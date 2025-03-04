@@ -3,5 +3,7 @@ absl-py
 flax
 jaxlib
 numpy
+jsonlines
+ray[default]
 # For profiling
 tensorboard-plugin-profile
