@@ -1,7 +1,7 @@
 benchmarks:
 - benchmark_name: "single_chip_hbm_copy"
   benchmark_sweep_params:
-  - {num_elements_range: {start: 1024, end: 20000, increase_by: 1024}, dtype: "bfloat16"}
+  - {num_elements_range: {start: 1024, end: 20000, increase_by: 1024}, dtype: "bfloat16", num_runs: 100}
   trace_dir: "/tmp/microbenchmarks/hbm"
   csv_path: "/tmp/microbenchmarks/hbm"
   xlml_metrics_dir: "/tmp/microbenchmarks/hbm"

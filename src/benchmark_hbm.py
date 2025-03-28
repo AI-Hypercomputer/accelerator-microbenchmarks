@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Tuple
 
-from benchmark_utils import simple_timeit
+from benchmark_utils import simple_timeit, MetricsStatistics
 import jax
 import jax.numpy as jnp
 
@@ -11,17 +11,19 @@ def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Helper function to build the metrics and metadata for the benchmark."""
-    metrics_keys = {"average_time_ms"}
+    exclude_keys = {"time_ms_list"}
     metadata = {
         key: value
         for key, value in params
-        if value is not None and key not in metrics_keys
+        if value is not None and key not in exclude_keys
     }
-    metrics = {key: value for key, value in params if key in metrics_keys}
-    return metadata, metrics
+    metadata["dtype"] = metadata["dtype"].dtype.itemsize
+    return metadata
 
 
-def single_chip_hbm_copy(num_elements: int, dtype: jnp.dtype) -> Dict[str, Any]:
+def single_chip_hbm_copy(
+    num_elements: int, dtype: jnp.dtype, num_runs: int = 1
+) -> Dict[str, Any]:
     """Benchmarks HBM with copy(read and write) on a single device."""
 
     def copy(a):
@@ -33,39 +35,52 @@ def single_chip_hbm_copy(num_elements: int, dtype: jnp.dtype) -> Dict[str, Any]:
     # Run once
     output = jitted_f(a)
     jax.block_until_ready(output)
+
     # Run the benchmark
-    average_time_ms = simple_timeit(
-        jitted_f,
-        a,
-        task="single_chip_hbm_copy",
-    )
-    return {"average_time_ms": average_time_ms}
+    time_ms_list = []
+    for _ in range(num_runs):
+        average_time_ms = simple_timeit(
+            jitted_f,
+            a,
+            task="single_chip_hbm_copy",
+        )
+        time_ms_list.append(average_time_ms)
+    return {"time_ms_list": time_ms_list}
 
 
 def single_chip_hbm_copy_calculate_metrics(
-    num_elements: int, dtype: jnp.dtype, average_time_ms: float
+    num_elements: int, dtype: jnp.dtype, time_ms_list: list
 ) -> Dict[str, Any]:
     """Calculates the metrics for the single chip hbm copy benchmark."""
     # Build dictionary of all the parameters in the function
     params = locals().items()
-    metadata, metrics = get_metrics_helper(params)
+    metadata = get_metrics_helper(params)
+    metrics = {}
 
     # Calculate throughput.
     tensor_size_bytes = num_elements * dtype.dtype.itemsize
 
     tensor_size_gbytes = (tensor_size_bytes * 2) / 10**9
-    average_time_s = average_time_ms / 10**3
-    bw_gbyte_sec = tensor_size_gbytes / average_time_s
+    time_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name="time_ms"
+    )
+    time_s_list = [time_ms / 10**3 for time_ms in time_ms_list]
+    bw_gbyte_sec_list = [tensor_size_gbytes / time_s for time_s in time_s_list]
+    statistics = MetricsStatistics(
+        metrics_list=bw_gbyte_sec_list, metrics_name="bw_gbyte_sec"
+    )
     print(
-        f"Tensor size: {tensor_size_bytes / 1024**2} MB, time taken (average):"
-        f" {average_time_ms:.4f} ms, bandwidth: {bw_gbyte_sec:.3f} GB/s"
+        f"Tensor size: {tensor_size_bytes / 1024**2} MB, time taken (mean):"
+        f" {time_statistics.statistics['p50']:.4f} ms, bandwidth (mean): {statistics.statistics['p50']:.3f} GB/s"
     )
     print()
     # Gather the metrics to report.
-    metrics.update(
+    metadata.update(
         {
-            "bandwidth_gbyte_sec": bw_gbyte_sec,
+            "tensor_size_gbytes": tensor_size_gbytes,
         }
     )
+    metrics.update(time_statistics.serialize_statistics())
+    metrics.update(statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
