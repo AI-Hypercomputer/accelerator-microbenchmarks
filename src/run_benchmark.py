@@ -10,6 +10,7 @@ import datetime
 import importlib
 import inspect
 import itertools
+import os
 import random
 import string
 from typing import Any, Callable, Dict, List, Tuple
@@ -202,6 +203,7 @@ def write_to_csv(
   if not isinstance(calculate_metrics_results[0], dict):
     raise ValueError("metrics result is not a dict.")
   # Open the CSV file for writing
+  os.makedirs(os.path.dirname(csv_path), exist_ok=True)
   with open(csv_path, mode="w", newline="") as csv_file:
     # Use the keys from the first item as the headers
 
