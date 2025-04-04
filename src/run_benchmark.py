@@ -196,6 +196,7 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
     if not isinstance(calculate_metrics_results[0], dict):
         raise ValueError("metrics result is not a dict.")
     # Open the CSV file for writing
+    print(f"in write_to_csv: {csv_path}")
     with open(csv_path, mode="w", newline="") as csv_file:
         # Use the keys from the first item as the headers
 
@@ -277,10 +278,13 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
 
     # Dump metrics to file.
     if csv_path:
-        test_name = f"t_{benchmark_name}_" + "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=10)
-        )
-        write_to_csv(f"{csv_path}/{test_name}.csv", calculate_metrics_results)
+        if jax.process_index() == 0:
+            test_name = f"t_{benchmark_name}_" + "".join(
+                random.choices(string.ascii_uppercase + string.digits, k=10)
+            )
+            csv_file_path = f"{csv_path}/{test_name}.csv"
+            print(f"in run_single_benchmark: {csv_file_path}")
+            write_to_csv(csv_file_path, calculate_metrics_results)
 
 
 def main(config_path: str, multithreaded: bool):
