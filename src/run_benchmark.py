@@ -232,6 +232,11 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
   csv_path = benchmark_config.get("csv_path")
   trace_dir = benchmark_config.get("trace_dir")
   xlml_metrics_dir = benchmark_config.get("xlml_metrics_dir")
+  warmup_tries = benchmark_config.get("warmup_tries")
+  warmup_tries = warmup_tries if warmup_tries is not None else 1000
+  tries = benchmark_config.get("tries")
+  tries = tries if tries is not None else 1000
+
   # TODO(qinyiyan): Add support for parsing xplane.
   if not benchmark_name:
     raise ValueError("Each benchmark must have a 'benchmark_name'.")
@@ -257,7 +262,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
     test_start_time = (
         datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
     )  # "Z" indicates UTC
-    benchmark_results = benchmark_func(**benchmark_param)
+    benchmark_results = benchmark_func(**benchmark_param, warmup_tries=warmup_tries, tries=tries)
     test_end_time = (
         datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
     )

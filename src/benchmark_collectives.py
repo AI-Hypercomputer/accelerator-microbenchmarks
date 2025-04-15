@@ -55,7 +55,7 @@ def get_metrics_helper(
 
 
 def psum_benchmark(
-    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int
+    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int, warmup_tries: int, tries: int
 ) -> Dict[str, Any]:
   """Benchmarks the psum collective operation.
 
@@ -87,7 +87,7 @@ def psum_benchmark(
     )
     jitted_op = jax.jit(psum_dcn_op)
     dcn_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="psum_dcn_op"
+        jitted_op, sharded_matrix, task="psum_dcn_op", warmup_tries=warmup_tries, tries=tries
     )
 
   # ICI benchmark
@@ -103,7 +103,7 @@ def psum_benchmark(
     )
     jitted_op = jax.jit(psum_ici_op)
     ici_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="psum_ici_op"
+        jitted_op, sharded_matrix, task="psum_ici_op", warmup_tries=warmup_tries, tries=tries
     )
   return {
       "dcn_average_time_ms": dcn_average_time_ms,
@@ -168,7 +168,7 @@ def psum_benchmark_calculate_metrics(
 
 
 def psum_scatter_benchmark(
-    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int
+    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int, warmup_tries: int, tries: int
 ) -> Dict[str, Any]:
   """Benchmarks the psum_scatter collective operation.
 
@@ -201,7 +201,7 @@ def psum_scatter_benchmark(
     )
     jitted_op = jax.jit(psum_scatter_dcn_op)
     dcn_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="psum_scatter_dcn_op"
+        jitted_op, sharded_matrix, task="psum_scatter_dcn_op", warmup_tries=warmup_tries, tries=tries
     )
 
   # ICI benchmark
@@ -218,7 +218,7 @@ def psum_scatter_benchmark(
     )
     jitted_op = jax.jit(psum_scatter_ici_op)
     ici_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="psum_scatter_ici_op"
+        jitted_op, sharded_matrix, task="psum_scatter_ici_op", warmup_tries=warmup_tries, tries=tries
     )
 
   return {
@@ -285,7 +285,7 @@ def psum_scatter_benchmark_calculate_metrics(
 
 
 def all_gather_benchmark(
-    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int
+    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int, warmup_tries: int, tries: int
 ) -> Dict[str, Any]:
   """Benchmarks the all_gather collective operation.
 
@@ -319,7 +319,7 @@ def all_gather_benchmark(
     )
     jitted_op = jax.jit(all_gather_dcn_op)
     dcn_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="all_gather_dcn_op"
+        jitted_op, sharded_matrix, task="all_gather_dcn_op", warmup_tries=warmup_tries, tries=tries
     )
 
   # ICI benchmark
@@ -337,7 +337,7 @@ def all_gather_benchmark(
     )
     jitted_op = jax.jit(all_gather_ici_op)
     ici_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="all_gather_ici_op"
+        jitted_op, sharded_matrix, task="all_gather_ici_op", warmup_tries=warmup_tries, tries=tries
     )
 
   return {
@@ -402,7 +402,7 @@ def all_gather_benchmark_calculate_metrics(
 
 
 def ppermute_benchmark(
-    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int
+    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int, warmup_tries: int, tries: int
 ) -> Dict[str, Any]:
   """Benchmarks the ppermute collective operation.
 
@@ -437,7 +437,7 @@ def ppermute_benchmark(
     )
     jitted_op = jax.jit(ppermute_dcn_op)
     dcn_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="ppermute_dcn_op"
+        jitted_op, sharded_matrix, task="ppermute_dcn_op", warmup_tries=warmup_tries, tries=tries
     )
 
   # ICI benchmark
@@ -455,7 +455,7 @@ def ppermute_benchmark(
     )
     jitted_op = jax.jit(ppermute_ici_op)
     ici_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="ppermute_ici_op"
+        jitted_op, sharded_matrix, task="ppermute_ici_op", warmup_tries=warmup_tries, tries=tries
     )
 
   return {
@@ -512,7 +512,7 @@ def ppermute_benchmark_calculate_metrics(
 
 
 def all_to_all_benchmark(
-    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int
+    matrix_dim: int, dtype: jnp.dtype, dcn_size: int, ici_size: int, warmup_tries: int, tries: int
 ) -> Dict[str, Any]:
   """Benchmarks the all_to_all collective operation.
 
@@ -548,7 +548,7 @@ def all_to_all_benchmark(
     )
     jitted_op = jax.jit(all_to_all_dcn_op)
     ici_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="all_to_all_dcn_op"
+        jitted_op, sharded_matrix, task="all_to_all_dcn_op", warmup_tries=warmup_tries, tries=tries
     )
 
   # ICI benchmark
@@ -568,7 +568,7 @@ def all_to_all_benchmark(
     )
     jitted_op = jax.jit(all_to_all_ici_op)
     ici_average_time_ms = simple_timeit(
-        jitted_op, sharded_matrix, task="all_to_all_ici_op"
+        jitted_op, sharded_matrix, task="all_to_all_ici_op", warmup_tries=warmup_tries, tries=tries
     )
 
   return {

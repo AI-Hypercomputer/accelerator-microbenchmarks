@@ -7,14 +7,20 @@ import jax
 import jsonlines
 
 
-def simple_timeit(f, *args, tries=1000, task=None):
+def simple_timeit(f, *args, warmup_tries, tries, task=None):
   """Simple utility to time a function for multiple runs."""
   assert task is not None
 
-  jax.block_until_ready(f(*args))  # warm it up!
+  # warmup loop
+  print(f"Running warmup loop with {warmup_tries} tries...")
+  for _ in range(warmup_tries):
+    data = f(*args)
+  jax.block_until_ready(data)
+
+  # benchmark loop
+  print(f"Running {task} benchmark loop with {tries} tries...")
   s = datetime.datetime.now()
   for _ in range(tries):
-    jax.devices()  # Force synchronization across devices
     data = f(*args)
   jax.block_until_ready(data)
   e = datetime.datetime.now()
