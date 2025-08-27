@@ -19,12 +19,12 @@ import subprocess
 import shutil
 
 
-def simple_timeit(f, *args, tries=10, task=None, trace_dir=None) -> float:
+def simple_timeit(f, *args, matrix_dim, tries=10, task=None, trace_dir=None) -> float:
     """Simple utility to time a function for multiple runs."""
     assert task is not None
 
     if trace_dir:
-        return timeit_from_trace(f, *args, tries=tries, task=task, trace_dir=trace_dir)
+        return timeit_from_trace(f, *args, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
 
     outcomes_ms = []
     jax.block_until_ready(f(*args))  # warm it up!
@@ -97,7 +97,7 @@ def is_local_directory_path(dir: str) -> bool:
     return dir.startswith("/") or dir.startswith("./") or dir.startswith("../")
 
 
-def timeit_from_trace(f, *args, tries=10, task=None, trace_dir=None) -> float:
+def timeit_from_trace(f, *args, matrix_dim, tries=10, task=None, trace_dir=None) -> float:
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
@@ -107,7 +107,7 @@ def timeit_from_trace(f, *args, tries=10, task=None, trace_dir=None) -> float:
 
     trace_name = f"t_{task}_" + "".join(
         random.choices(string.ascii_uppercase + string.digits, k=10)
-    )
+    ) + f"_{matrix_dim}"
     trace_full_dir = f"{trace_dir}/{trace_name}"
     tmp_trace_dir = trace_full_dir
     # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
