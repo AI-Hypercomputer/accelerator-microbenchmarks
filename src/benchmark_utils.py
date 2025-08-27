@@ -105,9 +105,8 @@ def timeit_from_trace(f, *args, matrix_dim, tries=10, task=None, trace_dir=None)
 
     jax.block_until_ready(f(*args))  # warm it up!
 
-    trace_name = f"t_{task}_dim{matrix_dim}_" + "".join(
-        random.choices(string.ascii_uppercase + string.digits, k=10)
-    )
+    trace_name = f"{task}_dim_{matrix_dim}"
+
     trace_full_dir = f"{trace_dir}/{trace_name}"
     tmp_trace_dir = trace_full_dir
     # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
