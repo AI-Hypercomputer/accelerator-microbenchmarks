@@ -18,6 +18,14 @@ from collections import defaultdict
 import subprocess
 import shutil
 
+# The dictionary to map a CPU collective function to its corresponding operation on TPU
+# "psum_scatter_ici_op" has different implementation according to its `matrix_dim` and the number of TPUs, so it's not considered in this mapping dictionary.
+TARGET_TASK_NAME_COLLECTIVES_MAP = {
+    "all_to_all_ici_op": r"all-to-all.[0-9]+",
+    "all_gather_ici_op": r"all-gather.[0-9]+",
+    "psum_ici_op": r"all-reduce.[0-9]+",
+    "ppermute_ici_op": r"collective-permute-done",
+}
 
 def simple_timeit(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None) -> float:
     """Simple utility to time a function for multiple runs."""
@@ -60,8 +68,15 @@ def get_trace(log_dir: str) -> dict[str, Any]:
     return trace
 
 
-def get_metrics_from_trace(trace: dict[str, Any], task: str) -> float:
+def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
+
+    # Check if the given task name is a collective with corresponding TPU opertion.
+    # This is a workaround and should be reverted or refactored in future.
+    if task in TARGET_TASK_NAME_COLLECTIVES_MAP.keys():
+        task = TARGET_TASK_NAME_COLLECTIVES_MAP[task]
+        return get_metrics_from_trace_tpu(trace, task)
     event_matcher = re.compile(task)
+    
     if "traceEvents" not in trace:
         raise KeyError("Key 'traceEvents' not found in trace.")
 
@@ -85,6 +100,26 @@ def get_metrics_from_trace(trace: dict[str, Any], task: str) -> float:
         raise
     return durations_ms
 
+def get_metrics_from_trace_tpu(trace: dict[str, Any], task: str) -> list[float]:
+    event_matcher = re.compile(task)
+
+    if "traceEvents" not in trace:
+        raise KeyError("Key 'traceEvents' not found in trace.")
+    
+    events = []
+    for e in trace["traceEvents"]:
+        if "name" in e and event_matcher.match(e["name"]):
+            events.append(e)
+    
+    # For each trace, find the TPU with smallest `pid` value and consider it to be TPU-0
+    min_pid = min([e["pid"] for e in events])
+    events_from_min_pid = [e for e in events if e["pid"] == min_pid]
+    try:
+        durations_ms = [float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid]
+    except KeyError:
+        print("KeyError: Key 'device_duration_ps' not found in the event object")
+        raise
+    return durations_ms
 
 def is_local_directory_path(dir: str) -> bool:
     """
