@@ -31,8 +31,13 @@ def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int
         )
         mesh = Mesh(mesh_devices, ("dcn", "ici"))
     else:
-        mesh_devices = mesh_utils.create_device_mesh([ici_size], devices=jax.devices())
-        mesh = Mesh(mesh_devices, "ici")
+        if ici_size == 256:
+            x, y = 16, 16
+            mesh_devices = mesh_utils.create_device_mesh([x, y], devices=jax.devices())
+            mesh = Mesh(mesh_devices, ("x", "y"))
+        else:
+            mesh_devices = mesh_utils.create_device_mesh([ici_size], devices=jax.devices())
+            mesh = Mesh(mesh_devices, "ici")
     return mesh, dcn_parallelism, ici_parallelism
 
 
@@ -235,9 +240,9 @@ def psum_scatter_benchmark(
     # ICI benchmark
     if ici_size > 1:
 
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, "ici"))
+        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P("x", None))
         def f(x):
-            return jax.lax.psum_scatter(x, "ici", tiled=True)
+            return jax.lax.psum_scatter(x, "x", tiled=True)
 
         sharded_matrix = jax.device_put(
             matrix, jax.sharding.NamedSharding(mesh, P(None, None))
