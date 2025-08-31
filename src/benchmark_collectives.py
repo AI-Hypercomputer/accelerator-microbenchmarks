@@ -104,17 +104,14 @@ def psum_benchmark(
     # ICI benchmark
     if ici_size > 1:
 
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, None))
+        @partial(shard_map, mesh=mesh, in_specs=P(None, None))
         def f(x):
             return jax.lax.psum(x, "ici")
 
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, None))
-        )
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
             jitted_op,
-            sharded_matrix,
+            matrix,
             matrix_dim=matrix_dim,
             tries=num_runs,
             task="psum_ici_op",
@@ -240,17 +237,14 @@ def psum_scatter_benchmark(
     # ICI benchmark
     if ici_size > 1:
 
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P("x", None))
+        @partial(shard_map, mesh=mesh, in_specs=P(None, None))
         def f(x):
             return jax.lax.psum_scatter(x, "x", tiled=True)
 
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, None))
-        )
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
             jitted_op,
-            sharded_matrix,
+            matrix,
             matrix_dim=matrix_dim,
             tries=num_runs,
             task="psum_scatter_ici_op",
@@ -385,20 +379,16 @@ def all_gather_benchmark(
         @partial(
             shard_map,
             mesh=mesh,
-            in_specs=P(None, "ici"),
-            out_specs=P(None, None),
+            in_specs=P("x", None),
             check_rep=False,
         )
         def f(x):
-            return jax.lax.all_gather(x, "ici", tiled=True)
+            return jax.lax.all_gather(x, "x", tiled=True)
 
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, "ici"))
-        )
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
             jitted_op,
-            sharded_matrix,
+            matrix,
             matrix_dim=matrix_dim,
             tries=num_runs,
             task="all_gather_ici_op",
