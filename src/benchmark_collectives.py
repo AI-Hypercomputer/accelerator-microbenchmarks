@@ -31,8 +31,9 @@ def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int
         )
         mesh = Mesh(mesh_devices, ("dcn", "ici"))
     else:
-        if ici_size == 256:
-            x, y = 16, 16
+        if ici_size == 256 or ici_size == 128
+            x = 16
+            y = 16 if ici_size == 256 else 8
             mesh_devices = mesh_utils.create_device_mesh([x, y], devices=jax.devices())
             mesh = Mesh(mesh_devices, ("x", "y"))
         else:
