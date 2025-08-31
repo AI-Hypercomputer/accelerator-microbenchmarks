@@ -239,7 +239,7 @@ def psum_scatter_benchmark(
 
         @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P("x", None))
         def f(x):
-            return jax.lax.psum_scatter(x, "x")
+            return jax.lax.psum_scatter(x, "x", tiled=True)
 
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
