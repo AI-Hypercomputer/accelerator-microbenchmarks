@@ -384,7 +384,7 @@ def all_gather_benchmark(
             check_rep=False,
         )
         def f(x):
-            return jax.lax.all_gather(x, "x")
+            return jax.lax.all_gather(x, "x", tiled=True)
 
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
