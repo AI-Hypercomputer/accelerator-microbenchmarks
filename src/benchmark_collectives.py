@@ -104,9 +104,9 @@ def psum_benchmark(
     # ICI benchmark
     if ici_size > 1:
 
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None))
+        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, None))
         def f(x):
-            return jax.lax.psum(x, "ici")
+            return jax.lax.psum(x, "x")
 
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
@@ -237,9 +237,9 @@ def psum_scatter_benchmark(
     # ICI benchmark
     if ici_size > 1:
 
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None))
+        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P("x", None))
         def f(x):
-            return jax.lax.psum_scatter(x, "x", tiled=True)
+            return jax.lax.psum_scatter(x, "x")
 
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
@@ -380,10 +380,11 @@ def all_gather_benchmark(
             shard_map,
             mesh=mesh,
             in_specs=P("x", None),
+            out_specs=P(None, None),
             check_rep=False,
         )
         def f(x):
-            return jax.lax.all_gather(x, "x", tiled=True)
+            return jax.lax.all_gather(x, "x")
 
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
