@@ -380,7 +380,7 @@ def all_gather_benchmark(
         @partial(
             shard_map,
             mesh=mesh,
-            in_specs=P(None, "ici"),
+            in_specs=P("ici", None),
             out_specs=P(None, None),
             check_rep=False,
         )
@@ -388,7 +388,7 @@ def all_gather_benchmark(
             return jax.lax.all_gather(x, "ici", tiled=True)
 
         sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, "ici"))
+            matrix, jax.sharding.NamedSharding(mesh, P("ici", None))
         )
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
