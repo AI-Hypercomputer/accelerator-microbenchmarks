@@ -455,7 +455,7 @@ def run_benchmark_multithreaded(benchmark_config):
             calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
 
     if csv_path:
-        write_to_csv(f"{csv_path}/{test_name}.csv", calculate_metrics_results)
+        write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
 
 
 if __name__ == "__main__":
