@@ -31,8 +31,13 @@ def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int
         )
         mesh = Mesh(mesh_devices, ("dcn", "ici"))
     else:
-        mesh_devices = mesh_utils.create_device_mesh([ici_size], devices=jax.devices())
-        mesh = Mesh(mesh_devices, "ici")
+        if ici_size == 64:
+            x, y = 8, 8
+            mesh_devices = mesh_utils.create_device_mesh([x, y], devices=jax.devices())
+            mesh = Mesh(mesh_devices, ("x", "y"))
+        else:
+            mesh_devices = mesh_utils.create_device_mesh([ici_size], devices=jax.devices())
+            mesh = Mesh(mesh_devices, "ici")
     return mesh, dcn_parallelism, ici_parallelism
 
 
@@ -380,16 +385,13 @@ def all_gather_benchmark(
         @partial(
             shard_map,
             mesh=mesh,
-            in_specs=P("ici", None),
+            in_specs=P("x", "y"),
             out_specs=P(None, None),
             check_rep=False,
         )
         def f(x):
-            return jax.lax.all_gather(x, "ici", tiled=True)
+            return jax.lax.all_gather(x, ("x", "y"), tiled=True)
 
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P("ici", None))
-        )
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
             jitted_op,
