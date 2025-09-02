@@ -395,7 +395,7 @@ def all_gather_benchmark(
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
             jitted_op,
-            sharded_matrix,
+            matrix,
             matrix_dim=matrix_dim,
             tries=num_runs,
             task="all_gather_ici_op",
