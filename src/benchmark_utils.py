@@ -19,15 +19,19 @@ import subprocess
 import shutil
 
 
-def simple_timeit(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None) -> float:
+def simple_timeit(f, *args, matrix_dim=None, warmup_tries = 10, tries=10, task=None, trace_dir=None) -> float:
     """Simple utility to time a function for multiple runs."""
     assert task is not None
 
     if trace_dir:
         return timeit_from_trace(f, *args, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
 
+    # warmup loop
+    print(f"Running warmup loop with {warmup_tries} tries...")
+    for _ in range(warmup_tries):
+        data = f(*args)
+    jax.block_until_ready(data)
     outcomes_ms = []
-    jax.block_until_ready(f(*args))  # warm it up!
     for _ in range(tries):
         jax.devices()  # Force synchronization across devices
         s = datetime.datetime.now()
@@ -97,13 +101,17 @@ def is_local_directory_path(dir: str) -> bool:
     return dir.startswith("/") or dir.startswith("./") or dir.startswith("../")
 
 
-def timeit_from_trace(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None) -> float:
+def timeit_from_trace(f, *args, matrix_dim=None, warmup_tries=10, tries=10, task=None, trace_dir=None) -> float:
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
     LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
 
-    jax.block_until_ready(f(*args))  # warm it up!
+    # warmup loop
+    print(f"Running warmup loop with {warmup_tries} tries...")
+    for _ in range(warmup_tries):
+        data = f(*args)
+    jax.block_until_ready(data)
 
     if matrix_dim is not None:
         trace_name = f"{task}_dim_{matrix_dim}"

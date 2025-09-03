@@ -279,6 +279,8 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
     trace_dir = benchmark_config.get("trace_dir")
     xlml_metrics_dir = benchmark_config.get("xlml_metrics_dir")
     xla_dump_dir = benchmark_config.get("xla_dump_dir")
+    warmup_tries = benchmark_config.get("warmup_tries")
+    warmup_tries = warmup_tries if warmup_tries is not None else 1000
 
     if not benchmark_name:
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
@@ -299,7 +301,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
         test_start_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )  # "Z" indicates UTC
-        benchmark_results = benchmark_func(**benchmark_param)
+        benchmark_results = benchmark_func(**benchmark_param, warmup_tries=warmup_tries)
         test_end_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )
@@ -400,6 +402,8 @@ def run_benchmark_multithreaded(benchmark_config):
     csv_path = benchmark_config.get("csv_path")
     if not benchmark_name:
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
+    warmup_tries = benchmark_config.get("warmup_tries")
+    warmup_tries = warmup_tries if warmup_tries is not None else 1000
 
     # Get the benchmark function
     benchmark_func, calculate_metrics_func = get_benchmark_functions(benchmark_name)
@@ -427,7 +431,7 @@ def run_benchmark_multithreaded(benchmark_config):
     with ThreadPoolExecutor(max_workers=num_hosts) as executor:
         # Create a mapping of futures to their corresponding parameters
         future_to_param = {
-            executor.submit(benchmark_func, **benchmark_param): benchmark_param
+            executor.submit(benchmark_func, **benchmark_param, warmup_tries=warmup_tries): benchmark_param
             for benchmark_param in preprocessed_benchmark_params
         }
 
