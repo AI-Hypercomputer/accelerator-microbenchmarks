@@ -36,7 +36,7 @@ def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int
     return mesh, dcn_parallelism, ici_parallelism
 
 
-def get_metrics_helper(
+def extract_metadata(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Helper function to build the metrics and metadata for the benchmark."""
@@ -134,7 +134,7 @@ def psum_benchmark_calculate_metrics(
     """Calculates the metrics for the psum benchmark."""
     # Build dictionary of all the parameters in the function
     params = locals().items()
-    metadata = get_metrics_helper(params)
+    metadata = extract_metadata(params)
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
@@ -272,7 +272,7 @@ def psum_scatter_benchmark_calculate_metrics(
     """Calculates the metrics for the psum_scatter benchmark."""
     # Build dictionary of all the parameters in the function
     params = locals().items()
-    metadata = get_metrics_helper(params)
+    metadata = extract_metadata(params)
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
@@ -421,7 +421,7 @@ def all_gather_benchmark_calculate_metrics(
     """Calculates the metrics for the all_gather benchmark."""
     # Build dictionary of all the parameters in the function
     params = locals().items()
-    metadata = get_metrics_helper(params)
+    metadata = extract_metadata(params)
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
@@ -561,7 +561,7 @@ def ppermute_benchmark_calculate_metrics(
     """Calculates the metrics for the ppermute benchmark."""
     # Build dictionary of all the parameters in the function
     params = locals().items()
-    metadata = get_metrics_helper(params)
+    metadata = extract_metadata(params)
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
@@ -697,7 +697,7 @@ def all_to_all_benchmark_calculate_metrics(
     """Calculates the metrics for the all_to_all benchmark."""
     # Build dictionary of all the parameters in the function
     params = locals().items()
-    metadata = get_metrics_helper(params)
+    metadata = extract_metadata(params)
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
