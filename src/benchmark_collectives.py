@@ -49,6 +49,69 @@ def extract_metadata(
     metadata["dtype"] = metadata["dtype"].dtype.itemsize
     return metadata
 
+def benchmark_collective(
+    benchmark_name: str,
+    jax_op: Any,
+    mesh: Mesh,
+    matrix: jnp.ndarray,
+    matrix_dim: int,
+    axis_name: str,
+    in_specs: P,
+    out_specs: P,
+    check_rep: bool = True,
+    jax_op_kwargs: Dict[str, Any] = None,
+    num_runs: int = 1,
+    warmup_tries: int = 10,
+    trace_dir: str = None,
+) -> list[float]:
+    """
+    Helper function to run a collective benchmark on DCN and ICI.
+
+    Args:
+      benchmark_name: The base name for the benchmark task.
+      jax_op: The JAX collective operation to benchmark (e.g., jax.lax.psum).
+      mesh: The JAX device mesh to run the benchmark on.
+      matrix: The input array for the collective operation.
+      matrix_dim: The dimension of the input matrix.
+      axis_name: The name of the axis over which the op is performed (e.g., "dcn" or "ici").
+      in_specs: The input sharding specs.
+      out_specs: The output sharding specs.
+      check_rep: Indicate if replication check is needed. Can be skipped in some situations.
+      jax_op_kwargs: Optional keyword arguments for the JAX operation.
+      num_runs: The number of times to run the benchmark operation for timing.
+      warmup_tries: The number of warmup runs before the actual timing.
+      trace_dir: Optional directory to save JAX traces.
+
+    Returns:
+      A list of average time in milliseconds for each run.
+    """
+    if jax_op_kwargs is None:
+        jax_op_kwargs = {}
+    if axis_name != "dcn" and axis_name != "ici":
+        raise ValueError(f"Unsupported axis name: {axis_name}")
+
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=in_specs,
+        out_specs=out_specs,
+        check_rep=check_rep,
+    )
+    def f(x):
+        return jax_op(x, axis_name, **jax_op_kwargs)
+
+    jitted_op = jax.jit(f)
+    average_time_ms_list = simple_timeit(
+        jitted_op,
+        matrix,
+        matrix_dim=matrix_dim,
+        warmup_tries=warmup_tries,
+        tries=num_runs,
+        task=f"{benchmark_name}_{axis_name}_op",
+        trace_dir=trace_dir,
+    )
+
+    return average_time_ms_list
 
 def psum_benchmark(
     matrix_dim: int,
@@ -75,53 +138,28 @@ def psum_benchmark(
     """
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
-    dcn_average_time_ms_list = ici_average_time_ms_list = None
-    # DCN benchmark
-    if dcn_size > 1:
-
-        @partial(shard_map, mesh=mesh, in_specs=P("dcn", None), out_specs=P(None))
-        def f(x):
-            return jax.lax.psum(x, "dcn")
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P("dcn", None))
-        )
-        jitted_op = jax.jit(f)
-        dcn_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="psum_dcn_op",
-            trace_dir=trace_dir,
-        )
-
-    # ICI benchmark
-    if ici_size > 1:
-
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, None))
-        def f(x):
-            return jax.lax.psum(x, "ici")
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, None))
-        )
-        jitted_op = jax.jit(f)
-        ici_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="psum_ici_op",
-            trace_dir=trace_dir,
-        )
-    return {
-        "dcn_average_time_ms_list": dcn_average_time_ms_list,
-        "ici_average_time_ms_list": ici_average_time_ms_list,
+    results = {
+        "dcn_average_time_ms_list": None,
+        "ici_average_time_ms_list": None,
     }
 
+    if dcn_size > 1:
+        results["dcn_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="psum", jax_op=jax.lax.psum, mesh=mesh, matrix=matrix,
+            matrix_dim=matrix_dim, axis_name="dcn", in_specs=P("dcn", None),
+            out_specs=P(None, None), num_runs=num_runs, warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
+        )
+
+    if ici_size > 1:
+        results["ici_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="psum", jax_op=jax.lax.psum, mesh=mesh, matrix=matrix,
+            matrix_dim=matrix_dim, axis_name="ici", in_specs=P(None, None),
+            out_specs=P(None, None), num_runs=num_runs, warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
+        )
+
+    return results
 
 def psum_benchmark_calculate_metrics(
     matrix_dim: int,
@@ -184,7 +222,6 @@ def psum_benchmark_calculate_metrics(
         metrics.update(ici_bandwidth_gbyte_s_statistics.serialize_statistics())
     return metadata, metrics
 
-
 def psum_scatter_benchmark(
     matrix_dim: int,
     dtype: jnp.dtype,
@@ -210,56 +247,33 @@ def psum_scatter_benchmark(
     """
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
-    dcn_average_time_ms_list = ici_average_time_ms_list = None
-    # DCN benchmark
-    if dcn_size > 1:
-
-        @partial(
-            shard_map, mesh=mesh, in_specs=P("dcn", None), out_specs=P("dcn", None)
-        )
-        def f(x):
-            return jax.lax.psum_scatter(x, "dcn", tiled=True)
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P("dcn", None))
-        )
-        jitted_op = jax.jit(f)
-        dcn_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="psum_scatter_dcn_op",
-            trace_dir=trace_dir,
-        )
-
-    # ICI benchmark
-    if ici_size > 1:
-
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, "ici"))
-        def f(x):
-            return jax.lax.psum_scatter(x, "ici", tiled=True)
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, None))
-        )
-        jitted_op = jax.jit(f)
-        ici_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="psum_scatter_ici_op",
-            trace_dir=trace_dir,
-        )
-
-    return {
-        "dcn_average_time_ms_list": dcn_average_time_ms_list,
-        "ici_average_time_ms_list": ici_average_time_ms_list,
+    results = {
+        "dcn_average_time_ms_list": None,
+        "ici_average_time_ms_list": None,
     }
 
+    psum_scatter_kwargs = {"tiled": True}
+
+
+    if dcn_size > 1:
+        results["dcn_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="psum_scatter", jax_op=jax.lax.psum_scatter, mesh=mesh,
+            matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
+            in_specs=P("dcn", None), out_specs=P("dcn", None),
+            jax_op_kwargs=psum_scatter_kwargs, num_runs=num_runs,
+            warmup_tries=warmup_tries, trace_dir=trace_dir,
+        )
+
+    if ici_size > 1:
+        results["ici_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="psum_scatter", jax_op=jax.lax.psum_scatter, mesh=mesh,
+            matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
+            in_specs=P(None, None), out_specs=P(None, "ici"),
+            jax_op_kwargs=psum_scatter_kwargs, num_runs=num_runs,
+            warmup_tries=warmup_tries, trace_dir=trace_dir,
+        )
+
+    return results
 
 def psum_scatter_benchmark_calculate_metrics(
     matrix_dim: int,
@@ -348,67 +362,32 @@ def all_gather_benchmark(
     """
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
-    dcn_average_time_ms_list = ici_average_time_ms_list = None
-
-    # DCN benchmark
-    if dcn_size > 1:
-
-        @partial(
-            shard_map,
-            mesh=mesh,
-            in_specs=P("dcn", None),
-            out_specs=P(None, None),
-            check_rep=False,
-        )
-        def f(x):
-            return jax.lax.all_gather(x, "dcn", tiled=True)
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P("dcn", None))
-        )
-        jitted_op = jax.jit(f)
-        dcn_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="all_gather_dcn_op",
-            trace_dir=trace_dir,
-        )
-
-    # ICI benchmark
-    if ici_size > 1:
-
-        @partial(
-            shard_map,
-            mesh=mesh,
-            in_specs=P("ici", None),
-            out_specs=P(None, None),
-            check_rep=False,
-        )
-        def f(x):
-            return jax.lax.all_gather(x, "ici", tiled=True)
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P("ici", None))
-        )
-        jitted_op = jax.jit(f)
-        ici_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="all_gather_ici_op",
-            trace_dir=trace_dir,
-        )
-
-    return {
-        "dcn_average_time_ms_list": dcn_average_time_ms_list,
-        "ici_average_time_ms_list": ici_average_time_ms_list,
+    results = {
+        "dcn_average_time_ms_list": None,
+        "ici_average_time_ms_list": None,
     }
 
+    all_gather_kwargs = {"tiled": True}
+
+    if dcn_size > 1:
+        results["dcn_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="all_gather", jax_op=jax.lax.all_gather, mesh=mesh,
+            matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
+            in_specs=P("dcn", None), out_specs=P(None, None), check_rep=False,
+            jax_op_kwargs=all_gather_kwargs, num_runs=num_runs,
+            warmup_tries=warmup_tries, trace_dir=trace_dir,
+        )
+
+    if ici_size > 1:
+        results["ici_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="all_gather", jax_op=jax.lax.all_gather, mesh=mesh,
+            matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
+            in_specs=P("ici", None), out_specs=P(None, None), check_rep=False,
+            jax_op_kwargs=all_gather_kwargs, num_runs=num_runs,
+            warmup_tries=warmup_tries, trace_dir=trace_dir,
+        )
+
+    return results
 
 def all_gather_benchmark_calculate_metrics(
     matrix_dim: int,
@@ -496,59 +475,33 @@ def ppermute_benchmark(
     """
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
-    dcn_average_time_ms_list = ici_average_time_ms_list = None
-
-    # DCN benchmark
-    if dcn_size > 1:
-
-        @partial(
-            shard_map, mesh=mesh, in_specs=P("dcn", None), out_specs=P("dcn", None)
-        )
-        def f(x):
-            perm = [(i, (i + 1) % dcn_size) for i in range(dcn_size)]
-            return jax.lax.ppermute(x, "dcn", perm)
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P("dcn", None))
-        )
-        jitted_op = jax.jit(f)
-        dcn_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="ppermute_dcn_op",
-            trace_dir=trace_dir,
-        )
-
-    # ICI benchmark
-    if ici_size > 1:
-
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, "ici"))
-        def f(x):
-            perm = [(i, (i + 1) % ici_size) for i in range(ici_size)]
-            return jax.lax.ppermute(x, "ici", perm)
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, None))
-        )
-        jitted_op = jax.jit(f)
-        ici_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="ppermute_ici_op",
-            trace_dir=trace_dir,
-        )
-
-    return {
-        "dcn_average_time_ms_list": dcn_average_time_ms_list,
-        "ici_average_time_ms_list": ici_average_time_ms_list,
+    results = {
+        "dcn_average_time_ms_list": None,
+        "ici_average_time_ms_list": None,
     }
 
+
+    if dcn_size > 1:
+        dcn_perm = [(i, (i + 1) % dcn_size) for i in range(dcn_size)]
+        results["dcn_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="ppermute", jax_op=jax.lax.ppermute, mesh=mesh,
+            matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
+            in_specs=P("dcn", None), out_specs=P("dcn", None),
+            jax_op_kwargs={"perm": dcn_perm}, num_runs=num_runs,
+            warmup_tries=warmup_tries, trace_dir=trace_dir,
+        )
+
+    if ici_size > 1:
+        ici_perm = [(i, (i + 1) % ici_size) for i in range(ici_size)]
+        results["ici_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="ppermute", jax_op=jax.lax.ppermute, mesh=mesh,
+            matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
+            in_specs=P(None, None), out_specs=P(None, "ici"),
+            jax_op_kwargs={"perm": ici_perm}, num_runs=num_runs,
+            warmup_tries=warmup_tries, trace_dir=trace_dir,
+        )
+
+    return results
 
 def ppermute_benchmark_calculate_metrics(
     matrix_dim: int,
@@ -602,7 +555,6 @@ def ppermute_benchmark_calculate_metrics(
         metrics.update(ici_bandwidth_gbyte_s_statistics.serialize_statistics())
     return metadata, metrics
 
-
 def all_to_all_benchmark(
     matrix_dim: int,
     dtype: jnp.dtype,
@@ -628,63 +580,32 @@ def all_to_all_benchmark(
     """
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
-    dcn_average_time_ms_list = ici_average_time_ms_list = None
-
-    # DCN benchmark
-    if dcn_size > 1:
-
-        @partial(
-            shard_map, mesh=mesh, in_specs=P("dcn", None), out_specs=P("dcn", None)
-        )
-        def f(x):
-            return jax.lax.all_to_all(x, "dcn", split_axis=0, concat_axis=0, tiled=True)
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P("dcn", None))
-        )
-        jitted_op = jax.jit(f)
-        dcn_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="all_to_all_dcn_op",
-            trace_dir=trace_dir,
-        )
-
-    # ICI benchmark
-    if ici_size > 1:
-
-        @partial(
-            shard_map,
-            mesh=mesh,
-            in_specs=P(None, None),
-            out_specs=P(None, None),
-            check_rep=False,
-        )
-        def f(x):
-            return jax.lax.all_to_all(x, "ici", split_axis=0, concat_axis=0, tiled=True)
-
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, None))
-        )
-        jitted_op = jax.jit(f)
-        ici_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            warmup_tries=warmup_tries,
-            tries=num_runs,
-            task="all_to_all_ici_op",
-            trace_dir=trace_dir,
-        )
-
-    return {
-        "dcn_average_time_ms_list": dcn_average_time_ms_list,
-        "ici_average_time_ms_list": ici_average_time_ms_list,
+    results = {
+        "dcn_average_time_ms_list": None,
+        "ici_average_time_ms_list": None,
     }
 
+    all_to_all_kwargs = {"split_axis": 0, "concat_axis": 0, "tiled": True}
+
+    if dcn_size > 1:
+        results["dcn_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="all_to_all", jax_op=jax.lax.all_to_all, mesh=mesh,
+            matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
+            in_specs=P("dcn", None), out_specs=P("dcn", None),
+            jax_op_kwargs=all_to_all_kwargs, num_runs=num_runs,
+            warmup_tries=warmup_tries, trace_dir=trace_dir,
+        )
+
+    if ici_size > 1:
+        results["ici_average_time_ms_list"] = benchmark_collective(
+            benchmark_name="all_to_all", jax_op=jax.lax.all_to_all, mesh=mesh,
+            matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
+            in_specs=P(None, None), out_specs=P(None, None), check_rep=False,
+            jax_op_kwargs=all_to_all_kwargs, num_runs=num_runs,
+            warmup_tries=warmup_tries, trace_dir=trace_dir,
+        )
+
+    return results
 
 def all_to_all_benchmark_calculate_metrics(
     matrix_dim: int,
