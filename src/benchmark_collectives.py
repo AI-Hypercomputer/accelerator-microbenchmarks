@@ -40,7 +40,7 @@ def extract_metadata(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Helper function to build the metrics and metadata for the benchmark."""
-    exclude_keys = ["ici_average_time_ms", "dcn_average_time_ms"]
+    exclude_keys = ["ici_average_time_ms_list", "dcn_average_time_ms_list"]
     metadata = {
         key: value
         for key, value in params
