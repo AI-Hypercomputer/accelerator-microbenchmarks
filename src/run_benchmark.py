@@ -13,7 +13,7 @@ import itertools
 import random
 import string
 from typing import Any, Callable, Dict, List, Tuple
-from benchmark_utils import maybe_write_metrics_file, rename_xla_dump, MetricsStatistics
+from benchmark_utils import maybe_write_metrics_file, rename_xla_dump
 import jax
 import yaml
 import ray
@@ -21,7 +21,6 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 import copy
 import pandas as pd
-import ast
 import json
 
 COLLECTIVE_BENCHMARK_MAP = {
@@ -203,9 +202,8 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
 
     This function takes a list of dictionaries, where each dictionary contains
     the 'metadata' and 'metrics' from a benchmark run. It processes each
-    dictionary by flattening it, calculating additional statistics for specific
-    fields (like 'ici_average_time_ms_list'), and then converting it into a
-    pandas DataFrame. All resulting DataFrames are concatenated and written to
+    dictionary by flattening it, and sanitizing the inputs to make sure it's suitable
+    for Pandas DataFrames creation. All resulting DataFrames are concatenated and written to
     the specified CSV file.
 
     Args:
@@ -217,41 +215,23 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
     if not isinstance(calculate_metrics_results[0], dict):
         raise ValueError("metrics result is not a dict.")
 
-    def flatten_dict(current_dict: Dict) -> Dict:
-        """Recursively flattens a nested dictionary."""
+    def flatten_and_sanitize_dict(current_dict: Dict) -> Dict:
+        """
+        Recursively flattens and sanitize dictionary to make it compatible
+        with row creation with pandas DataFrame
+        """
         output_dict = {}
         for key, val in current_dict.items():
             if isinstance(val, Dict):
-                output_dict.update(flatten_dict(val))
+                output_dict.update(flatten_and_sanitize_dict(val))
             else:
-                # Try to evaluate string-formatted literals (e.g., "[1, 2, 3]")
-                try:
-                    output_dict[key] = ast.literal_eval(val)
-                except (ValueError, SyntaxError, TypeError):
-                    # If it's not a valid literal, keep it as a string.
-                    output_dict[key] = val
+                output_dict[key] = json.dumps(val) if isinstance(val, (list, tuple, set)) else val
+
         return output_dict
 
     def convert_dict_to_df(target_dict: Dict) -> pd.DataFrame:
         """Converts a single benchmark result dictionary to a pandas DataFrame."""
-        flattened_dict = flatten_dict(target_dict)
-        
-        # This section is specific to collective benchmarks that produce
-        # 'ici_average_time_ms_list'.
-        if "ici_average_time_ms_list" in flattened_dict:
-            # Calculate statistics for the timing list.
-            ici_average_time_ms_statistics = MetricsStatistics(
-                metrics_list=flattened_dict["ici_average_time_ms_list"],
-                metrics_name="ici_average_time_ms",
-            ).statistics
-            for key, val in ici_average_time_ms_statistics.items():
-                flattened_dict["ici_average_time_ms_" + key] = val
-
-            # Convert list to JSON string for CSV storage.
-            flattened_dict["ici_average_time_ms_list"] = json.dumps(
-                flattened_dict["ici_average_time_ms_list"]
-            )
-
+        flattened_dict = flatten_and_sanitize_dict(target_dict)
         df = pd.DataFrame(flattened_dict, index=[0])
         return df
 
