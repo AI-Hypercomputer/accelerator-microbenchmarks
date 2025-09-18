@@ -11,6 +11,7 @@ from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+import json
 
 # pylint: disable=g-importing-member
 def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int]]:
@@ -233,6 +234,11 @@ def psum_benchmark_calculate_metrics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "psum_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
+        generate_metrics_statistics(
+            ici_average_time_ms_list, "ici_average_time_ms", "psum_ici",
+            matrix_dim, dtype, matrix_size_gbyte, metrics)
+        metrics["ici_average_time_ms_list"] = json.dumps(ici_average_time_ms_list)
+
     return metadata, metrics
 
 def psum_scatter_benchmark(
@@ -335,6 +341,12 @@ def psum_scatter_benchmark_calculate_metrics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "psum_scatter_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
+        generate_metrics_statistics(
+            ici_average_time_ms_list, "ici_average_time_ms", "psum_scatter_ici",
+            matrix_dim, dtype, matrix_size_gbyte, metrics
+        )
+        metrics["ici_average_time_ms_list"] = json.dumps(ici_average_time_ms_list)
+
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
@@ -436,6 +448,11 @@ def all_gather_benchmark_calculate_metrics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "all_gather_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
+        generate_metrics_statistics(
+            ici_average_time_ms_list, "ici_average_time_ms", "all_gather_ici",
+            matrix_dim, dtype, matrix_size_gbyte, metrics
+        )
+        metrics["ici_average_time_ms_list"] = json.dumps(ici_average_time_ms_list)
 
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
@@ -532,6 +549,11 @@ def ppermute_benchmark_calculate_metrics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "ppermute_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
+        generate_metrics_statistics(
+            ici_average_time_ms_list, "ici_average_time_ms", "ppermute_ici",
+            matrix_dim, dtype, matrix_size_gbyte, metrics
+        )
+        metrics["ici_average_time_ms_list"] = json.dumps(ici_average_time_ms_list)
     return metadata, metrics
 
 def all_to_all_benchmark(
@@ -618,7 +640,6 @@ def all_to_all_benchmark_calculate_metrics(
 
     # Calculate metrics for ICI benchmark
     if ici_size > 1 and ici_average_time_ms_list is not None:
-
         ici_bandwidth_gbyte_s_list = [
                 matrix_size_gbyte
                 * (ici_size - 1)
@@ -630,6 +651,11 @@ def all_to_all_benchmark_calculate_metrics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "all_to_all_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
+        generate_metrics_statistics(
+            ici_average_time_ms_list, "ici_average_time_ms", "all_to_all_ici",
+            matrix_dim, dtype, matrix_size_gbyte, metrics
+        )
+        metrics["ici_average_time_ms_list"] = json.dumps(ici_average_time_ms_list)
 
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
