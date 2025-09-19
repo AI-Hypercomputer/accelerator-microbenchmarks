@@ -13,7 +13,7 @@ import itertools
 import random
 import string
 from typing import Any, Callable, Dict, List, Tuple
-from benchmark_utils import maybe_write_metrics_file, rename_xla_dump, MetricsStatistics
+from benchmark_utils import maybe_write_metrics_file, rename_xla_dump
 import jax
 import yaml
 import ray
@@ -235,23 +235,6 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
     def convert_dict_to_df(target_dict: Dict) -> pd.DataFrame:
         """Converts a single benchmark result dictionary to a pandas DataFrame."""
         flattened_dict = flatten_dict(target_dict)
-        
-        # This section is specific to collective benchmarks that produce
-        # 'ici_average_time_ms_list'.
-        if "ici_average_time_ms_list" in flattened_dict:
-            # Calculate statistics for the timing list.
-            ici_average_time_ms_statistics = MetricsStatistics(
-                metrics_list=flattened_dict["ici_average_time_ms_list"],
-                metrics_name="ici_average_time_ms",
-            ).statistics
-            for key, val in ici_average_time_ms_statistics.items():
-                flattened_dict["ici_average_time_ms_" + key] = val
-
-            # Convert list to JSON string for CSV storage.
-            flattened_dict["ici_average_time_ms_list"] = json.dumps(
-                flattened_dict["ici_average_time_ms_list"]
-            )
-
         df = pd.DataFrame(flattened_dict, index=[0])
         return df
 
