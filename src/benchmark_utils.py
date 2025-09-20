@@ -24,7 +24,7 @@ def simple_timeit(f, *args, matrix_dim=None, warmup_tries = 10, tries=10, task=N
     assert task is not None
 
     if trace_dir:
-        return timeit_from_trace(f, *args, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
+        return timeit_from_trace(f, *args, matrix_dim=matrix_dim, warmup_tries=warmup_tries, tries=tries, task=task, trace_dir=trace_dir)
 
     # warmup loop
     print(f"Running warmup loop with {warmup_tries} tries...")

@@ -83,6 +83,7 @@ def naive_attention_benchmark(
     scale: bool = False,
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Naive attention benchmark."""
 
@@ -120,6 +121,7 @@ def naive_attention_benchmark(
         v,
         causal,
         scale,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="naive_attention",
         trace_dir=trace_dir,
@@ -152,6 +154,7 @@ def pallas_flash_attention_benchmark(
     causal: bool = True,
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks the Pallas flash attention kernel."""
 
@@ -174,6 +177,7 @@ def pallas_flash_attention_benchmark(
         k,
         v,
         causal,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="pallas_flash_attention",
         trace_dir=trace_dir,
@@ -205,6 +209,7 @@ def splash_attention_benchmark(
     causal: bool = True,
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks the Splash attention kernel."""
 
@@ -257,6 +262,7 @@ def splash_attention_benchmark(
         k,
         v,
         causal,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="splash_attention",
         trace_dir=trace_dir,
@@ -287,6 +293,7 @@ def flax_nnx_attention_benchmark(
     num_heads: int,
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks the Flax nnx attention."""
 
@@ -313,6 +320,7 @@ def flax_nnx_attention_benchmark(
         q,
         k,
         v,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="flax_attention",
         trace_dir=trace_dir,
@@ -342,6 +350,7 @@ def flax_linen_attention_benchmark(
     num_heads: int,
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks the Flax linen attention."""
 
@@ -367,6 +376,7 @@ def flax_linen_attention_benchmark(
         q,
         k,
         v,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="flax_attention",
         trace_dir=trace_dir,
@@ -397,6 +407,7 @@ def keras_attention_benchmark(
     causal: bool = False,
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks the Flax linen attention."""
 
@@ -432,6 +443,7 @@ def keras_attention_benchmark(
         k,
         v,
         causal,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="keras_attention",
         trace_dir=trace_dir,

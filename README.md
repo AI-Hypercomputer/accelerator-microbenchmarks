@@ -28,7 +28,7 @@ gcloud compute ssh $TPU_NAME --zone=$ZONE
 
 Now that you have the VM environment set up, `git clone` the accelerator-microbenchmarks on the VM and install the dependencies:
 ```bash
-git clone https://github.com/qinyiyan/accelerator-microbenchmarks.git
+git clone https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git
 pip install -r requirements.txt
 ```
 

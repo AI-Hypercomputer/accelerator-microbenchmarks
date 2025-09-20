@@ -26,6 +26,7 @@ def single_chip_hbm_copy(
     dtype: jnp.dtype,
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks HBM with copy(read and write) on a single device."""
 
@@ -43,6 +44,7 @@ def single_chip_hbm_copy(
     time_ms_list = simple_timeit(
         jitted_f,
         a,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="single_chip_hbm_copy",
         trace_dir=trace_dir,
