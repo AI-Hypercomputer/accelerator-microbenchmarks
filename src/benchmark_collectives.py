@@ -33,7 +33,7 @@ def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int
     else:
         mesh_devices = mesh_utils.create_device_mesh([ici_size], devices=jax.devices())
         mesh = Mesh(mesh_devices, "ici")
-    return mesh, dcn_parallelism, ici_parallelism
+    return mesh
 
 
 def extract_metadata(
@@ -158,7 +158,7 @@ def psum_benchmark(
     Returns:
       The measured time for the DCN and ICI benchmarks.
     """
-    mesh, _, _ = create_mesh(dcn_size, ici_size)
+    mesh = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
         "dcn_time_ms_list": None,
@@ -261,7 +261,7 @@ def psum_scatter_benchmark(
     Returns:
       The measured time for the DCN and ICI benchmarks.
     """
-    mesh, _, _ = create_mesh(dcn_size, ici_size)
+    mesh = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
         "dcn_time_ms_list": None,
@@ -371,7 +371,7 @@ def all_gather_benchmark(
     Returns:
       The measured time for the DCN and ICI benchmarks.
     """
-    mesh, _, _ = create_mesh(dcn_size, ici_size)
+    mesh = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
         "dcn_time_ms_list": None,
@@ -478,7 +478,7 @@ def ppermute_benchmark(
     Returns:
       The measured time for the DCN and ICI benchmarks.
     """
-    mesh, _, _ = create_mesh(dcn_size, ici_size)
+    mesh = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
         "dcn_time_ms_list": None,
@@ -578,7 +578,7 @@ def all_to_all_benchmark(
     Returns:
       The measured time for the DCN and ICI benchmarks.
     """
-    mesh, _, _ = create_mesh(dcn_size, ici_size)
+    mesh = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
         "dcn_time_ms_list": None,
