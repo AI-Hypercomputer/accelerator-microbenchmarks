@@ -40,7 +40,7 @@ def extract_metadata(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Helper function to build the metrics and metadata for the benchmark."""
-    exclude_keys = ["ici_average_time_ms_list", "dcn_average_time_ms_list"]
+    exclude_keys = ["ici_time_ms_list", "dcn_time_ms_list"]
     metadata = {
         key: value
         for key, value in params
@@ -105,7 +105,7 @@ def benchmark_collective(
       trace_dir: Optional directory to save JAX traces.
 
     Returns:
-      A list of average time in milliseconds for each run.
+      A list of time in milliseconds for each run.
     """
     if jax_op_kwargs is None:
         jax_op_kwargs = {}
@@ -123,7 +123,7 @@ def benchmark_collective(
         return jax_op(x, axis_name, **jax_op_kwargs)
 
     jitted_op = jax.jit(f)
-    average_time_ms_list = simple_timeit(
+    time_ms_list = simple_timeit(
         jitted_op,
         matrix,
         matrix_dim=matrix_dim,
@@ -133,7 +133,7 @@ def benchmark_collective(
         trace_dir=trace_dir,
     )
 
-    return average_time_ms_list
+    return time_ms_list
 
 def psum_benchmark(
     matrix_dim: int,
@@ -161,12 +161,12 @@ def psum_benchmark(
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
-        "dcn_average_time_ms_list": None,
-        "ici_average_time_ms_list": None,
+        "dcn_time_ms_list": None,
+        "ici_time_ms_list": None,
     }
 
     if dcn_size > 1:
-        results["dcn_average_time_ms_list"] = benchmark_collective(
+        results["dcn_time_ms_list"] = benchmark_collective(
             benchmark_name="psum", jax_op=jax.lax.psum, mesh=mesh, matrix=matrix,
             matrix_dim=matrix_dim, axis_name="dcn", in_specs=P("dcn", None),
             out_specs=P(None, None), num_runs=num_runs, warmup_tries=warmup_tries,
@@ -174,7 +174,7 @@ def psum_benchmark(
         )
 
     if ici_size > 1:
-        results["ici_average_time_ms_list"] = benchmark_collective(
+        results["ici_time_ms_list"] = benchmark_collective(
             benchmark_name="psum", jax_op=jax.lax.psum, mesh=mesh, matrix=matrix,
             matrix_dim=matrix_dim, axis_name="ici", in_specs=P(None, None),
             out_specs=P(None, None), num_runs=num_runs, warmup_tries=warmup_tries,
@@ -188,8 +188,8 @@ def psum_benchmark_calculate_metrics(
     dtype: jnp.dtype,
     dcn_size: int,
     ici_size: int,
-    ici_average_time_ms_list: list[float],
-    dcn_average_time_ms_list: list[float],
+    ici_time_ms_list: list[float],
+    dcn_time_ms_list: list[float],
 ) -> Dict[str, Any]:
     """Calculates the metrics for the psum benchmark."""
     # Build dictionary of all the parameters in the function
@@ -198,7 +198,7 @@ def psum_benchmark_calculate_metrics(
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
-    if dcn_size > 1 and dcn_average_time_ms_list is not None:
+    if dcn_size > 1 and dcn_time_ms_list is not None:
         # bandwidth is claculated as psum can be done via reduce_scatter +
         # all_gather so bandwidth is the sum of the two (formulas below)
         dcn_bandwidth_gbyte_s_list = [
@@ -207,8 +207,8 @@ def psum_benchmark_calculate_metrics(
                 * 2
                 / dcn_size
                 / dcn_size
-                / (dcn_average_time_ms / 1e3)
-                for dcn_average_time_ms in dcn_average_time_ms_list
+                / (dcn_time_ms / 1e3)
+                for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
             dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "psum_dcn",
@@ -216,7 +216,7 @@ def psum_benchmark_calculate_metrics(
         )
 
     # Calculate metrics for ICI benchmark
-    if ici_size > 1 and ici_average_time_ms_list is not None:
+    if ici_size > 1 and ici_time_ms_list is not None:
         # bandwidth is claculated as psum can be done via reduce_scatter +
         # all_gather so bandwidth is the sum of the two (formulas below)
         ici_bandwidth_gbyte_s_list = [
@@ -224,17 +224,17 @@ def psum_benchmark_calculate_metrics(
                 * (ici_size - 1)
                 * 2
                 / ici_size
-                / (ici_average_time_ms / 1e3)
-                for ici_average_time_ms in ici_average_time_ms_list
+                / (ici_time_ms / 1e3)
+                for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "psum_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
         generate_metrics_statistics(
-            ici_average_time_ms_list, "ici_average_time_ms", "psum_ici",
+            ici_time_ms_list, "ici_time_ms", "psum_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics)
-        metrics["ici_average_time_ms_list"] = ici_average_time_ms_list
+        metrics["ici_time_ms_list"] = ici_time_ms_list
 
     return metadata, metrics
 
@@ -264,15 +264,15 @@ def psum_scatter_benchmark(
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
-        "dcn_average_time_ms_list": None,
-        "ici_average_time_ms_list": None,
+        "dcn_time_ms_list": None,
+        "ici_time_ms_list": None,
     }
 
     psum_scatter_kwargs = {"tiled": True}
 
 
     if dcn_size > 1:
-        results["dcn_average_time_ms_list"] = benchmark_collective(
+        results["dcn_time_ms_list"] = benchmark_collective(
             benchmark_name="psum_scatter", jax_op=jax.lax.psum_scatter, mesh=mesh,
             matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
             in_specs=P("dcn", None), out_specs=P("dcn", None),
@@ -281,7 +281,7 @@ def psum_scatter_benchmark(
         )
 
     if ici_size > 1:
-        results["ici_average_time_ms_list"] = benchmark_collective(
+        results["ici_time_ms_list"] = benchmark_collective(
             benchmark_name="psum_scatter", jax_op=jax.lax.psum_scatter, mesh=mesh,
             matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
             in_specs=P(None, None), out_specs=P(None, "ici"),
@@ -296,8 +296,8 @@ def psum_scatter_benchmark_calculate_metrics(
     dtype: jnp.dtype,
     dcn_size: int,
     ici_size: int,
-    ici_average_time_ms_list: list[float],
-    dcn_average_time_ms_list: list[float],
+    ici_time_ms_list: list[float],
+    dcn_time_ms_list: list[float],
 ) -> Dict[str, Any]:
     """Calculates the metrics for the psum_scatter benchmark."""
     # Build dictionary of all the parameters in the function
@@ -306,7 +306,7 @@ def psum_scatter_benchmark_calculate_metrics(
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
-    if dcn_size > 1 and dcn_average_time_ms_list is not None:
+    if dcn_size > 1 and dcn_time_ms_list is not None:
 
         # each sharded matrix size is matrix_size_gbyte / dcn_size and then it needs
         # to use (dcn_size - 1) steps in a ring algorithm
@@ -315,8 +315,8 @@ def psum_scatter_benchmark_calculate_metrics(
                 * (dcn_size - 1)
                 / dcn_size
                 / dcn_size
-                / (dcn_average_time_ms / 1e3)
-                for dcn_average_time_ms in dcn_average_time_ms_list
+                / (dcn_time_ms / 1e3)
+                for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
             dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "psum_scatter_dcn",
@@ -324,25 +324,25 @@ def psum_scatter_benchmark_calculate_metrics(
         )
 
     # Calculate metrics for ICI benchmark
-    if ici_size > 1 and ici_average_time_ms_list is not None:
+    if ici_size > 1 and ici_time_ms_list is not None:
         # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
         # to use (ici_size - 1) steps in a ring algorithm
         ici_bandwidth_gbyte_s_list = [
                 matrix_size_gbyte
                 * (ici_size - 1)
                 / ici_size
-                / (ici_average_time_ms / 1e3)
-                for ici_average_time_ms in ici_average_time_ms_list
+                / (ici_time_ms / 1e3)
+                for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "psum_scatter_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
         generate_metrics_statistics(
-            ici_average_time_ms_list, "ici_average_time_ms", "psum_scatter_ici",
+            ici_time_ms_list, "ici_time_ms", "psum_scatter_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
-        metrics["ici_average_time_ms_list"] = ici_average_time_ms_list
+        metrics["ici_time_ms_list"] = ici_time_ms_list
 
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
@@ -374,14 +374,14 @@ def all_gather_benchmark(
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
-        "dcn_average_time_ms_list": None,
-        "ici_average_time_ms_list": None,
+        "dcn_time_ms_list": None,
+        "ici_time_ms_list": None,
     }
 
     all_gather_kwargs = {"tiled": True}
 
     if dcn_size > 1:
-        results["dcn_average_time_ms_list"] = benchmark_collective(
+        results["dcn_time_ms_list"] = benchmark_collective(
             benchmark_name="all_gather", jax_op=jax.lax.all_gather, mesh=mesh,
             matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
             in_specs=P("dcn", None), out_specs=P(None, None), check_rep=False,
@@ -390,7 +390,7 @@ def all_gather_benchmark(
         )
 
     if ici_size > 1:
-        results["ici_average_time_ms_list"] = benchmark_collective(
+        results["ici_time_ms_list"] = benchmark_collective(
             benchmark_name="all_gather", jax_op=jax.lax.all_gather, mesh=mesh,
             matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
             in_specs=P("ici", None), out_specs=P(None, None), check_rep=False,
@@ -405,8 +405,8 @@ def all_gather_benchmark_calculate_metrics(
     dtype: jnp.dtype,
     dcn_size: int,
     ici_size: int,
-    ici_average_time_ms_list: list[float],
-    dcn_average_time_ms_list: list[float],
+    ici_time_ms_list: list[float],
+    dcn_time_ms_list: list[float],
 ) -> Dict[str, Any]:
     """Calculates the metrics for the all_gather benchmark."""
     # Build dictionary of all the parameters in the function
@@ -415,7 +415,7 @@ def all_gather_benchmark_calculate_metrics(
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
-    if dcn_size > 1 and dcn_average_time_ms_list is not None:
+    if dcn_size > 1 and dcn_time_ms_list is not None:
 
         # each sharded matrix size is matrix_size_gbyte / dcn_size and then it needs
         # to use (dcn_size - 1) steps in a ring algorithm
@@ -423,8 +423,8 @@ def all_gather_benchmark_calculate_metrics(
                 matrix_size_gbyte
                 * (dcn_size - 1)
                 / dcn_size
-                / (dcn_average_time_ms / 1e3)
-                for dcn_average_time_ms in dcn_average_time_ms_list
+                / (dcn_time_ms / 1e3)
+                for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
             dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "all_gather_dcn",
@@ -432,25 +432,25 @@ def all_gather_benchmark_calculate_metrics(
         )
 
     # Calculate metrics for ICI benchmark
-    if ici_size > 1 and ici_average_time_ms_list is not None:
+    if ici_size > 1 and ici_time_ms_list is not None:
         # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
         # to use (ici_size - 1) steps in a ring algorithm
         ici_bandwidth_gbyte_s_list = [
                 matrix_size_gbyte
                 * (ici_size - 1)
                 / ici_size
-                / (ici_average_time_ms / 1e3)
-                for ici_average_time_ms in ici_average_time_ms_list
+                / (ici_time_ms / 1e3)
+                for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "all_gather_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
         generate_metrics_statistics(
-            ici_average_time_ms_list, "ici_average_time_ms", "all_gather_ici",
+            ici_time_ms_list, "ici_time_ms", "all_gather_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
-        metrics["ici_average_time_ms_list"] = ici_average_time_ms_list
+        metrics["ici_time_ms_list"] = ici_time_ms_list
 
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
@@ -481,14 +481,14 @@ def ppermute_benchmark(
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
-        "dcn_average_time_ms_list": None,
-        "ici_average_time_ms_list": None,
+        "dcn_time_ms_list": None,
+        "ici_time_ms_list": None,
     }
 
 
     if dcn_size > 1:
         dcn_perm = [(i, (i + 1) % dcn_size) for i in range(dcn_size)]
-        results["dcn_average_time_ms_list"] = benchmark_collective(
+        results["dcn_time_ms_list"] = benchmark_collective(
             benchmark_name="ppermute", jax_op=jax.lax.ppermute, mesh=mesh,
             matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
             in_specs=P("dcn", None), out_specs=P("dcn", None),
@@ -498,7 +498,7 @@ def ppermute_benchmark(
 
     if ici_size > 1:
         ici_perm = [(i, (i + 1) % ici_size) for i in range(ici_size)]
-        results["ici_average_time_ms_list"] = benchmark_collective(
+        results["ici_time_ms_list"] = benchmark_collective(
             benchmark_name="ppermute", jax_op=jax.lax.ppermute, mesh=mesh,
             matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
             in_specs=P(None, None), out_specs=P(None, "ici"),
@@ -513,8 +513,8 @@ def ppermute_benchmark_calculate_metrics(
     dtype: jnp.dtype,
     dcn_size: int,
     ici_size: int,
-    ici_average_time_ms_list: list[float],
-    dcn_average_time_ms_list: list[float],
+    ici_time_ms_list: list[float],
+    dcn_time_ms_list: list[float],
 ) -> Dict[str, Any]:
     """Calculates the metrics for the ppermute benchmark."""
     # Build dictionary of all the parameters in the function
@@ -523,13 +523,13 @@ def ppermute_benchmark_calculate_metrics(
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
-    if dcn_size > 1 and dcn_average_time_ms_list is not None:
+    if dcn_size > 1 and dcn_time_ms_list is not None:
 
         # each sharded matrix size is matrix_size_gbyte / dcn_size and then it needs
         # to use 1 step
         dcn_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte / dcn_size / (dcn_average_time_ms / 1e3)
-                for dcn_average_time_ms in dcn_average_time_ms_list
+                matrix_size_gbyte / dcn_size / (dcn_time_ms / 1e3)
+                for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
             dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "ppermute_dcn",
@@ -537,22 +537,22 @@ def ppermute_benchmark_calculate_metrics(
         )
 
     # Calculate metrics for ICI benchmark
-    if ici_size > 1 and ici_average_time_ms_list is not None:
+    if ici_size > 1 and ici_time_ms_list is not None:
         # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
         # to use 1 step
         ici_bandwidth_gbyte_s_list = [
-            matrix_size_gbyte / (ici_average_time_ms / 1e3)
-            for ici_average_time_ms in ici_average_time_ms_list
+            matrix_size_gbyte / (ici_time_ms / 1e3)
+            for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "ppermute_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
         generate_metrics_statistics(
-            ici_average_time_ms_list, "ici_average_time_ms", "ppermute_ici",
+            ici_time_ms_list, "ici_time_ms", "ppermute_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
-        metrics["ici_average_time_ms_list"] = ici_average_time_ms_list
+        metrics["ici_time_ms_list"] = ici_time_ms_list
     return metadata, metrics
 
 def all_to_all_benchmark(
@@ -581,14 +581,14 @@ def all_to_all_benchmark(
     mesh, _, _ = create_mesh(dcn_size, ici_size)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     results = {
-        "dcn_average_time_ms_list": None,
-        "ici_average_time_ms_list": None,
+        "dcn_time_ms_list": None,
+        "ici_time_ms_list": None,
     }
 
     all_to_all_kwargs = {"split_axis": 0, "concat_axis": 0, "tiled": True}
 
     if dcn_size > 1:
-        results["dcn_average_time_ms_list"] = benchmark_collective(
+        results["dcn_time_ms_list"] = benchmark_collective(
             benchmark_name="all_to_all", jax_op=jax.lax.all_to_all, mesh=mesh,
             matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
             in_specs=P("dcn", None), out_specs=P("dcn", None),
@@ -597,7 +597,7 @@ def all_to_all_benchmark(
         )
 
     if ici_size > 1:
-        results["ici_average_time_ms_list"] = benchmark_collective(
+        results["ici_time_ms_list"] = benchmark_collective(
             benchmark_name="all_to_all", jax_op=jax.lax.all_to_all, mesh=mesh,
             matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
             in_specs=P(None, None), out_specs=P(None, None), check_rep=False,
@@ -612,8 +612,8 @@ def all_to_all_benchmark_calculate_metrics(
     dtype: jnp.dtype,
     dcn_size: int,
     ici_size: int,
-    ici_average_time_ms_list: list[float],
-    dcn_average_time_ms_list: list[float],
+    ici_time_ms_list: list[float],
+    dcn_time_ms_list: list[float],
 ) -> Dict[str, Any]:
     """Calculates the metrics for the all_to_all benchmark."""
     # Build dictionary of all the parameters in the function
@@ -622,15 +622,15 @@ def all_to_all_benchmark_calculate_metrics(
     metrics = {}
     matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
     # Calculate metrics for DCN benchmark
-    if dcn_size > 1 and dcn_average_time_ms_list is not None:
+    if dcn_size > 1 and dcn_time_ms_list is not None:
 
         dcn_bandwidth_gbyte_s_list = [
                 matrix_size_gbyte
                 * (dcn_size - 1)
                 / dcn_size
                 / dcn_size
-                / (dcn_average_time_ms / 1e3)
-                for dcn_average_time_ms in dcn_average_time_ms_list
+                / (dcn_time_ms / 1e3)
+                for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
             dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "all_to_all_dcn",
@@ -638,23 +638,23 @@ def all_to_all_benchmark_calculate_metrics(
         )
 
     # Calculate metrics for ICI benchmark
-    if ici_size > 1 and ici_average_time_ms_list is not None:
+    if ici_size > 1 and ici_time_ms_list is not None:
         ici_bandwidth_gbyte_s_list = [
                 matrix_size_gbyte
                 * (ici_size - 1)
                 / ici_size
-                / (ici_average_time_ms / 1e3)
-                for ici_average_time_ms in ici_average_time_ms_list
+                / (ici_time_ms / 1e3)
+                for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
             ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "all_to_all_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
         generate_metrics_statistics(
-            ici_average_time_ms_list, "ici_average_time_ms", "all_to_all_ici",
+            ici_time_ms_list, "ici_time_ms", "all_to_all_ici",
             matrix_dim, dtype, matrix_size_gbyte, metrics
         )
-        metrics["ici_average_time_ms_list"] = ici_average_time_ms_list
+        metrics["ici_time_ms_list"] = ici_time_ms_list
 
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
