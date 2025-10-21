@@ -118,6 +118,8 @@ def timeit_from_trace(f, *args, matrix_dim=None, warmup_tries=10, tries=10, task
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
+    task = "all-gather.*"
+
     LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
     is_multihost = jax.process_count() > 1
 
