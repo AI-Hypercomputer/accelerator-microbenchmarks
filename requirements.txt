@@ -1,4 +1,4 @@
-jax[tpu]
+jax[tpu]==0.8.0
 absl-py
 flax
 jaxlib
