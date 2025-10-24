@@ -62,7 +62,8 @@ HBM_BENCHMARK_MAP = {
 GEMM_BENCHMARK_MAP = {
     "gemm_simple":"benchmark_gemm.gemm_simple",
     "gemm": "benchmark_gemm.gemm",
-    "gemm_accum": "benchmark_gemm.gemm_accum"
+    "gemm_accum": "benchmark_gemm.gemm_accum",
+    "quantization": "benchmark_gemm.quantization",
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)

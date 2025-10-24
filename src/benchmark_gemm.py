@@ -16,6 +16,7 @@ from jax.sharding import Mesh
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
 import numpy as np
+from qwix import pallas as qpl
 
 # pylint: disable=g-importing-member
 # Set the environment variable for TPU initialization arguments to optimize
@@ -142,7 +143,11 @@ def gemm_metrics_all(
     metadata.update(
         {
             "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
+            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
+            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
             "Throughput (median, TFLOPS)": tflops_per_sec_statistics.statistics['p50'],
+            "Throughput (average, TFLOPS)": tflops_per_sec_statistics.statistics['avg'],
+            "Throughput (P90, TFLOPS)": tflops_per_sec_statistics.statistics['p90'],
             "total_flops": total_flops,
             "total_gigabytes_transferred": total_gigabytes_transferred,
         }
@@ -306,7 +311,11 @@ def gemm_accum_calculate_metrics(
     metadata.update(
         {
             "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
+            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
+            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
             "Throughput (median, TFLOPS)": tflops_per_sec_statistics.statistics['p50'],
+            "Throughput (average, TFLOPS)": tflops_per_sec_statistics.statistics['avg'],
+            "Throughput (P90, TFLOPS)": tflops_per_sec_statistics.statistics['p90'],
             "total_flops": total_flops,
             "total_gigabytes_transferred": total_gigabytes_transferred,
         }
@@ -314,5 +323,85 @@ def gemm_accum_calculate_metrics(
     metrics.update(average_time_ms_statistics.serialize_statistics())
     metrics.update(tflops_per_sec_statistics.serialize_statistics())
     metrics.update(data_transfer_gbyte_sec_statistics.serialize_statistics())
+    metrics = {key: value for key, value in metrics.items() if value is not None}
+    return metadata, metrics
+
+def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+) -> Dict[str, Any]:
+    """
+    OUT<M, N>:FP8, SF<M>:FP32 = Quantize(N<M, N>:BF16)
+    SF[i] = FP8_MAX / amax(IN[i])
+    OUT[i] = cast_fp8(IN[i] / SF[i])
+    """
+    def f(x):
+        qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+        return qx.qvalue, qx.scale
+
+    mesh = create_mesh()
+    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
+    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=P(),
+            out_specs=(P(), P()),
+            check_rep=False,
+        )
+    )
+    # Run once.
+    output, scale = jit_sharded_f(x)
+    jax.block_until_ready(output, scale)  # Ensure full completion before printing metrics
+    print(f"qwix({x.shape=}) = {output.shape=} x {scale.shape=}, {x.dtype=}, {output.dtype=}, {scale.dtype=}")
+    # Run the benchmark
+    time_ms_list = simple_timeit(
+        jit_sharded_f,
+        x,
+        warmup_tries=warmup_tries,
+        tries=num_runs,
+        task="quantization",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def quantization_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    """Calculates the metrics for the naive matmul benchmark."""
+    # Build dictionary of all the parameters in the function
+    params = locals().items()
+    metadata = get_metrics_helper(params)
+    metrics = {}
+
+    # Calculate FLOPs
+    total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
+    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    bytes_per_sec_list = [
+        total_bytes / average_time_s for average_time_s in average_time_s_list
+    ]
+    average_time_ms_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name="step_time_ms"
+    )
+    bytes_per_sec_statistics = MetricsStatistics(
+        metrics_list=bytes_per_sec_list, metrics_name="tflops_per_sec"
+    )
+    print(
+        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
+        f" {bytes_per_sec_statistics.statistics['p50']:.2f} Bytes / second"
+    )
+    print()
+    # Gather the metrics to report.
+    metadata.update(
+        {
+            "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
+            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
+            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput (median, Bytes/s)": bytes_per_sec_statistics.statistics['p50'],
+            "Throughput (average, Bytes/s)": bytes_per_sec_statistics.statistics['avg'],
+            "Throughput (P90, Bytes/s)": bytes_per_sec_statistics.statistics['p90'],
+            "total_flops": total_bytes,
+        }
+    )
+    metrics.update(average_time_ms_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
