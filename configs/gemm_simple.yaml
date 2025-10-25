@@ -1,8 +1,8 @@
 benchmarks:
-- benchmark_name: "gemm"
-  trace_dir: "../microbenchmarks/gemm"
-  csv_path: "../microbenchmarks/gemm"
-  xlml_metrics_dir: "../microbenchmarks/gemm"
+- benchmark_name: "gemm_simple"
+  trace_dir: "../microbenchmarks/gemm_simple"
+  csv_path: "../microbenchmarks/gemm_simple"
+  xlml_metrics_dir: "../microbenchmarks/gemm_simple"
   warmup_tries: 20
   num_runs: 1000
   benchmark_sweep_params:

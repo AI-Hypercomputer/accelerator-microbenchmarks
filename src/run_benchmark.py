@@ -64,6 +64,7 @@ GEMM_BENCHMARK_MAP = {
     "gemm": "benchmark_gemm.gemm",
     "gemm_accum": "benchmark_gemm.gemm_accum",
     "quantization": "benchmark_gemm.quantization",
+    "transpose_quantization": "benchmark_gemm.transpose_quantization"
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)

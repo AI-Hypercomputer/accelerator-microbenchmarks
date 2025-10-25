@@ -102,7 +102,7 @@ def gemm_simple(
     )
     return {"time_ms_list": time_ms_list}
 
-def gemm_metrics_all(
+def unified_gemm_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
@@ -161,7 +161,7 @@ def gemm_metrics_all(
 def gemm_simple_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    return gemm_metrics_all(m, k, n, time_ms_list)
+    return unified_gemm_metrics(m, k, n, time_ms_list)
 
 def gemm(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
@@ -214,7 +214,7 @@ def gemm(
 def gemm_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    return gemm_metrics_all(m, k, n, time_ms_list)
+    return unified_gemm_metrics(m, k, n, time_ms_list)
 
 
 def gemm_accum(
@@ -351,7 +351,7 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmu
     )
     # Run once.
     output, scale = jit_sharded_f(x)
-    jax.block_until_ready(output, scale)  # Ensure full completion before printing metrics
+    jax.block_until_ready((output, scale))  # Ensure full completion before printing metrics
     print(f"qwix({x.shape=}) = {output.shape=} x {scale.shape=}, {x.dtype=}, {output.dtype=}, {scale.dtype=}")
     # Run the benchmark
     time_ms_list = simple_timeit(
@@ -364,7 +364,7 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmu
     )
     return {"time_ms_list": time_ms_list}
 
-def quantization_calculate_metrics(
+def unified_quantization_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
@@ -376,18 +376,18 @@ def quantization_calculate_metrics(
     # Calculate FLOPs
     total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
     average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
-    bytes_per_sec_list = [
-        total_bytes / average_time_s for average_time_s in average_time_s_list
+    gigabytes_per_sec_list = [
+        total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
     ]
     average_time_ms_statistics = MetricsStatistics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
-    bytes_per_sec_statistics = MetricsStatistics(
-        metrics_list=bytes_per_sec_list, metrics_name="tflops_per_sec"
+    gigabytes_per_sec_statistics = MetricsStatistics(
+        metrics_list=gigabytes_per_sec_list, metrics_name="tflops_per_sec"
     )
     print(
         f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {bytes_per_sec_statistics.statistics['p50']:.2f} Bytes / second"
+        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} Bytes / second"
     )
     print()
     # Gather the metrics to report.
@@ -396,12 +396,61 @@ def quantization_calculate_metrics(
             "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
             "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
             "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput (median, Bytes/s)": bytes_per_sec_statistics.statistics['p50'],
-            "Throughput (average, Bytes/s)": bytes_per_sec_statistics.statistics['avg'],
-            "Throughput (P90, Bytes/s)": bytes_per_sec_statistics.statistics['p90'],
+            "Throughput (median, GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
+            "Throughput (average, GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
+            "Throughput (P90, GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
             "total_flops": total_bytes,
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
+
+def quantization_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    return unified_quantization_metrics(m, n, time_ms_list)
+
+def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+) -> Dict[str, Any]:
+    """
+    OUT<M, N>:FP8, SF<M>:FP32 = Quantize(N<M, N>:BF16)
+    SF[i] = FP8_MAX / amax(IN[i])
+    OUT[i] = cast_fp8(IN[i] / SF[i])
+    """
+    def f(x):
+        x = x.T
+        qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+        return qx.qvalue, qx.scale
+
+    mesh = create_mesh()
+    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
+    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=P(),
+            out_specs=(P(), P()),
+            check_rep=False,
+        )
+    )
+    # Run once.
+    output, scale = jit_sharded_f(x)
+    jax.block_until_ready((output, scale))  # Ensure full completion before printing metrics
+    print(f"qwix({x.shape=}) = {output.shape=} x {scale.shape=}, {x.dtype=}, {output.dtype=}, {scale.dtype=}")
+    # Run the benchmark
+    time_ms_list = simple_timeit(
+        jit_sharded_f,
+        x,
+        warmup_tries=warmup_tries,
+        tries=num_runs,
+        task="quantization",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def transpose_quantization_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    return unified_quantization_metrics(m, n, time_ms_list)

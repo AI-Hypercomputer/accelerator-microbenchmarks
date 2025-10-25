@@ -23,11 +23,19 @@ benchmarks:
 #   xlml_metrics_dir: "../microbenchmarks/gemm_accum"
 #   warmup_tries: 20
 #   num_runs: 1000
-- benchmark_name: "quantization"
-  benchmark_sweep_params:
-  - {m: 512, n: 4096}
-  trace_dir: "../microbenchmarks/quantization"
-  csv_path: "../microbenchmarks/quantization"
-  xlml_metrics_dir: "../microbenchmarks/quantization"
+# - benchmark_name: "quantization"
+#   trace_dir: "../microbenchmarks/quantization"
+#   csv_path: "../microbenchmarks/quantization"
+#   xlml_metrics_dir: "../microbenchmarks/quantization"
+#   warmup_tries: 20
+#   num_runs: 1000
+#   benchmark_sweep_params:
+#   - {m: 512, n: 4096}
+- benchmark_name: "transpose_quantization"
+  trace_dir: "../microbenchmarks/transpose_quantization"
+  csv_path: "../microbenchmarks/transpose_quantization"
+  xlml_metrics_dir: "../microbenchmarks/transpose_quantization"
   warmup_tries: 20
   num_runs: 1000
+  benchmark_sweep_params:
+  - {m: 512, n: 4096}
