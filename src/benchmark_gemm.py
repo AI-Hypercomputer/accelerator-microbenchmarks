@@ -644,3 +644,53 @@ def rmsnorm_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 2, 1)
+
+def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+) -> Dict[str, Any]:
+    """
+    For each row i of N:
+    Y_i = X_i / rms(x_i)
+    """
+    f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
+
+    mesh = create_mesh()
+    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
+    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+
+    # We need a scalar loss function to differentiate.
+    # We sum the output and cast to f32 for stable gradients.
+    def loss_fn(module: nnx.RMSNorm, x_input: jax.Array):
+        y = module(x_input)
+        local_loss = jnp.sum(y.astype(jnp.float32))
+        return jax.lax.psum(local_loss, axis_name='i')
+    
+    sharded_loss_fn = shard_map(
+        loss_fn,
+        mesh,
+        in_specs=(P(), P("i", None)),
+        out_specs=P(), # Output is a single replicated scalar
+        check_rep=False
+    )
+    
+    grad_fn = nnx.grad(sharded_loss_fn, argnums=1)
+    jit_sharded_bwd = jax.jit(grad_fn)
+
+    # Run once.
+    grads = jit_sharded_bwd(f, x)
+    jax.block_until_ready(grads)  # Ensure full completion before printing metrics
+    print(f"rmsnorm_bwd({x.shape=}) = {grads.shape=}, {x.dtype=}, {grads.dtype=}")
+    time_ms_list = simple_timeit(
+        jit_sharded_bwd,
+        f,
+        x,
+        warmup_tries=warmup_tries,
+        tries=num_runs,
+        task="rmsnorm_bwd",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def rmsnorm_bwd_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 2, 1)
