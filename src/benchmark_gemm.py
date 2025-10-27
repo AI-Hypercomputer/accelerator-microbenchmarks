@@ -346,7 +346,7 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmu
             f,
             mesh,
             in_specs=P("i", None),
-            out_specs=(P(), P()),
+            out_specs=(P("i", None), P("i", None)),
             check_rep=False,
         )
     )
@@ -478,7 +478,7 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_
             f,
             mesh,
             in_specs=P("i", None),
-            out_specs=(P()),
+            out_specs=(P("i", None)),
             check_rep=False,
         )
     )
@@ -582,7 +582,7 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_
             f_bwd,
             mesh,
             in_specs=(P("i", None), P("i", None)),
-            out_specs=(P()),
+            out_specs=(P("i", None)),
             check_rep=False,
         )
     )
@@ -622,7 +622,7 @@ def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup
             f,
             mesh,
             in_specs=P("i", None),
-            out_specs=(P()),
+            out_specs=(P("i", None)),
             check_rep=False,
         )
     )
@@ -648,8 +648,7 @@ def rmsnorm_fwd_calculate_metrics(
 def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """
-    For each row i of N:
-    Y_i = X_i / rms(x_i)
+    Inverse of rmsnorm_fwd
     """
     f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
 
