@@ -31,11 +31,35 @@ benchmarks:
 #   num_runs: 1000
 #   benchmark_sweep_params:
 #   - {m: 512, n: 4096}
-- benchmark_name: "transpose_quantization"
-  trace_dir: "../microbenchmarks/transpose_quantization"
-  csv_path: "../microbenchmarks/transpose_quantization"
-  xlml_metrics_dir: "../microbenchmarks/transpose_quantization"
+# - benchmark_name: "transpose_quantization"
+#   trace_dir: "../microbenchmarks/transpose_quantization"
+#   csv_path: "../microbenchmarks/transpose_quantization"
+#   xlml_metrics_dir: "../microbenchmarks/transpose_quantization"
+#   warmup_tries: 20
+#   num_runs: 1000
+#   benchmark_sweep_params:
+#   - {m: 512, n: 4096}
+# - benchmark_name: "swiglu_fwd"
+#   trace_dir: "../microbenchmarks/swiglu_fwd"
+#   csv_path: "../microbenchmarks/swiglu_fwd"
+#   xlml_metrics_dir: "../microbenchmarks/swiglu_fwd"
+#   warmup_tries: 20
+#   num_runs: 1000
+#   benchmark_sweep_params:
+#   - {m: 4096, n: 1024}
+# - benchmark_name: "swiglu_bwd"
+#   trace_dir: "../microbenchmarks/swiglu_bwd"
+#   csv_path: "../microbenchmarks/swiglu_bwd"
+#   xlml_metrics_dir: "../microbenchmarks/swiglu_bwd"
+#   warmup_tries: 20
+#   num_runs: 1000
+#   benchmark_sweep_params:
+#   - {m: 4096, n: 1024}
+- benchmark_name: "rmsnorm_fwd"
+  trace_dir: "../microbenchmarks/rmsnorm_fwd"
+  csv_path: "../microbenchmarks/rmsnorm_fwd"
+  xlml_metrics_dir: "../microbenchmarks/rmsnorm_fwd"
   warmup_tries: 20
   num_runs: 1000
   benchmark_sweep_params:
-  - {m: 512, n: 4096}
+  - {m: 2048, n: 7168}

@@ -64,7 +64,10 @@ GEMM_BENCHMARK_MAP = {
     "gemm": "benchmark_gemm.gemm",
     "gemm_accum": "benchmark_gemm.gemm_accum",
     "quantization": "benchmark_gemm.quantization",
-    "transpose_quantization": "benchmark_gemm.transpose_quantization"
+    "transpose_quantization": "benchmark_gemm.transpose_quantization",
+    "swiglu_fwd": "benchmark_gemm.swiglu_fwd",
+    "swiglu_bwd": "benchmark_gemm.swiglu_bwd",
+    "rmsnorm_fwd": "benchmark_gemm.rmsnorm_fwd",
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)

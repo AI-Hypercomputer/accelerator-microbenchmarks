@@ -17,6 +17,7 @@ from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
 import numpy as np
 from qwix import pallas as qpl
+from flax import nnx
 
 # pylint: disable=g-importing-member
 # Set the environment variable for TPU initialization arguments to optimize
@@ -414,7 +415,7 @@ def quantization_calculate_metrics(
 def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """
-    OUT<M, N>:FP8, SF<M>:FP32 = Quantize(N<M, N>:BF16)
+    OUT<N, M>:FP8, SF<N>:FP32 = Quantize(Transpose(N<M, N>:BF16)) for 2D
     SF[i] = FP8_MAX / amax(IN[i])
     OUT[i] = cast_fp8(IN[i] / SF[i])
     """
@@ -454,3 +455,192 @@ def transpose_quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     return unified_quantization_metrics(m, n, time_ms_list)
+
+def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+) -> Dict[str, Any]:
+    """
+    A, B = Split(X, 2)
+    Y = Swish(A) ⊗ B
+    """
+    def f(x):
+        A, B = jnp.split(x, 2, axis=-1)
+        A_fp32 = A.astype(jnp.float32)
+        B_fp32 = B.astype(jnp.float32)
+        Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
+        return Y_fp32.astype(jnp.bfloat16)
+
+
+    mesh = create_mesh()
+    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
+    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=P(),
+            out_specs=(P()),
+            check_rep=False,
+        )
+    )
+    # Run once.
+    output = jit_sharded_f(x)
+    jax.block_until_ready(output)  # Ensure full completion before printing metrics
+    print(f"swiglu_fwd({x.shape=}) = {output.shape=}, {x.dtype=}, {output.dtype=}")
+    time_ms_list = simple_timeit(
+        jit_sharded_f,
+        x,
+        warmup_tries=warmup_tries,
+        tries=num_runs,
+        task="swiglu_fwd",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def unified_swiglu_rmsnorm_metrics(
+    m: int, n: int, time_ms_list: list[float], x_scale, y_scale
+) -> Dict[str, Any]:
+    """Calculates the metrics for the naive matmul benchmark."""
+    # Build dictionary of all the parameters in the function
+    params = locals().items()
+    metadata = get_metrics_helper(params)
+    metrics = {}
+
+    # Calculate FLOPs
+    total_bytes = int(2 * (x_scale * m * n + m * n * y_scale))  # Total floating-point operations
+    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    gigabytes_per_sec_list = [
+        total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
+    ]
+    average_time_ms_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name="step_time_ms"
+    )
+    gigabytes_per_sec_statistics = MetricsStatistics(
+        metrics_list=gigabytes_per_sec_list, metrics_name="tflops_per_sec"
+    )
+    print(
+        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
+        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} Bytes / second"
+    )
+    print()
+    # Gather the metrics to report.
+    metadata.update(
+        {
+            "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
+            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
+            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput (median, GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
+            "Throughput (average, GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
+            "Throughput (P90, GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
+            "total_flops": total_bytes,
+        }
+    )
+    metrics.update(average_time_ms_statistics.serialize_statistics())
+    metrics = {key: value for key, value in metrics.items() if value is not None}
+    return metadata, metrics
+
+def swiglu_fwd_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 1, 0.5)
+
+
+def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+) -> Dict[str, Any]:
+    """
+    Inverse of swiglu_fwd
+    """
+    def f_fwd(x):
+        A, B = jnp.split(x, 2, axis=-1)
+        A_fp32 = A.astype(jnp.float32)
+        B_fp32 = B.astype(jnp.float32)
+        Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
+        return Y_fp32.astype(jnp.bfloat16)
+    
+    def f_bwd(x: jax.Array, dy: jax.Array) -> jax.Array:
+        """
+        x: The original <M, N> BF16 input.
+        dy: The upstream <M, N/2> BF16 gradient.
+        """
+        # Get the VJP "pullback" function
+        # We ignore the forward result (_y)
+        _y, pullback_fn = jax.vjp(f_fwd, x)
+        
+        # Call the pullback function with the upstream gradient
+        # This IS the backward pass.
+        dx = pullback_fn(dy)
+        
+        # dx is returned as a tuple (one item per arg of f_fwd)
+        return dx[0]
+
+    mesh = create_mesh()
+    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
+    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    dy = jnp.arange(np.prod((m, n // 2))).reshape((m, n // 2)).astype(jnp.bfloat16)
+    dy = jax.device_put(dy, NamedSharding(mesh, P("i", None)))
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f_bwd,
+            mesh,
+            in_specs=(P(), P()),
+            out_specs=(P()),
+            check_rep=False,
+        )
+    )
+    # Run once.
+    output = jit_sharded_f(x, dy)
+    jax.block_until_ready(output)  # Ensure full completion before printing metrics
+    print(f"swiglu_bwd({x.shape=}, {dy.shape=}) = {output.shape=}, {x.dtype=}, {dy.dtype=}, {output.dtype=}")
+    time_ms_list = simple_timeit(
+        jit_sharded_f,
+        x,
+        dy,
+        warmup_tries=warmup_tries,
+        tries=num_runs,
+        task="swiglu_bwd",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def swiglu_bwd_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 2, 0.5)
+
+def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+) -> Dict[str, Any]:
+    """
+    For each row i of N:
+    Y_i = X_i / rms(x_i)
+    """
+    f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
+
+    mesh = create_mesh()
+    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
+    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=P(),
+            out_specs=(P()),
+            check_rep=False,
+        )
+    )
+    # Run once.
+    output = jit_sharded_f(x)
+    jax.block_until_ready(output)  # Ensure full completion before printing metrics
+    print(f"rmsnorm_fwd({x.shape=}) = {output.shape=}, {x.dtype=}, {output.dtype=}")
+    time_ms_list = simple_timeit(
+        jit_sharded_f,
+        x,
+        warmup_tries=warmup_tries,
+        tries=num_runs,
+        task="rmsnorm_fwd",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def rmsnorm_fwd_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 2, 1)
