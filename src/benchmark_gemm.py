@@ -143,14 +143,13 @@ def unified_gemm_metrics(
     # Gather the metrics to report.
     metadata.update(
         {
-            "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
-            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
-            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput (median, TFLOPS)": tflops_per_sec_statistics.statistics['p50'],
-            "Throughput (average, TFLOPS)": tflops_per_sec_statistics.statistics['avg'],
-            "Throughput (P90, TFLOPS)": tflops_per_sec_statistics.statistics['p90'],
+            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
+            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
+            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput(median,TFLOP/s)": tflops_per_sec_statistics.statistics['p50'],
+            "Throughput(average,TFLOP/s)": tflops_per_sec_statistics.statistics['avg'],
+            "Throughput(P90,TFLOP/s)": tflops_per_sec_statistics.statistics['p90'],
             "total_flops": total_flops,
-            "total_gigabytes_transferred": total_gigabytes_transferred,
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
@@ -311,12 +310,12 @@ def gemm_accum_calculate_metrics(
     # Gather the metrics to report.
     metadata.update(
         {
-            "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
-            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
-            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput (median, TFLOPS)": tflops_per_sec_statistics.statistics['p50'],
-            "Throughput (average, TFLOPS)": tflops_per_sec_statistics.statistics['avg'],
-            "Throughput (P90, TFLOPS)": tflops_per_sec_statistics.statistics['p90'],
+            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
+            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
+            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput(median,TFLOP/s)": tflops_per_sec_statistics.statistics['p50'],
+            "Throughput(average,TFLOP/s)": tflops_per_sec_statistics.statistics['avg'],
+            "Throughput(P90,TFLOP/s)": tflops_per_sec_statistics.statistics['p90'],
             "total_flops": total_flops,
             "total_gigabytes_transferred": total_gigabytes_transferred,
         }
@@ -394,13 +393,13 @@ def unified_quantization_metrics(
     # Gather the metrics to report.
     metadata.update(
         {
-            "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
-            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
-            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput (median, GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
-            "Throughput (average, GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
-            "Throughput (P90, GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
-            "total_flops": total_bytes,
+            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
+            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
+            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput(median,GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
+            "Throughput(average,GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
+            "Throughput(P90,GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
+            "total_bytes": total_bytes,
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
@@ -525,13 +524,13 @@ def unified_swiglu_rmsnorm_metrics(
     # Gather the metrics to report.
     metadata.update(
         {
-            "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
-            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
-            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput (median, GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
-            "Throughput (average, GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
-            "Throughput (P90, GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
-            "total_flops": total_bytes,
+            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
+            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
+            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput(median,GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
+            "Throughput(average,GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
+            "Throughput(P90,GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
+            "total_bytes": total_bytes,
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
@@ -761,13 +760,13 @@ def add_calculate_metrics(
     # Gather the metrics to report.
     metadata.update(
         {
-            "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
-            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
-            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput (median, GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
-            "Throughput (average, GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
-            "Throughput (P90, GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
-            "total_flops": total_bytes,
+            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
+            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
+            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput(median,GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
+            "Throughput(average,GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
+            "Throughput(P90,GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
+            "total_bytes": total_bytes,
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
