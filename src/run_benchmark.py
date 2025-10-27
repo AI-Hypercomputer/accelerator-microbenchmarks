@@ -69,6 +69,7 @@ GEMM_BENCHMARK_MAP = {
     "swiglu_bwd": "benchmark_gemm.swiglu_bwd",
     "rmsnorm_fwd": "benchmark_gemm.rmsnorm_fwd",
     "rmsnorm_bwd": "benchmark_gemm.rmsnorm_bwd",
+    "add": "benchmark_gemm.add",
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)

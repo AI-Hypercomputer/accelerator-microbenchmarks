@@ -694,3 +694,83 @@ def rmsnorm_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 2, 1)
+
+def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+) -> Dict[str, Any]:
+    """
+    Z = X + Y
+    """
+    def f(x, y):
+        return x + y
+
+
+    mesh = create_mesh()
+    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
+    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    y = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
+    y = jax.device_put(y, NamedSharding(mesh, P("i", None)))
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(P("i", None), P("i", None)),
+            out_specs=(P("i", None)),
+            check_rep=False,
+        )
+    )
+    # Run once.
+    output = jit_sharded_f(x, y)
+    jax.block_until_ready(output)  # Ensure full completion before printing metrics
+    print(f"add({x.shape=}, {y.shape=}) = {output.shape=}, {x.dtype=}, {y.dtype=}, {output.dtype=}")
+    time_ms_list = simple_timeit(
+        jit_sharded_f,
+        x,
+        y,
+        warmup_tries=warmup_tries,
+        tries=num_runs,
+        task="add",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def add_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    """Calculates the metrics for the naive matmul benchmark."""
+    # Build dictionary of all the parameters in the function
+    params = locals().items()
+    metadata = get_metrics_helper(params)
+    metrics = {}
+
+    # Calculate FLOPs
+    total_bytes = 6 * m * n  # Total floating-point operations
+    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    gigabytes_per_sec_list = [
+        total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
+    ]
+    average_time_ms_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name="step_time_ms"
+    )
+    gigabytes_per_sec_statistics = MetricsStatistics(
+        metrics_list=gigabytes_per_sec_list, metrics_name="tflops_per_sec"
+    )
+    print(
+        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
+        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second"
+    )
+    print()
+    # Gather the metrics to report.
+    metadata.update(
+        {
+            "Step Time (median, ms)": average_time_ms_statistics.statistics['p50'],
+            "Step Time (average, ms)": average_time_ms_statistics.statistics['avg'],
+            "Step Time (P90, ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput (median, GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
+            "Throughput (average, GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
+            "Throughput (P90, GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
+            "total_flops": total_bytes,
+        }
+    )
+    metrics.update(average_time_ms_statistics.serialize_statistics())
+    metrics = {key: value for key, value in metrics.items() if value is not None}
+    return metadata, metrics
