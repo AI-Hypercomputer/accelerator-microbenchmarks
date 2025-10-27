@@ -82,7 +82,7 @@ def gemm_simple(
         shard_map(
             f,
             mesh,
-            in_specs=(P(), P()),
+            in_specs=(P("i", None), P()),
             out_specs=P(),
             check_rep=False,
         )
@@ -189,7 +189,7 @@ def gemm(
         shard_map(
             f,
             mesh,
-            in_specs=(P(), P(), P(), P()),
+            in_specs=(P("i", None), P(), P("i", None), P()),
             out_specs=P(),
             check_rep=False,
         )
@@ -245,7 +245,7 @@ def gemm_accum(
         shard_map(
             f,
             mesh,
-            in_specs=(P(), P(), P(), P(), P()),
+            in_specs=(P("i", None), P("i", None), P(), P("i", None), P()),
             out_specs=P(),
             check_rep=False,
         )
@@ -345,7 +345,7 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmu
         shard_map(
             f,
             mesh,
-            in_specs=P(),
+            in_specs=P("i", None),
             out_specs=(P(), P()),
             check_rep=False,
         )
@@ -388,7 +388,7 @@ def unified_quantization_metrics(
     )
     print(
         f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} Bytes / second"
+        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second"
     )
     print()
     # Gather the metrics to report.
@@ -431,7 +431,7 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
         shard_map(
             f,
             mesh,
-            in_specs=P(),
+            in_specs=P("i", None),
             out_specs=(P(), P()),
             check_rep=False,
         )
@@ -477,7 +477,7 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_
         shard_map(
             f,
             mesh,
-            in_specs=P(),
+            in_specs=P("i", None),
             out_specs=(P()),
             check_rep=False,
         )
@@ -519,7 +519,7 @@ def unified_swiglu_rmsnorm_metrics(
     )
     print(
         f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} Bytes / second"
+        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second"
     )
     print()
     # Gather the metrics to report.
@@ -581,7 +581,7 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_
         shard_map(
             f_bwd,
             mesh,
-            in_specs=(P(), P()),
+            in_specs=(P("i", None), P("i", None)),
             out_specs=(P()),
             check_rep=False,
         )
@@ -621,7 +621,7 @@ def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup
         shard_map(
             f,
             mesh,
-            in_specs=P(),
+            in_specs=P("i", None),
             out_specs=(P()),
             check_rep=False,
         )
