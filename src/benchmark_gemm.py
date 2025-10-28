@@ -8,7 +8,7 @@ from typing import Any, Dict, Tuple
 
 
 # pylint: disable=g-importing-member
-from benchmark_utils import simple_timeit, MetricsStatistics
+from benchmark_utils import simple_timeit, MetricsStatistics, iteration_timeit
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
@@ -74,12 +74,42 @@ def gemm_simple(
             return acc.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    lhs = jnp.arange(np.prod((m, k))).reshape((m, k)).astype(jnp.float8_e4m3fn)
-    rhs = jnp.arange(np.prod((k, n))).reshape((k, n)).astype(jnp.float8_e4m3fn)
-    # lhs(m,k): sharded across devices. rhs(k,n): replicated on devices.
-    # output(m,n): replicated on devices.
-    lhs = jax.device_put(lhs, NamedSharding(mesh, P("i", None)))
-    rhs = jax.device_put(rhs, NamedSharding(mesh, P(None, None)))
+    lhs_sharding = NamedSharding(mesh, P("i", None))
+    rhs_sharding = NamedSharding(mesh, P(None, None))
+    out_sharding = P("i", None)
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(lhs_sharding.spec, rhs_sharding.spec),
+            out_specs=out_sharding,
+            check_rep=False,
+        )
+    )
+
+    lhs_shape = (m, k)
+    rhs_shape = (k, n)
+    lhs_dtype = jnp.float8_e4m3fn
+    rhs_dtype = jnp.float8_e4m3fn
+
+    key = jax.random.key(0)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, key_lhs, key_rhs = jax.random.split(key, 3)
+        
+        # Create random data on host
+        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+        
+        # Put on device (HBM)
+        lhs_device = jax.device_put(lhs_host, lhs_sharding)
+        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+        
+        return (lhs_device, rhs_device)
+
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -89,15 +119,11 @@ def gemm_simple(
             check_rep=False,
         )
     )
-    # Run once.
-    output = jit_sharded_f(lhs, rhs)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
-    print(f"{lhs.shape=} x {rhs.shape=} = {output.shape=}, {lhs.dtype=}, {rhs.dtype=}, {output.dtype=}")
     # Run the benchmark
-    time_ms_list = simple_timeit(
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        lhs,
-        rhs,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
         tries=num_runs,
         task="gemm_simple",
         trace_dir=trace_dir,
