@@ -281,9 +281,8 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
     warmup_tries = benchmark_config.get("warmup_tries")
     warmup_tries = warmup_tries if warmup_tries is not None else 10
     if output_path != "":
-        csv_path = os.path.join(output_path, benchmark_name)
+        # csv_path = os.path.join(output_path, benchmark_name)
         trace_dir = os.path.join(output_path, benchmark_name, "trace")
-        xlml_metrics_dir = os.path.join(output_path, benchmark_name, "xlml")
         xla_dump_dir = os.path.join(output_path, benchmark_name, "hlo_graphs")
 
     if not benchmark_name:
