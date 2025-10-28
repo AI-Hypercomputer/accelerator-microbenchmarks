@@ -110,15 +110,6 @@ def gemm_simple(
         
         return (lhs_device, rhs_device)
 
-    jit_sharded_f = jax.jit(
-        shard_map(
-            f,
-            mesh,
-            in_specs=(P("i", None), P()),
-            out_specs=P(),
-            check_rep=False,
-        )
-    )
     # Run the benchmark
     time_ms_list = iteration_timeit(
         jit_sharded_f,
