@@ -18,6 +18,7 @@ from jax.sharding import PartitionSpec as P
 import numpy as np
 from qwix import pallas as qpl
 from flax import nnx
+from common import MARKER
 
 # pylint: disable=g-importing-member
 # Set the environment variable for TPU initialization arguments to optimize
@@ -68,8 +69,9 @@ def gemm_simple(
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8."""
 
     def f(x, y):
-        acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
-        return acc.astype(jnp.bfloat16)
+        with jax.named_scope(MARKER):
+            acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
+            return acc.astype(jnp.bfloat16)
 
     mesh = create_mesh()
     lhs = jnp.arange(np.prod((m, k))).reshape((m, k)).astype(jnp.float8_e4m3fn)
@@ -168,10 +170,11 @@ def gemm(
 ) -> Dict[str, Any]:
     """OUT<M, N>:BF16 = matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)"""
     def f(x, y, scale_m, scale_n):
-        acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
-        scales = scale_m * scale_n
-        result_fp32 = acc * scales
-        return result_fp32.astype(jnp.bfloat16)
+        with jax.named_scope(MARKER):
+            acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
+            scales = scale_m * scale_n
+            result_fp32 = acc * scales
+            return result_fp32.astype(jnp.bfloat16)
 
     mesh = create_mesh()
     lhs = jnp.arange(np.prod((m, k))).reshape((m, k)).astype(jnp.float8_e4m3fn)
@@ -222,10 +225,11 @@ def gemm_accum(
 ) -> Dict[str, Any]:
     """OUT<M, N>:FP32 += matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)"""
     def f(out_buffer, x, y, scale_m, scale_n):
-        acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
-        scales = scale_m * scale_n
-        result_fp32 = acc * scales
-        return out_buffer + result_fp32
+        with jax.named_scope(MARKER):
+            acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
+            scales = scale_m * scale_n
+            result_fp32 = acc * scales
+            return out_buffer + result_fp32
 
     mesh = create_mesh()
     lhs = jnp.arange(np.prod((m, k))).reshape((m, k)).astype(jnp.float8_e4m3fn)
@@ -334,8 +338,9 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmu
     OUT[i] = cast_fp8(IN[i] / SF[i])
     """
     def f(x):
-        qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
-        return qx.qvalue, qx.scale
+        with jax.named_scope(MARKER):
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+            return qx.qvalue, qx.scale
 
     mesh = create_mesh()
     x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
@@ -419,9 +424,10 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
     OUT[i] = cast_fp8(IN[i] / SF[i])
     """
     def f(x):
-        x = x.T
-        qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
-        return qx.qvalue, qx.scale
+        with jax.named_scope(MARKER):
+            x = x.T
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+            return qx.qvalue, qx.scale
 
     mesh = create_mesh()
     x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
@@ -462,11 +468,12 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_
     Y = Swish(A) ⊗ B
     """
     def f(x):
-        A, B = jnp.split(x, 2, axis=-1)
-        A_fp32 = A.astype(jnp.float32)
-        B_fp32 = B.astype(jnp.float32)
-        Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
-        return Y_fp32.astype(jnp.bfloat16)
+        with jax.named_scope(MARKER):
+            A, B = jnp.split(x, 2, axis=-1)
+            A_fp32 = A.astype(jnp.float32)
+            B_fp32 = B.astype(jnp.float32)
+            Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
+            return Y_fp32.astype(jnp.bfloat16)
 
 
     mesh = create_mesh()
@@ -549,27 +556,29 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_
     Inverse of swiglu_fwd
     """
     def f_fwd(x):
-        A, B = jnp.split(x, 2, axis=-1)
-        A_fp32 = A.astype(jnp.float32)
-        B_fp32 = B.astype(jnp.float32)
-        Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
-        return Y_fp32.astype(jnp.bfloat16)
+        with jax.named_scope(MARKER):
+            A, B = jnp.split(x, 2, axis=-1)
+            A_fp32 = A.astype(jnp.float32)
+            B_fp32 = B.astype(jnp.float32)
+            Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
+            return Y_fp32.astype(jnp.bfloat16)
     
     def f_bwd(x: jax.Array, dy: jax.Array) -> jax.Array:
         """
         x: The original <M, N> BF16 input.
         dy: The upstream <M, N/2> BF16 gradient.
         """
-        # Get the VJP "pullback" function
-        # We ignore the forward result (_y)
-        _y, pullback_fn = jax.vjp(f_fwd, x)
-        
-        # Call the pullback function with the upstream gradient
-        # This IS the backward pass.
-        dx = pullback_fn(dy)
-        
-        # dx is returned as a tuple (one item per arg of f_fwd)
-        return dx[0]
+        with jax.named_scope(MARKER):
+            # Get the VJP "pullback" function
+            # We ignore the forward result (_y)
+            _y, pullback_fn = jax.vjp(f_fwd, x)
+            
+            # Call the pullback function with the upstream gradient
+            # This IS the backward pass.
+            dx = pullback_fn(dy)
+            
+            # dx is returned as a tuple (one item per arg of f_fwd)
+            return dx[0]
 
     mesh = create_mesh()
     x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
@@ -611,7 +620,8 @@ def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup
     For each row i of N:
     Y_i = X_i / rms(x_i)
     """
-    f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
+    with jax.named_scope(MARKER):
+        f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
 
     mesh = create_mesh()
     x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
@@ -649,7 +659,8 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup
     """
     Inverse of rmsnorm_fwd
     """
-    f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
+    with jax.named_scope(MARKER):
+        f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
 
     mesh = create_mesh()
     x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
@@ -669,9 +680,9 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup
         out_specs=P(), # Output is a single replicated scalar
         check_rep=False
     )
-    
-    grad_fn = nnx.grad(sharded_loss_fn, argnums=1)
-    jit_sharded_bwd = jax.jit(grad_fn)
+    with jax.named_scope(MARKER):
+        grad_fn = nnx.grad(sharded_loss_fn, argnums=1)
+        jit_sharded_bwd = jax.jit(grad_fn)
 
     # Run once.
     grads = jit_sharded_bwd(f, x)
@@ -699,7 +710,8 @@ def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: 
     Z = X + Y
     """
     def f(x, y):
-        return x + y
+        with jax.named_scope(MARKER):
+            return x + y
 
 
     mesh = create_mesh()
