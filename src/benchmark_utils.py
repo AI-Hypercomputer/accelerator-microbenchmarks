@@ -94,8 +94,8 @@ def iteration_timeit(
         data_args = data_generator()
         # 2. Run compute
         result = compute_func(*data_args)
-    # Block on the *last* run
-    jax.block_until_ready(result)
+        # 3. Block on the run
+        jax.block_until_ready(result)
     print(f"[{task}] Warmup complete.")
 
     arg_shapes = [arg.shape for arg in data_args]

@@ -67,7 +67,7 @@ def get_metrics_helper(
 def gemm_simple(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
-    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8."""
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -673,20 +673,18 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     """
     Inverse of rmsnorm_fwd
     """
-    with jax.named_scope(MARKER):
-        f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
-
     mesh = create_mesh()
     x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
     x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
-
+    f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
     # We need a scalar loss function to differentiate.
     # We sum the output and cast to f32 for stable gradients.
     def loss_fn(module: nnx.RMSNorm, x_input: jax.Array):
-        y = module(x_input)
+        with jax.named_scope(MARKER):
+            y = module(x_input)
         local_loss = jnp.sum(y.astype(jnp.float32))
         return jax.lax.psum(local_loss, axis_name='i')
-    
+
     sharded_loss_fn = shard_map(
         loss_fn,
         mesh,
@@ -694,9 +692,8 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
         out_specs=P(), # Output is a single replicated scalar
         check_rep=False
     )
-    with jax.named_scope(MARKER):
-        grad_fn = nnx.grad(sharded_loss_fn, argnums=1)
-        jit_sharded_bwd = jax.jit(grad_fn)
+    grad_fn = nnx.grad(sharded_loss_fn, argnums=1)
+    jit_sharded_bwd = jax.jit(grad_fn)
 
     # Run once.
     grads = jit_sharded_bwd(f, x)
