@@ -45,6 +45,7 @@ M_MAX_SIZE = 50000
 # The number of layers in the multilayer collective matmul.
 # Matmul shapes: A(M,K) x H1(K,K)... x B(K,N) = C(M,N)
 LAYERS = 2
+WITH_SHARDING = True
 
 def create_mesh() -> Mesh:
     """Creates a mesh."""
@@ -74,9 +75,13 @@ def gemm_simple(
             return acc.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    lhs_sharding = NamedSharding(mesh, P("i", None))
     rhs_sharding = NamedSharding(mesh, P(None, None))
-    out_sharding = P("i", None)
+    if WITH_SHARDING:
+        lhs_sharding = NamedSharding(mesh, P("i", None))
+        out_sharding = P("i", None)
+    else:
+        lhs_sharding = NamedSharding(mesh, P(None, None))
+        out_sharding = P(None, None)
 
     jit_sharded_f = jax.jit(
         shard_map(
