@@ -59,12 +59,25 @@ ATTENTION_BENCHMARK_MAP = {
 HBM_BENCHMARK_MAP = {
     "single_chip_hbm_copy": "benchmark_hbm.single_chip_hbm_copy",
 }
+GEMM_BENCHMARK_MAP = {
+    "gemm_simple":"benchmark_gemm.gemm_simple",
+    "gemm": "benchmark_gemm.gemm",
+    "gemm_accum": "benchmark_gemm.gemm_accum",
+    "quantization": "benchmark_gemm.quantization",
+    "transpose_quantization": "benchmark_gemm.transpose_quantization",
+    "swiglu_fwd": "benchmark_gemm.swiglu_fwd",
+    "swiglu_bwd": "benchmark_gemm.swiglu_bwd",
+    "rmsnorm_fwd": "benchmark_gemm.rmsnorm_fwd",
+    "rmsnorm_bwd": "benchmark_gemm.rmsnorm_bwd",
+    "add": "benchmark_gemm.add",
+}
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)
 BENCHMARK_MAP.update(MATMUL_BENCHMARK_MAP)
 BENCHMARK_MAP.update(CONVOLUTION_BENCHMARK_MAP)
 BENCHMARK_MAP.update(ATTENTION_BENCHMARK_MAP)
 BENCHMARK_MAP.update(HBM_BENCHMARK_MAP)
+BENCHMARK_MAP.update(GEMM_BENCHMARK_MAP)
 
 
 # Mapping from dtype string to actual dtype object
@@ -72,6 +85,7 @@ dtype_mapping = {
     "bfloat16": jax.numpy.bfloat16,
     "float32": jax.numpy.float32,
     "int32": jax.numpy.int32,
+    "float8": jax.numpy.float8_e4m3fn
     # Add other dtypes as needed
 }
 
@@ -252,7 +266,7 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
         print(f"Failed to write metrics to CSV: {e}")
 
 
-def run_single_benchmark(benchmark_config: Dict[str, Any]):
+def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
     """Run a single benchmark with one or more configurations."""
     # Extract benchmark details
     benchmark_name = benchmark_config.get("benchmark_name")
@@ -266,6 +280,10 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
     xla_dump_dir = benchmark_config.get("xla_dump_dir")
     warmup_tries = benchmark_config.get("warmup_tries")
     warmup_tries = warmup_tries if warmup_tries is not None else 10
+    if output_path != "":
+        # csv_path = os.path.join(output_path, benchmark_name)
+        trace_dir = os.path.join(output_path, benchmark_name, "trace")
+        xla_dump_dir = os.path.join(output_path, benchmark_name, "hlo_graphs")
 
     if not benchmark_name:
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
@@ -336,9 +354,12 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
         write_to_csv(f"{csv_path}/{test_name}.csv", calculate_metrics_results)
 
 
-def main(config_path: str, multithreaded: bool):
+def main(args):
     """Main function."""
     # Load configuration
+    config_path = args.config
+    multithreaded = args.multithreaded
+    output_path = args.output_path
     config = get_benchmark_config(config_path)
     benchmarks = config.get("benchmarks")
     if not benchmarks or not isinstance(benchmarks, list):
@@ -370,15 +391,15 @@ def main(config_path: str, multithreaded: bool):
         # print("Num hosts detected: %d", num_hosts)
 
         for benchmark_config in benchmarks:
-            run_benchmark_multithreaded(benchmark_config)
+            run_benchmark_multithreaded(benchmark_config, output_path)
 
     else:
         jax.distributed.initialize()
         for benchmark_config in benchmarks:
-            run_single_benchmark(benchmark_config)
+            run_single_benchmark(benchmark_config, output_path)
 
 
-def run_benchmark_multithreaded(benchmark_config):
+def run_benchmark_multithreaded(benchmark_config, output_path):
     # Extract benchmark details
     benchmark_name = benchmark_config.get("benchmark_name")
     benchmark_params = benchmark_config.get("benchmark_params", [])
@@ -390,6 +411,9 @@ def run_benchmark_multithreaded(benchmark_config):
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
     warmup_tries = benchmark_config.get("warmup_tries")
     warmup_tries = warmup_tries if warmup_tries is not None else 10
+    if output_path != "":
+        csv_path = os.path.join(output_path, benchmark_name)
+        os.makedirs(csv_path, exist_ok=True)
 
     # Get the benchmark function
     benchmark_func, calculate_metrics_func = get_benchmark_functions(benchmark_name)
@@ -459,10 +483,16 @@ if __name__ == "__main__":
         help="Path to the YAML configuration file.",
     )
     parser.add_argument(
+        "--output_path",
+        type=str,
+        default="",
+        help="Path to output.",
+    )
+    parser.add_argument(
         "--multithreaded",
         type=bool,
         default=False,
         help="Path to the YAML configuration file.",
     )
     args = parser.parse_args()
-    main(args.config, args.multithreaded)
+    main(args)
