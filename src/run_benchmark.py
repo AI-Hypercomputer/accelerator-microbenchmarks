@@ -59,12 +59,25 @@ ATTENTION_BENCHMARK_MAP = {
 HBM_BENCHMARK_MAP = {
     "single_chip_hbm_copy": "benchmark_hbm.single_chip_hbm_copy",
 }
+GEMM_BENCHMARK_MAP = {
+    "gemm_simple":"benchmark_gemm.gemm_simple",
+    "gemm": "benchmark_gemm.gemm",
+    "gemm_accum": "benchmark_gemm.gemm_accum",
+    "quantization": "benchmark_gemm.quantization",
+    "transpose_quantization": "benchmark_gemm.transpose_quantization",
+    "swiglu_fwd": "benchmark_gemm.swiglu_fwd",
+    "swiglu_bwd": "benchmark_gemm.swiglu_bwd",
+    "rmsnorm_fwd": "benchmark_gemm.rmsnorm_fwd",
+    "rmsnorm_bwd": "benchmark_gemm.rmsnorm_bwd",
+    "add": "benchmark_gemm.add",
+}
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)
 BENCHMARK_MAP.update(MATMUL_BENCHMARK_MAP)
 BENCHMARK_MAP.update(CONVOLUTION_BENCHMARK_MAP)
 BENCHMARK_MAP.update(ATTENTION_BENCHMARK_MAP)
 BENCHMARK_MAP.update(HBM_BENCHMARK_MAP)
+BENCHMARK_MAP.update(GEMM_BENCHMARK_MAP)
 
 
 # Mapping from dtype string to actual dtype object
@@ -72,6 +85,7 @@ dtype_mapping = {
     "bfloat16": jax.numpy.bfloat16,
     "float32": jax.numpy.float32,
     "int32": jax.numpy.int32,
+    "float8": jax.numpy.float8_e4m3fn
     # Add other dtypes as needed
 }
 
