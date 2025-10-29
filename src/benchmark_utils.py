@@ -27,19 +27,6 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
     "ppermute_ici_op": r"collective-permute.[0-9]+",
 }
 
-TARGET_TASK_NAME_GEMM_MAP = {
-    "gemm_simple": ["convolution_convert_fusion"],
-    "gemm": ["multiply_convert_fusion", "fusion"],
-    "gemm_accum": ["multiply_add_fusion"],
-    "quantization": ["broadcast_multiply_fusion", "abs_reduce_fusion", "fusion", "clamp_convert_fusion"],
-    "transpose_quantization": ["broadcast_multiply_fusion", "abs_reduce_fusion", "fusion", "fusion.1"],
-    "swiglu_fwd": ["fusion.4"],
-    "swiglu_bwd": ["fusion.6", "pad_maximum_fusion"],
-    "rmsnorm_fwd": ["fusion", "fusion.1", "add_rsqrt_fusion"],
-    "rmsnorm_bwd": ["fusion.1", "fusion.4", "fusion.5"],
-    "add": ["add.3"],
-}
-
 def iteration_timeit_from_trace(
     compute_func: Callable,
     data_generator: Callable,
@@ -77,18 +64,14 @@ def iteration_timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return iteration_get_metrics_from_trace(trace, task)
+    return iteration_get_metrics_from_trace(trace)
 
-def iteration_get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
+def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
     marker_done_events = []
-    if task in TARGET_TASK_NAME_GEMM_MAP:
-        target_ops = TARGET_TASK_NAME_GEMM_MAP[task]
-    else:
-        assert False, f"Wrong task: {task}"
     for event in trace["traceEvents"]:
         args = event.get("args", {})
         tf_op = args.get("tf_op", "")
-        if MARKER in tf_op and event.get("name", "") in target_ops:
+        if MARKER in tf_op:
             marker_done_events.append(event)
 
     # print(marker_done_events)
