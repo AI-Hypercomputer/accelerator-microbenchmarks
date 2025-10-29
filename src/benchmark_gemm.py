@@ -64,6 +64,87 @@ def get_metrics_helper(
     }
     return metadata
 
+def unified_flops_metrics(
+    time_ms_list: list[float], total_flops: int
+) -> Dict[str, Any]:
+    """Calculates the metrics for the naive matmul benchmark."""
+    # Build dictionary of all the parameters in the function
+    params = locals().items()
+    metadata = get_metrics_helper(params)
+    metrics = {}
+
+    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    tflops_per_sec_list = [
+        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
+    ]
+    average_time_ms_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name="step_time_ms"
+    )
+    tflops_per_sec_statistics = MetricsStatistics(
+        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec"
+    )
+    print(
+        f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
+        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second"
+    )
+    print()
+    # Gather the metrics to report.
+    metadata.update(
+        {
+            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
+            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
+            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput(median,TFLOP/s)": tflops_per_sec_statistics.statistics['p50'],
+            "Throughput(average,TFLOP/s)": tflops_per_sec_statistics.statistics['avg'],
+            "Throughput(P90,TFLOP/s)": tflops_per_sec_statistics.statistics['p90'],
+            "total_flops": total_flops,
+        }
+    )
+    metrics.update(average_time_ms_statistics.serialize_statistics())
+    metrics.update(tflops_per_sec_statistics.serialize_statistics())
+    metrics = {key: value for key, value in metrics.items() if value is not None}
+    return metadata, metrics
+
+def unified_bytes_metrics(
+    time_ms_list: list[float], total_bytes: int
+) -> Dict[str, Any]:
+    """Calculates the metrics for the naive matmul benchmark."""
+    # Build dictionary of all the parameters in the function
+    params = locals().items()
+    metadata = get_metrics_helper(params)
+    metrics = {}
+
+    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    gigabytes_per_sec_list = [
+        total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
+    ]
+    average_time_ms_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name="step_time_ms"
+    )
+    gigabytes_per_sec_statistics = MetricsStatistics(
+        metrics_list=gigabytes_per_sec_list, metrics_name="tflops_per_sec"
+    )
+    print(
+        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
+        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second"
+    )
+    print()
+    # Gather the metrics to report.
+    metadata.update(
+        {
+            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
+            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
+            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
+            "Throughput(median,GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
+            "Throughput(average,GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
+            "Throughput(P90,GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
+            "total_bytes": total_bytes,
+        }
+    )
+    metrics.update(average_time_ms_statistics.serialize_statistics())
+    metrics = {key: value for key, value in metrics.items() if value is not None}
+    return metadata, metrics
+
 def gemm_simple(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
@@ -126,67 +207,14 @@ def gemm_simple(
     )
     return {"time_ms_list": time_ms_list}
 
-def unified_gemm_metrics(
+def gemm_simple_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    """Calculates the metrics for the naive matmul benchmark."""
-    # Build dictionary of all the parameters in the function
-    params = locals().items()
-    metadata = get_metrics_helper(params)
-    metrics = {}
-
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
     if WITH_SHARDING:
         total_flops = total_flops // jax.device_count()
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
-    tflops_per_sec_list = [
-        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
-    ]
-    average_time_ms_statistics = MetricsStatistics(
-        metrics_list=time_ms_list, metrics_name="step_time_ms"
-    )
-    tflops_per_sec_statistics = MetricsStatistics(
-        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec"
-    )
-    total_gigabytes_transferred = 2 * (m * k + k * n + m * n) / 10**9
-    data_transfer_gbyte_sec_list = [
-        total_gigabytes_transferred / average_time_s
-        for average_time_s in average_time_s_list
-    ]
-    data_transfer_gbyte_sec_statistics = MetricsStatistics(
-        metrics_list=data_transfer_gbyte_sec_list,
-        metrics_name="data_transfer_gbyte_sec",
-    )
-    print(
-        f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second, Total GBs transferred (median):"
-        f" {total_gigabytes_transferred:.2f} GB, GBs per second:"
-        f" {data_transfer_gbyte_sec_statistics.statistics['p50']:.2f} GB/s"
-    )
-    print()
-    # Gather the metrics to report.
-    metadata.update(
-        {
-            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
-            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput(median,TFLOP/s)": tflops_per_sec_statistics.statistics['p50'],
-            "Throughput(average,TFLOP/s)": tflops_per_sec_statistics.statistics['avg'],
-            "Throughput(P90,TFLOP/s)": tflops_per_sec_statistics.statistics['p90'],
-            "total_flops": total_flops,
-        }
-    )
-    metrics.update(average_time_ms_statistics.serialize_statistics())
-    metrics.update(tflops_per_sec_statistics.serialize_statistics())
-    metrics.update(data_transfer_gbyte_sec_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
-    return metadata, metrics
-
-def gemm_simple_calculate_metrics(
-    m: int, k: int, n: int, time_ms_list: list[float]
-) -> Dict[str, Any]:
-    return unified_gemm_metrics(m, k, n, time_ms_list)
+    return unified_flops_metrics(time_ms_list, total_flops)
 
 def gemm(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
@@ -239,7 +267,11 @@ def gemm(
 def gemm_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    return unified_gemm_metrics(m, k, n, time_ms_list)
+    # Calculate FLOPs
+    total_flops = 2 * m * k * n  # Total floating-point operations
+    if WITH_SHARDING:
+        total_flops = total_flops // jax.device_count()
+    return unified_flops_metrics(time_ms_list, total_flops)
 
 
 def gemm_accum(
@@ -298,58 +330,10 @@ def gemm_accum(
 def gemm_accum_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    """Calculates the metrics for the naive matmul benchmark."""
-    # Build dictionary of all the parameters in the function
-    params = locals().items()
-    metadata = get_metrics_helper(params)
-    metrics = {}
-
     # Calculate FLOPs
     total_flops = 2 * m * k * n + m * n  # Total floating-point operations
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
-    tflops_per_sec_list = [
-        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
-    ]
-    average_time_ms_statistics = MetricsStatistics(
-        metrics_list=time_ms_list, metrics_name="step_time_ms"
-    )
-    tflops_per_sec_statistics = MetricsStatistics(
-        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec"
-    )
-    total_gigabytes_transferred = 2 * (m * k + k * n + m * n) / 10**9
-    data_transfer_gbyte_sec_list = [
-        total_gigabytes_transferred / average_time_s
-        for average_time_s in average_time_s_list
-    ]
-    data_transfer_gbyte_sec_statistics = MetricsStatistics(
-        metrics_list=data_transfer_gbyte_sec_list,
-        metrics_name="data_transfer_gbyte_sec",
-    )
-    print(
-        f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second, Total GBs transferred (median):"
-        f" {total_gigabytes_transferred:.2f} GB, GBs per second:"
-        f" {data_transfer_gbyte_sec_statistics.statistics['p50']:.2f} GB/s"
-    )
-    print()
-    # Gather the metrics to report.
-    metadata.update(
-        {
-            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
-            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput(median,TFLOP/s)": tflops_per_sec_statistics.statistics['p50'],
-            "Throughput(average,TFLOP/s)": tflops_per_sec_statistics.statistics['avg'],
-            "Throughput(P90,TFLOP/s)": tflops_per_sec_statistics.statistics['p90'],
-            "total_flops": total_flops,
-            "total_gigabytes_transferred": total_gigabytes_transferred,
-        }
-    )
-    metrics.update(average_time_ms_statistics.serialize_statistics())
-    metrics.update(tflops_per_sec_statistics.serialize_statistics())
-    metrics.update(data_transfer_gbyte_sec_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
-    return metadata, metrics
+    return unified_flops_metrics(time_ms_list, total_flops)
+
 
 def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -389,52 +373,11 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     )
     return {"time_ms_list": time_ms_list}
 
-def unified_quantization_metrics(
-    m: int, n: int, time_ms_list: list[float]
-) -> Dict[str, Any]:
-    """Calculates the metrics for the naive matmul benchmark."""
-    # Build dictionary of all the parameters in the function
-    params = locals().items()
-    metadata = get_metrics_helper(params)
-    metrics = {}
-
-    # Calculate FLOPs
-    total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
-    gigabytes_per_sec_list = [
-        total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
-    ]
-    average_time_ms_statistics = MetricsStatistics(
-        metrics_list=time_ms_list, metrics_name="step_time_ms"
-    )
-    gigabytes_per_sec_statistics = MetricsStatistics(
-        metrics_list=gigabytes_per_sec_list, metrics_name="tflops_per_sec"
-    )
-    print(
-        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second"
-    )
-    print()
-    # Gather the metrics to report.
-    metadata.update(
-        {
-            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
-            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput(median,GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
-            "Throughput(average,GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
-            "Throughput(P90,GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
-            "total_bytes": total_bytes,
-        }
-    )
-    metrics.update(average_time_ms_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
-    return metadata, metrics
-
 def quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    return unified_quantization_metrics(m, n, time_ms_list)
+    total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
+    return unified_bytes_metrics(time_ms_list, total_bytes)
 
 def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -478,7 +421,8 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
 def transpose_quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    return unified_quantization_metrics(m, n, time_ms_list)
+    total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
+    return unified_bytes_metrics(time_ms_list, total_bytes)
 
 def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -520,52 +464,11 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     )
     return {"time_ms_list": time_ms_list}
 
-def unified_swiglu_rmsnorm_metrics(
-    m: int, n: int, time_ms_list: list[float], x_scale, y_scale
-) -> Dict[str, Any]:
-    """Calculates the metrics for the naive matmul benchmark."""
-    # Build dictionary of all the parameters in the function
-    params = locals().items()
-    metadata = get_metrics_helper(params)
-    metrics = {}
-
-    # Calculate FLOPs
-    total_bytes = int(2 * (x_scale * m * n + m * n * y_scale))  # Total floating-point operations
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
-    gigabytes_per_sec_list = [
-        total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
-    ]
-    average_time_ms_statistics = MetricsStatistics(
-        metrics_list=time_ms_list, metrics_name="step_time_ms"
-    )
-    gigabytes_per_sec_statistics = MetricsStatistics(
-        metrics_list=gigabytes_per_sec_list, metrics_name="tflops_per_sec"
-    )
-    print(
-        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second"
-    )
-    print()
-    # Gather the metrics to report.
-    metadata.update(
-        {
-            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
-            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput(median,GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
-            "Throughput(average,GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
-            "Throughput(P90,GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
-            "total_bytes": total_bytes,
-        }
-    )
-    metrics.update(average_time_ms_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
-    return metadata, metrics
-
 def swiglu_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 1, 0.5)
+    total_bytes = 2 * (m * n + m * n // 2)
+    return unified_bytes_metrics(time_ms_list, total_bytes)
 
 
 def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -629,7 +532,8 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 def swiglu_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 2, 0.5)
+    total_bytes = 2 * (2 * m * n + m * n // 2)
+    return unified_bytes_metrics(time_ms_list, total_bytes)
 
 def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -668,7 +572,8 @@ def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 def rmsnorm_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 2, 1)
+    total_bytes = 2 * (2 * m * n + m * n)
+    return unified_bytes_metrics(time_ms_list, total_bytes)
 
 def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -714,7 +619,8 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 def rmsnorm_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    return unified_swiglu_rmsnorm_metrics(m, n, time_ms_list, 2, 1)
+    total_bytes = 2 * (2 * m * n + m * n)
+    return unified_bytes_metrics(time_ms_list, total_bytes)
 
 def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -757,41 +663,5 @@ def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 def add_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    """Calculates the metrics for the naive matmul benchmark."""
-    # Build dictionary of all the parameters in the function
-    params = locals().items()
-    metadata = get_metrics_helper(params)
-    metrics = {}
-
-    # Calculate FLOPs
-    total_bytes = 6 * m * n  # Total floating-point operations
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
-    gigabytes_per_sec_list = [
-        total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
-    ]
-    average_time_ms_statistics = MetricsStatistics(
-        metrics_list=time_ms_list, metrics_name="step_time_ms"
-    )
-    gigabytes_per_sec_statistics = MetricsStatistics(
-        metrics_list=gigabytes_per_sec_list, metrics_name="tflops_per_sec"
-    )
-    print(
-        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second"
-    )
-    print()
-    # Gather the metrics to report.
-    metadata.update(
-        {
-            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
-            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput(median,GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
-            "Throughput(average,GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
-            "Throughput(P90,GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
-            "total_bytes": total_bytes,
-        }
-    )
-    metrics.update(average_time_ms_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
-    return metadata, metrics
+    total_bytes = 6 * m * n
+    return unified_bytes_metrics(time_ms_list, total_bytes)
