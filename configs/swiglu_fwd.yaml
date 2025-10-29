@@ -3,7 +3,8 @@ benchmarks:
   trace_dir: "../microbenchmarks/swiglu_fwd"
   csv_path: "../microbenchmarks/swiglu_fwd"
   xlml_metrics_dir: "../microbenchmarks/swiglu_fwd"
-  num_runs: 1000
+  xla_dump_dir: "../microbenchmarks/swiglu_fwd/hlo_graphs"
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 4096, n: 1024}
   - {m: 1024, n: 512}

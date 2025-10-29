@@ -3,7 +3,8 @@ benchmarks:
   trace_dir: "../microbenchmarks/gemm_simple"
   csv_path: "../microbenchmarks/gemm_simple"
   xlml_metrics_dir: "../microbenchmarks/gemm_simple"
-  num_runs: 1000
+  xla_dump_dir: "../microbenchmarks/gemm_simple/hlo_graphs"
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 1024, k: 7168, n: 3584}
   - {m: 8192, k: 21504, n: 7168}

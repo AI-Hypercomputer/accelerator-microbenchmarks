@@ -3,69 +3,69 @@ benchmarks:
   trace_dir: "../microbenchmarks/gemm_simple"
   csv_path: "../microbenchmarks/gemm_simple"
   xlml_metrics_dir: "../microbenchmarks/gemm_simple"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 256, k: 8192, n: 512}
 - benchmark_name: "gemm"
   trace_dir: "../microbenchmarks/gemm"
   csv_path: "../microbenchmarks/gemm"
   xlml_metrics_dir: "../microbenchmarks/gemm"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 256, k: 8192, n: 512}
 - benchmark_name: "gemm_accum"
   trace_dir: "../microbenchmarks/gemm_accum"
   csv_path: "../microbenchmarks/gemm_accum"
   xlml_metrics_dir: "../microbenchmarks/gemm_accum"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 512, k: 128, n: 7168}
 - benchmark_name: "quantization"
   trace_dir: "../microbenchmarks/quantization"
   csv_path: "../microbenchmarks/quantization"
   xlml_metrics_dir: "../microbenchmarks/quantization"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 512, n: 896}
 - benchmark_name: "transpose_quantization"
   trace_dir: "../microbenchmarks/transpose_quantization"
   csv_path: "../microbenchmarks/transpose_quantization"
   xlml_metrics_dir: "../microbenchmarks/transpose_quantization"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 512, n: 896}
 - benchmark_name: "swiglu_fwd"
   trace_dir: "../microbenchmarks/swiglu_fwd"
   csv_path: "../microbenchmarks/swiglu_fwd"
   xlml_metrics_dir: "../microbenchmarks/swiglu_fwd"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 128, n: 2048}
 - benchmark_name: "swiglu_bwd"
   trace_dir: "../microbenchmarks/swiglu_bwd"
   csv_path: "../microbenchmarks/swiglu_bwd"
   xlml_metrics_dir: "../microbenchmarks/swiglu_bwd"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 128, n: 2048}
 - benchmark_name: "rmsnorm_fwd"
   trace_dir: "../microbenchmarks/rmsnorm_fwd"
   csv_path: "../microbenchmarks/rmsnorm_fwd"
   xlml_metrics_dir: "../microbenchmarks/rmsnorm_fwd"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 128, n: 7168}
 - benchmark_name: "rmsnorm_bwd"
   trace_dir: "../microbenchmarks/rmsnorm_bwd"
   csv_path: "../microbenchmarks/rmsnorm_bwd"
   xlml_metrics_dir: "../microbenchmarks/rmsnorm_bwd"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 128, n: 7168}
 - benchmark_name: "add"
   trace_dir: "../microbenchmarks/add"
   csv_path: "../microbenchmarks/add"
   xlml_metrics_dir: "../microbenchmarks/add"
-  num_runs: 1000
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 128, n: 7168}
