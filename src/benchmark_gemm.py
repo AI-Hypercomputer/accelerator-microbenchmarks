@@ -635,7 +635,7 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
         Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
         return Y_fp32.astype(jnp.bfloat16)
     
-    def f_bwd(x: jax.Array, dy: jax.Array) -> jax.Array:
+    def f(x: jax.Array, dy: jax.Array) -> jax.Array:
         """
         x: The original <M, N> BF16 input.
         dy: The upstream <M, N/2> BF16 gradient.
@@ -661,7 +661,7 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
         out_sharding = NamedSharding(mesh, P(None, None))
     jit_sharded_f = jax.jit(
         shard_map(
-            f_bwd,
+            f,
             mesh,
             in_specs=(x_sharding.spec, dy_sharding.spec),
             out_specs=out_sharding.spec,
@@ -770,36 +770,64 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     """
     Inverse of rmsnorm_fwd
     """
-    mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
-    f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(SEED))
-    # We need a scalar loss function to differentiate.
-    # We sum the output and cast to f32 for stable gradients.
-    def loss_fn(module: nnx.RMSNorm, x_input: jax.Array):
+    rms_norm_module = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, param_dtype=jnp.float32, rngs=nnx.Rngs(SEED))
+    def f_fwd(x):
         with jax.named_scope(MARKER):
-            y = module(x_input)
-        local_loss = jnp.sum(y.astype(jnp.float32))
-        return jax.lax.psum(local_loss, axis_name='i')
+            return rms_norm_module(x)
+    
+    def f(x: jax.Array, dy: jax.Array) -> jax.Array:
+        """
+        x: The original <M, N> BF16 input.
+        dy: The upstream <M, N/2> BF16 gradient.
+        """
+        # Get the VJP "pullback" function
+        # We ignore the forward result (_y)
+        _y, pullback_fn = jax.vjp(f_fwd, x)
+        with jax.named_scope(MARKER):
+            # Call the pullback function with the upstream gradient
+            # This IS the backward pass.
+            dx = pullback_fn(dy)
+            # dx is returned as a tuple (one item per arg of f_fwd)
+            return dx[0]
 
-    sharded_loss_fn = shard_map(
-        loss_fn,
-        mesh,
-        in_specs=(P(), P("i", None)),
-        out_specs=P(), # Output is a single replicated scalar
-        check_rep=False
+    mesh = create_mesh()
+    if WITH_SHARDING:
+        x_sharding = NamedSharding(mesh, P("i", None))
+        dy_sharding = NamedSharding(mesh, P("i", None))
+        out_sharding = NamedSharding(mesh, P("i", None))
+    else:
+        x_sharding = NamedSharding(mesh, P(None, None))
+        dy_sharding = NamedSharding(mesh, P(None, None))
+        out_sharding = NamedSharding(mesh, P(None, None))
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(x_sharding.spec, dy_sharding.spec),
+            out_specs=out_sharding.spec,
+            check_rep=False
+        )
     )
-    grad_fn = nnx.grad(sharded_loss_fn, argnums=1)
-    jit_sharded_bwd = jax.jit(grad_fn)
-
-    # Run once.
-    grads = jit_sharded_bwd(f, x)
-    jax.block_until_ready(grads)  # Ensure full completion before printing metrics
-    print(f"rmsnorm_bwd({x.shape=}) = {grads.shape=}, {x.dtype=}, {grads.dtype=}")
-    time_ms_list = simple_timeit(
-        jit_sharded_bwd,
-        f,
-        x,
+    x_shape = (m, n)
+    dy_shape = (m, n)
+    x_dtype = jnp.bfloat16
+    dy_dtype = jnp.bfloat16
+    
+    key = jax.random.key(SEED)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1, k2 = jax.random.split(key, 3)
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+        dy_host = jax.random.normal(k2, dy_shape).astype(dy_dtype)
+        x_device = jax.device_put(x_host, x_sharding)
+        dy_device = jax.device_put(dy_host, dy_sharding)
+        return (x_device, dy_device)
+    time_ms_list = iteration_timeit(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}", # Using mxn as dims
         tries=num_runs,
         task="rmsnorm_bwd",
         trace_dir=trace_dir,

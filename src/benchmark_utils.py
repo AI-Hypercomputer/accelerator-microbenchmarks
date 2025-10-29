@@ -36,6 +36,7 @@ TARGET_TASK_NAME_GEMM_MAP = {
     "swiglu_fwd": ["fusion.4"],
     "swiglu_bwd": ["fusion.6", "pad_maximum_fusion"],
     "rmsnorm_fwd": ["fusion", "fusion.1", "add_rsqrt_fusion"],
+    "rmsnorm_bwd": ["fusion.1", "fusion.4", "fusion.5"],
     "add": ["add.3"],
 }
 
