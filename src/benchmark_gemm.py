@@ -47,6 +47,7 @@ M_MAX_SIZE = 50000
 LAYERS = 2
 WITH_SHARDING = True
 SEED = 0
+PEAK_FLOPS_PER_DEVICE=1153.5 # TFLOP/s for single core(device) under p_state=7
 
 def create_mesh() -> Mesh:
     """Creates a mesh."""
@@ -57,7 +58,7 @@ def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Helper function to build the metrics and metadata for the benchmark."""
-    exclude_param_keys = {"time_ms_list"}
+    exclude_param_keys = {"time_ms_list", "total_flops", "total_flops_all_devices", "peak_TFLOPS_per_device"}
     metadata = {
         key: value
         for key, value in params
@@ -66,7 +67,7 @@ def get_metrics_helper(
     return metadata
 
 def unified_flops_metrics(
-    time_ms_list: list[float], total_flops: int
+    m: int, n: int, k: int, time_ms_list: list[float], total_flops: int, total_flops_all_devices: int, peak_TFLOPS_per_device: float
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -78,31 +79,45 @@ def unified_flops_metrics(
     tflops_per_sec_list = [
         total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
     ]
+    tflops_per_sec_all_devices = [
+        total_flops_all_devices / average_time_s / 10**12 for average_time_s in average_time_s_list
+    ]
+    mfu = [
+        tflops_per_sec/peak_TFLOPS_per_device for tflops_per_sec in tflops_per_sec_list
+    ]
     average_time_ms_statistics = MetricsStatistics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
     tflops_per_sec_statistics = MetricsStatistics(
-        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec"
+        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec_pre_chip"
+    )
+    tflops_per_sec_all_devices_statistics = MetricsStatistics(
+        metrics_list=tflops_per_sec_all_devices, metrics_name="tflops_per_sec"
+    )
+    mfu_statistics=MetricsStatistics(
+        metrics_list=mfu, metrics_name="MFU"
     )
     print(
-        f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second"
+        f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, "
+        f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOP / second / chip, "
+        f"TotalThroughput (median): {tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} TFLOP / second, "
+        f"MFU: {mfu_statistics.statistics['p50']:.2%}"
     )
     print()
     # Gather the metrics to report.
     metadata.update(
         {
             "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
-            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput(median,TFLOP/s)": tflops_per_sec_statistics.statistics['p50'],
-            "Throughput(average,TFLOP/s)": tflops_per_sec_statistics.statistics['avg'],
-            "Throughput(P90,TFLOP/s)": tflops_per_sec_statistics.statistics['p90'],
+            "Throughput(median,TFLOP/s/chip)": tflops_per_sec_statistics.statistics['p50'],
+            "TotalThroughput(median,TFLOP/s)": tflops_per_sec_all_devices_statistics.statistics['p50'],
+            "MFU": mfu_statistics.statistics['p50'],
             "total_flops": total_flops,
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
     metrics.update(tflops_per_sec_statistics.serialize_statistics())
+    metrics.update(tflops_per_sec_all_devices_statistics.serialize_statistics())
+    metrics.update(mfu_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
@@ -213,9 +228,10 @@ def gemm_simple_calculate_metrics(
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops_all_devices = total_flops
     if WITH_SHARDING:
         total_flops = total_flops // jax.device_count()
-    return unified_flops_metrics(time_ms_list, total_flops)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 def gemm(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
@@ -297,9 +313,10 @@ def gemm_calculate_metrics(
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops_all_devices = total_flops
     if WITH_SHARDING:
         total_flops = total_flops // jax.device_count()
-    return unified_flops_metrics(time_ms_list, total_flops)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 
 def gemm_accum(
@@ -395,9 +412,10 @@ def gemm_accum_calculate_metrics(
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n + m * n  # Total floating-point operations
+    total_flops_all_devices = total_flops
     if WITH_SHARDING:
         total_flops = total_flops // jax.device_count()
-    return unified_flops_metrics(time_ms_list, total_flops)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 
 def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
