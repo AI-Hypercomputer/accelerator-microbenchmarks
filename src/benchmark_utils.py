@@ -17,6 +17,7 @@ import re
 from collections import defaultdict
 import subprocess
 import shutil
+from common import MARKER
 
 # The dictionary to map a JAX (collective) function to its main HLO.
 TARGET_TASK_NAME_COLLECTIVES_MAP = {
@@ -24,6 +25,10 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
     "all_gather_ici_op": r"all-gather.[0-9]+",
     "psum_ici_op": r"all-reduce.[0-9]+",
     "ppermute_ici_op": r"collective-permute.[0-9]+",
+}
+
+TARGET_TASK_NAME_GEMM_MAP = {
+    "gemm_simple": "convolution_convert_fusion",
 }
 
 def iteration_timeit_from_trace(
@@ -63,7 +68,28 @@ def iteration_timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return get_metrics_from_trace(trace, task)
+    return iteration_get_metrics_from_trace(trace, task)
+
+def iteration_get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
+    marker_done_events = []
+    if task in TARGET_TASK_NAME_GEMM_MAP:
+        target_ops = TARGET_TASK_NAME_GEMM_MAP[task]
+    for event in trace["traceEvents"]:
+        args = event.get("args", {})
+        tf_op = args.get("tf_op", "")
+        if MARKER in tf_op and event.get("name", "") == target_ops:
+            marker_done_events.append(event)
+    # print(marker_done_events)
+
+    min_pid = min([e["pid"] for e in marker_done_events])
+    events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
+    # print(events_from_min_pid)
+    durations_ms = [
+        float(e["args"]["device_duration_ps"]) / 1e9
+        for e in events_from_min_pid
+    ]
+    print("durations_ms: ", durations_ms)
+    return durations_ms
 
 def iteration_timeit(
     compute_func: Callable,
@@ -110,7 +136,7 @@ def iteration_timeit(
     print(f"[{task}] Verified global dtypes: {arg_dtypes} -> {result_dtypes}")
 
     if trace_dir is not None:
-        iteration_timeit_from_trace(compute_func, data_generator, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
+        return iteration_timeit_from_trace(compute_func, data_generator, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
 
     outcomes_ms = []
     print(f"[{task}] Running measurement loop with {tries} tries...")

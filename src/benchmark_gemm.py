@@ -137,6 +137,8 @@ def unified_gemm_metrics(
 
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
+    if WITH_SHARDING:
+        total_flops = total_flops // jax.device_count()
     average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
     tflops_per_sec_list = [
         total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
