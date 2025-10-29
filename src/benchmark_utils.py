@@ -35,6 +35,7 @@ TARGET_TASK_NAME_GEMM_MAP = {
     "transpose_quantization": ["broadcast_multiply_fusion", "abs_reduce_fusion", "fusion", "fusion.1"],
     "swiglu_fwd": ["fusion.4"],
     "swiglu_bwd": ["fusion.6", "pad_maximum_fusion"],
+    "rmsnorm_fwd": ["fusion", "fusion.1", "add_rsqrt_fusion"],
     "add": ["add.3"],
 }
 

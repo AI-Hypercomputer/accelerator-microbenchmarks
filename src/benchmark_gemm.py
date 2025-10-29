@@ -711,39 +711,59 @@ def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     For each row i of N:
     Y_i = X_i / rms(x_i)
     """
-    with jax.named_scope(MARKER):
-        f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(SEED))
+    rms_norm_module = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, param_dtype=jnp.float32, rngs=nnx.Rngs(SEED))
+    def f(x):
+        with jax.named_scope(MARKER):
+            return rms_norm_module(x)
 
     mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    if WITH_SHARDING:
+        x_sharding = NamedSharding(mesh, P("i", None))
+        out_sharding = NamedSharding(mesh, P("i", None)) # Output (m,n) is sharded on 'm'
+    else:
+        x_sharding = NamedSharding(mesh, P(None, None))
+        out_sharding = NamedSharding(mesh, P(None, None))
+    
     jit_sharded_f = jax.jit(
         shard_map(
             f,
             mesh,
-            in_specs=P("i", None),
-            out_specs=(P("i", None)),
+            in_specs=x_sharding.spec,
+            out_specs=out_sharding.spec, # Corrected: single spec, not tuple
             check_rep=False,
         )
     )
-    # Run once.
-    output = jit_sharded_f(x)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
-    print(f"rmsnorm_fwd({x.shape=}) = {output.shape=}, {x.dtype=}, {output.dtype=}")
-    time_ms_list = simple_timeit(
+
+    x_shape = (m, n)
+    x_dtype = jnp.bfloat16
+    key = jax.random.key(SEED)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1 = jax.random.split(key)
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+        x_device = jax.device_put(x_host, x_sharding)
+        return (x_device,)
+
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        x,
+        data_generator,
+        matrix_dim=f"{m}x{n}", # Using mxn as dims
         tries=num_runs,
         task="rmsnorm_fwd",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}
 
+
 def rmsnorm_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n)
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
+    total_bytes_all_devices = total_bytes
+    if WITH_SHARDING:
+        total_bytes = total_bytes // jax.device_count()
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -790,7 +810,10 @@ def rmsnorm_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n)
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
+    total_bytes_all_devices = total_bytes
+    if WITH_SHARDING:
+        total_bytes = total_bytes // jax.device_count()
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
