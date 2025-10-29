@@ -17,7 +17,6 @@ rm -rf /tmp/microbenchmarks/outputs/* && \
 cd accelerator-microbenchmarks && \
 git checkout ${BRANCH_NAME} && \
 pip install -r requirements.txt && \
-pip show jax && \
 export LIBTPU_INIT_ARGS='--xla_jf_all_to_all_shard_kib=16' && \
 python3.12 src/run_benchmark.py --config=${CONIFG}"
 
