@@ -476,7 +476,7 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", # Using mxn as dims
+        matrix_dim=f"{m}x{n}", 
         tries=num_runs,
         task="quantization",
         trace_dir=trace_dir,
@@ -544,7 +544,7 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", # Using mxn as dims
+        matrix_dim=f"{m}x{n}", 
         tries=num_runs,
         task="transpose_quantization",
         trace_dir=trace_dir,
@@ -607,7 +607,7 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", # Using mxn as dims
+        matrix_dim=f"{m}x{n}", 
         tries=num_runs,
         task="swiglu_fwd",
         trace_dir=trace_dir,
@@ -617,7 +617,7 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 def swiglu_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    total_bytes = 2 * (m * n + m * n // 2)
+    total_bytes = 2 * (2 * m * n + m * n // 2)
     total_bytes_all_devices = total_bytes
     if WITH_SHARDING:
         total_bytes = total_bytes // jax.device_count()
@@ -629,63 +629,81 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     Inverse of swiglu_fwd
     """
     def f_fwd(x):
-        with jax.named_scope(MARKER):
-            A, B = jnp.split(x, 2, axis=-1)
-            A_fp32 = A.astype(jnp.float32)
-            B_fp32 = B.astype(jnp.float32)
-            Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
-            return Y_fp32.astype(jnp.bfloat16)
+        A, B = jnp.split(x, 2, axis=-1)
+        A_fp32 = A.astype(jnp.float32)
+        B_fp32 = B.astype(jnp.float32)
+        Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
+        return Y_fp32.astype(jnp.bfloat16)
     
     def f_bwd(x: jax.Array, dy: jax.Array) -> jax.Array:
         """
         x: The original <M, N> BF16 input.
         dy: The upstream <M, N/2> BF16 gradient.
         """
+        # Get the VJP "pullback" function
+        # We ignore the forward result (_y)
+        _y, pullback_fn = jax.vjp(f_fwd, x)
         with jax.named_scope(MARKER):
-            # Get the VJP "pullback" function
-            # We ignore the forward result (_y)
-            _y, pullback_fn = jax.vjp(f_fwd, x)
-            
             # Call the pullback function with the upstream gradient
             # This IS the backward pass.
             dx = pullback_fn(dy)
-            
             # dx is returned as a tuple (one item per arg of f_fwd)
             return dx[0]
 
     mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
-    dy = jnp.arange(np.prod((m, n // 2))).reshape((m, n // 2)).astype(jnp.bfloat16)
-    dy = jax.device_put(dy, NamedSharding(mesh, P("i", None)))
+    if WITH_SHARDING:
+        x_sharding = NamedSharding(mesh, P("i", None))
+        dy_sharding = NamedSharding(mesh, P("i", None))
+        out_sharding = NamedSharding(mesh, P("i", None)) # Output dx has same sharding as x
+    else:
+        x_sharding = NamedSharding(mesh, P(None, None))
+        dy_sharding = NamedSharding(mesh, P(None, None))
+        out_sharding = NamedSharding(mesh, P(None, None))
     jit_sharded_f = jax.jit(
         shard_map(
             f_bwd,
             mesh,
-            in_specs=(P("i", None), P("i", None)),
-            out_specs=(P("i", None)),
+            in_specs=(x_sharding.spec, dy_sharding.spec),
+            out_specs=out_sharding.spec,
             check_rep=False,
         )
     )
-    # Run once.
-    output = jit_sharded_f(x, dy)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
-    print(f"swiglu_bwd({x.shape=}, {dy.shape=}) = {output.shape=}, {x.dtype=}, {dy.dtype=}, {output.dtype=}")
-    time_ms_list = simple_timeit(
+
+    x_shape = (m, n)
+    dy_shape = (m, n // 2)
+    x_dtype = jnp.bfloat16
+    dy_dtype = jnp.bfloat16
+    
+    key = jax.random.key(SEED)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1, k2 = jax.random.split(key, 3)
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+        dy_host = jax.random.normal(k2, dy_shape).astype(dy_dtype)
+        x_device = jax.device_put(x_host, x_sharding)
+        dy_device = jax.device_put(dy_host, dy_sharding)
+        return (x_device, dy_device)
+
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        x,
-        dy,
+        data_generator,
+        matrix_dim=f"{m}x{n}",
         tries=num_runs,
         task="swiglu_bwd",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}
 
+
 def swiglu_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n // 2)
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
+    total_bytes_all_devices = total_bytes
+    if WITH_SHARDING:
+        total_bytes = total_bytes // jax.device_count()
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -825,7 +843,7 @@ def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", # Using mxn as dims
+        matrix_dim=f"{m}x{n}", 
         tries=num_runs,
         task="add",
         trace_dir=trace_dir,
