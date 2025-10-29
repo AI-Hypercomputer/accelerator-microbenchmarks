@@ -19,6 +19,7 @@ import numpy as np
 from qwix import pallas as qpl
 from flax import nnx
 from common import MARKER
+from enum import Enum, auto
 
 # pylint: disable=g-importing-member
 # Set the environment variable for TPU initialization arguments to optimize
@@ -37,6 +38,14 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
     # "--xla_tpu_should_accumulate_into_mrb=true" # Unknown XLA Flag
 )
+class ShardingStrategy(Enum):
+    """Defines different sharding strategies for tensors."""
+    NO_SHARDING = auto()
+    SHARDING_ON_ALL_DEVICES_WITH_M = auto()
+    SHARDING_ON_SINGLE_CHIP_WITH_M = auto() # Only sharding on the two core of one single chip
+    SHARDING_ON_ALL_DEVICES_WITH_N = auto()
+    SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
+
 TRACE_BASE_DIR = None
 METRICS_JSONL_DIR = None
 # Matmul shapes: A(M,K) x B(K,N) = C(M,N)
@@ -47,12 +56,87 @@ M_MAX_SIZE = 50000
 # Matmul shapes: A(M,K) x H1(K,K)... x B(K,N) = C(M,N)
 LAYERS = 2
 WITH_SHARDING = True
+
+SHARDING_STRATEGY=ShardingStrategy.NO_SHARDING
 SEED = 0
 PEAK_FLOPS_PER_DEVICE=1153.5 # TFLOP/s for single core(device) under p_state=7
 
+def get_lhs_named_shading(mesh):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return NamedSharding(mesh, P(None, None))
+
+def get_rhs_named_shading(mesh):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+
+def get_out_sharding():
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return P(None, None)
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return P("device", None)
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return P("device", None)
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return P(None, "device")
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return P(None, "device")
+
+def handle_per_device_based_on_sharding(value):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return value
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return value // jax.device_count()
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return value // 2
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return value // jax.device_count()
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return value // 2
+
+def handle_all_devices_based_on_sharding(value):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return value * jax.device_count()
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return value
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return value * jax.device_count() // 2
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return value
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return value * jax.device_count() // 2
+
 def create_mesh() -> Mesh:
     """Creates a mesh."""
-    mesh = Mesh(np.array(jax.devices()), axis_names="i")
+    if SHARDING_STRATEGY == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M or SHARDING_STRATEGY == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+        num_devices = jax.device_count()
+        assert num_devices % 2 == 0, "Total devices must be divisible by 2 (chip size)"
+        num_chips = num_devices // 2
+        mesh_shape = (num_chips, 2)
+        mesh_axes = ('chip', 'device')
+        mesh = jax.sharding.Mesh(np.array(jax.devices()).reshape(mesh_shape), mesh_axes)
+    else:
+        mesh = Mesh(np.array(jax.devices()), axis_names="device")
     return mesh
 
 def get_metrics_helper(
@@ -179,13 +263,9 @@ def gemm_simple(
             return acc.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    rhs_sharding = NamedSharding(mesh, P(None, None))
-    if WITH_SHARDING:
-        lhs_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        lhs_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
+    lhs_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    out_sharding = get_out_sharding()        
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -236,8 +316,8 @@ def gemm_simple_calculate_metrics(
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
     total_flops_all_devices = total_flops
-    if WITH_SHARDING:
-        total_flops = total_flops // jax.device_count()
+    total_flops = handle_per_device_based_on_sharding(total_flops)
+    total_flops_all_devices = handle_all_devices_based_on_sharding(total_flops_all_devices)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 def gemm(
