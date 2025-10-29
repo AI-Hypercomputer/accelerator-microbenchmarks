@@ -1,0 +1,8 @@
+benchmarks:
+- benchmark_name: "gemm_bf16_simple"
+  trace_dir: "../microbenchmarks/gemm_bf16_simple"
+  csv_path: "../microbenchmarks/gemm_bf16_simple"
+  xlml_metrics_dir: "../microbenchmarks/gemm_bf16_simple"
+  num_runs: 1000
+  benchmark_sweep_params:
+  - {m: {start: 1, end: 65536, multiplier: 2}, k: {start: 1, end: 65536, multiplier: 2}, n: {start: 1, end: 65536, multiplier: 2}}

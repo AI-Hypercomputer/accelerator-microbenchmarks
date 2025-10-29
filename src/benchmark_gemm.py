@@ -240,6 +240,80 @@ def gemm_simple_calculate_metrics(
         total_flops = total_flops // jax.device_count()
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
+def gemm_bf16_simple(
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+) -> Dict[str, Any]:
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:BF16 x IN1<K, N>:BF16. Accumulation is FP32."""
+
+    def f(x, y):
+        with jax.named_scope(MARKER):
+            # Keep accumulation in F)32 for precision
+            acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
+            # Output is BF16
+            return acc.astype(jnp.bfloat16)
+
+    mesh = create_mesh()
+    rhs_sharding = NamedSharding(mesh, P(None, None))
+    if WITH_SHARDING:
+        lhs_sharding = NamedSharding(mesh, P("i", None))
+        out_sharding = P("i", None)
+    else:
+        lhs_sharding = NamedSharding(mesh, P(None, None))
+        out_sharding = P(None, None)
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(lhs_sharding.spec, rhs_sharding.spec),
+            out_specs=out_sharding,
+            check_rep=False,
+        )
+    )
+
+    lhs_shape = (m, k)
+    rhs_shape = (k, n)
+    lhs_dtype = jnp.bfloat16
+    rhs_dtype = jnp.bfloat16
+
+    key = jax.random.key(SEED)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, key_lhs, key_rhs = jax.random.split(key, 3)
+
+        # Create random data on host
+        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+
+        # Put on device (HBM)
+        lhs_device = jax.device_put(lhs_host, lhs_sharding)
+        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+
+        return (lhs_device, rhs_device)
+
+    # Run the benchmark
+    time_ms_list = iteration_timeit(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
+        tries=num_runs,
+        task="gemm_bf16_simple",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def gemm_bf16_simple_calculate_metrics(
+    m: int, k: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    # Calculate FLOPs
+    total_flops = (2 * m * k * n) - (m * n)  # Total floating-point operations
+    total_flops_all_devices = total_flops
+    if WITH_SHARDING:
+        total_flops = total_flops // jax.device_count()
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
+
 def gemm(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
