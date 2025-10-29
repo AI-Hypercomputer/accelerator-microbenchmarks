@@ -31,14 +31,14 @@ benchmarks:
 #   num_runs: 100
 #   benchmark_sweep_params:
 #   - {m: 16384, n: 16384}
-- benchmark_name: "transpose_quantization"
-  trace_dir: "../microbenchmarks/transpose_quantization"
-  csv_path: "../microbenchmarks/transpose_quantization"
-  xlml_metrics_dir: "../microbenchmarks/transpose_quantization"
-  xla_dump_dir: "../microbenchmarks/transpose_quantization/hlo_graphs"
-  num_runs: 100
-  benchmark_sweep_params:
-  - {m: 16384, n: 16384}
+# - benchmark_name: "transpose_quantization"
+#   trace_dir: "../microbenchmarks/transpose_quantization"
+#   csv_path: "../microbenchmarks/transpose_quantization"
+#   xlml_metrics_dir: "../microbenchmarks/transpose_quantization"
+#   xla_dump_dir: "../microbenchmarks/transpose_quantization/hlo_graphs"
+#   num_runs: 100
+#   benchmark_sweep_params:
+#   - {m: 16384, n: 16384}
 # - benchmark_name: "swiglu_fwd"
 #   trace_dir: "../microbenchmarks/swiglu_fwd"
 #   csv_path: "../microbenchmarks/swiglu_fwd"
@@ -71,11 +71,11 @@ benchmarks:
 #   num_runs: 100
 #   benchmark_sweep_params:
 #   - {m: 4096, n: 16384}
-# - benchmark_name: "add"
-#   trace_dir: "../microbenchmarks/add"
-#   csv_path: "../microbenchmarks/add"
-#   xlml_metrics_dir: "../microbenchmarks/add"
-#   xla_dump_dir: "../microbenchmarks/add/hlo_graphs"
-#   num_runs: 100
-#   benchmark_sweep_params:
-#   - {m: 4096, n: 16384}
+- benchmark_name: "add"
+  trace_dir: "../microbenchmarks/add"
+  csv_path: "../microbenchmarks/add"
+  xlml_metrics_dir: "../microbenchmarks/add"
+  xla_dump_dir: "../microbenchmarks/add/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 4096, n: 16384}

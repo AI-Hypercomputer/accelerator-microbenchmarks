@@ -380,7 +380,7 @@ def gemm_accum(
     sf1_dtype = jnp.float32
     out_buffer_dtype = jnp.float32
     
-    key = jax.random.key(0)
+    key = jax.random.key(SEED)
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
@@ -460,7 +460,7 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     x_shape = (m, n)
     x_dtype = jnp.bfloat16
     
-    key = jax.random.key(0)
+    key = jax.random.key(SEED)
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
@@ -528,7 +528,7 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
     x_shape = (m, n)
     x_dtype = jnp.bfloat16
     
-    key = jax.random.key(0)
+    key = jax.random.key(SEED)
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
@@ -678,7 +678,7 @@ def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     Y_i = X_i / rms(x_i)
     """
     with jax.named_scope(MARKER):
-        f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
+        f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(SEED))
 
     mesh = create_mesh()
     x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
@@ -719,7 +719,7 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     mesh = create_mesh()
     x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
     x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
-    f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
+    f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(SEED))
     # We need a scalar loss function to differentiate.
     # We sum the output and cast to f32 for stable gradients.
     def loss_fn(module: nnx.RMSNorm, x_input: jax.Array):
@@ -769,27 +769,47 @@ def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 
 
     mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
-    y = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    y = jax.device_put(y, NamedSharding(mesh, P("i", None)))
+    if WITH_SHARDING:
+        x_sharding = NamedSharding(mesh, P("i", None))
+        y_sharding = NamedSharding(mesh, P("i", None))
+        out_sharding = P("i", None)
+    else:
+        x_sharding = NamedSharding(mesh, P(None, None))
+        y_sharding = NamedSharding(mesh, P(None, None))
+        out_sharding = P(None, None)
     jit_sharded_f = jax.jit(
         shard_map(
             f,
             mesh,
-            in_specs=(P("i", None), P("i", None)),
-            out_specs=(P("i", None)),
+            in_specs=(x_sharding.spec, y_sharding.spec),
+            out_specs=out_sharding,
             check_rep=False,
         )
     )
-    # Run once.
-    output = jit_sharded_f(x, y)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
-    print(f"add({x.shape=}, {y.shape=}) = {output.shape=}, {x.dtype=}, {y.dtype=}, {output.dtype=}")
-    time_ms_list = simple_timeit(
+    x_shape = (m, n)
+    y_shape = (m, n)
+    x_dtype = jnp.bfloat16
+    y_dtype = jnp.bfloat16
+    
+    key = jax.random.key(SEED)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1, k2 = jax.random.split(key, 3)
+        
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+        y_host = jax.random.normal(k2, y_shape).astype(y_dtype)
+
+        x_device = jax.device_put(x_host, x_sharding)
+        y_device = jax.device_put(y_host, y_sharding)
+        
+        return (x_device, y_device)
+
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        x,
-        y,
+        data_generator,
+        matrix_dim=f"{m}x{n}", # Using mxn as dims
         tries=num_runs,
         task="add",
         trace_dir=trace_dir,
@@ -800,4 +820,7 @@ def add_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 6 * m * n
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
+    total_bytes_all_device = total_bytes
+    if WITH_SHARDING:
+        total_bytes = total_bytes // jax.device_count()
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_device)
