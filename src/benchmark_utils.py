@@ -31,7 +31,8 @@ TARGET_TASK_NAME_GEMM_MAP = {
     "gemm_simple": ["convolution_convert_fusion"],
     "gemm": ["multiply_convert_fusion"],
     "gemm_accum": ["multiply_add_fusion"],
-    "quantization": ["broadcast_multiply_fusion", "abs_reduce_fusion", "fusion", "clamp_convert_fusion"]
+    "quantization": ["broadcast_multiply_fusion", "abs_reduce_fusion", "fusion", "clamp_convert_fusion"],
+    "transpose_quantization": ["broadcast_multiply_fusion", "abs_reduce_fusion", "fusion", "fusion.1"],
 }
 
 def iteration_timeit_from_trace(

@@ -506,27 +506,47 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    if WITH_SHARDING:
+        x_sharding = NamedSharding(mesh, P("i", None))
+        out_qvalue_sharding = NamedSharding(mesh, P("i", None)) # (m, n) sharded on 'm'
+        out_scale_sharding = NamedSharding(mesh, P("i",))
+    else:
+        x_sharding = NamedSharding(mesh, P(None, None))
+        out_qvalue_sharding = NamedSharding(mesh, P(None, None))
+        out_scale_sharding = NamedSharding(mesh, P(None,))
+    
     jit_sharded_f = jax.jit(
         shard_map(
             f,
             mesh,
-            in_specs=P("i", None),
-            out_specs=(P(), P()),
+            in_specs=x_sharding.spec,
+            out_specs=(out_qvalue_sharding.spec, out_scale_sharding.spec),
             check_rep=False,
         )
     )
-    # Run once.
-    output, scale = jit_sharded_f(x)
-    jax.block_until_ready((output, scale))  # Ensure full completion before printing metrics
-    print(f"qwix({x.shape=}) = {output.shape=} x {scale.shape=}, {x.dtype=}, {output.dtype=}, {scale.dtype=}")
-    # Run the benchmark
-    time_ms_list = simple_timeit(
+
+    x_shape = (m, n)
+    x_dtype = jnp.bfloat16
+    
+    key = jax.random.key(0)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1 = jax.random.split(key)
+        
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+
+        x_device = jax.device_put(x_host, x_sharding)
+        
+        return (x_device,)
+
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        x,
+        data_generator,
+        matrix_dim=f"{m}x{n}", # Using mxn as dims
         tries=num_runs,
-        task="quantization",
+        task="transpose_quantization",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}
@@ -535,7 +555,10 @@ def transpose_quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
+    total_bytes_all_devices = total_bytes
+    if WITH_SHARDING:
+        total_bytes = total_bytes // jax.device_count()
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
