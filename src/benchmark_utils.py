@@ -28,9 +28,10 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
 }
 
 TARGET_TASK_NAME_GEMM_MAP = {
-    "gemm_simple": "convolution_convert_fusion",
-    "gemm": "multiply_convert_fusion",
-    "gemm_accum": "multiply_add_fusion",
+    "gemm_simple": ["convolution_convert_fusion"],
+    "gemm": ["multiply_convert_fusion"],
+    "gemm_accum": ["multiply_add_fusion"],
+    "quantization": ["abs_reduce_fusion", "abs_reduce_fusion", "fusion", "clamp_convert_fusion"]
 }
 
 def iteration_timeit_from_trace(
@@ -81,16 +82,22 @@ def iteration_get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[f
     for event in trace["traceEvents"]:
         args = event.get("args", {})
         tf_op = args.get("tf_op", "")
-        if MARKER in tf_op and event.get("name", "") == target_ops:
-            marker_done_events.append(event)
+        marker_done_event = []
+        if MARKER in tf_op and event.get("name", "") in target_ops:
+            marker_done_event.append(event)
+        if len(marker_done_event):
+            marker_done_events.append(marker_done_event)
     # print(marker_done_events)
 
-    min_pid = min([e["pid"] for e in marker_done_events])
-    events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
+    min_pid = min(e["pid"] for sublist in marker_done_events if sublist for e in sublist)
+    events_from_min_pid = [
+        sublist for sublist in marker_done_events
+        if sublist and sublist[0]["pid"] == min_pid
+    ]
     # print(events_from_min_pid)
     durations_ms = [
-        float(e["args"]["device_duration_ps"]) / 1e9
-        for e in events_from_min_pid
+        sum(float(e["args"]["device_duration_ps"]) / 1e9 for e in sublist)
+        for sublist in events_from_min_pid
     ]
     print("durations_ms: ", durations_ms)
     return durations_ms
@@ -130,7 +137,7 @@ def iteration_timeit(
 
     arg_shapes = [arg.shape for arg in data_args]
     arg_dtypes = [arg.dtype for arg in data_args]
-    if isinstance(result, list):
+    if isinstance(result, list) or isinstance(result, tuple):
         result_shapes = [r.shape for r in result]
         result_dtypes = [r.dtype for r in result]
     else:

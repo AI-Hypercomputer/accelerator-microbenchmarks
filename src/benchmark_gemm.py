@@ -34,6 +34,7 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_dvfs_p_state=7 "
+    # "--xla_tpu_vmem_scavenging_mode=NONE "
     # "--xla_tpu_should_accumulate_into_mrb=true" # Unknown XLA Flag
 )
 TRACE_BASE_DIR = None
@@ -58,7 +59,7 @@ def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Helper function to build the metrics and metadata for the benchmark."""
-    exclude_param_keys = {"time_ms_list", "total_flops", "total_flops_all_devices", "peak_TFLOPS_per_device"}
+    exclude_param_keys = {"time_ms_list", "total_flops", "total_flops_all_devices", "peak_TFLOPS_per_device", "total_bytes"}
     metadata = {
         key: value
         for key, value in params
@@ -89,7 +90,7 @@ def unified_flops_metrics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
     tflops_per_sec_statistics = MetricsStatistics(
-        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec_pre_chip"
+        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec_pre_device"
     )
     tflops_per_sec_all_devices_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_all_devices, metrics_name="tflops_per_sec"
@@ -99,7 +100,7 @@ def unified_flops_metrics(
     )
     print(
         f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, "
-        f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOP / second / chip, "
+        f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOP / second / device, "
         f"TotalThroughput (median): {tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} TFLOP / second, "
         f"MFU: {mfu_statistics.statistics['p50']:.2%}"
     )
@@ -108,7 +109,7 @@ def unified_flops_metrics(
     metadata.update(
         {
             "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "Throughput(median,TFLOP/s/chip)": tflops_per_sec_statistics.statistics['p50'],
+            "Throughput(median,TFLOP/s/device)": tflops_per_sec_statistics.statistics['p50'],
             "TotalThroughput(median,TFLOP/s)": tflops_per_sec_all_devices_statistics.statistics['p50'],
             "MFU": mfu_statistics.statistics['p50'],
             "total_flops": total_flops,
@@ -121,8 +122,8 @@ def unified_flops_metrics(
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
-def unified_bytes_metrics(
-    time_ms_list: list[float], total_bytes: int
+def unified_bytes_metrics( 
+    m: int, n: int, time_ms_list: list[float], total_bytes: int, total_bytes_all_devices: int=1e9
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -134,30 +135,36 @@ def unified_bytes_metrics(
     gigabytes_per_sec_list = [
         total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
     ]
+    digabytes_per_sec_all_devices = [
+        total_bytes_all_devices / average_time_s / 10**9 for average_time_s in average_time_s_list
+    ]
     average_time_ms_statistics = MetricsStatistics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
     gigabytes_per_sec_statistics = MetricsStatistics(
-        metrics_list=gigabytes_per_sec_list, metrics_name="tflops_per_sec"
+        metrics_list=gigabytes_per_sec_list, metrics_name="bytes_per_sec_per_device"
+    )
+    gigabytes_per_sec_all_devices_statistics = MetricsStatistics(
+        metrics_list=digabytes_per_sec_all_devices, metrics_name="tflops_per_sec"
     )
     print(
-        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Performance (median):"
-        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second"
+        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Throughput (median):"
+        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second / device,"
+        f" TotalThroughput (median): {gigabytes_per_sec_all_devices_statistics.statistics['p50']:.2f} GBytes / second"
     )
     print()
     # Gather the metrics to report.
     metadata.update(
         {
             "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "StepTime(average,ms)": average_time_ms_statistics.statistics['avg'],
-            "StepTime(P90,ms)": average_time_ms_statistics.statistics['p90'],
-            "Throughput(median,GBytes/s)": gigabytes_per_sec_statistics.statistics['p50'],
-            "Throughput(average,GBytes/s)": gigabytes_per_sec_statistics.statistics['avg'],
-            "Throughput(P90,GBytes/s)": gigabytes_per_sec_statistics.statistics['p90'],
+            "Throughput(median,GBytes/s/device)": gigabytes_per_sec_statistics.statistics['p50'],
+            "TotalThroughput(median,GBytes/s)": gigabytes_per_sec_all_devices_statistics.statistics['p50'],
             "total_bytes": total_bytes,
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
+    metrics.update(gigabytes_per_sec_statistics.serialize_statistics())
+    metrics.update(gigabytes_per_sec_all_devices_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
@@ -431,25 +438,45 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    if WITH_SHARDING:
+        x_sharding = NamedSharding(mesh, P("i", None))
+        out_qvalue_sharding = NamedSharding(mesh, P("i", None)) # (m, n) sharded on 'm'
+        out_scale_sharding = NamedSharding(mesh, P("i",))
+    else:
+        x_sharding = NamedSharding(mesh, P(None, None))
+        out_qvalue_sharding = NamedSharding(mesh, P(None, None))
+        out_scale_sharding = NamedSharding(mesh, P(None,))
+    
     jit_sharded_f = jax.jit(
         shard_map(
             f,
             mesh,
-            in_specs=P("i", None),
-            out_specs=(P("i", None), P("i", None)),
+            in_specs=x_sharding.spec,
+            out_specs=(out_qvalue_sharding.spec, out_scale_sharding.spec),
             check_rep=False,
         )
     )
-    # Run once.
-    output, scale = jit_sharded_f(x)
-    jax.block_until_ready((output, scale))  # Ensure full completion before printing metrics
-    print(f"qwix({x.shape=}) = {output.shape=} x {scale.shape=}, {x.dtype=}, {output.dtype=}, {scale.dtype=}")
-    # Run the benchmark
-    time_ms_list = simple_timeit(
+
+    x_shape = (m, n)
+    x_dtype = jnp.bfloat16
+    
+    key = jax.random.key(0)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1 = jax.random.split(key)
+        
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+
+        x_device = jax.device_put(x_host, x_sharding)
+        
+        return (x_device,)
+
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        x,
+        data_generator,
+        matrix_dim=f"{m}x{n}", # Using mxn as dims
         tries=num_runs,
         task="quantization",
         trace_dir=trace_dir,
@@ -460,7 +487,10 @@ def quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
-    return unified_bytes_metrics(time_ms_list, total_bytes)
+    total_bytes_all_devices = total_bytes
+    if WITH_SHARDING:
+        total_bytes = total_bytes // jax.device_count()
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -505,7 +535,7 @@ def transpose_quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
-    return unified_bytes_metrics(time_ms_list, total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
 
 def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -551,7 +581,7 @@ def swiglu_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (m * n + m * n // 2)
-    return unified_bytes_metrics(time_ms_list, total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
 
 
 def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -616,7 +646,7 @@ def swiglu_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n // 2)
-    return unified_bytes_metrics(time_ms_list, total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
 
 def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -656,7 +686,7 @@ def rmsnorm_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n)
-    return unified_bytes_metrics(time_ms_list, total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
 
 def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -703,7 +733,7 @@ def rmsnorm_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n)
-    return unified_bytes_metrics(time_ms_list, total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
 
 def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -747,4 +777,4 @@ def add_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 6 * m * n
-    return unified_bytes_metrics(time_ms_list, total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
