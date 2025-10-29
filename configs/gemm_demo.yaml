@@ -79,3 +79,19 @@ benchmarks:
   num_runs: 100
   benchmark_sweep_params:
   - {m: 4096, n: 16384}
+- benchmark_name: "gemm_fp8_rowwise"
+  trace_dir: "../microbenchmarks/gemm_fp8_rowwise"
+  csv_path: "../microbenchmarks/gemm_fp8_rowwise"
+  xlml_metrics_dir: "../microbenchmarks/gemm_fp8_rowwise"
+  xla_dump_dir: "../microbenchmarks/gemm_fp8_rowwise/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 4096}
+- benchmark_name: "gemm_fp8_b128_fp32"
+  trace_dir: "../microbenchmarks/gemm_fp8_b128_fp32"
+  csv_path: "../microbenchmarks/gemm_fp8_b128_fp32"
+  xlml_metrics_dir: "../microbenchmarks/gemm_fp8_b128_fp32"
+  xla_dump_dir: "../microbenchmarks/gemm_fp8_b128_fp32/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 4096}
