@@ -29,6 +29,7 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
 
 TARGET_TASK_NAME_GEMM_MAP = {
     "gemm_simple": "convolution_convert_fusion",
+    "gemm": "multiply_convert_fusion",
 }
 
 def iteration_timeit_from_trace(
@@ -74,6 +75,8 @@ def iteration_get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[f
     marker_done_events = []
     if task in TARGET_TASK_NAME_GEMM_MAP:
         target_ops = TARGET_TASK_NAME_GEMM_MAP[task]
+    else:
+        assert False, f"Wrong task: {task}"
     for event in trace["traceEvents"]:
         args = event.get("args", {})
         tf_op = args.get("tf_op", "")
