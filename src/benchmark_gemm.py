@@ -59,7 +59,7 @@ def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Helper function to build the metrics and metadata for the benchmark."""
-    exclude_param_keys = {"time_ms_list", "total_flops", "total_flops_all_devices", "peak_TFLOPS_per_device", "total_bytes"}
+    exclude_param_keys = {"time_ms_list", "total_flops", "total_flops_all_devices", "peak_TFLOPS_per_device", "total_bytes", "total_bytes_all_devices"}
     metadata = {
         key: value
         for key, value in params
