@@ -142,10 +142,10 @@ def unified_bytes_metrics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
     gigabytes_per_sec_statistics = MetricsStatistics(
-        metrics_list=gigabytes_per_sec_list, metrics_name="bytes_per_sec_per_device"
+        metrics_list=gigabytes_per_sec_list, metrics_name="Gbytes_per_sec_per_device"
     )
     gigabytes_per_sec_all_devices_statistics = MetricsStatistics(
-        metrics_list=digabytes_per_sec_all_devices, metrics_name="tflops_per_sec"
+        metrics_list=digabytes_per_sec_all_devices, metrics_name="Gbytes_per_sec"
     )
     print(
         f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Throughput (median):"
@@ -574,26 +574,40 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
             Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
             return Y_fp32.astype(jnp.bfloat16)
 
-
     mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    if WITH_SHARDING:
+        x_sharding = NamedSharding(mesh, P("i", None))
+        # Output shape is (m, n/2), so sharding is also on the 'm' dim
+        out_sharding = NamedSharding(mesh, P("i", None)) 
+    else:
+        x_sharding = NamedSharding(mesh, P(None, None))
+        out_sharding = NamedSharding(mesh, P(None, None))
     jit_sharded_f = jax.jit(
         shard_map(
             f,
             mesh,
-            in_specs=P("i", None),
-            out_specs=(P("i", None)),
+            in_specs=x_sharding.spec,
+            out_specs=out_sharding.spec,
             check_rep=False,
         )
     )
-    # Run once.
-    output = jit_sharded_f(x)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
-    print(f"swiglu_fwd({x.shape=}) = {output.shape=}, {x.dtype=}, {output.dtype=}")
-    time_ms_list = simple_timeit(
+
+    x_shape = (m, n)
+    x_dtype = jnp.bfloat16
+
+    key = jax.random.key(SEED)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1 = jax.random.split(key)
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+        x_device = jax.device_put(x_host, x_sharding)
+        return (x_device,)
+    
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        x,
+        data_generator,
+        matrix_dim=f"{m}x{n}", # Using mxn as dims
         tries=num_runs,
         task="swiglu_fwd",
         trace_dir=trace_dir,
@@ -604,8 +618,10 @@ def swiglu_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (m * n + m * n // 2)
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
-
+    total_bytes_all_devices = total_bytes
+    if WITH_SHARDING:
+        total_bytes = total_bytes // jax.device_count()
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
