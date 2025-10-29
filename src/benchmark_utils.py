@@ -30,6 +30,7 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
 TARGET_TASK_NAME_GEMM_MAP = {
     "gemm_simple": "convolution_convert_fusion",
     "gemm": "multiply_convert_fusion",
+    "gemm_accum": "multiply_add_fusion",
 }
 
 def iteration_timeit_from_trace(

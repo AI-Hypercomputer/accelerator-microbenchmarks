@@ -314,52 +314,89 @@ def gemm_accum(
             return out_buffer + result_fp32
 
     mesh = create_mesh()
-    lhs = jnp.arange(np.prod((m, k))).reshape((m, k)).astype(jnp.float8_e4m3fn)
-    rhs = jnp.arange(np.prod((k, n))).reshape((k, n)).astype(jnp.float8_e4m3fn)
-    sf0 = jnp.arange(m).reshape((m, 1)).astype(jnp.float32)
-    sf1 = jnp.arange(n).reshape((1, n)).astype(jnp.float32)
-    out_buffer = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.float32)
-    # lhs(m,k): sharded across devices. rhs(k,n): replicated on devices.
-    # output(m,n): replicated on devices.
-    lhs = jax.device_put(lhs, NamedSharding(mesh, P("i", None)))
-    rhs = jax.device_put(rhs, NamedSharding(mesh, P(None, None)))
-    sf0 = jax.device_put(sf0, NamedSharding(mesh, P("i", None)))
-    sf1 = jax.device_put(sf1, NamedSharding(mesh, P(None, None)))
-    out_buffer = jax.device_put(out_buffer, NamedSharding(mesh, P("i", None)))
+
+    rhs_sharding = NamedSharding(mesh, P(None, None))
+    sf1_sharding = NamedSharding(mesh, P(None, None))
+
+    if WITH_SHARDING:
+        lhs_sharding = NamedSharding(mesh, P("i", None))
+        sf0_sharding = NamedSharding(mesh, P("i", None))
+        out_buffer_sharding = NamedSharding(mesh, P("i", None))
+        out_sharding = P("i", None)
+    else:
+        lhs_sharding = NamedSharding(mesh, P(None, None))
+        sf0_sharding = NamedSharding(mesh, P(None, None))
+        out_buffer_sharding = NamedSharding(mesh, P(None, None))
+        out_sharding = P(None, None)
     jit_sharded_f = jax.jit(
         shard_map(
             f,
             mesh,
-            in_specs=(P("i", None), P("i", None), P(), P("i", None), P()),
-            out_specs=P(),
+            in_specs=(
+                out_buffer_sharding.spec, 
+                lhs_sharding.spec, 
+                rhs_sharding.spec, 
+                sf0_sharding.spec, 
+                sf1_sharding.spec
+            ),
+            out_specs=out_sharding,
             check_rep=False,
         )
     )
-    # Run once.
-    output = jit_sharded_f(out_buffer, lhs, rhs, sf0, sf1)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
-    print(f"Inputs: {lhs.shape=}, {rhs.shape=}, {sf0.shape=}, {sf1.shape=}")
-    print(f"Buffers: {out_buffer.shape=}, {output.shape=}")
-    print(f"Dtypes: {lhs.dtype=}, {out_buffer.dtype=}, {output.dtype=}")
-    # Run the benchmark
-    time_ms_list = simple_timeit(
+    
+    lhs_shape = (m, k)
+    rhs_shape = (k, n)
+    sf0_shape = (m, 1)
+    sf1_shape = (1, n)
+    out_buffer_shape = (m, n)
+    
+    lhs_dtype = jnp.float8_e4m3fn
+    rhs_dtype = jnp.float8_e4m3fn
+    sf0_dtype = jnp.float32
+    sf1_dtype = jnp.float32
+    out_buffer_dtype = jnp.float32
+    
+    key = jax.random.key(0)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k_buf, k1, k2, k3, k4 = jax.random.split(key, 6)
+        
+        # Create random data on host
+        out_buffer_host = jax.random.normal(k_buf, out_buffer_shape).astype(out_buffer_dtype)
+        lhs_host = jax.random.normal(k1, lhs_shape).astype(lhs_dtype)
+        rhs_host = jax.random.normal(k2, rhs_shape).astype(rhs_dtype)
+        sf0_host = jax.random.normal(k3, sf0_shape).astype(sf0_dtype)
+        sf1_host = jax.random.normal(k4, sf1_shape).astype(sf1_dtype)
+        
+        # Put on device (HBM)
+        out_buffer_device = jax.device_put(out_buffer_host, out_buffer_sharding)
+        lhs_device = jax.device_put(lhs_host, lhs_sharding)
+        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+        sf0_device = jax.device_put(sf0_host, sf0_sharding)
+        sf1_device = jax.device_put(sf1_host, sf1_sharding)
+        
+        return (out_buffer_device, lhs_device, rhs_device, sf0_device, sf1_device)
+
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        out_buffer,
-        lhs,
-        rhs,
-        sf0,
-        sf1,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
         tries=num_runs,
         task="gemm_accum",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}
 
+
 def gemm_accum_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n + m * n  # Total floating-point operations
+    if WITH_SHARDING:
+        total_flops = total_flops // jax.device_count()
     return unified_flops_metrics(time_ms_list, total_flops)
 
 
