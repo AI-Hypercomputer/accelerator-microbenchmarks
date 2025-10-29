@@ -19,6 +19,14 @@ import shutil
 import time
 from jax.experimental import multihost_utils
 
+TARGET_TASK_NAME_COLLECTIVES_MAP = {
+    "all_to_all_ici_op": r"all_to_all.[0-9]+",
+    "all_gather_ici_op": r"all-gather.[0-9]+",
+    "psum_ici_op": r"all-reduce.[0-9]+",
+    "ppermute_ici_op": r"collective-permute.[0-9]+",
+}
+
+TIME_PROXIMITY_THRESHOLD_US = 0.1
 
 def simple_timeit(f, *args, matrix_dim=None, warmup_tries = 10, tries=10, task=None, trace_dir=None) -> list[float]:
     """Simple utility to time a function for multiple runs."""
@@ -82,7 +90,7 @@ def get_trace(log_dir: str) -> dict[str, Any]:
     return trace
 
 
-def get_metrics_from_trace(trace: dict[str, Any], task: str) -> float:
+def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
     event_matcher = re.compile(task)
     if "traceEvents" not in trace:
         raise KeyError("Key 'traceEvents' not found in trace.")
@@ -101,6 +109,51 @@ def get_metrics_from_trace(trace: dict[str, Any], task: str) -> float:
         print("KeyError: Key 'dur' not found in the event object")
         raise
     return durations_ms
+
+
+def get_metrics_from_trace_tpu(trace: dict[str, Any], task: str) -> list[float]:
+    event_matcher = re.compile(task)
+
+    if "traceEvents" not in trace:
+        raise KeyError("Key 'traceEvents' not found in trace.")
+    
+    events = []
+    for e in trace["traceEvents"]:
+        if "name" in e and event_matcher.match(e["name"]):
+            events.append(e)
+    
+    if not events:
+        raise Exception("No events found")
+    
+    # For each trace, find the TPU with smallest `pid` value and consider it to be TPU-0
+    min_pid = min([e["pid"] for e in events])
+    events_min_pid = [e for e in events if e["pid"] == min_pid]
+    
+    # Consolidate the events that are close enough in time. In some cases for
+    # AllToAll, it could be split into a few back-to-back all-to-all ops.
+    sorted_events = sorted(events_min_pid, key=lambda x: x["ts"])
+    merged_durations_us = []
+    current_group_start_time = sorted_events[0]["ts"]
+    current_group_duration = sorted_events[0]["dur"]
+    current_group_timestamp_end = current_group_start_time + current_group_duration
+
+    for e in sorted_events[1:]:
+        current_timestamp = e["ts"]
+        current_duration = e["dur"]
+        
+        time_diff = current_timestamp - current_group_timestamp_end
+        if time_diff < TIME_PROXIMITY_THRESHOLD_US:
+            current_group_duration += current_duration
+            current_group_timestamp_end = current_timestamp + current_duration
+        else:
+            merged_durations_us.append(current_group_duration)
+            current_group_start_time = current_timestamp
+            current_group_duration = current_duration
+            current_group_timestamp_end = current_group_start_time + current_group_duration
+
+    merged_durations_us.append(current_group_duration)
+    merged_durations_ms = [t/1e3 for t in merged_durations_us]
+    return merged_durations_ms
 
 
 def is_local_directory_path(dir: str) -> bool:
@@ -152,6 +205,10 @@ def timeit_from_trace(f, *args, matrix_dim=None, warmup_tries=10, tries=10, task
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
+    
+    if task in TARGET_TASK_NAME_COLLECTIVES_MAP:
+        return get_metrics_from_trace_tpu(trace, TARGET_TASK_NAME_COLLECTIVES_MAP[task])
+
     return get_metrics_from_trace(trace, task)
 
 

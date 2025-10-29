@@ -13,7 +13,9 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 
 # pylint: disable=g-importing-member
-
+import os
+os.environ["LIBTPU_INIT_ARGS"] = "--xla_jf_all_to_all_shard_kib=16"
+# os.environ["XLA_FLAGS"] = "--xla_dump_to=/tmp/microbenchmarks/outputs"
 
 def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int]]:
     """Creates a hybrid mesh with the given DCN and ICI sizes."""
