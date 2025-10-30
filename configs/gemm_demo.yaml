@@ -39,6 +39,22 @@ benchmarks:
   num_runs: 100
   benchmark_sweep_params:
   - {m: 16384, n: 16384}
+- benchmark_name: "quantization_static_scaling"
+  trace_dir: "../microbenchmarks/quantization_static_scaling"
+  csv_path: "../microbenchmarks/quantization_static_scaling"
+  xlml_metrics_dir: "../microbenchmarks/quantization_static_scaling"
+  xla_dump_dir: "../microbenchmarks/quantization_static_scaling/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, n: 16384}
+- benchmark_name: "transpose_quantization_static_scaling"
+  trace_dir: "../microbenchmarks/transpose_quantization_static_scaling"
+  csv_path: "../microbenchmarks/transpose_quantization_static_scaling"
+  xlml_metrics_dir: "../microbenchmarks/transpose_quantization_static_scaling"
+  xla_dump_dir: "../microbenchmarks/transpose_quantization_static_scaling/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, n: 16384}
 - benchmark_name: "swiglu_fwd"
   trace_dir: "../microbenchmarks/swiglu_fwd"
   csv_path: "../microbenchmarks/swiglu_fwd"
