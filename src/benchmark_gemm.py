@@ -376,8 +376,8 @@ def gemm_simple_calculate_metrics(
         peak_flops_multiplier = 0.25
     elif in_dtype_str.lower() == "fp8":
         peak_flops_multiplier = 1.0
-    else
-        raise RuntimeError(f"{in_dtype_str.lower()} is not supported for setting peak_flops_multiplier."
+    else:
+        raise RuntimeError(f"{in_dtype_str.lower()} is not supported for setting peak_flops_multiplier.")
 
     metadata, metrics = unified_flops_metrics(
             m, n, k, time_ms_list,
@@ -488,8 +488,8 @@ def gemm_batched_simple_calculate_metrics(
         peak_flops_multiplier = 0.25
     elif in_dtype_str.lower() == "fp8":
         peak_flops_multiplier = 1.0
-    else
-        raise RuntimeError(f"{in_dtype_str.lower()} is not supported for setting peak_flops_multiplier."
+    else:
+        raise RuntimeError(f"{in_dtype_str.lower()} is not supported for setting peak_flops_multiplier.")
 
 
     metadata, metrics = unified_flops_metrics(
