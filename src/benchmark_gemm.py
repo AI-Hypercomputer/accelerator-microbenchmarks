@@ -1077,7 +1077,7 @@ def gemm_fp8_b128_fp32(
         data_generator,
         matrix_dim=f"{m}x{n}x{k}",
         tries=num_runs,
-        task="gemm_fp8_rowwise",
+        task="gemm_fp8_b128_fp32",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}
