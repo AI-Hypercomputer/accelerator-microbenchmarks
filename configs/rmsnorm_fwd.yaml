@@ -3,7 +3,8 @@ benchmarks:
   trace_dir: "../microbenchmarks/rmsnorm_fwd"
   csv_path: "../microbenchmarks/rmsnorm_fwd"
   xlml_metrics_dir: "../microbenchmarks/rmsnorm_fwd"
-  num_runs: 1000
+  xla_dump_dir: "../microbenchmarks/rmsnorm_fwd/hlo_graphs"
+  num_runs: 100
   benchmark_sweep_params:
   - {m: 2048, n: 7168}
   - {m: 4096, n: 8192}

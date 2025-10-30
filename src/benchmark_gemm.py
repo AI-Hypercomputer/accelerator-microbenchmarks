@@ -19,6 +19,7 @@ import numpy as np
 from qwix import pallas as qpl
 from flax import nnx
 from common import MARKER
+from enum import Enum, auto
 
 # pylint: disable=g-importing-member
 # Set the environment variable for TPU initialization arguments to optimize
@@ -34,9 +35,17 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_dvfs_p_state=7 "
-    # "--xla_tpu_vmem_scavenging_mode=NONE "
+    "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
     # "--xla_tpu_should_accumulate_into_mrb=true" # Unknown XLA Flag
 )
+class ShardingStrategy(Enum):
+    """Defines different sharding strategies for tensors."""
+    NO_SHARDING = auto()
+    SHARDING_ON_ALL_DEVICES_WITH_M = auto()
+    SHARDING_ON_SINGLE_CHIP_WITH_M = auto() # Only sharding on the two core of one single chip
+    SHARDING_ON_ALL_DEVICES_WITH_N = auto()
+    SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
+
 TRACE_BASE_DIR = None
 METRICS_JSONL_DIR = None
 # Matmul shapes: A(M,K) x B(K,N) = C(M,N)
@@ -46,13 +55,119 @@ M_MAX_SIZE = 50000
 # The number of layers in the multilayer collective matmul.
 # Matmul shapes: A(M,K) x H1(K,K)... x B(K,N) = C(M,N)
 LAYERS = 2
-WITH_SHARDING = True
+
+SHARDING_STRATEGY=ShardingStrategy.NO_SHARDING
 SEED = 0
 PEAK_FLOPS_PER_DEVICE=1153.5 # TFLOP/s for single core(device) under p_state=7
 
+def get_lhs_named_shading(mesh):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return NamedSharding(mesh, P(None, None))
+
+def get_rhs_named_shading(mesh):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+
+def get_out_sharding():
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return P(None, None)
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return P("device", None)
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return P("device", None)
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return P(None, "device")
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return P(None, "device")
+
+def get_rowwise_named_shading(mesh):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            assert False, f"ShardingStrategy is wrong: {SHARDING_STRATEGY}"
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return False, f"ShardingStrategy is wrong: {SHARDING_STRATEGY}"
+
+def get_output_named_shading(mesh):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+
+def handle_per_device_based_on_sharding(value):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return value
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return value // jax.device_count()
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return value // 2
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return value // jax.device_count()
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return value // 2
+
+def handle_all_devices_based_on_sharding(value: int):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return value * jax.device_count()
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return value
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return value * jax.device_count() // 2
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return value
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return value * jax.device_count() // 2
+
+def handle_based_on_sharding(value: int):
+    total_value = value
+    value = handle_per_device_based_on_sharding(value)
+    total_value = handle_all_devices_based_on_sharding(total_value)
+    return value, total_value
+
 def create_mesh() -> Mesh:
     """Creates a mesh."""
-    mesh = Mesh(np.array(jax.devices()), axis_names="i")
+    if SHARDING_STRATEGY == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M or SHARDING_STRATEGY == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+        num_devices = jax.device_count()
+        assert num_devices % 2 == 0, "Total devices must be divisible by 2 (chip size)"
+        num_chips = num_devices // 2
+        mesh_shape = (num_chips, 2)
+        mesh_axes = ('chip', 'device')
+        mesh = jax.sharding.Mesh(np.array(jax.devices()).reshape(mesh_shape), mesh_axes)
+    else:
+        mesh = Mesh(np.array(jax.devices()), axis_names="device")
     return mesh
 
 def get_metrics_helper(
@@ -142,10 +257,10 @@ def unified_bytes_metrics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
     gigabytes_per_sec_statistics = MetricsStatistics(
-        metrics_list=gigabytes_per_sec_list, metrics_name="bytes_per_sec_per_device"
+        metrics_list=gigabytes_per_sec_list, metrics_name="Gbytes_per_sec_per_device"
     )
     gigabytes_per_sec_all_devices_statistics = MetricsStatistics(
-        metrics_list=digabytes_per_sec_all_devices, metrics_name="tflops_per_sec"
+        metrics_list=digabytes_per_sec_all_devices, metrics_name="Gbytes_per_sec"
     )
     print(
         f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Throughput (median):"
@@ -179,13 +294,9 @@ def gemm_simple(
             return acc.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    rhs_sharding = NamedSharding(mesh, P(None, None))
-    if WITH_SHARDING:
-        lhs_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        lhs_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
+    lhs_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    out_sharding = get_out_sharding()        
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -235,9 +346,7 @@ def gemm_simple_calculate_metrics(
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = (2 * k - 1) * m * n  # Total floating-point operations
-    total_flops_all_devices = total_flops
-    if WITH_SHARDING:
-        total_flops = total_flops // jax.device_count()
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 def gemm_bf16_simple(
@@ -253,13 +362,9 @@ def gemm_bf16_simple(
             return acc.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    rhs_sharding = NamedSharding(mesh, P(None, None))
-    if WITH_SHARDING:
-        lhs_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        lhs_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
+    lhs_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    out_sharding = get_out_sharding()
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -308,10 +413,8 @@ def gemm_bf16_simple_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     # Calculate FLOPs
-    total_flops = (2 * m * k * n) - (m * n)  # Total floating-point operations
-    total_flops_all_devices = total_flops
-    if WITH_SHARDING:
-        total_flops = total_flops // jax.device_count()
+    total_flops = (2 * k - 1) * m * n)  # Total floating-point operations
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 def gemm(
@@ -326,17 +429,11 @@ def gemm(
             return result_fp32.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    rhs_sharding = NamedSharding(mesh, P(None, None))
-    sf1_sharding = NamedSharding(mesh, P(None, None))
-
-    if WITH_SHARDING:
-        lhs_sharding = NamedSharding(mesh, P("i", None))
-        sf0_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        lhs_sharding = NamedSharding(mesh, P(None, None))
-        sf0_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
+    lhs_sharding = get_lhs_named_shading(mesh)
+    sf0_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    sf1_sharding = get_rhs_named_shading(mesh)
+    out_sharding = get_out_sharding()
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -394,9 +491,7 @@ def gemm_calculate_metrics(
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = (2 * k + 1) * m * n  # Total floating-point operations
-    total_flops_all_devices = total_flops
-    if WITH_SHARDING:
-        total_flops = total_flops // jax.device_count()
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 
@@ -413,19 +508,13 @@ def gemm_accum(
 
     mesh = create_mesh()
 
-    rhs_sharding = NamedSharding(mesh, P(None, None))
-    sf1_sharding = NamedSharding(mesh, P(None, None))
+    lhs_sharding = get_lhs_named_shading(mesh)
+    sf0_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    sf1_sharding = get_rhs_named_shading(mesh)
+    out_buffer_sharding = get_output_named_shading(mesh)
+    out_sharding = get_out_sharding()
 
-    if WITH_SHARDING:
-        lhs_sharding = NamedSharding(mesh, P("i", None))
-        sf0_sharding = NamedSharding(mesh, P("i", None))
-        out_buffer_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        lhs_sharding = NamedSharding(mesh, P(None, None))
-        sf0_sharding = NamedSharding(mesh, P(None, None))
-        out_buffer_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -493,9 +582,7 @@ def gemm_accum_calculate_metrics(
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n + m * n  # Total floating-point operations
-    total_flops_all_devices = total_flops
-    if WITH_SHARDING:
-        total_flops = total_flops // jax.device_count()
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 
@@ -508,18 +595,13 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     """
     def f(x):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        out_qvalue_sharding = NamedSharding(mesh, P("i", None)) # (m, n) sharded on 'm'
-        out_scale_sharding = NamedSharding(mesh, P("i",))
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        out_qvalue_sharding = NamedSharding(mesh, P(None, None))
-        out_scale_sharding = NamedSharding(mesh, P(None,))
+    x_sharding = get_rowwise_named_shading(mesh)
+    out_qvalue_sharding = get_rowwise_named_shading(mesh)
+    out_scale_sharding = get_rowwise_named_shading(mesh)
     
     jit_sharded_f = jax.jit(
         shard_map(
@@ -550,7 +632,7 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", # Using mxn as dims
+        matrix_dim=f"{m}x{n}", 
         tries=num_runs,
         task="quantization",
         trace_dir=trace_dir,
@@ -561,9 +643,7 @@ def quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
-    total_bytes_all_devices = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -576,18 +656,13 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
     def f(x):
         with jax.named_scope(MARKER):
             x = x.T
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        out_qvalue_sharding = NamedSharding(mesh, P("i", None)) # (m, n) sharded on 'm'
-        out_scale_sharding = NamedSharding(mesh, P("i",))
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        out_qvalue_sharding = NamedSharding(mesh, P(None, None))
-        out_scale_sharding = NamedSharding(mesh, P(None,))
+    x_sharding = get_rowwise_named_shading(mesh)
+    out_qvalue_sharding = get_rowwise_named_shading(mesh)
+    out_scale_sharding = get_rowwise_named_shading(mesh)
     
     jit_sharded_f = jax.jit(
         shard_map(
@@ -618,7 +693,7 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", # Using mxn as dims
+        matrix_dim=f"{m}x{n}", 
         tries=num_runs,
         task="transpose_quantization",
         trace_dir=trace_dir,
@@ -629,9 +704,7 @@ def transpose_quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
-    total_bytes_all_devices = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -648,26 +721,35 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
             Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
             return Y_fp32.astype(jnp.bfloat16)
 
-
     mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    x_sharding = get_rowwise_named_shading(mesh)
+    out_sharding = get_rowwise_named_shading(mesh)
     jit_sharded_f = jax.jit(
         shard_map(
             f,
             mesh,
-            in_specs=P("i", None),
-            out_specs=(P("i", None)),
+            in_specs=x_sharding.spec,
+            out_specs=out_sharding.spec,
             check_rep=False,
         )
     )
-    # Run once.
-    output = jit_sharded_f(x)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
-    print(f"swiglu_fwd({x.shape=}) = {output.shape=}, {x.dtype=}, {output.dtype=}")
-    time_ms_list = simple_timeit(
+
+    x_shape = (m, n)
+    x_dtype = jnp.bfloat16
+
+    key = jax.random.key(SEED)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1 = jax.random.split(key)
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+        x_device = jax.device_put(x_host, x_sharding)
+        return (x_device,)
+    
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        x,
+        data_generator,
+        matrix_dim=f"{m}x{n}", 
         tries=num_runs,
         task="swiglu_fwd",
         trace_dir=trace_dir,
@@ -677,9 +759,9 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 def swiglu_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    total_bytes = 2 * (m * n + m * n // 2)
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
-
+    total_bytes = 2 * (2 * m * n + m * n // 2)
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -687,63 +769,74 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     Inverse of swiglu_fwd
     """
     def f_fwd(x):
-        with jax.named_scope(MARKER):
-            A, B = jnp.split(x, 2, axis=-1)
-            A_fp32 = A.astype(jnp.float32)
-            B_fp32 = B.astype(jnp.float32)
-            Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
-            return Y_fp32.astype(jnp.bfloat16)
+        A, B = jnp.split(x, 2, axis=-1)
+        A_fp32 = A.astype(jnp.float32)
+        B_fp32 = B.astype(jnp.float32)
+        Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
+        return Y_fp32.astype(jnp.bfloat16)
     
-    def f_bwd(x: jax.Array, dy: jax.Array) -> jax.Array:
+    def f(x: jax.Array, dy: jax.Array) -> jax.Array:
         """
         x: The original <M, N> BF16 input.
         dy: The upstream <M, N/2> BF16 gradient.
         """
+        # Get the VJP "pullback" function
+        # We ignore the forward result (_y)
+        _y, pullback_fn = jax.vjp(f_fwd, x)
         with jax.named_scope(MARKER):
-            # Get the VJP "pullback" function
-            # We ignore the forward result (_y)
-            _y, pullback_fn = jax.vjp(f_fwd, x)
-            
             # Call the pullback function with the upstream gradient
             # This IS the backward pass.
             dx = pullback_fn(dy)
-            
             # dx is returned as a tuple (one item per arg of f_fwd)
             return dx[0]
 
     mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
-    dy = jnp.arange(np.prod((m, n // 2))).reshape((m, n // 2)).astype(jnp.bfloat16)
-    dy = jax.device_put(dy, NamedSharding(mesh, P("i", None)))
+    x_sharding = get_rowwise_named_shading(mesh)
+    dy_sharding = get_rowwise_named_shading(mesh)
+    out_sharding = get_rowwise_named_shading(mesh)
     jit_sharded_f = jax.jit(
         shard_map(
-            f_bwd,
+            f,
             mesh,
-            in_specs=(P("i", None), P("i", None)),
-            out_specs=(P("i", None)),
+            in_specs=(x_sharding.spec, dy_sharding.spec),
+            out_specs=out_sharding.spec,
             check_rep=False,
         )
     )
-    # Run once.
-    output = jit_sharded_f(x, dy)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
-    print(f"swiglu_bwd({x.shape=}, {dy.shape=}) = {output.shape=}, {x.dtype=}, {dy.dtype=}, {output.dtype=}")
-    time_ms_list = simple_timeit(
+
+    x_shape = (m, n)
+    dy_shape = (m, n // 2)
+    x_dtype = jnp.bfloat16
+    dy_dtype = jnp.bfloat16
+    
+    key = jax.random.key(SEED)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1, k2 = jax.random.split(key, 3)
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+        dy_host = jax.random.normal(k2, dy_shape).astype(dy_dtype)
+        x_device = jax.device_put(x_host, x_sharding)
+        dy_device = jax.device_put(dy_host, dy_sharding)
+        return (x_device, dy_device)
+
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        x,
-        dy,
+        data_generator,
+        matrix_dim=f"{m}x{n}",
         tries=num_runs,
         task="swiglu_bwd",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}
 
+
 def swiglu_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n // 2)
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -751,75 +844,112 @@ def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     For each row i of N:
     Y_i = X_i / rms(x_i)
     """
-    with jax.named_scope(MARKER):
-        f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(SEED))
+    rms_norm_module = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, param_dtype=jnp.float32, rngs=nnx.Rngs(SEED))
+    def f(x):
+        with jax.named_scope(MARKER):
+            return rms_norm_module(x)
 
     mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
+    x_sharding = get_rowwise_named_shading(mesh)
+    out_sharding = get_rowwise_named_shading(mesh)
+    
     jit_sharded_f = jax.jit(
         shard_map(
             f,
             mesh,
-            in_specs=P("i", None),
-            out_specs=(P("i", None)),
+            in_specs=x_sharding.spec,
+            out_specs=out_sharding.spec, # Corrected: single spec, not tuple
             check_rep=False,
         )
     )
-    # Run once.
-    output = jit_sharded_f(x)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
-    print(f"rmsnorm_fwd({x.shape=}) = {output.shape=}, {x.dtype=}, {output.dtype=}")
-    time_ms_list = simple_timeit(
+
+    x_shape = (m, n)
+    x_dtype = jnp.bfloat16
+    key = jax.random.key(SEED)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1 = jax.random.split(key)
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+        x_device = jax.device_put(x_host, x_sharding)
+        return (x_device,)
+
+    time_ms_list = iteration_timeit(
         jit_sharded_f,
-        x,
+        data_generator,
+        matrix_dim=f"{m}x{n}", # Using mxn as dims
         tries=num_runs,
         task="rmsnorm_fwd",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}
 
+
 def rmsnorm_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n)
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
     """
     Inverse of rmsnorm_fwd
     """
-    mesh = create_mesh()
-    x = jnp.arange(np.prod((m, n))).reshape((m, n)).astype(jnp.bfloat16)
-    x = jax.device_put(x, NamedSharding(mesh, P("i", None)))
-    f = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, rngs=nnx.Rngs(SEED))
-    # We need a scalar loss function to differentiate.
-    # We sum the output and cast to f32 for stable gradients.
-    def loss_fn(module: nnx.RMSNorm, x_input: jax.Array):
+    rms_norm_module = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, param_dtype=jnp.float32, rngs=nnx.Rngs(SEED))
+    def f_fwd(x):
         with jax.named_scope(MARKER):
-            y = module(x_input)
-        local_loss = jnp.sum(y.astype(jnp.float32))
-        return jax.lax.psum(local_loss, axis_name='i')
+            return rms_norm_module(x)
+    
+    def f(x: jax.Array, dy: jax.Array) -> jax.Array:
+        """
+        x: The original <M, N> BF16 input.
+        dy: The upstream <M, N/2> BF16 gradient.
+        """
+        # Get the VJP "pullback" function
+        # We ignore the forward result (_y)
+        _y, pullback_fn = jax.vjp(f_fwd, x)
+        with jax.named_scope(MARKER):
+            # Call the pullback function with the upstream gradient
+            # This IS the backward pass.
+            dx = pullback_fn(dy)
+            # dx is returned as a tuple (one item per arg of f_fwd)
+            return dx[0]
 
-    sharded_loss_fn = shard_map(
-        loss_fn,
-        mesh,
-        in_specs=(P(), P("i", None)),
-        out_specs=P(), # Output is a single replicated scalar
-        check_rep=False
+    mesh = create_mesh()
+    x_sharding = get_rowwise_named_shading(mesh)
+    dy_sharding = get_rowwise_named_shading(mesh)
+    out_sharding = get_rowwise_named_shading(mesh)
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(x_sharding.spec, dy_sharding.spec),
+            out_specs=out_sharding.spec,
+            check_rep=False
+        )
     )
-    grad_fn = nnx.grad(sharded_loss_fn, argnums=1)
-    jit_sharded_bwd = jax.jit(grad_fn)
-
-    # Run once.
-    grads = jit_sharded_bwd(f, x)
-    jax.block_until_ready(grads)  # Ensure full completion before printing metrics
-    print(f"rmsnorm_bwd({x.shape=}) = {grads.shape=}, {x.dtype=}, {grads.dtype=}")
-    time_ms_list = simple_timeit(
-        jit_sharded_bwd,
-        f,
-        x,
+    x_shape = (m, n)
+    dy_shape = (m, n)
+    x_dtype = jnp.bfloat16
+    dy_dtype = jnp.bfloat16
+    
+    key = jax.random.key(SEED)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1, k2 = jax.random.split(key, 3)
+        x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
+        dy_host = jax.random.normal(k2, dy_shape).astype(dy_dtype)
+        x_device = jax.device_put(x_host, x_sharding)
+        dy_device = jax.device_put(dy_host, dy_sharding)
+        return (x_device, dy_device)
+    time_ms_list = iteration_timeit(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}", # Using mxn as dims
         tries=num_runs,
         task="rmsnorm_bwd",
         trace_dir=trace_dir,
@@ -830,7 +960,8 @@ def rmsnorm_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n)
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes)
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
 ) -> Dict[str, Any]:
@@ -841,16 +972,10 @@ def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
         with jax.named_scope(MARKER):
             return x + y
 
-
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        y_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        y_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
+    x_sharding = get_output_named_shading(mesh)
+    y_sharding = get_output_named_shading(mesh)
+    out_sharding = get_out_sharding()
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -883,7 +1008,7 @@ def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", # Using mxn as dims
+        matrix_dim=f"{m}x{n}", 
         tries=num_runs,
         task="add",
         trace_dir=trace_dir,
@@ -894,7 +1019,139 @@ def add_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 6 * m * n
-    total_bytes_all_device = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_device)
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
+
+def gemm_fp8_rowwise(
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+) -> Dict[str, Any]:
+    """FP8-Rowwise GEMM."""
+
+    def f(x, y):
+        with jax.named_scope(MARKER):
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
+            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
+            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
+            return acc.astype(jnp.bfloat16)
+
+    mesh = create_mesh()
+    lhs_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    out_sharding = get_out_sharding()
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(lhs_sharding.spec, rhs_sharding.spec),
+            out_specs=out_sharding,
+            check_rep=False,
+        )
+    )
+
+    lhs_shape = (m, k)
+    rhs_shape = (k, n)
+    lhs_dtype = jnp.bfloat16
+    rhs_dtype = jnp.bfloat16
+
+    key = jax.random.key(SEED)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, key_lhs, key_rhs = jax.random.split(key, 3)
+        
+        # Create random data on host
+        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+        
+        # Put on device (HBM)
+        lhs_device = jax.device_put(lhs_host, lhs_sharding)
+        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+        
+        return (lhs_device, rhs_device)
+
+    # Run the benchmark
+    time_ms_list = iteration_timeit(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
+        tries=num_runs,
+        task="gemm_fp8_rowwise",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def gemm_fp8_rowwise_calculate_metrics(
+    m: int, k: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
+
+def gemm_fp8_b128_fp32(
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+) -> Dict[str, Any]:
+    """FP8 GEMM as DeepSeek-stype quantization, block size: 1x128"""
+
+    def f(x, y):
+        with jax.named_scope(MARKER):
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0], tiled_axes={1: 128})
+            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0], tiled_axes={1: 128})
+            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
+            return acc.astype(jnp.bfloat16)
+
+    mesh = create_mesh()
+    lhs_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    out_sharding = get_out_sharding()
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(lhs_sharding.spec, rhs_sharding.spec),
+            out_specs=out_sharding,
+            check_rep=False,
+        )
+    )
+
+    lhs_shape = (m, k)
+    rhs_shape = (k, n)
+    lhs_dtype = jnp.bfloat16
+    rhs_dtype = jnp.bfloat16
+
+    key = jax.random.key(SEED)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, key_lhs, key_rhs = jax.random.split(key, 3)
+        
+        # Create random data on host
+        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+        
+        # Put on device (HBM)
+        lhs_device = jax.device_put(lhs_host, lhs_sharding)
+        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+        
+        return (lhs_device, rhs_device)
+
+    # Run the benchmark
+    time_ms_list = iteration_timeit(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
+        tries=num_runs,
+        task="gemm_fp8_rowwise",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def gemm_fp8_b128_fp32_calculate_metrics(
+    m: int, k: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)

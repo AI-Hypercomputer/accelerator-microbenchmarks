@@ -72,6 +72,8 @@ GEMM_BENCHMARK_MAP = {
     "rmsnorm_fwd": "benchmark_gemm.rmsnorm_fwd",
     "rmsnorm_bwd": "benchmark_gemm.rmsnorm_bwd",
     "add": "benchmark_gemm.add",
+    "gemm_fp8_rowwise": "benchmark_gemm.gemm_fp8_rowwise",
+    "gemm_fp8_b128_fp32": "benchmark_gemm.gemm_fp8_b128_fp32",
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)

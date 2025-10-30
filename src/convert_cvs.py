@@ -1,6 +1,6 @@
 import csv
 
-file_name = "/home/sanbao_google_com/cvs/self microbenchmarks for TPU v7 - add.csv"
+file_name = "/home/sanbao_google_com/cvs/self microbenchmarks for TPU v7 - gemm_numerics.csv"
 
 try:
     with open(file_name, mode='r', encoding='utf-8') as file:
@@ -11,10 +11,11 @@ try:
         for row in reader:
             # Extract M and N, strip whitespace, and convert to integer
             m_val = int(row['M'].strip())
+            k_val = int(row['K'].strip())
             n_val = int(row['N'].strip())
             
             # Print in the desired format
-            print(f"- {{m: {m_val}, n: {n_val}}}")
+            print(f"- {{m: {m_val}, k: {k_val}, n: {n_val}}}")
 
 except FileNotFoundError:
     print(f"Error: The file '{file_name}' was not found.")
