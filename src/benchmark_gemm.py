@@ -35,7 +35,7 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_dvfs_p_state=7 "
-    "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
+    # "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
     # "--xla_tpu_should_accumulate_into_mrb=true" # Unknown XLA Flag
 )
 class ShardingStrategy(Enum):
@@ -100,6 +100,32 @@ def get_out_sharding():
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return P(None, "device")
 
+def get_rowwise_named_shading(mesh):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            assert False, f"ShardingStrategy is wrong: {SHARDING_STRATEGY}"
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return False, f"ShardingStrategy is wrong: {SHARDING_STRATEGY}"
+
+def get_output_named_shading(mesh):
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+
 def handle_per_device_based_on_sharding(value):
     match SHARDING_STRATEGY:
         case ShardingStrategy.NO_SHARDING:
@@ -113,7 +139,7 @@ def handle_per_device_based_on_sharding(value):
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return value // 2
 
-def handle_all_devices_based_on_sharding(value):
+def handle_all_devices_based_on_sharding(value: int):
     match SHARDING_STRATEGY:
         case ShardingStrategy.NO_SHARDING:
             return value * jax.device_count()
@@ -125,6 +151,12 @@ def handle_all_devices_based_on_sharding(value):
             return value
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return value * jax.device_count() // 2
+
+def handle_based_on_sharding(value: int):
+    total_value = value
+    value = handle_per_device_based_on_sharding(value)
+    total_value = handle_all_devices_based_on_sharding(total_value)
+    return value, total_value
 
 def create_mesh() -> Mesh:
     """Creates a mesh."""
@@ -315,9 +347,7 @@ def gemm_simple_calculate_metrics(
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops_all_devices = total_flops
-    total_flops = handle_per_device_based_on_sharding(total_flops)
-    total_flops_all_devices = handle_all_devices_based_on_sharding(total_flops_all_devices)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 def gemm(
@@ -332,17 +362,11 @@ def gemm(
             return result_fp32.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    rhs_sharding = NamedSharding(mesh, P(None, None))
-    sf1_sharding = NamedSharding(mesh, P(None, None))
-
-    if WITH_SHARDING:
-        lhs_sharding = NamedSharding(mesh, P("i", None))
-        sf0_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        lhs_sharding = NamedSharding(mesh, P(None, None))
-        sf0_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
+    lhs_sharding = get_lhs_named_shading(mesh)
+    sf0_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    sf1_sharding = get_rhs_named_shading(mesh)
+    out_sharding = get_out_sharding()
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -400,9 +424,7 @@ def gemm_calculate_metrics(
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops_all_devices = total_flops
-    if WITH_SHARDING:
-        total_flops = total_flops // jax.device_count()
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 
@@ -419,19 +441,13 @@ def gemm_accum(
 
     mesh = create_mesh()
 
-    rhs_sharding = NamedSharding(mesh, P(None, None))
-    sf1_sharding = NamedSharding(mesh, P(None, None))
+    lhs_sharding = get_lhs_named_shading(mesh)
+    sf0_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    sf1_sharding = get_rhs_named_shading(mesh)
+    out_buffer_sharding = get_output_named_shading(mesh)
+    out_sharding = get_out_sharding()
 
-    if WITH_SHARDING:
-        lhs_sharding = NamedSharding(mesh, P("i", None))
-        sf0_sharding = NamedSharding(mesh, P("i", None))
-        out_buffer_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        lhs_sharding = NamedSharding(mesh, P(None, None))
-        sf0_sharding = NamedSharding(mesh, P(None, None))
-        out_buffer_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -499,9 +515,7 @@ def gemm_accum_calculate_metrics(
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n + m * n  # Total floating-point operations
-    total_flops_all_devices = total_flops
-    if WITH_SHARDING:
-        total_flops = total_flops // jax.device_count()
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 
@@ -518,14 +532,9 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        out_qvalue_sharding = NamedSharding(mesh, P("i", None)) # (m, n) sharded on 'm'
-        out_scale_sharding = NamedSharding(mesh, P("i",))
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        out_qvalue_sharding = NamedSharding(mesh, P(None, None))
-        out_scale_sharding = NamedSharding(mesh, P(None,))
+    x_sharding = get_rowwise_named_shading(mesh)
+    out_qvalue_sharding = get_rowwise_named_shading(mesh)
+    out_scale_sharding = get_rowwise_named_shading(mesh)
     
     jit_sharded_f = jax.jit(
         shard_map(
@@ -567,9 +576,7 @@ def quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
-    total_bytes_all_devices = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -586,14 +593,9 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        out_qvalue_sharding = NamedSharding(mesh, P("i", None)) # (m, n) sharded on 'm'
-        out_scale_sharding = NamedSharding(mesh, P("i",))
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        out_qvalue_sharding = NamedSharding(mesh, P(None, None))
-        out_scale_sharding = NamedSharding(mesh, P(None,))
+    x_sharding = get_rowwise_named_shading(mesh)
+    out_qvalue_sharding = get_rowwise_named_shading(mesh)
+    out_scale_sharding = get_rowwise_named_shading(mesh)
     
     jit_sharded_f = jax.jit(
         shard_map(
@@ -635,9 +637,7 @@ def transpose_quantization_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
-    total_bytes_all_devices = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -655,13 +655,8 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
             return Y_fp32.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        # Output shape is (m, n/2), so sharding is also on the 'm' dim
-        out_sharding = NamedSharding(mesh, P("i", None)) 
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = NamedSharding(mesh, P(None, None))
+    x_sharding = get_rowwise_named_shading(mesh)
+    out_sharding = get_rowwise_named_shading(mesh)
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -698,9 +693,7 @@ def swiglu_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n // 2)
-    total_bytes_all_devices = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -731,14 +724,9 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
             return dx[0]
 
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        dy_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = NamedSharding(mesh, P("i", None)) # Output dx has same sharding as x
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        dy_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = NamedSharding(mesh, P(None, None))
+    x_sharding = get_rowwise_named_shading(mesh)
+    dy_sharding = get_rowwise_named_shading(mesh)
+    out_sharding = get_rowwise_named_shading(mesh)
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -780,9 +768,7 @@ def swiglu_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n // 2)
-    total_bytes_all_devices = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -797,12 +783,8 @@ def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
             return rms_norm_module(x)
 
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = NamedSharding(mesh, P("i", None)) # Output (m,n) is sharded on 'm'
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = NamedSharding(mesh, P(None, None))
+    x_sharding = get_rowwise_named_shading(mesh)
+    out_sharding = get_rowwise_named_shading(mesh)
     
     jit_sharded_f = jax.jit(
         shard_map(
@@ -840,9 +822,7 @@ def rmsnorm_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n)
-    total_bytes_all_devices = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -871,14 +851,9 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
             return dx[0]
 
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        dy_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = NamedSharding(mesh, P("i", None))
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        dy_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = NamedSharding(mesh, P(None, None))
+    x_sharding = get_rowwise_named_shading(mesh)
+    dy_sharding = get_rowwise_named_shading(mesh)
+    out_sharding = get_rowwise_named_shading(mesh)
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -918,9 +893,7 @@ def rmsnorm_bwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 2 * (2 * m * n + m * n)
-    total_bytes_all_devices = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -932,16 +905,10 @@ def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
         with jax.named_scope(MARKER):
             return x + y
 
-
     mesh = create_mesh()
-    if WITH_SHARDING:
-        x_sharding = NamedSharding(mesh, P("i", None))
-        y_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        x_sharding = NamedSharding(mesh, P(None, None))
-        y_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
+    x_sharding = get_output_named_shading(mesh)
+    y_sharding = get_output_named_shading(mesh)
+    out_sharding = get_out_sharding()
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -985,10 +952,8 @@ def add_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_bytes = 6 * m * n
-    total_bytes_all_device = total_bytes
-    if WITH_SHARDING:
-        total_bytes = total_bytes // jax.device_count()
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_device)
+    total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
+    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
 def gemm_fp8_rowwise(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
@@ -1003,13 +968,9 @@ def gemm_fp8_rowwise(
             return acc.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    rhs_sharding = NamedSharding(mesh, P(None, None))
-    if WITH_SHARDING:
-        lhs_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        lhs_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
+    lhs_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    out_sharding = get_out_sharding()
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -1058,10 +1019,8 @@ def gemm_fp8_rowwise_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops_all_devices = total_flops
-    if WITH_SHARDING:
-        total_flops = total_flops // jax.device_count()
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
 
 def gemm_fp8_b128_fp32(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
@@ -1076,13 +1035,9 @@ def gemm_fp8_b128_fp32(
             return acc.astype(jnp.bfloat16)
 
     mesh = create_mesh()
-    rhs_sharding = NamedSharding(mesh, P(None, None))
-    if WITH_SHARDING:
-        lhs_sharding = NamedSharding(mesh, P("i", None))
-        out_sharding = P("i", None)
-    else:
-        lhs_sharding = NamedSharding(mesh, P(None, None))
-        out_sharding = P(None, None)
+    lhs_sharding = get_lhs_named_shading(mesh)
+    rhs_sharding = get_rhs_named_shading(mesh)
+    out_sharding = get_out_sharding()
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -1131,7 +1086,5 @@ def gemm_fp8_b128_fp32_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops_all_devices = total_flops
-    if WITH_SHARDING:
-        total_flops = total_flops // jax.device_count()
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
