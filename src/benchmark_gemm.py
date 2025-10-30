@@ -35,7 +35,7 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_dvfs_p_state=7 "
-    "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
+    # "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
     # "--xla_tpu_should_accumulate_into_mrb=true" # Unknown XLA Flag
 )
 class ShardingStrategy(Enum):
@@ -58,7 +58,7 @@ LAYERS = 2
 
 SHARDING_STRATEGY=ShardingStrategy.NO_SHARDING
 SEED = 0
-PEAK_FLOPS_PER_DEVICE=1153.5 # TFLOP/s for single core(device) under p_state=7
+PEAK_FLOPS_PER_DEVICE=2307 # TFLOP/s for single core(device) of FP8 under p_state=7
 
 
 def str_to_dtype(dtype_str: str) -> jnp.dtype:
@@ -382,7 +382,7 @@ def gemm_simple_calculate_metrics(
     metadata, metrics = unified_flops_metrics(
             m, n, k, time_ms_list,
             total_flops, total_flops_all_devices,
-            PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier * 2)
+            PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier)
 
     # Add dtype info to metadata for logging
     metadata["in_dtype"] = in_dtype_str
@@ -496,7 +496,7 @@ def gemm_batched_simple_calculate_metrics(
         m, n, k, time_ms_list,
         total_flops_per_device,
         total_flops_all_devices,
-        PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier * 2
+        PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier
     )
 
     # Manually add the new parameters to the metadata for logging
@@ -581,7 +581,7 @@ def gemm_calculate_metrics(
     # Calculate FLOPs
     total_flops = (2 * k + 1) * m * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
 
 
 def gemm_accum(
@@ -672,7 +672,7 @@ def gemm_accum_calculate_metrics(
     # Calculate FLOPs
     total_flops = 2 * m * k * n + m * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
 
 
 def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
@@ -684,7 +684,7 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     """
     def f(x):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
@@ -745,7 +745,7 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
     def f(x):
         with jax.named_scope(MARKER):
             x = x.T
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
@@ -1118,8 +1118,8 @@ def gemm_fp8_rowwise(
 
     def f(x, y):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
-            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
             acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
             return acc.astype(jnp.bfloat16)
 
@@ -1176,7 +1176,7 @@ def gemm_fp8_rowwise_calculate_metrics(
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
 
 def gemm_fp8_b128_fp32(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
@@ -1185,8 +1185,8 @@ def gemm_fp8_b128_fp32(
 
     def f(x, y):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0], tiled_axes={1: 128})
-            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0], tiled_axes={1: 128})
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0], tiled_axes={1: 128})
+            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0], tiled_axes={1: 128})
             acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
             return acc.astype(jnp.bfloat16)
 
@@ -1233,7 +1233,7 @@ def gemm_fp8_b128_fp32(
         data_generator,
         matrix_dim=f"{m}x{n}x{k}",
         tries=num_runs,
-        task="gemm_fp8_rowwise",
+        task="gemm_fp8_b128_fp32",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}
@@ -1243,4 +1243,4 @@ def gemm_fp8_b128_fp32_calculate_metrics(
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
