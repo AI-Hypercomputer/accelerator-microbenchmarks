@@ -528,7 +528,7 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     """
     def f(x):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
@@ -589,7 +589,7 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
     def f(x):
         with jax.named_scope(MARKER):
             x = x.T
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
@@ -962,8 +962,8 @@ def gemm_fp8_rowwise(
 
     def f(x, y):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
-            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
+            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
             acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
             return acc.astype(jnp.bfloat16)
 
@@ -1029,8 +1029,8 @@ def gemm_fp8_b128_fp32(
 
     def f(x, y):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0], tiled_axes={1: 128})
-            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0], tiled_axes={1: 128})
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0], tiled_axes={1: 128})
+            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0], tiled_axes={1: 128})
             acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
             return acc.astype(jnp.bfloat16)
 
