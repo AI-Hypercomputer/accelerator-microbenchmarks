@@ -35,7 +35,7 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_dvfs_p_state=7 "
-    # "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
+    "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
     # "--xla_tpu_should_accumulate_into_mrb=true" # Unknown XLA Flag
 )
 class ShardingStrategy(Enum):
@@ -1020,7 +1020,7 @@ def gemm_fp8_rowwise_calculate_metrics(
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 def gemm_fp8_b128_fp32(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
