@@ -234,7 +234,7 @@ def gemm_simple_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     # Calculate FLOPs
-    total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops = (2 * k - 1) * m * n  # Total floating-point operations
     total_flops_all_devices = total_flops
     if WITH_SHARDING:
         total_flops = total_flops // jax.device_count()
@@ -393,7 +393,7 @@ def gemm_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     # Calculate FLOPs
-    total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops = (2 * k + 1) * m * n  # Total floating-point operations
     total_flops_all_devices = total_flops
     if WITH_SHARDING:
         total_flops = total_flops // jax.device_count()

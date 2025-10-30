@@ -1,0 +1,8 @@
+benchmarks:
+- benchmark_name: "gemm_simple"
+  trace_dir: "../microbenchmarks/gemm_simple_inference"
+  csv_path: "../microbenchmarks/gemm_simple_inference"
+  xlml_metrics_dir: "../microbenchmarks/gemm_simple_inference"
+  num_runs: 1000
+  benchmark_sweep_params:
+  - {m: {start: 512, end: 65536, multiplier: 2}, k: {start: 512, end: 65536, multiplier: 2}, n: {start: 512, end: 65536, multiplier: 2}}
