@@ -62,7 +62,7 @@ HBM_BENCHMARK_MAP = {
 }
 GEMM_BENCHMARK_MAP = {
     "gemm_simple":"benchmark_gemm.gemm_simple",
-    "gemm_bf16_simple":"benchmark_gemm.gemm_bf16_simple",
+    "gemm_batched_simple":"benchmark_gemm.gemm_batched_simple",
     "gemm": "benchmark_gemm.gemm",
     "gemm_accum": "benchmark_gemm.gemm_accum",
     "quantization": "benchmark_gemm.quantization",
