@@ -1103,7 +1103,7 @@ def gemm_mxfp8_b32(
     """FP8-Rowwise GEMM with dynamic scaling factors."""
     def f(x, y):
         with jax.named_scope(MARKER):
-            how = qarray.HowToQuantize(qtype='mxfp8', calibration_method="absmax", channelwise_axes=[0], tiled_axes={1: 128})
+            how = qarray.HowToQuantize(qtype='mxfp8', calibration_method="absmax", channelwise_axes=[0], tiled_axes={1: 32})
             qx = qarray.quantize(x, how=how)
             qy = qarray.quantize(y, how=how)
             acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
