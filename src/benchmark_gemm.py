@@ -1103,7 +1103,7 @@ def gemm_mxfp8_b32(
     """FP8-Rowwise GEMM with dynamic scaling factors."""
     def f(x, y):
         with jax.named_scope(MARKER):
-            how = qarray.HowToQuantize(qtype='mxfp8', calibration_method="absmax", channelwise_axes=[0], tiled_axes={1: 32})
+            how = qarray.HowToQuantize(qtype='mxfp8', calibration_method="absmax")
             qx = qarray.quantize(x, how=how)
             qy = qarray.quantize(y, how=how)
             acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
@@ -1112,6 +1112,27 @@ def gemm_mxfp8_b32(
     
 
 def gemm_mxfp8_b32_calculate_metrics(
+    m: int, k: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+
+def gemm_mxfp8_b32_static_scaling(
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+) -> Dict[str, Any]:
+    """FP8-Rowwise GEMM with dynamic scaling factors."""
+    def f(x, y):
+        with jax.named_scope(MARKER):
+            how = qarray.HowToQuantize(qtype='mxfp8', calibration_method="fixed, -224, 224")
+            qx = qarray.quantize(x, how=how)
+            qy = qarray.quantize(y, how=how)
+            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
+            return acc.astype(jnp.bfloat16)
+    return gemm_fp8_quantization(m, k, n, f, num_runs, trace_dir, task_name="gemm_mxfp8_b32")
+    
+
+def gemm_mxfp8_b32_static_scaling_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
