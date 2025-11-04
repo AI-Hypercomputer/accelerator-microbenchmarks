@@ -79,6 +79,8 @@ GEMM_BENCHMARK_MAP = {
     "gemm_fp8_b128_fp32_static_scaling": "benchmark_gemm.gemm_fp8_b128_fp32_static_scaling",
     "quantization_static_scaling": "benchmark_gemm.quantization_static_scaling",
     "transpose_quantization_static_scaling": "benchmark_gemm.transpose_quantization_static_scaling",
+    "gemm_mxfp8_b32": "benchmark_gemm.gemm_mxfp8_b32",
+    "gemm_mxfp8_b32_static_scaling": "benchmark_gemm.gemm_mxfp8_b32_static_scaling",
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)
