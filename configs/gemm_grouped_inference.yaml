@@ -1,8 +1,8 @@
 benchmarks:
-- benchmark_name: "gemm_batched_simple"
-  trace_dir: "../microbenchmarks/gemm_batched_simple_inference"
-  csv_path: "../microbenchmarks/gemm_batched_simple_inference"
-  xlml_metrics_dir: "../microbenchmarks/gemm_batched_simple_inference"
+- benchmark_name: "gemm_grouped_ragged_dot"
+  trace_dir: "../microbenchmarks/gemm_grouped_ragged_dot_inference"
+  csv_path: "../microbenchmarks/gemm_grouped_ragged_dot_inference"
+  xlml_metrics_dir: "../microbenchmarks/gemm_grouped_ragged_dot_inference"
   num_runs: 1000
   benchmark_sweep_params:
   - {b: {start: 4, end: 256, multiplier: 2}, m: {start: 256, end: 2048, multiplier: 2}, k: {start: 256, end: 2048, multiplier: 2}, n: {start: 256, end: 2048, multiplier: 2}, in_dtype_str: "bf16", out_dtype_str: "bf16"}
