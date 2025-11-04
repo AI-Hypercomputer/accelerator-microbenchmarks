@@ -1,0 +1,8 @@
+benchmarks:
+- benchmark_name: "gemm_batched"
+  trace_dir: "../microbenchmarks/gemm_batched_rescale_inference"
+  csv_path: "../microbenchmarks/gemm_batched_rescale_inference"
+  xlml_metrics_dir: "../microbenchmarks/gemm_batched_rescale_inference"
+  num_runs: 1000
+  benchmark_sweep_params:
+  - {b: {start: 4, end: 256, multiplier: 2}, m: {start: 56, end: 2048, multiplier: 2}, k: {start: 256, end: 2048, multiplier: 2}, n: {start: 256, end: 2048, multiplier: 2}, in_dtype_str: "fp8", out_dtype_str: "bf16"}

@@ -56,11 +56,44 @@ M_MAX_SIZE = 50000
 # The number of layers in the multilayer collective matmul.
 # Matmul shapes: A(M,K) x H1(K,K)... x B(K,N) = C(M,N)
 LAYERS = 2
-WITH_SHARDING = True
 
 SHARDING_STRATEGY=ShardingStrategy.NO_SHARDING
 SEED = 0
 PEAK_FLOPS_PER_DEVICE=2307 # TFLOP/s for single core(device) of FP8 under p_state=7
+
+
+def str_to_dtype(dtype_str: str) -> jnp.dtype:
+    """Converts a string identifier to a JAX numpy dtype."""
+    if dtype_str.lower() == "fp8":
+        return jnp.float8_e4m3fn
+    elif dtype_str.lower() == "bf16":
+        return jnp.bfloat16
+    elif dtype_str.lower() == "fp16":
+        return jnp.float16
+    elif dtype_str.lower() == "fp32":
+        return jnp.float32
+    else:
+        raise ValueError(f"Unsupported dtype string: {dtype_str}")
+
+def get_peak_flops_multiplier(in_dtype_str: str) -> float:
+    """
+    Returns the peak FLOPS multiplier relative to the baseline
+    (PEAK_FLOPS_PER_DEVICE) based on the input data type.
+    """
+    in_dtype_lower = in_dtype_str.lower()
+    if in_dtype_lower == "fp8":
+        # FP8 is 2x faster than BF16
+        # The baseline PEAK_FLOPS_PER_DEVICE is 1153.5 * 2 = 2307, which is FP8 peak.
+        # So the multiplier should be 1.0
+        return 1.0
+    elif in_dtype_lower == "bf16" or in_dtype_lower == "fp16":
+        # BF16/FP16 is 2x slower than FP8 peak
+        return 0.5
+    elif in_dtype_lower == "fp32":
+        # FP32 is 4x slower than FP8 peak
+        return 0.25
+    else:
+        raise RuntimeError(f"{in_dtype_lower} is not supported for setting peak_flops_multiplier.")
 
 def get_lhs_named_shading(mesh):
     match SHARDING_STRATEGY:
@@ -286,14 +319,21 @@ def unified_bytes_metrics(
     return metadata, metrics
 
 def gemm_simple(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+    m: int, k: int, n: int,
+    in_dtype_str: str, out_dtype_str: str,
+    num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
+
+    # Convert string dtypes to jnp dtypes
+    lhs_dtype = str_to_dtype(in_dtype_str)
+    rhs_dtype = str_to_dtype(in_dtype_str)
+    out_dtype = str_to_dtype(out_dtype_str)
 
     def f(x, y):
         with jax.named_scope(MARKER):
             acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
-            return acc.astype(jnp.bfloat16)
+            return acc.astype(out_dtype)
 
     mesh = create_mesh()
     lhs_sharding = get_lhs_named_shading(mesh)
@@ -312,8 +352,6 @@ def gemm_simple(
 
     lhs_shape = (m, k)
     rhs_shape = (k, n)
-    lhs_dtype = jnp.float8_e4m3fn
-    rhs_dtype = jnp.float8_e4m3fn
 
     key = jax.random.key(SEED)
 
@@ -338,18 +376,300 @@ def gemm_simple(
         data_generator,
         matrix_dim=f"{m}x{n}x{k}",
         tries=num_runs,
-        task="gemm_simple",
+        task=f"gemm_simple_{in_dtype_str}_{out_dtype_str}",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}
 
 def gemm_simple_calculate_metrics(
-    m: int, k: int, n: int, time_ms_list: list[float]
+    m: int, k: int, n: int,
+    in_dtype_str: str, out_dtype_str: str,
+    time_ms_list: list[float]
 ) -> Dict[str, Any]:
     # Calculate FLOPs
-    total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops = (2 * k - 1) * m * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+
+    # Get the multiplier by calling the utility function
+    peak_flops_multiplier = get_peak_flops_multiplier(in_dtype_str)
+
+    metadata, metrics = unified_flops_metrics(
+            m, n, k, time_ms_list,
+            total_flops, total_flops_all_devices,
+            PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier)
+
+    # Add dtype info to metadata for logging
+    metadata["in_dtype"] = in_dtype_str
+    metadata["out_dtype"] = out_dtype_str
+
+    return metadata, metrics
+
+def gemm_batched_simple(
+    b: int, m: int, k: int, n: int,
+    in_dtype_str: str, out_dtype_str: str,
+    num_runs: int = 1, trace_dir: str = None
+) -> Dict[str, Any]:
+    """Benchmarks the BATCHED OUT<B, M, N> = IN0<B, M, K> x IN1<B, K, N>. Accumulation is FP32."""
+
+    # Convert string dtypes to jnp dtypes
+    lhs_dtype = str_to_dtype(in_dtype_str)
+    rhs_dtype = str_to_dtype(in_dtype_str)
+    out_dtype = str_to_dtype(out_dtype_str)
+
+    def f(x, y):
+        with jax.named_scope(MARKER):
+            # Batched matmul: (B, M, K) @ (B, K, N) -> (B, M, N)
+            acc = jax.numpy.einsum("bij,bjk->bik", x, y, preferred_element_type=jnp.float32)
+            return acc.astype(out_dtype)
+
+    mesh = create_mesh()
+
+    # Get the 2D sharding specs from your helper functions
+    lhs_sharding_2d = get_lhs_named_shading(mesh).spec
+    rhs_sharding_2d = get_rhs_named_shading(mesh).spec
+    out_sharding_2d = get_out_sharding()
+
+    # Create new 3D specs by adding 'None' for the batch dimension (dim 0)
+    # (B, M, K) - sharding from (M, K)
+    lhs_spec = P(None, *lhs_sharding_2d)
+    # (B, K, N) - sharding from (K, N)
+    rhs_spec = P(None, *rhs_sharding_2d)
+    # (B, M, N) - sharding from (M, N)
+    out_spec = P(None, *out_sharding_2d)
+
+    # Create the full NamedSharding objects for the data generator
+    lhs_sharding = NamedSharding(mesh, lhs_spec)
+    rhs_sharding = NamedSharding(mesh, rhs_spec)
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(lhs_spec, rhs_spec),
+            out_specs=out_spec,
+            check_rep=False,
+        )
+    )
+
+    # Add the batch dimension 'b' to the shapes
+    lhs_shape = (b, m, k)
+    rhs_shape = (b, k, n)
+
+    key = jax.random.key(SEED)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, key_lhs, key_rhs = jax.random.split(key, 3)
+
+        # Create random data on host with new 3D shapes
+        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+
+        # Put on device (HBM)
+        lhs_device = jax.device_put(lhs_host, lhs_sharding)
+        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+
+        return (lhs_device, rhs_device)
+
+    # Run the benchmark
+    time_ms_list = iteration_timeit(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{b}x{m}x{n}x{k}",
+        tries=num_runs,
+        task=f"gemm_batched_simple_{in_dtype_str}_{out_dtype_str}",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def gemm_batched_simple_calculate_metrics(
+    b: int, m: int, k: int, n: int,
+    in_dtype_str: str, out_dtype_str: str,
+    time_ms_list: list[float]
+) -> Dict[str, Any]:
+
+    # Calculate FLOPs for the *entire batch*
+    total_flops_base = b * (2 * m * k * n)
+
+    # Get per-device and all-device FLOPS based on sharding strategy
+    total_flops_per_device, total_flops_all_devices = handle_based_on_sharding(total_flops_base)
+
+    # Get the multiplier by calling the utility function
+    peak_flops_multiplier = get_peak_flops_multiplier(in_dtype_str)
+
+    metadata, metrics = unified_flops_metrics(
+        m, n, k, time_ms_list,
+        total_flops_per_device,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier
+    )
+
+    # Manually add the new parameters to the metadata for logging
+    metadata["b"] = b
+    metadata["in_dtype"] = in_dtype_str
+    metadata["out_dtype"] = out_dtype_str
+
+    return metadata, metrics
+
+# --- Add this import at the top of your file ---
+try:
+    import tokamax_api
+except ImportError:
+    print("Warning: tokamax_api not found. gemm_ragged_dot will not be available.")
+    tokamax_api = None
+# ---
+
+def gemm_grouped_ragged_dot(
+    b: int, m: int, k: int, n: int,
+    in_dtype_str: str, out_dtype_str: str,
+    num_runs: int = 1, trace_dir: str = None
+) -> Dict[str, Any]:
+    """Benchmarks a Batched GEMM using tokamax_api.ragged_dot.
+
+    This implements (B, M, K) @ (B, K, N) by treating it as a Grouped GEMM:
+    LHS: (B*M, K)
+    RHS: (B, K, N) [B is the number of "experts"]
+    group_sizes: [M, M, ..., M] (length B)
+    """
+    if tokamax_api is None:
+        raise ImportError("tokamax_api not found. Cannot run gemm_ragged_dot.")
+
+    # Convert string dtypes to jnp dtypes
+    in_dtype = str_to_dtype(in_dtype_str)
+    out_dtype = str_to_dtype(out_dtype_str)
+
+    def f(lhs, rhs, group_sizes):
+        with jax.named_scope(MARKER):
+            # Call the ragged_dot kernel
+            output_stacked = tokamax_api.ragged_dot(
+                lhs=lhs,
+                rhs=rhs,
+                group_sizes=group_sizes,
+                precision=jax.lax.Precision.DEFAULT,
+                preferred_element_type=jnp.float32, # Use FP32 accumulation
+                implementation="mosaic" # Use the high-performance TPU kernel
+            )
+
+            # Reshape the output from (B*M, N) back to (B, M, N)
+            output_batched = output_stacked.reshape((b, m, n))
+            return output_batched.astype(out_dtype)
+
+    mesh = create_mesh()
+
+    # --- Sharding logic that respects SHARDING_STRATEGY ---
+    # We define sharding specs based on the *intent* of the strategy
+
+    match SHARDING_STRATEGY:
+        case ShardingStrategy.NO_SHARDING:
+            # Replicate everything
+            lhs_spec = P(None, None)            # (B*M, K)
+            rhs_spec = P(None, None, None)      # (B, K, N)
+            group_sizes_spec = P(None,)         # (B,)
+            out_spec = P(None, None, None)      # (B, M, N)
+
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M | ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            # This is Token/Expert Parallelism. We shard along the 'device' axis.
+            # 'device' axis is defined in create_mesh()
+            lhs_spec = P("device", None)        # Shard (B*M) tokens
+            rhs_spec = P("device", None, None)  # Shard (B) experts
+            group_sizes_spec = P("device",)     # Shard (B) group_sizes
+            out_spec = P("device", None, None)  # Output is sharded by B
+
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N | ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            # This is Tensor Parallelism. We shard along the 'N' dimension.
+            lhs_spec = P(None, None)            # Replicate (B*M) tokens
+            rhs_spec = P(None, None, "device")  # Shard (N) dimension
+            group_sizes_spec = P(None,)         # Replicate group_sizes
+            out_spec = P(None, None, "device")  # Output is sharded by N
+
+        case _:
+            raise ValueError(f"Unsupported SHARDING_STRATEGY for ragged_dot: {SHARDING_STRATEGY}")
+
+    # Create the full NamedSharding objects
+    lhs_sharding = NamedSharding(mesh, lhs_spec)
+    rhs_sharding = NamedSharding(mesh, rhs_spec)
+    group_sizes_sharding = NamedSharding(mesh, group_sizes_spec)
+    # --- End of sharding logic ---
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(lhs_sharding.spec, rhs_sharding.spec, group_sizes_sharding.spec),
+            out_specs=out_spec,
+            check_rep=False,
+        )
+    )
+
+    # Note the 2D and 3D shapes required for the inputs
+    lhs_shape = (b * m, k) # Stacked tokens
+    rhs_shape = (b, k, n) # Stacked expert weights
+    group_sizes_shape = (b,)
+
+    key = jax.random.key(SEED)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key
+        key, key_lhs, key_rhs = jax.random.split(key, 3)
+
+        # Create random data on host
+        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(in_dtype)
+        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(in_dtype)
+
+        # Create the group_sizes array: [m, m, m, ...]
+        group_sizes_host = jnp.full(group_sizes_shape, m, dtype=jnp.int32)
+
+        # Put on device (HBM) with the new sharding
+        lhs_device = jax.device_put(lhs_host, lhs_sharding)
+        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+        group_sizes_device = jax.device_put(group_sizes_host, group_sizes_sharding)
+
+        return (lhs_device, rhs_device, group_sizes_device)
+
+    # Run the benchmark
+    time_ms_list = iteration_timeit(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{b}x{m}x{n}x{k}",
+        tries=num_runs,
+        task=f"gemm_ragged_dot_{in_dtype_str}_{out_dtype_str}",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def gemm_grouped_ragged_dot_calculate_metrics(
+    b: int, m: int, k: int, n: int,
+    in_dtype_str: str, out_dtype_str: str,
+    time_ms_list: list[float]
+) -> Dict[str, Any]:
+
+    # The total FLOPS are identical to the batched simple GEMM
+    # (2*k-1) FLOPS per element, times M*N elements, times B batches
+    total_flops_base = b * ( (2 * k - 1) * m * n )
+
+    # Get per-device and all-device FLOPS based on sharding strategy
+    # Your `handle_based_on_sharding` function should work perfectly here!
+    total_flops_per_device, total_flops_all_devices = handle_based_on_sharding(total_flops_base)
+
+    # Get the multiplier by calling the utility function
+    peak_flops_multiplier = get_peak_flops_multiplier(in_dtype_str)
+
+    metadata, metrics = unified_flops_metrics(
+        m, n, k, time_ms_list,
+        total_flops_per_device,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier
+    )
+
+    # Manually add the new parameters to the metadata for logging
+    metadata["b"] = b
+    metadata["in_dtype"] = in_dtype_str
+    metadata["out_dtype"] = out_dtype_str
+    metadata["kernel"] = "ragged_dot" # Add kernel name
+
+    return metadata, metrics
 
 def gemm(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
@@ -424,10 +744,135 @@ def gemm_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     # Calculate FLOPs
-    total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops = (2 * k + 1) * m * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
 
+def gemm_batched(
+    b: int, m: int, k: int, n: int,
+    in_dtype_str: str, out_dtype_str: str,
+    num_runs: int = 1, trace_dir: str = None
+) -> Dict[str, Any]:
+    """Batched OUT<B, M, N> = matmul(IN0<B, M, K>, IN1<B, K, N>) * outer_product(SF0<B, M, 1> * SF1<B, 1, N>)"""
+
+    # Convert string dtypes to jnp dtypes
+    lhs_dtype = str_to_dtype(in_dtype_str)
+    rhs_dtype = str_to_dtype(in_dtype_str)
+    out_dtype = str_to_dtype(out_dtype_str)
+    # Scale factors are typically FP32
+    sf_dtype = jnp.float32
+
+    def f(x, y, scale_m, scale_n):
+        with jax.named_scope(MARKER):
+            # Batched matmul: (B, M, K) @ (B, K, N) -> (B, M, N)
+            acc = jax.numpy.einsum("bij,bjk->bik", x, y, preferred_element_type=jnp.float32)
+            # Batched scale outer product: (B, M, 1) * (B, 1, N) -> (B, M, N)
+            scales = scale_m * scale_n
+            # Batched element-wise scaling
+            result_fp32 = acc * scales
+            return result_fp32.astype(out_dtype)
+
+    mesh = create_mesh()
+
+    # --- Adapt 2D sharding specs to 3D by prepending 'None' for batch dim ---
+    lhs_sharding_2d = get_lhs_named_shading(mesh).spec
+    rhs_sharding_2d = get_rhs_named_shading(mesh).spec
+    out_sharding_2d = get_out_sharding()
+
+    # (B, M, K)
+    lhs_spec = P(None, *lhs_sharding_2d)
+    # (B, K, N)
+    rhs_spec = P(None, *rhs_sharding_2d)
+    # (B, M, 1) - Sharded along M, like LHS
+    sf0_spec = P(None, *get_lhs_named_shading(mesh).spec)
+    # (B, 1, N) - Sharded along N, like RHS
+    sf1_spec = P(None, None, get_rhs_named_shading(mesh).spec[1])
+    # (B, M, N)
+    out_spec = P(None, *out_sharding_2d)
+
+    # Create full NamedSharding objects for the data generator
+    lhs_sharding = NamedSharding(mesh, lhs_spec)
+    rhs_sharding = NamedSharding(mesh, rhs_spec)
+    sf0_sharding = NamedSharding(mesh, sf0_spec)
+    sf1_sharding = NamedSharding(mesh, sf1_spec)
+    # --- End of sharding logic ---
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(lhs_spec, rhs_spec, sf0_spec, sf1_spec),
+            out_specs=out_spec,
+            check_rep=False,
+        )
+    )
+
+    # Add the batch dimension 'b' to all shapes
+    lhs_shape = (b, m, k)
+    rhs_shape = (b, k, n)
+    sf0_shape = (b, m, 1)
+    sf1_shape = (b, 1, n)
+
+    key = jax.random.key(SEED)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key # Use and update the outer 'key'
+        key, k1, k2, k3, k4 = jax.random.split(key, 5)
+
+        # Create random data on host with new 3D shapes
+        lhs_host = jax.random.normal(k1, lhs_shape).astype(lhs_dtype)
+        rhs_host = jax.random.normal(k2, rhs_shape).astype(rhs_dtype)
+        sf0_host = jax.random.normal(k3, sf0_shape).astype(sf_dtype)
+        sf1_host = jax.random.normal(k4, sf1_shape).astype(sf_dtype)
+
+        # Put on device (HBM)
+        lhs_device = jax.device_put(lhs_host, lhs_sharding)
+        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+        sf0_device = jax.device_put(sf0_host, sf0_sharding)
+        sf1_device = jax.device_put(sf1_host, sf1_sharding)
+
+        return (lhs_device, rhs_device, sf0_device, sf1_device)
+
+    time_ms_list = iteration_timeit(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{b}x{m}x{n}x{k}",
+        tries=num_runs,
+        task=f"gemm_batched_{in_dtype_str}_{out_dtype_str}",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def gemm_batched_calculate_metrics(
+    b: int, m: int, k: int, n: int,
+    in_dtype_str: str, out_dtype_str: str,
+    time_ms_list: list[float]
+) -> Dict[str, Any]:
+
+    # Calculate FLOPs for the *entire batch*
+    # (2*k+1)*m*n FLOPS per item, multiplied by batch size b
+    total_flops_base = b * ((2 * k + 1) * m * n)
+
+    # Get per-device and all-device FLOPS based on sharding strategy
+    total_flops_per_device, total_flops_all_devices = handle_based_on_sharding(total_flops_base)
+
+    # Get the multiplier by calling the utility function
+    peak_flops_multiplier = get_peak_flops_multiplier(in_dtype_str)
+
+    metadata, metrics = unified_flops_metrics(
+        m, n, k, time_ms_list,
+        total_flops_per_device,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier
+    )
+
+    # Manually add the new parameters to the metadata for logging
+    metadata["b"] = b
+    metadata["in_dtype"] = in_dtype_str
+    metadata["out_dtype"] = out_dtype_str
+
+    return metadata, metrics
 
 def gemm_accum(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, 
