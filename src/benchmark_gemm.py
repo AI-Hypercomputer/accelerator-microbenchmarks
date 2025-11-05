@@ -29,8 +29,8 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_dvfs_p_state=7 "
-    "--xla_tpu_vmem_scavenging_mode=NONE "
-    "--xla_tpu_allow_conv_input_fusion_with_downcast_convert=true "
+    # "--xla_tpu_vmem_scavenging_mode=NONE "
+    # "--xla_tpu_allow_conv_input_fusion_with_downcast_convert=true "
 )
 
 TRACE_BASE_DIR = None
@@ -606,8 +606,7 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     """
     rms_norm_module = nnx.RMSNorm(num_features=n, dtype=jnp.bfloat16, param_dtype=jnp.float32, rngs=nnx.Rngs(SEED))
     def f_fwd(x):
-        with jax.named_scope(MARKER):
-            return rms_norm_module(x)
+        return rms_norm_module(x)
     
     def f(x: jax.Array, dy: jax.Array) -> jax.Array:
         """
