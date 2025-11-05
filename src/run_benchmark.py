@@ -56,6 +56,7 @@ ATTENTION_BENCHMARK_MAP = {
     "flax_nnx_attention": "benchmark_attention.flax_nnx_attention_benchmark",
     "flax_linen_attention": ("benchmark_attention.flax_linen_attention_benchmark"),
     "keras_attention": "benchmark_attention.keras_attention_benchmark",
+    "tokamax_splash_attention": "benchmark_attention.tokamax_splash_attention_benchmark",
 }
 HBM_BENCHMARK_MAP = {
     "single_chip_hbm_copy": "benchmark_hbm.single_chip_hbm_copy",
@@ -181,7 +182,13 @@ def generate_benchmark_params_sweeping(
             if key.endswith("_range"):
                 key = key[:-6]  # Remove the last 6 characters (i.e., '_range')
 
-            if isinstance(value, dict):
+            if key.endswith("_list"):
+                key = key[:-5]  # Remove the last 6 characters (i.e., '_list')
+
+            if isinstance(value, list):
+                param_sets[key] = value
+
+            elif isinstance(value, dict):
                 # Extract the range and multiplier
                 start = value.get("start")
                 end = value.get("end")
