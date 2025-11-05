@@ -2,7 +2,7 @@
 
 import datetime
 import os
-from typing import Dict, Any, Callable
+from typing import Any, Dict, Tuple, Callable
 import glob
 
 import jax
@@ -18,6 +18,10 @@ from collections import defaultdict
 import subprocess
 import shutil
 from common import MARKER
+from enum import Enum, auto
+from jax.sharding import Mesh
+from jax.sharding import NamedSharding
+from jax.sharding import PartitionSpec as P
 
 # The dictionary to map a JAX (collective) function to its main HLO.
 TARGET_TASK_NAME_COLLECTIVES_MAP = {
@@ -26,6 +30,14 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
     "psum_ici_op": r"all-reduce.[0-9]+",
     "ppermute_ici_op": r"collective-permute.[0-9]+",
 }
+
+class ShardingStrategy(Enum):
+    """Defines different sharding strategies for tensors."""
+    NO_SHARDING = auto()
+    SHARDING_ON_ALL_DEVICES_WITH_M = auto()
+    SHARDING_ON_SINGLE_CHIP_WITH_M = auto() # Only sharding on the two core of one single chip
+    SHARDING_ON_ALL_DEVICES_WITH_N = auto()
+    SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
 
 def iteration_timeit_from_trace(
     compute_func: Callable,
@@ -481,3 +493,226 @@ def rename_xla_dump(
         else:
             upload_to_storage(trace_dir=new_filepath, local_file=original_filepath)
     print(f"The XLA dump is stored in {dest_xla_dump_dir}")
+
+def get_lhs_named_shading(mesh, strategy: ShardingStrategy):
+    match strategy:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return NamedSharding(mesh, P(None, None))
+
+def get_rhs_named_shading(mesh, strategy: ShardingStrategy):
+    match strategy:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+
+def get_out_sharding(strategy: ShardingStrategy):
+    match strategy:
+        case ShardingStrategy.NO_SHARDING:
+            return P(None, None)
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return P("device", None)
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return P("device", None)
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return P(None, "device")
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return P(None, "device")
+
+def get_rowwise_named_shading(mesh, strategy: ShardingStrategy):
+    match strategy:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            assert False, f"ShardingStrategy is wrong for this ops: {strategy}"
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return False, f"ShardingStrategy is wrong for this ops: {strategy}"
+
+def get_output_named_shading(mesh, strategy: ShardingStrategy):
+    match strategy:
+        case ShardingStrategy.NO_SHARDING:
+            return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return NamedSharding(mesh, P("device", None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return NamedSharding(mesh, P(None, "device"))
+
+def handle_per_device_based_on_sharding(value, strategy: ShardingStrategy):
+    match strategy:
+        case ShardingStrategy.NO_SHARDING:
+            return value
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return value // jax.device_count()
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return value // 2
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return value // jax.device_count()
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return value // 2
+
+def handle_all_devices_based_on_sharding(value: int, strategy: ShardingStrategy):
+    match strategy:
+        case ShardingStrategy.NO_SHARDING:
+            return value * jax.device_count()
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M:
+            return value
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M:
+            return value * jax.device_count() // 2
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_N:
+            return value
+        case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+            return value * jax.device_count() // 2
+
+def handle_based_on_sharding(value: int, strategy: ShardingStrategy):
+    total_value = value
+    value = handle_per_device_based_on_sharding(value, strategy)
+    total_value = handle_all_devices_based_on_sharding(total_value, strategy)
+    return value, total_value
+
+def create_mesh(strategy: ShardingStrategy) -> Mesh:
+    """Creates a mesh."""
+    if strategy == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M or strategy == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+        num_devices = jax.device_count()
+        assert num_devices % 2 == 0, "Total devices must be divisible by 2 (chip size)"
+        num_chips = num_devices // 2
+        mesh_shape = (num_chips, 2)
+        mesh_axes = ('chip', 'device')
+        mesh = jax.sharding.Mesh(np.array(jax.devices()).reshape(mesh_shape), mesh_axes)
+    else:
+        mesh = Mesh(np.array(jax.devices()), axis_names="device")
+    return mesh
+
+def get_metrics_helper(
+    params: Dict[str, Any],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Helper function to build the metrics and metadata for the benchmark."""
+    exclude_param_keys = {"time_ms_list", "total_flops", "total_flops_all_devices", "peak_TFLOPS_per_device", "total_bytes", "total_bytes_all_devices"}
+    metadata = {
+        key: value
+        for key, value in params
+        if value is not None and key not in exclude_param_keys
+    }
+    return metadata
+
+def unified_flops_metrics(
+    m: int, n: int, k: int, time_ms_list: list[float], total_flops: int, total_flops_all_devices: int, peak_TFLOPS_per_device: float
+) -> Dict[str, Any]:
+    """Calculates the metrics for the naive matmul benchmark."""
+    # Build dictionary of all the parameters in the function
+    params = locals().items()
+    metadata = get_metrics_helper(params)
+    metrics = {}
+
+    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    tflops_per_sec_list = [
+        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
+    ]
+    tflops_per_sec_all_devices = [
+        total_flops_all_devices / average_time_s / 10**12 for average_time_s in average_time_s_list
+    ]
+    mfu = [
+        tflops_per_sec/peak_TFLOPS_per_device for tflops_per_sec in tflops_per_sec_list
+    ]
+    average_time_ms_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name="step_time_ms"
+    )
+    tflops_per_sec_statistics = MetricsStatistics(
+        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec_pre_device"
+    )
+    tflops_per_sec_all_devices_statistics = MetricsStatistics(
+        metrics_list=tflops_per_sec_all_devices, metrics_name="tflops_per_sec"
+    )
+    mfu_statistics=MetricsStatistics(
+        metrics_list=mfu, metrics_name="MFU"
+    )
+    print(
+        f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, "
+        f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOP / second / device, "
+        f"TotalThroughput (median): {tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} TFLOP / second, "
+        f"MFU: {mfu_statistics.statistics['p50']:.2%}"
+    )
+    print()
+    # Gather the metrics to report.
+    metadata.update(
+        {
+            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
+            "Throughput(median,TFLOP/s/device)": tflops_per_sec_statistics.statistics['p50'],
+            "TotalThroughput(median,TFLOP/s)": tflops_per_sec_all_devices_statistics.statistics['p50'],
+            "MFU": mfu_statistics.statistics['p50'],
+            "total_flops": total_flops,
+        }
+    )
+    metrics.update(average_time_ms_statistics.serialize_statistics())
+    metrics.update(tflops_per_sec_statistics.serialize_statistics())
+    metrics.update(tflops_per_sec_all_devices_statistics.serialize_statistics())
+    metrics.update(mfu_statistics.serialize_statistics())
+    metrics = {key: value for key, value in metrics.items() if value is not None}
+    return metadata, metrics
+
+def unified_bytes_metrics( 
+    m: int, n: int, time_ms_list: list[float], total_bytes: int, total_bytes_all_devices: int=1e9
+) -> Dict[str, Any]:
+    """Calculates the metrics for the naive matmul benchmark."""
+    # Build dictionary of all the parameters in the function
+    params = locals().items()
+    metadata = get_metrics_helper(params)
+    metrics = {}
+
+    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    gigabytes_per_sec_list = [
+        total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
+    ]
+    digabytes_per_sec_all_devices = [
+        total_bytes_all_devices / average_time_s / 10**9 for average_time_s in average_time_s_list
+    ]
+    average_time_ms_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name="step_time_ms"
+    )
+    gigabytes_per_sec_statistics = MetricsStatistics(
+        metrics_list=gigabytes_per_sec_list, metrics_name="Gbytes_per_sec_per_device"
+    )
+    gigabytes_per_sec_all_devices_statistics = MetricsStatistics(
+        metrics_list=digabytes_per_sec_all_devices, metrics_name="Gbytes_per_sec"
+    )
+    print(
+        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Throughput (median):"
+        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second / device,"
+        f" TotalThroughput (median): {gigabytes_per_sec_all_devices_statistics.statistics['p50']:.2f} GBytes / second"
+    )
+    print()
+    # Gather the metrics to report.
+    metadata.update(
+        {
+            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
+            "Throughput(median,GBytes/s/device)": gigabytes_per_sec_statistics.statistics['p50'],
+            "TotalThroughput(median,GBytes/s)": gigabytes_per_sec_all_devices_statistics.statistics['p50'],
+            "total_bytes": total_bytes,
+        }
+    )
+    metrics.update(average_time_ms_statistics.serialize_statistics())
+    metrics.update(gigabytes_per_sec_statistics.serialize_statistics())
+    metrics.update(gigabytes_per_sec_all_devices_statistics.serialize_statistics())
+    metrics = {key: value for key, value in metrics.items() if value is not None}
+    return metadata, metrics
