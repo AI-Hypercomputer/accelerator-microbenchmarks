@@ -512,14 +512,6 @@ def gemm_batched_simple_calculate_metrics(
 
     return metadata, metrics
 
-# --- Add this import at the top of your file ---
-try:
-    import tokamax_api
-except ImportError:
-    print("Warning: tokamax_api not found. gemm_ragged_dot will not be available.")
-    tokamax_api = None
-# ---
-
 def gemm_grouped_ragged_dot(
     b: int, m: int, k: int, n: int,
     in_dtype_str: str, out_dtype_str: str,
@@ -532,8 +524,6 @@ def gemm_grouped_ragged_dot(
     RHS: (B, K, N) [B is the number of "experts"]
     group_sizes: [M, M, ..., M] (length B)
     """
-    if tokamax_api is None:
-        raise ImportError("tokamax_api not found. Cannot run gemm_ragged_dot.")
 
     # Convert string dtypes to jnp dtypes
     in_dtype = str_to_dtype(in_dtype_str)
@@ -542,13 +532,12 @@ def gemm_grouped_ragged_dot(
     def f(lhs, rhs, group_sizes):
         with jax.named_scope(MARKER):
             # Call the ragged_dot kernel
-            output_stacked = tokamax_api.ragged_dot(
+            output_stacked = jax.lax.ragged_dot(
                 lhs=lhs,
                 rhs=rhs,
                 group_sizes=group_sizes,
                 precision=jax.lax.Precision.DEFAULT,
-                preferred_element_type=jnp.float32, # Use FP32 accumulation
-                implementation="mosaic" # Use the high-performance TPU kernel
+                preferred_element_type=jnp.float32 # Use FP32 accumulation
             )
 
             # Reshape the output from (B*M, N) back to (B, M, N)
