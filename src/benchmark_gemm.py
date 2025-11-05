@@ -36,6 +36,8 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_dvfs_p_state=7 "
+    # "--xla_tpu_allow_conv_input_fusion_with_downcast_convert=true "
+    # "--xla_tpu_impure_enable_packed_bf16_math_ops=true "
     # "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
     # "--xla_tpu_should_accumulate_into_mrb=true" # Unknown XLA Flag
 )
@@ -703,7 +705,7 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 def swiglu_fwd_calculate_metrics(
     m: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    total_bytes = 2 * (2 * m * n + m * n // 2)
+    total_bytes = 2 * (m * n + m * n // 2)
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
