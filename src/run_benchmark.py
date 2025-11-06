@@ -61,25 +61,25 @@ ATTENTION_BENCHMARK_MAP = {
 HBM_BENCHMARK_MAP = {
     "single_chip_hbm_copy": "benchmark_hbm.single_chip_hbm_copy",
 }
-GEMM_BENCHMARK_MAP = {
+COMPUTE_BENCHMARK_MAP = {
     "gemm_simple":"benchmark_gemm.gemm_simple",
     "gemm": "benchmark_gemm.gemm",
     "gemm_accum": "benchmark_gemm.gemm_accum",
-    "quantization": "benchmark_gemm.quantization",
-    "transpose_quantization": "benchmark_gemm.transpose_quantization",
-    "swiglu_fwd": "benchmark_gemm.swiglu_fwd",
-    "swiglu_bwd": "benchmark_gemm.swiglu_bwd",
-    "rmsnorm_fwd": "benchmark_gemm.rmsnorm_fwd",
-    "rmsnorm_bwd": "benchmark_gemm.rmsnorm_bwd",
-    "add": "benchmark_gemm.add",
-    "gemm_fp8_rowwise": "benchmark_gemm.gemm_fp8_rowwise",
-    "gemm_fp8_b128_fp32": "benchmark_gemm.gemm_fp8_b128_fp32",
-    "gemm_fp8_rowwise_static_scaling": "benchmark_gemm.gemm_fp8_rowwise_static_scaling",
-    "gemm_fp8_b128_fp32_static_scaling": "benchmark_gemm.gemm_fp8_b128_fp32_static_scaling",
-    "quantization_static_scaling": "benchmark_gemm.quantization_static_scaling",
-    "transpose_quantization_static_scaling": "benchmark_gemm.transpose_quantization_static_scaling",
-    "gemm_mxfp8_b32": "benchmark_gemm.gemm_mxfp8_b32",
-    "gemm_mxfp8_b32_static_scaling": "benchmark_gemm.gemm_mxfp8_b32_static_scaling",
+    "quantization": "benchmark_compute.quantization",
+    "transpose_quantization": "benchmark_compute.transpose_quantization",
+    "quantization_static_scaling": "benchmark_compute.quantization_static_scaling",
+    "transpose_quantization_static_scaling": "benchmark_compute.transpose_quantization_static_scaling",
+    "swiglu_fwd": "benchmark_compute.swiglu_fwd",
+    "swiglu_bwd": "benchmark_compute.swiglu_bwd",
+    "rmsnorm_fwd": "benchmark_compute.rmsnorm_fwd",
+    "rmsnorm_bwd": "benchmark_compute.rmsnorm_bwd",
+    "add": "benchmark_compute.add",
+    "gemm_fp8_rowwise": "benchmark_gemm_numerics.gemm_fp8_rowwise",
+    "gemm_fp8_b128_fp32": "benchmark_gemm_numerics.gemm_fp8_b128_fp32",
+    "gemm_fp8_rowwise_static_scaling": "benchmark_gemm_numerics.gemm_fp8_rowwise_static_scaling",
+    "gemm_fp8_b128_fp32_static_scaling": "benchmark_gemm_numerics.gemm_fp8_b128_fp32_static_scaling",
+    "gemm_mxfp8_b32": "benchmark_gemm_numerics.gemm_mxfp8_b32",
+    "gemm_mxfp8_b32_static_scaling": "benchmark_gemm_numerics.gemm_mxfp8_b32_static_scaling",
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)
@@ -87,7 +87,7 @@ BENCHMARK_MAP.update(MATMUL_BENCHMARK_MAP)
 BENCHMARK_MAP.update(CONVOLUTION_BENCHMARK_MAP)
 BENCHMARK_MAP.update(ATTENTION_BENCHMARK_MAP)
 BENCHMARK_MAP.update(HBM_BENCHMARK_MAP)
-BENCHMARK_MAP.update(GEMM_BENCHMARK_MAP)
+BENCHMARK_MAP.update(COMPUTE_BENCHMARK_MAP)
 
 
 # Mapping from dtype string to actual dtype object
