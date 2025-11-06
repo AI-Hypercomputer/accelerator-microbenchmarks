@@ -1,0 +1,10 @@
+benchmarks:
+- benchmark_name: "quantization"
+  trace_dir: "../microbenchmarks/quantization_infernece/sharding-on-m"
+  csv_path: "../microbenchmarks/quantization_infernece/sharding-on-m"
+  xlml_metrics_dir: "../microbenchmarks/quantization_infernece/sharding-on-m/xlml_metrics"
+  warmup_tries: 20
+  num_runs: 1000
+  benchmark_sweep_params:
+  - {m_range: {start: 1, end: 66000, multiplier: 2}, n_range: {start: 128, end: 66000, multiplier: 2}, quant_dtype: "float8_e4m3fn", use_static_scale: false}
+  - {m_range: {start: 1, end: 66000, multiplier: 2}, n_range: {start: 128, end: 66000, multiplier: 2}, quant_dtype: "float4_e2m1fn", use_static_scale: false}

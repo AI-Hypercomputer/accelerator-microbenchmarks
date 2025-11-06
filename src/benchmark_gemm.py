@@ -1,6 +1,6 @@
 """Benchmarks matmul in various flavors.
 
-1. 
+1.
 """
 
 import os
@@ -35,7 +35,7 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_dvfs_p_state=7 "
-    "--xla_tpu_vmem_scavenging_mode=NONE " # for gemm, gemm_simple and gemm_accum
+    # "--xla_tpu_vmem_scavenging_mode=NONE "
     # "--xla_tpu_should_accumulate_into_mrb=true" # Unknown XLA Flag
 )
 class ShardingStrategy(Enum):
@@ -55,7 +55,6 @@ M_MAX_SIZE = 50000
 # The number of layers in the multilayer collective matmul.
 # Matmul shapes: A(M,K) x H1(K,K)... x B(K,N) = C(M,N)
 LAYERS = 2
-WITH_SHARDING = True
 
 SHARDING_STRATEGY=ShardingStrategy.NO_SHARDING
 SEED = 0
@@ -238,8 +237,8 @@ def unified_flops_metrics(
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
-def unified_bytes_metrics( 
-    m: int, n: int, time_ms_list: list[float], total_bytes: int, total_bytes_all_devices: int=1e9
+def unified_bytes_metrics(
+    m: int, n: int, quant_dtype: jnp.dtype, time_ms_list: list[float], total_bytes: int, total_bytes_all_devices: int=1e9
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -297,7 +296,7 @@ def gemm_simple(
     mesh = create_mesh()
     lhs_sharding = get_lhs_named_shading(mesh)
     rhs_sharding = get_rhs_named_shading(mesh)
-    out_sharding = get_out_sharding()        
+    out_sharding = get_out_sharding()
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -320,15 +319,15 @@ def gemm_simple(
         """Creates new random data on host and puts it on device."""
         nonlocal key # Use and update the outer 'key'
         key, key_lhs, key_rhs = jax.random.split(key, 3)
-        
+
         # Create random data on host
         lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
         rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
-        
+
         # Put on device (HBM)
         lhs_device = jax.device_put(lhs_host, lhs_sharding)
         rhs_device = jax.device_put(rhs_host, rhs_sharding)
-        
+
         return (lhs_device, rhs_device)
 
     # Run the benchmark
@@ -382,7 +381,7 @@ def gemm(
     rhs_shape = (k, n)
     sf0_shape = (m, 1)
     sf1_shape = (1, n)
-    
+
     lhs_dtype = jnp.float8_e4m3fn
     rhs_dtype = jnp.float8_e4m3fn
     sf0_dtype = jnp.float32
@@ -394,21 +393,21 @@ def gemm(
         """Creates new random data on host and puts it on device."""
         nonlocal key # Use and update the outer 'key'
         key, k1, k2, k3, k4 = jax.random.split(key, 5)
-        
+
         # Create random data on host
         lhs_host = jax.random.normal(k1, lhs_shape).astype(lhs_dtype)
         rhs_host = jax.random.normal(k2, rhs_shape).astype(rhs_dtype)
         sf0_host = jax.random.normal(k3, sf0_shape).astype(sf0_dtype)
         sf1_host = jax.random.normal(k4, sf1_shape).astype(sf1_dtype)
-        
+
         # Put on device (HBM)
         lhs_device = jax.device_put(lhs_host, lhs_sharding)
         rhs_device = jax.device_put(rhs_host, rhs_sharding)
         sf0_device = jax.device_put(sf0_host, sf0_sharding)
         sf1_device = jax.device_put(sf1_host, sf1_sharding)
-        
+
         return (lhs_device, rhs_device, sf0_device, sf1_device)
-    
+
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
@@ -429,7 +428,7 @@ def gemm_calculate_metrics(
 
 
 def gemm_accum(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, 
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None,
 ) -> Dict[str, Any]:
     """OUT<M, N>:FP32 += matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)"""
     def f(out_buffer, x, y, scale_m, scale_n):
@@ -453,50 +452,50 @@ def gemm_accum(
             f,
             mesh,
             in_specs=(
-                out_buffer_sharding.spec, 
-                lhs_sharding.spec, 
-                rhs_sharding.spec, 
-                sf0_sharding.spec, 
+                out_buffer_sharding.spec,
+                lhs_sharding.spec,
+                rhs_sharding.spec,
+                sf0_sharding.spec,
                 sf1_sharding.spec
             ),
             out_specs=out_sharding,
             check_rep=False,
         )
     )
-    
+
     lhs_shape = (m, k)
     rhs_shape = (k, n)
     sf0_shape = (m, 1)
     sf1_shape = (1, n)
     out_buffer_shape = (m, n)
-    
+
     lhs_dtype = jnp.float8_e4m3fn
     rhs_dtype = jnp.float8_e4m3fn
     sf0_dtype = jnp.float32
     sf1_dtype = jnp.float32
     out_buffer_dtype = jnp.float32
-    
+
     key = jax.random.key(SEED)
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
         nonlocal key # Use and update the outer 'key'
         key, k_buf, k1, k2, k3, k4 = jax.random.split(key, 6)
-        
+
         # Create random data on host
         out_buffer_host = jax.random.normal(k_buf, out_buffer_shape).astype(out_buffer_dtype)
         lhs_host = jax.random.normal(k1, lhs_shape).astype(lhs_dtype)
         rhs_host = jax.random.normal(k2, rhs_shape).astype(rhs_dtype)
         sf0_host = jax.random.normal(k3, sf0_shape).astype(sf0_dtype)
         sf1_host = jax.random.normal(k4, sf1_shape).astype(sf1_dtype)
-        
+
         # Put on device (HBM)
         out_buffer_device = jax.device_put(out_buffer_host, out_buffer_sharding)
         lhs_device = jax.device_put(lhs_host, lhs_sharding)
         rhs_device = jax.device_put(rhs_host, rhs_sharding)
         sf0_device = jax.device_put(sf0_host, sf0_sharding)
         sf1_device = jax.device_put(sf1_host, sf1_sharding)
-        
+
         return (out_buffer_device, lhs_device, rhs_device, sf0_device, sf1_device)
 
     time_ms_list = iteration_timeit(
@@ -519,23 +518,24 @@ def gemm_accum_calculate_metrics(
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE*2)
 
 
-def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
+def quantization(m: int, n: int, quant_dtype: jnp.dtype, use_static_scale: bool = False, num_runs: int = 1, trace_dir: str = None,
 ) -> Dict[str, Any]:
     """
     OUT<M, N>:FP8, SF<M>:FP32 = Quantize(N<M, N>:BF16)
     SF[i] = FP8_MAX / amax(IN[i])
     OUT[i] = cast_fp8(IN[i] / SF[i])
     """
+    calibration_method = "fixed, -224, 224" if use_static_scale else "absmax"
     def f(x):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
+            qx = qpl.quantize(x, qtype=quant_dtype, scale_dtype=jnp.float32, calibration_method=calibration_method, channelwise_axes=[0])
             return qx.qvalue, qx.scale
 
     mesh = create_mesh()
     x_sharding = get_rowwise_named_shading(mesh)
     out_qvalue_sharding = get_rowwise_named_shading(mesh)
     out_scale_sharding = get_rowwise_named_shading(mesh)
-    
+
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -548,24 +548,24 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 
     x_shape = (m, n)
     x_dtype = jnp.bfloat16
-    
+
     key = jax.random.key(SEED)
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
         nonlocal key # Use and update the outer 'key'
         key, k1 = jax.random.split(key)
-        
+
         x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
 
         x_device = jax.device_put(x_host, x_sharding)
-        
+
         return (x_device,)
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", 
+        matrix_dim=f"{m}x{n}",
         tries=num_runs,
         task="quantization",
         trace_dir=trace_dir,
@@ -573,13 +573,18 @@ def quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     return {"time_ms_list": time_ms_list}
 
 def quantization_calculate_metrics(
-    m: int, n: int, time_ms_list: list[float]
+    m: int, n: int, quant_dtype: jnp.dtype, use_static_scale: bool, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
+    #       calculate scale     apply quant    write quant output       write scale factor
+    # NOTE: (2 * m * n)     +  (2 * m * n)   + (1 * m * n)          +      (4 * m)
+    info_fn = jnp.iinfo if jnp.issubdtype(quant_dtype, jnp.integer) else jnp.finfo
+    width_in_bytes = info_fn(quant_dtype).bits / 8
+    output_flops_based_on_dtype = m * n * width_in_bytes
+    total_bytes = (2 * m * n) + (2 * m * n) + (4 * m) + output_flops_based_on_dtype
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
-    return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
+    return unified_bytes_metrics(m, n,  quant_dtype, time_ms_list, total_bytes, total_bytes_all_devices)
 
-def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
+def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 ) -> Dict[str, Any]:
     """
     OUT<N, M>:FP8, SF<N>:FP32 = Quantize(Transpose(N<M, N>:BF16)) for 2D
@@ -596,7 +601,7 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
     x_sharding = get_rowwise_named_shading(mesh)
     out_qvalue_sharding = get_rowwise_named_shading(mesh)
     out_scale_sharding = get_rowwise_named_shading(mesh)
-    
+
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -609,24 +614,24 @@ def transpose_quantization(m: int, n: int, num_runs: int = 1, trace_dir: str = N
 
     x_shape = (m, n)
     x_dtype = jnp.bfloat16
-    
+
     key = jax.random.key(SEED)
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
         nonlocal key # Use and update the outer 'key'
         key, k1 = jax.random.split(key)
-        
+
         x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
 
         x_device = jax.device_put(x_host, x_sharding)
-        
+
         return (x_device,)
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", 
+        matrix_dim=f"{m}x{n}",
         tries=num_runs,
         task="transpose_quantization",
         trace_dir=trace_dir,
@@ -640,7 +645,7 @@ def transpose_quantization_calculate_metrics(
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
-def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
+def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 ) -> Dict[str, Any]:
     """
     A, B = Split(X, 2)
@@ -678,11 +683,11 @@ def swiglu_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
         x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
         x_device = jax.device_put(x_host, x_sharding)
         return (x_device,)
-    
+
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", 
+        matrix_dim=f"{m}x{n}",
         tries=num_runs,
         task="swiglu_fwd",
         trace_dir=trace_dir,
@@ -696,7 +701,7 @@ def swiglu_fwd_calculate_metrics(
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
-def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
+def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 ) -> Dict[str, Any]:
     """
     Inverse of swiglu_fwd
@@ -707,7 +712,7 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
         B_fp32 = B.astype(jnp.float32)
         Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
         return Y_fp32.astype(jnp.bfloat16)
-    
+
     def f(x: jax.Array, dy: jax.Array) -> jax.Array:
         """
         x: The original <M, N> BF16 input.
@@ -741,7 +746,7 @@ def swiglu_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     dy_shape = (m, n // 2)
     x_dtype = jnp.bfloat16
     dy_dtype = jnp.bfloat16
-    
+
     key = jax.random.key(SEED)
     def data_generator():
         """Creates new random data on host and puts it on device."""
@@ -771,7 +776,7 @@ def swiglu_bwd_calculate_metrics(
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
-def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
+def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 ) -> Dict[str, Any]:
     """
     For each row i of N:
@@ -785,7 +790,7 @@ def rmsnorm_fwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     mesh = create_mesh()
     x_sharding = get_rowwise_named_shading(mesh)
     out_sharding = get_rowwise_named_shading(mesh)
-    
+
     jit_sharded_f = jax.jit(
         shard_map(
             f,
@@ -825,7 +830,7 @@ def rmsnorm_fwd_calculate_metrics(
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
-def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
+def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 ) -> Dict[str, Any]:
     """
     Inverse of rmsnorm_fwd
@@ -834,7 +839,7 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     def f_fwd(x):
         with jax.named_scope(MARKER):
             return rms_norm_module(x)
-    
+
     def f(x: jax.Array, dy: jax.Array) -> jax.Array:
         """
         x: The original <M, N> BF16 input.
@@ -868,7 +873,7 @@ def rmsnorm_bwd(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     dy_shape = (m, n)
     x_dtype = jnp.bfloat16
     dy_dtype = jnp.bfloat16
-    
+
     key = jax.random.key(SEED)
     def data_generator():
         """Creates new random data on host and puts it on device."""
@@ -896,7 +901,7 @@ def rmsnorm_bwd_calculate_metrics(
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes)
     return unified_bytes_metrics(m, n,  time_ms_list, total_bytes, total_bytes_all_devices)
 
-def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None, 
+def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
 ) -> Dict[str, Any]:
     """
     Z = X + Y
@@ -922,26 +927,26 @@ def add(m: int, n: int, num_runs: int = 1, trace_dir: str = None,
     y_shape = (m, n)
     x_dtype = jnp.bfloat16
     y_dtype = jnp.bfloat16
-    
+
     key = jax.random.key(SEED)
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
         nonlocal key # Use and update the outer 'key'
         key, k1, k2 = jax.random.split(key, 3)
-        
+
         x_host = jax.random.normal(k1, x_shape).astype(x_dtype)
         y_host = jax.random.normal(k2, y_shape).astype(y_dtype)
 
         x_device = jax.device_put(x_host, x_sharding)
         y_device = jax.device_put(y_host, y_sharding)
-        
+
         return (x_device, y_device)
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}", 
+        matrix_dim=f"{m}x{n}",
         tries=num_runs,
         task="add",
         trace_dir=trace_dir,
@@ -993,15 +998,15 @@ def gemm_fp8_rowwise(
         """Creates new random data on host and puts it on device."""
         nonlocal key # Use and update the outer 'key'
         key, key_lhs, key_rhs = jax.random.split(key, 3)
-        
+
         # Create random data on host
         lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
         rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
-        
+
         # Put on device (HBM)
         lhs_device = jax.device_put(lhs_host, lhs_sharding)
         rhs_device = jax.device_put(rhs_host, rhs_sharding)
-        
+
         return (lhs_device, rhs_device)
 
     # Run the benchmark
@@ -1060,15 +1065,15 @@ def gemm_fp8_b128_fp32(
         """Creates new random data on host and puts it on device."""
         nonlocal key # Use and update the outer 'key'
         key, key_lhs, key_rhs = jax.random.split(key, 3)
-        
+
         # Create random data on host
         lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
         rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
-        
+
         # Put on device (HBM)
         lhs_device = jax.device_put(lhs_host, lhs_sharding)
         rhs_device = jax.device_put(rhs_host, rhs_sharding)
-        
+
         return (lhs_device, rhs_device)
 
     # Run the benchmark
