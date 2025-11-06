@@ -80,6 +80,7 @@ COMPUTE_BENCHMARK_MAP = {
     "gemm_fp8_b128_fp32_static_scaling": "benchmark_gemm_numerics.gemm_fp8_b128_fp32_static_scaling",
     "gemm_mxfp8_b32": "benchmark_gemm_numerics.gemm_mxfp8_b32",
     "gemm_mxfp8_b32_static_scaling": "benchmark_gemm_numerics.gemm_mxfp8_b32_static_scaling",
+    "inference_add": "benchmark_inference_compute.add",
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)

@@ -1,0 +1,9 @@
+benchmarks:
+- benchmark_name: "inference_add"
+  trace_dir: "../microbenchmarks/inference_add"
+  csv_path: "../microbenchmarks/inference_add"
+  xlml_metrics_dir: "../microbenchmarks/inference_add"
+  xla_dump_dir: "../microbenchmarks/inference_add/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 1024, dtype: "bfloat16"}
