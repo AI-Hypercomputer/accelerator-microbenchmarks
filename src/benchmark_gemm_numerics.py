@@ -1,4 +1,12 @@
-"""Benchmarks different compute operations in various flavors.
+"""
+Benchmarks different compute operations in various flavors.
+Considered ops:
+1. gemm_fp8_rowwise
+2. gemm_fp8_b128_fp32
+3. gemm_fp8_rowwise_static_scaling
+4. gemm_fp8_b128_fp32_static_scaling
+5. gemm_mxfp8_b32
+6. gemm_mxfp8_b32_static_scaling
 """
 
 import os

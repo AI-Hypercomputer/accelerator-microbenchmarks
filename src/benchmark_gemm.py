@@ -1,4 +1,9 @@
-"""Benchmarks gemm in various flavors.
+"""
+Benchmarks gemm in various flavors.
+Considered ops:
+1. gemm_simple
+2. gemm
+3. gemm_accum
 """
 
 import os

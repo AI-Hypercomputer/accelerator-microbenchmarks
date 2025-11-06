@@ -1,4 +1,15 @@
-"""Benchmarks different compute operations in various flavors.
+"""
+Benchmarks different compute operations in various flavors.
+Considered ops:
+1. quantization
+2. transpose_quantization
+3. quantization_static_scaling
+4. transpose_quantization_static_scaling
+5. swiglu_fwd
+6. swiglu_bwd
+7. rmsnorm_fwd
+8. rmsnorm_bwd
+9. add
 """
 
 import os
