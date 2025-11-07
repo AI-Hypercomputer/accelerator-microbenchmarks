@@ -6,4 +6,31 @@ benchmarks:
   xla_dump_dir: "../microbenchmarks/inference_add/hlo_graphs"
   num_runs: 100
   benchmark_sweep_params:
-  - {m: 1024, dtype: "bfloat16"}
+  - {m: 65536, n: 65536, dtype: "bfloat16"}
+  - {m: 65536, n: 65536, dtype: "float8"}
+- benchmark_name: "inference_rmsnorm"
+  trace_dir: "../microbenchmarks/inference_rmsnorm"
+  csv_path: "../microbenchmarks/inference_rmsnorm"
+  xlml_metrics_dir: "../microbenchmarks/inference_rmsnorm"
+  xla_dump_dir: "../microbenchmarks/inference_rmsnorm/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 65536, n: 65536, dtype: "bfloat16"}
+- benchmark_name: "inference_silu_mul"
+  trace_dir: "../microbenchmarks/inference_silu_mul"
+  csv_path: "../microbenchmarks/inference_silu_mul"
+  xlml_metrics_dir: "../microbenchmarks/inference_silu_mul"
+  xla_dump_dir: "../microbenchmarks/inference_silu_mul/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 65536, n: 65536, dtype: "bfloat16"}
+  - {m: 65536, n: 65536, dtype: "float8"}
+- benchmark_name: "inference_sigmoid"
+  trace_dir: "../microbenchmarks/inference_sigmoid"
+  csv_path: "../microbenchmarks/inference_sigmoid"
+  xlml_metrics_dir: "../microbenchmarks/inference_sigmoid"
+  xla_dump_dir: "../microbenchmarks/inference_sigmoid/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 65536, n: 65536, dtype: "bfloat16"}
+  - {m: 65536, n: 65536, dtype: "float8"}
