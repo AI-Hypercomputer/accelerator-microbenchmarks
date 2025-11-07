@@ -528,7 +528,6 @@ def tokamax_splash_attention_benchmark(
     tune_pallas_only: bool = True,
     num_runs: int = 1,
     trace_dir: str = None,
-    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
   """Benchmarks the Tokamax Splash attention kernel."""
 
@@ -636,9 +635,10 @@ def tokamax_splash_attention_benchmark(
     hyperparams["block_q_dkv"] = tiles
     hyperparams["block_kv_dkv"] = tiles
     hyperparams["block_kv_dkv_compute"] = tiles
+    hyperparams["block_q_dq"] = tiles
+    hyperparams["block_kv_dq"] = tiles
 
   # Incorporate any potentially previously tuned hyperparameters
-  hyperparams_override = hyperparams_override or {}
   hyperparams = dict(hyperparams, **hyperparams_override)
 
   # Prepare the attention function for tuning.
@@ -678,7 +678,6 @@ def tokamax_splash_attention_benchmark(
       q,
       k,
       v,
-      warmup_tries=warmup_tries,
       tries=num_runs,
       task="flax_attention",
       trace_dir=trace_dir,
@@ -706,3 +705,4 @@ def tokamax_splash_attention_benchmark_calculate_metrics(
     # Build dictionary of all the parameters in the function
     params = locals().items()
     return get_metrics_helper(params)
+
