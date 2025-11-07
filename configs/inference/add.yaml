@@ -1,0 +1,25 @@
+benchmarks:
+- benchmark_name: "inference_add"
+  trace_dir: "../microbenchmarks/inference_add"
+  csv_path: "../microbenchmarks/inference_add"
+  xlml_metrics_dir: "../microbenchmarks/inference_add"
+  xla_dump_dir: "../microbenchmarks/inference_add/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  # - {"m": 1, "dtype": "bfloat16"}
+  # - {"m": 2, "dtype": "bfloat16"}
+  # - {"m": 4, "dtype": "bfloat16"}
+  # - {"m": 8, "dtype": "bfloat16"}
+  # - {"m": 16, "dtype": "bfloat16"}
+  # - {"m": 32, "dtype": "bfloat16"}
+  - {"m": 64, "dtype": "bfloat16"}
+  - {"m": 128, "dtype": "bfloat16"}
+  - {"m": 256, "dtype": "bfloat16"}
+  - {"m": 512, "dtype": "bfloat16"}
+  - {"m": 1024, "dtype": "bfloat16"}
+  - {"m": 2048, "dtype": "bfloat16"}
+  - {"m": 4096, "dtype": "bfloat16"}
+  - {"m": 8192, "dtype": "bfloat16"}
+  - {"m": 16384, "dtype": "bfloat16"}
+  - {"m": 32768, "dtype": "bfloat16"}
+  - {"m": 65536, "dtype": "bfloat16"}
