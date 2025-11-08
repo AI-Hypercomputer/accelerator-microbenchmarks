@@ -126,6 +126,28 @@ def gemm_fp8_rowwise_calculate_metrics(
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
     return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
 
+def gemm_fp8_rowwise_w_dequantize(
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+) -> Dict[str, Any]:
+    """FP8-Rowwise GEMM with dynamic scaling factors."""
+    def f(x, y):
+        with jax.named_scope(MARKER):
+            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
+            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[1])
+            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32).astype(jnp.float8_e4m3fn)
+            result_scale = qx.scale * qy.scale
+            final_result = qarray.dequantize(qarray.QArray(acc, result_scale))
+            return final_result.astype(jnp.bfloat16)
+    return gemm_fp8_quantization(m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_rowwise_w_dequantize")
+
+def gemm_fp8_rowwise_w_dequantize_calculate_metrics(
+    m: int, k: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
+    total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+
+
 def gemm_fp8_b128_fp32(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
