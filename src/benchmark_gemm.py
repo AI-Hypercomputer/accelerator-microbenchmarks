@@ -642,6 +642,7 @@ def gemm_grouped_ragged_dot(
 def gemm_grouped_ragged_dot_calculate_metrics(
     b: int, m: int, k: int, n: int,
     in_dtype_str: str, out_dtype_str: str,
+    ragged_dot_tiling: str,
     time_ms_list: list[float]
 ) -> Dict[str, Any]:
 
