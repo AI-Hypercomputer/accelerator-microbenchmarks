@@ -68,10 +68,11 @@ def iteration_timeit_from_trace(
 
 def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
     marker_done_events = []
+    events_lookup =[MARKER, "ragged-dot"]
     for event in trace["traceEvents"]:
         args = event.get("args", {})
         tf_op = args.get("tf_op", "")
-        if MARKER in tf_op:
+        if any(s in tf_op for s in events_lookup):
             marker_done_events.append(event)
 
     # print(marker_done_events)

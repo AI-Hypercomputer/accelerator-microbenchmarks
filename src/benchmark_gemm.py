@@ -515,9 +515,10 @@ def gemm_batched_simple_calculate_metrics(
 def gemm_grouped_ragged_dot(
     b: int, m: int, k: int, n: int,
     in_dtype_str: str, out_dtype_str: str,
-    num_runs: int = 1, trace_dir: str = None
+    num_runs: int = 1, trace_dir: str = None,
+    ragged_dot_tiling: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks a Batched GEMM using tokamax_api.ragged_dot.
+    """Benchmarks a Batched GEMM using jax.lax.ragged_dot.
 
     This implements (B, M, K) @ (B, K, N) by treating it as a Grouped GEMM:
     LHS: (B*M, K)
@@ -531,18 +532,27 @@ def gemm_grouped_ragged_dot(
 
     def f(lhs, rhs, group_sizes):
         with jax.named_scope(MARKER):
-            # Call the ragged_dot kernel
-            output_stacked = jax.lax.ragged_dot(
-                lhs=lhs,
-                rhs=rhs,
-                group_sizes=group_sizes,
-                precision=jax.lax.Precision.DEFAULT,
-                preferred_element_type=jnp.float32 # Use FP32 accumulation
+            # Use the tiling context if provided, otherwise do nothing.
+            tiling_ctx = (
+                set_xla_metadata(ragged_dot_tiling=ragged_dot_tiling)
+                if ragged_dot_tiling
+                else contextlib.nullcontext()
             )
+
+            with tiling_ctx:
+	            # Call the ragged_dot kernel. Accumulation is fp32 by default
+	            output_stacked = jax.lax.ragged_dot(
+	                lhs=lhs,
+	                rhs=rhs,
+	                group_sizes=group_sizes,
+	                precision=jax.lax.Precision.DEFAULT,
+	                preferred_element_type=out_dtype
+	            )
 
             # Reshape the output from (B*M, N) back to (B, M, N)
             output_batched = output_stacked.reshape((b, m, n))
-            return output_batched.astype(out_dtype)
+
+            return output_batched
 
     mesh = create_mesh()
 
