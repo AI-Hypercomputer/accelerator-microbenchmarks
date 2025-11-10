@@ -11,6 +11,7 @@ from typing import Any, Dict, Tuple, Callable
 from benchmark_utils import simple_timeit, MetricsStatistics, iteration_timeit
 import jax
 from jax.experimental.shard_map import shard_map
+from jax.experimental.xla_metadata import set_xla_metadata
 import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import NamedSharding
