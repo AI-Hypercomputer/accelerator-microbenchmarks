@@ -668,6 +668,7 @@ def gemm_grouped_ragged_dot_calculate_metrics(
     metadata["b"] = b
     metadata["in_dtype"] = in_dtype_str
     metadata["out_dtype"] = out_dtype_str
+    metadata["ragged_dot_tiling"] = ragged_dot_tiling
     metadata["kernel"] = "ragged_dot" # Add kernel name
 
     return metadata, metrics
