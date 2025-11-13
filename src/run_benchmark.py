@@ -71,8 +71,6 @@ GEMM_BENCHMARK_MAP = {
     "rmsnorm_fwd": "benchmark_gemm.rmsnorm_fwd",
     "rmsnorm_bwd": "benchmark_gemm.rmsnorm_bwd",
     "add": "benchmark_gemm.add",
-    "gemm_fp8_rowwise": "benchmark_gemm.gemm_fp8_rowwise",
-    "gemm_fp8_b128_fp32": "benchmark_gemm.gemm_fp8_b128_fp32",
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)
@@ -251,7 +249,7 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
     def convert_dict_to_df(target_dict: Dict) -> pd.DataFrame:
         """Converts a single benchmark result dictionary to a pandas DataFrame."""
         flattened_dict = flatten_dict(target_dict)
-        
+
         # This section is specific to collective benchmarks that produce
         # 'ici_average_time_ms_list'.
         if "ici_average_time_ms_list" in flattened_dict:
