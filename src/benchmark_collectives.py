@@ -11,28 +11,41 @@ from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
-
+from common import MARKER
 # pylint: disable=g-importing-member
 
 
-def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int]]:
+def create_mesh(dcn_size: int, ici_size: int, mesh_shape: str) -> tuple[Mesh, list[int], list[int]]:
     """Creates a hybrid mesh with the given DCN and ICI sizes."""
     dcn_parallelism = [dcn_size, 1]
     ici_parallelism = [1, ici_size]
 
-    total_devices = jax.device_count()
-    if total_devices != (dcn_size * ici_size):
-        raise ValueError(
-            f"Need {dcn_size * ici_size} devices, but found {total_devices}"
-        )
+    devices_needed = dcn_size * ici_size
+    devices = jax.devices()
+    
+    if len(devices) < devices_needed:
+      raise ValueError(f"Need {devices_needed} devices, but found {len(devices)}")
+    devices = devices[:devices_needed]
     if dcn_size > 1:
         mesh_devices = mesh_utils.create_hybrid_device_mesh(
             ici_parallelism, dcn_parallelism, devices=jax.devices()
         )
         mesh = Mesh(mesh_devices, ("dcn", "ici"))
     else:
-        mesh_devices = mesh_utils.create_device_mesh([ici_size], devices=jax.devices())
-        mesh = Mesh(mesh_devices, "ici")
+        mesh_shape = mesh_shape.split("x")
+        mesh_shape= [int(i) for i in mesh_shape]
+
+        shape = mesh_shape if mesh_shape else (ici_size,)
+
+        axis_names = [f"d_{i}" for i in range(len(shape))]
+        print(shape)
+        print(axis_names)
+        # print(devices, len(devices))
+        first_device = devices[0]
+        device_kind = first_device.device_kind
+        print(f"Found device kind: {device_kind}")
+        mesh_devices = mesh_utils.create_device_mesh(shape, devices=jax.devices())
+        mesh = Mesh(mesh_devices, axis_names)
     return mesh, dcn_parallelism, ici_parallelism
 
 
@@ -325,6 +338,8 @@ def all_gather_benchmark(
     dtype: jnp.dtype,
     dcn_size: int,
     ici_size: int,
+    mesh_shape: str = None,
+    op_dimension: str = None,
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -342,7 +357,8 @@ def all_gather_benchmark(
     Returns:
       The measured time for the DCN and ICI benchmarks.
     """
-    mesh, _, _ = create_mesh(dcn_size, ici_size)
+    mesh, _, _ = create_mesh(dcn_size, ici_size, mesh_shape)
+
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     dcn_average_time_ms_list = ici_average_time_ms_list = None
 
@@ -376,19 +392,24 @@ def all_gather_benchmark(
 
     # ICI benchmark
     if ici_size > 1:
-
+        op_dimension = op_dimension.split("x")
+        op_dimension = tuple(int(dim) for dim in op_dimension)
+        sharding_axis = tuple(
+            name for i, name in enumerate(mesh.axis_names) if op_dimension[i] > 1
+        )
         @partial(
             shard_map,
             mesh=mesh,
-            in_specs=P("ici", None),
+            in_specs=P(sharding_axis, None),
             out_specs=P(None, None),
             check_rep=False,
         )
         def f(x):
-            return jax.lax.all_gather(x, "ici", tiled=True)
+            with jax.named_scope(MARKER):
+                return jax.lax.all_gather(x, sharding_axis, tiled=True)
 
         sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P("ici", None))
+            matrix, jax.sharding.NamedSharding(mesh, P(sharding_axis, None))
         )
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
@@ -411,6 +432,8 @@ def all_gather_benchmark_calculate_metrics(
     dtype: jnp.dtype,
     dcn_size: int,
     ici_size: int,
+    mesh_shape: str,
+    op_dimension: str,
     ici_average_time_ms_list: list[float],
     dcn_average_time_ms_list: list[float],
 ) -> Dict[str, Any]:

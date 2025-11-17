@@ -337,6 +337,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         test_start_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )  # "Z" indicates UTC
+        print(benchmark_func)
         benchmark_results = benchmark_func(**benchmark_param)
         test_end_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"

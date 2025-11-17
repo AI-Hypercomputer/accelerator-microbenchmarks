@@ -1,0 +1,8 @@
+benchmarks:
+- benchmark_name: "gemm_simple"
+  trace_dir: "../microbenchmarks/gemm_throttling_large"
+  csv_path: "../microbenchmarks/gemm_throttling_large"
+  xlml_metrics_dir: "../microbenchmarks/gemm_throttling_large"
+  xla_dump_dir: "../microbenchmarks/gemm_throttling_large/hlo_graphs"
+  benchmark_sweep_params:
+  - {m: 16384, k: 18432, n: 16384, num_runs: 10000}

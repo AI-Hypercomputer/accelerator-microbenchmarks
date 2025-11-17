@@ -9,30 +9,17 @@ Considered ops:
 import os
 from typing import Any, Dict, Tuple, Callable
 
+import datetime
 
 # pylint: disable=g-importing-member
-from benchmark_utils import iteration_timeit, ShardingStrategy, get_lhs_named_shading, get_rhs_named_shading, get_out_sharding, get_rowwise_named_shading, get_output_named_shading, create_mesh, handle_based_on_sharding, unified_flops_metrics, unified_bytes_metrics
+from benchmark_utils import iteration_timeit, ShardingStrategy, get_lhs_named_shading, get_rhs_named_shading, get_out_sharding, get_rowwise_named_shading, get_output_named_shading, create_mesh, handle_based_on_sharding, unified_flops_metrics, unified_bytes_metrics, set_libtpu_init_args_from_yaml
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 from common import MARKER
 
 # pylint: disable=g-importing-member
-# Set the environment variable for TPU initialization arguments to optimize
-# collective matmul. Setting the flags to false will disable the optimization.
-os.environ["LIBTPU_INIT_ARGS"] = (
-    "--xla_tpu_enable_async_collective_fusion=true "
-    "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true "
-    "--xla_tpu_enable_async_collective_fusion_multiple_steps=true "
-    "--xla_tpu_overlap_compute_collective_tc=true "
-    "--xla_enable_async_all_gather=true "
-    "--xla_enable_async_collective_permute=true "
-    "--xla_tpu_enable_all_experimental_scheduler_features=true "
-    "--xla_tpu_accumulate_into_mrb=true "
-    "--xla_tpu_scoped_vmem_limit_kib=65536 "
-    "--xla_tpu_dvfs_p_state=7 "
-    "--xla_tpu_vmem_scavenging_mode=NONE "
-)
+os.environ['XPROF_E2E_ENABLE_PYTHON_TRACER'] = 'FALSE'
 
 TRACE_BASE_DIR = None
 METRICS_JSONL_DIR = None
@@ -97,7 +84,9 @@ def gemm_simple(
         return (lhs_device, rhs_device)
 
     # Run the benchmark
-    time_ms_list = iteration_timeit(
+    
+    print("Running gemm_simple benchmark", num_runs)
+    time_ms_list,start_time, end_time = iteration_timeit(
         jit_sharded_f,
         data_generator,
         matrix_dim=f"{m}x{n}x{k}",
@@ -105,15 +94,15 @@ def gemm_simple(
         task="gemm_simple",
         trace_dir=trace_dir,
     )
-    return {"time_ms_list": time_ms_list}
+    return {"time_ms_list": time_ms_list,"start_time": start_time, "end_time": end_time}
 
 def gemm_simple_calculate_metrics(
-    m: int, k: int, n: int, time_ms_list: list[float]
+    m: int, k: int, n: int, time_ms_list: list[float], start_time: datetime.datetime, end_time: datetime.datetime
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE, start_time, end_time)
 
 def gemm(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
@@ -173,7 +162,7 @@ def gemm(
         sf1_device = jax.device_put(sf1_host, sf1_sharding)
         
         return (lhs_device, rhs_device, sf0_device, sf1_device)
-    
+    print("Running gemm benchmark", num_runs)
     time_ms_list = iteration_timeit(
         jit_sharded_f,
         data_generator,
@@ -182,6 +171,8 @@ def gemm(
         task="gemm",
         trace_dir=trace_dir,
     )
+
+    
     return {"time_ms_list": time_ms_list}
 
 def gemm_calculate_metrics(
@@ -190,7 +181,7 @@ def gemm_calculate_metrics(
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE, exp_start_time, exp_end_time)
 
 
 def gemm_accum(

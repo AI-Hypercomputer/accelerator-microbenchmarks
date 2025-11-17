@@ -4,6 +4,7 @@ import datetime
 import os
 from typing import Any, Dict, Tuple, Callable
 import glob
+import yaml
 
 import jax
 import jsonlines
@@ -17,7 +18,7 @@ import re
 from collections import defaultdict
 import subprocess
 import shutil
-from common import MARKER
+from common import MARKER, get_libtpu_args_str
 from enum import Enum, auto
 from jax.sharding import Mesh
 from jax.sharding import NamedSharding
@@ -31,6 +32,7 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
     "ppermute_ici_op": r"collective-permute.[0-9]+",
 }
 
+
 class ShardingStrategy(Enum):
     """Defines different sharding strategies for tensors."""
     NO_SHARDING = auto()
@@ -43,7 +45,7 @@ def iteration_timeit_from_trace(
     compute_func: Callable,
     data_generator: Callable,
     matrix_dim: str=None,
-    tries: int=10, 
+    tries: int=17, 
     task: str = None,
     trace_dir: str = None) -> list[float]:
     """
@@ -64,19 +66,25 @@ def iteration_timeit_from_trace(
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
     with jax.profiler.trace(tmp_trace_dir):
-        for _ in range(tries):
+        start_time = datetime.datetime.now()
+        for i in range(tries):
+            if i%10 == 0:
+                print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
             data_args = data_generator()
-            jax.devices()  # Force synchronization across devices
-            with jax.profiler.TraceAnnotation(task):
-                result = compute_func(*data_args)
-                jax.block_until_ready(result)
-
+            jax.devices()
+            with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                with jax.named_scope(f"{MARKER}_{i}"):
+                    result = compute_func(*data_args)
+                    jax.block_until_ready(result)
+    end_time = datetime.datetime.now()
+    print(f"[{task}] Iteration {i} of {tries} with {matrix_dim} took {end_time - start_time}")
     trace = get_trace(tmp_trace_dir)
-
+    end_time = datetime.datetime.now()
+    print(f"[{task}] Iteration {i} of {tries} with {matrix_dim} took {end_time - start_time} to get trace")
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return iteration_get_metrics_from_trace(trace)
+    return iteration_get_metrics_from_trace(trace), start_time, end_time
 
 def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
     marker_done_events = []
@@ -85,15 +93,18 @@ def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
         tf_op = args.get("tf_op", "")
         if MARKER in tf_op:
             marker_done_events.append(event)
-
-    # print(marker_done_events)
+    # print(f"marker_done_events: {marker_done_events}")
+    # for event in marker_done_events:
+    #     print(f"event: {event}")
+    unique_pids = set([e["pid"] for e in marker_done_events])
+    print(f"unique_pids: {unique_pids}")
+    if not marker_done_events:
+        return []
     min_pid = min([e["pid"] for e in marker_done_events])
     events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
-    # print(events_from_min_pid)
-    durations_ms = [
-        sum(float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid)
-    ]
-    print("durations_ms: ", durations_ms)
+    durations_ms = [float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid]
+    print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
+    print(durations_ms)
     return durations_ms
 
 def iteration_timeit(
@@ -294,6 +305,7 @@ def timeit_from_trace(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=
     # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+    print(trace_dir)
     with jax.profiler.trace(tmp_trace_dir):
         for _ in range(tries):
             jax.devices()  # Force synchronization across devices
@@ -305,7 +317,7 @@ def timeit_from_trace(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return get_metrics_from_trace(trace, task)
+    return iteration_get_metrics_from_trace(trace)
 
 
 def maybe_write_metrics_file(
@@ -364,6 +376,19 @@ def upload_to_storage(trace_dir: str, local_file: str):
         raise KeyError(f"{trace_dir} is not a valid GCS path.")
 
 
+def load_yaml_config(config_path: str) -> Dict[str, Any] | None:
+    """Loads a YAML config file."""
+    try:
+        with open(config_path, "r") as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"Warning: Config file not found at {config_path}")
+        return None
+    except yaml.YAMLError as e:
+        print(f"Error parsing YAML file {config_path}: {e}")
+        return None
+
+
 class MetricsStatistics:
     """
     Represents statistics for a list of metrics.
@@ -384,6 +409,10 @@ class MetricsStatistics:
             "p95": np.percentile(self.metrics_list, 95),
             "p99": np.percentile(self.metrics_list, 99),
             "avg": np.mean(self.metrics_list),
+            "max": np.max(self.metrics_list),
+            "num_runs": len(self.metrics_list),
+            "min": np.min(self.metrics_list),
+            # "all_values": json.dumps(self.metrics_list),
         }
 
     def __repr__(self):
@@ -617,7 +646,7 @@ def get_metrics_helper(
     return metadata
 
 def unified_flops_metrics(
-    m: int, n: int, k: int, time_ms_list: list[float], total_flops: int, total_flops_all_devices: int, peak_TFLOPS_per_device: float
+    m: int, n: int, k: int, time_ms_list: list[float], total_flops: int, total_flops_all_devices: int, peak_TFLOPS_per_device: float,start_time = None, end_time = None
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -653,7 +682,9 @@ def unified_flops_metrics(
         f"TotalThroughput (median): {tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} TFLOP / second, "
         f"MFU: {mfu_statistics.statistics['p50']:.2%}"
     )
-    print()
+    # print()
+    # time_ms_list =
+
     # Gather the metrics to report.
     metadata.update(
         {
@@ -662,6 +693,8 @@ def unified_flops_metrics(
             "TotalThroughput(median,TFLOP/s)": tflops_per_sec_all_devices_statistics.statistics['p50'],
             "MFU": mfu_statistics.statistics['p50'],
             "total_flops": total_flops,
+            "duration": end_time - start_time,
+            # "all_time_ms_list":  f"{json.dumps(time_ms_list)}",
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
@@ -716,3 +749,28 @@ def unified_bytes_metrics(
     metrics.update(gigabytes_per_sec_all_devices_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
+
+
+def set_libtpu_init_args_from_yaml(config_path: str):
+    """Loads LIBTPU init args from YAML based on version/strategy and sets env var."""
+    config = load_yaml_config(config_path)
+    if not config:
+        return
+    try:
+        tpu_version = config["tpu_version"]
+        tpu_strategy = config["tpu_strategy"]
+        libtpu_args = get_libtpu_args_str(tpu_version, tpu_strategy)
+        if libtpu_args:
+            os.environ["LIBTPU_INIT_ARGS"] = libtpu_args
+            print(
+                f"LIBTPU_INIT_ARGS set for {tpu_version}/{tpu_strategy}: {libtpu_args}"
+            )
+        else:
+            print(
+                "Could not retrieve LIBTPU_INIT_ARGS for"
+                f" {tpu_version}/{tpu_strategy}."
+            )
+    except KeyError as e:
+        print(f"Missing key in YAML {config_path}: {e}")
+    except TypeError:  # If config is None or doesn't have keys
+        print(f"Invalid config structure in {config_path}")
