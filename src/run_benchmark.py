@@ -5,7 +5,6 @@ Sample usage (on TPU vm):
 """
 
 import argparse
-import csv
 import datetime
 import importlib
 import inspect
@@ -62,7 +61,7 @@ HBM_BENCHMARK_MAP = {
     "single_chip_hbm_copy": "benchmark_hbm.single_chip_hbm_copy",
 }
 COMPUTE_BENCHMARK_MAP = {
-    "gemm_simple":"benchmark_gemm.gemm_simple",
+    "gemm_simple": "benchmark_gemm.gemm_simple",
     "gemm": "benchmark_gemm.gemm",
     "gemm_accum": "benchmark_gemm.gemm_accum",
     "quantization": "benchmark_compute.quantization",
@@ -100,7 +99,7 @@ dtype_mapping = {
     "bfloat16": jax.numpy.bfloat16,
     "float32": jax.numpy.float32,
     "int32": jax.numpy.int32,
-    "float8": jax.numpy.float8_e4m3fn
+    "float8": jax.numpy.float8_e4m3fn,
     # Add other dtypes as needed
 }
 
@@ -269,7 +268,7 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
     def convert_dict_to_df(target_dict: Dict) -> pd.DataFrame:
         """Converts a single benchmark result dictionary to a pandas DataFrame."""
         flattened_dict = flatten_dict(target_dict)
-        
+
         # This section is specific to collective benchmarks that produce
         # 'ici_average_time_ms_list'.
         if "ici_average_time_ms_list" in flattened_dict:

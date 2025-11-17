@@ -18,7 +18,7 @@ import re
 from collections import defaultdict
 import subprocess
 import shutil
-from common import MARKER, get_libtpu_args_str
+from common import MARKER
 from enum import Enum, auto
 from jax.sharding import Mesh
 from jax.sharding import NamedSharding
@@ -36,19 +36,24 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
 
 class ShardingStrategy(Enum):
     """Defines different sharding strategies for tensors."""
+
     NO_SHARDING = auto()
     SHARDING_ON_ALL_DEVICES_WITH_M = auto()
-    SHARDING_ON_SINGLE_CHIP_WITH_M = auto() # Only sharding on the two core of one single chip
+    SHARDING_ON_SINGLE_CHIP_WITH_M = (
+        auto()
+    )  # Only sharding on the two core of one single chip
     SHARDING_ON_ALL_DEVICES_WITH_N = auto()
     SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
+
 
 def iteration_timeit_from_trace(
     compute_func: Callable,
     data_generator: Callable,
-    matrix_dim: str=None,
-    tries: int=17, 
+    matrix_dim: str = None,
+    tries: int = 17,
     task: str = None,
-    trace_dir: str = None) -> list[float]:
+    trace_dir: str = None,
+) -> list[float]:
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
@@ -66,10 +71,10 @@ def iteration_timeit_from_trace(
     # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+    # data_args = data_generator()
     with jax.profiler.trace(tmp_trace_dir):
-        start_time = datetime.datetime.now()
         for i in range(tries):
-            if i%10 == 0:
+            if i % 10 == 0:
                 print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
             data_args = data_generator()
             jax.devices()
@@ -77,15 +82,14 @@ def iteration_timeit_from_trace(
                 with jax.named_scope(f"{MARKER}_{i}"):
                     result = compute_func(*data_args)
                     jax.block_until_ready(result)
-    end_time = datetime.datetime.now()
-    print(f"[{task}] Iteration {i} of {tries} with {matrix_dim} took {end_time - start_time}")
+
     trace = get_trace(tmp_trace_dir)
-    end_time = datetime.datetime.now()
-    print(f"[{task}] Iteration {i} of {tries} with {matrix_dim} took {end_time - start_time} to get trace")
+
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return iteration_get_metrics_from_trace(trace), start_time, end_time
+    return iteration_get_metrics_from_trace(trace)
+
 
 def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
     marker_done_events = []
@@ -103,10 +107,13 @@ def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
         return []
     min_pid = min([e["pid"] for e in marker_done_events])
     events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
-    durations_ms = [float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid]
+    durations_ms = [
+        float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid
+    ]
     print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
     print(durations_ms)
     return durations_ms
+
 
 def iteration_timeit(
     compute_func: Callable,
@@ -115,7 +122,7 @@ def iteration_timeit(
     warmup_tries: int = 10,
     tries: int = 10,
     task: str = None,
-    trace_dir: str = None
+    trace_dir: str = None,
 ) -> list[float]:
     """
     Simple utility to time a function, ensuring no cache hits
@@ -131,7 +138,7 @@ def iteration_timeit(
     """
     assert task is not None
     print(f"[{task}] Running warmup loop with {warmup_tries} tries...")
-    result = None # To hold the last result for block_until_ready
+    result = None  # To hold the last result for block_until_ready
     for _ in range(warmup_tries):
         # 1. Generate new data for each iteration
         data_args = data_generator()
@@ -153,11 +160,18 @@ def iteration_timeit(
     print(f"[{task}] Verified global dtypes: {arg_dtypes} -> {result_dtypes}")
 
     if trace_dir is not None:
-        return iteration_timeit_from_trace(compute_func, data_generator, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
+        return iteration_timeit_from_trace(
+            compute_func,
+            data_generator,
+            matrix_dim=matrix_dim,
+            tries=tries,
+            task=task,
+            trace_dir=trace_dir,
+        )
 
     outcomes_ms = []
     print(f"[{task}] Running measurement loop with {tries} tries...")
-    
+
     for i in range(tries):
         # 1. Generate NEW random data (meets "no cache hit" rule)
         data_args = data_generator()
@@ -168,7 +182,7 @@ def iteration_timeit(
 
         # 2. Run the operation
         result = compute_func(*data_args)
-        
+
         # 3. Block until operation is complete
         jax.block_until_ready(result)
 
@@ -177,13 +191,16 @@ def iteration_timeit(
     return outcomes_ms
 
 
-
-def simple_timeit(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None) -> float:
+def simple_timeit(
+    f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None
+) -> float:
     """Simple utility to time a function for multiple runs."""
     assert task is not None
 
     if trace_dir:
-        return timeit_from_trace(f, *args, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
+        return timeit_from_trace(
+            f, *args, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir
+        )
 
     outcomes_ms = []
     jax.block_until_ready(f(*args))  # warm it up!
@@ -220,7 +237,6 @@ def get_trace(log_dir: str) -> dict[str, Any]:
 
 
 def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
-
     # Check if the given task name is a collective with corresponding TPU opertion.
     # This is a workaround and should be reverted or refactored in future.
     if task in TARGET_TASK_NAME_COLLECTIVES_MAP:
@@ -228,9 +244,9 @@ def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
             task = TARGET_TASK_NAME_COLLECTIVES_MAP[task]
             return get_metrics_from_trace_tpu(trace, task)
         except:
-            return [-1.]
+            return [-1.0]
     event_matcher = re.compile(task)
-    
+
     if "traceEvents" not in trace:
         raise KeyError("Key 'traceEvents' not found in trace.")
 
@@ -254,26 +270,30 @@ def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
         raise
     return durations_ms
 
+
 def get_metrics_from_trace_tpu(trace: dict[str, Any], task: str) -> list[float]:
     event_matcher = re.compile(task)
 
     if "traceEvents" not in trace:
         raise KeyError("Key 'traceEvents' not found in trace.")
-    
+
     events = []
     for e in trace["traceEvents"]:
         if "name" in e and event_matcher.match(e["name"]):
             events.append(e)
-    
+
     # For each trace, find the TPU with smallest `pid` value and consider it to be TPU-0
     min_pid = min([e["pid"] for e in events])
     events_from_min_pid = [e for e in events if e["pid"] == min_pid]
     try:
-        durations_ms = [float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid]
+        durations_ms = [
+            float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid
+        ]
     except KeyError:
         print("KeyError: Key 'device_duration_ps' not found in the event object")
         raise
     return durations_ms
+
 
 def is_local_directory_path(dir: str) -> bool:
     """
@@ -286,7 +306,9 @@ def is_local_directory_path(dir: str) -> bool:
     return dir.startswith("/") or dir.startswith("./") or dir.startswith("../")
 
 
-def timeit_from_trace(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None) -> float:
+def timeit_from_trace(
+    f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None
+) -> float:
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
@@ -524,6 +546,7 @@ def rename_xla_dump(
             upload_to_storage(trace_dir=new_filepath, local_file=original_filepath)
     print(f"The XLA dump is stored in {dest_xla_dump_dir}")
 
+
 def get_lhs_named_shading(mesh, strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
@@ -536,6 +559,7 @@ def get_lhs_named_shading(mesh, strategy: ShardingStrategy):
             return NamedSharding(mesh, P(None, None))
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return NamedSharding(mesh, P(None, None))
+
 
 def get_rhs_named_shading(mesh, strategy: ShardingStrategy):
     match strategy:
@@ -550,6 +574,7 @@ def get_rhs_named_shading(mesh, strategy: ShardingStrategy):
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return NamedSharding(mesh, P(None, "device"))
 
+
 def get_out_sharding(strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
@@ -562,6 +587,7 @@ def get_out_sharding(strategy: ShardingStrategy):
             return P(None, "device")
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return P(None, "device")
+
 
 def get_rowwise_named_shading(mesh, strategy: ShardingStrategy):
     match strategy:
@@ -576,6 +602,7 @@ def get_rowwise_named_shading(mesh, strategy: ShardingStrategy):
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return False, f"ShardingStrategy is wrong for this ops: {strategy}"
 
+
 def get_output_named_shading(mesh, strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
@@ -588,6 +615,7 @@ def get_output_named_shading(mesh, strategy: ShardingStrategy):
             return NamedSharding(mesh, P(None, "device"))
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return NamedSharding(mesh, P(None, "device"))
+
 
 def handle_per_device_based_on_sharding(value, strategy: ShardingStrategy):
     match strategy:
@@ -602,6 +630,7 @@ def handle_per_device_based_on_sharding(value, strategy: ShardingStrategy):
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return value // 2
 
+
 def handle_all_devices_based_on_sharding(value: int, strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
@@ -615,30 +644,43 @@ def handle_all_devices_based_on_sharding(value: int, strategy: ShardingStrategy)
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return value * jax.device_count() // 2
 
+
 def handle_based_on_sharding(value: int, strategy: ShardingStrategy):
     total_value = value
     value = handle_per_device_based_on_sharding(value, strategy)
     total_value = handle_all_devices_based_on_sharding(total_value, strategy)
     return value, total_value
 
+
 def create_mesh(strategy: ShardingStrategy) -> Mesh:
     """Creates a mesh."""
-    if strategy == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M or strategy == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
+    if (
+        strategy == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M
+        or strategy == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N
+    ):
         num_devices = jax.device_count()
         assert num_devices % 2 == 0, "Total devices must be divisible by 2 (chip size)"
         num_chips = num_devices // 2
         mesh_shape = (num_chips, 2)
-        mesh_axes = ('chip', 'device')
+        mesh_axes = ("chip", "device")
         mesh = jax.sharding.Mesh(np.array(jax.devices()).reshape(mesh_shape), mesh_axes)
     else:
         mesh = Mesh(np.array(jax.devices()), axis_names="device")
     return mesh
 
+
 def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Helper function to build the metrics and metadata for the benchmark."""
-    exclude_param_keys = {"time_ms_list", "total_flops", "total_flops_all_devices", "peak_TFLOPS_per_device", "total_bytes", "total_bytes_all_devices"}
+    exclude_param_keys = {
+        "time_ms_list",
+        "total_flops",
+        "total_flops_all_devices",
+        "peak_TFLOPS_per_device",
+        "total_bytes",
+        "total_bytes_all_devices",
+    }
     metadata = {
         key: value
         for key, value in params
@@ -646,8 +688,17 @@ def get_metrics_helper(
     }
     return metadata
 
+
 def unified_flops_metrics(
-    m: int, n: int, k: int, time_ms_list: list[float], total_flops: int, total_flops_all_devices: int, peak_TFLOPS_per_device: float,start_time = None, end_time = None
+    m: int,
+    n: int,
+    k: int,
+    time_ms_list: list[float],
+    total_flops: int,
+    total_flops_all_devices: int,
+    peak_TFLOPS_per_device: float,
+    start_time=None,
+    end_time=None,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -660,10 +711,12 @@ def unified_flops_metrics(
         total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
     ]
     tflops_per_sec_all_devices = [
-        total_flops_all_devices / average_time_s / 10**12 for average_time_s in average_time_s_list
+        total_flops_all_devices / average_time_s / 10**12
+        for average_time_s in average_time_s_list
     ]
     mfu = [
-        tflops_per_sec/peak_TFLOPS_per_device for tflops_per_sec in tflops_per_sec_list
+        tflops_per_sec / peak_TFLOPS_per_device
+        for tflops_per_sec in tflops_per_sec_list
     ]
     average_time_ms_statistics = MetricsStatistics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
@@ -674,9 +727,7 @@ def unified_flops_metrics(
     tflops_per_sec_all_devices_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_all_devices, metrics_name="tflops_per_sec"
     )
-    mfu_statistics=MetricsStatistics(
-        metrics_list=mfu, metrics_name="MFU"
-    )
+    mfu_statistics = MetricsStatistics(metrics_list=mfu, metrics_name="MFU")
     print(
         f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, "
         f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOP / second / device, "
@@ -689,10 +740,14 @@ def unified_flops_metrics(
     # Gather the metrics to report.
     metadata.update(
         {
-            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "Throughput(median,TFLOP/s/device)": tflops_per_sec_statistics.statistics['p50'],
-            "TotalThroughput(median,TFLOP/s)": tflops_per_sec_all_devices_statistics.statistics['p50'],
-            "MFU": mfu_statistics.statistics['p50'],
+            "StepTime(median,ms)": average_time_ms_statistics.statistics["p50"],
+            "Throughput(median,TFLOP/s/device)": tflops_per_sec_statistics.statistics[
+                "p50"
+            ],
+            "TotalThroughput(median,TFLOP/s)": tflops_per_sec_all_devices_statistics.statistics[
+                "p50"
+            ],
+            "MFU": mfu_statistics.statistics["p50"],
             "total_flops": total_flops,
             "duration": end_time - start_time,
             # "all_time_ms_list":  f"{json.dumps(time_ms_list)}",
@@ -705,8 +760,13 @@ def unified_flops_metrics(
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
-def unified_bytes_metrics( 
-    m: int, n: int, time_ms_list: list[float], total_bytes: int, total_bytes_all_devices: int=1e9
+
+def unified_bytes_metrics(
+    m: int,
+    n: int,
+    time_ms_list: list[float],
+    total_bytes: int,
+    total_bytes_all_devices: int = 1e9,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -719,7 +779,8 @@ def unified_bytes_metrics(
         total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
     ]
     digabytes_per_sec_all_devices = [
-        total_bytes_all_devices / average_time_s / 10**9 for average_time_s in average_time_s_list
+        total_bytes_all_devices / average_time_s / 10**9
+        for average_time_s in average_time_s_list
     ]
     average_time_ms_statistics = MetricsStatistics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
@@ -739,9 +800,13 @@ def unified_bytes_metrics(
     # Gather the metrics to report.
     metadata.update(
         {
-            "StepTime(median,ms)": average_time_ms_statistics.statistics['p50'],
-            "Throughput(median,GBytes/s/device)": gigabytes_per_sec_statistics.statistics['p50'],
-            "TotalThroughput(median,GBytes/s)": gigabytes_per_sec_all_devices_statistics.statistics['p50'],
+            "StepTime(median,ms)": average_time_ms_statistics.statistics["p50"],
+            "Throughput(median,GBytes/s/device)": gigabytes_per_sec_statistics.statistics[
+                "p50"
+            ],
+            "TotalThroughput(median,GBytes/s)": gigabytes_per_sec_all_devices_statistics.statistics[
+                "p50"
+            ],
             "total_bytes": total_bytes,
         }
     )
@@ -750,27 +815,3 @@ def unified_bytes_metrics(
     metrics.update(gigabytes_per_sec_all_devices_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
-
-def set_libtpu_init_args_from_yaml(config_path: str):
-    """Loads LIBTPU init args from YAML based on version/strategy and sets env var."""
-    config = load_yaml_config(config_path)
-    if not config:
-        return
-    try:
-        tpu_version = config["tpu_version"]
-        tpu_strategy = config["tpu_strategy"]
-        libtpu_args = get_libtpu_args_str(tpu_version, tpu_strategy)
-        if libtpu_args:
-            os.environ["LIBTPU_INIT_ARGS"] = libtpu_args
-            print(
-                f"LIBTPU_INIT_ARGS set for {tpu_version}/{tpu_strategy}: {libtpu_args}"
-            )
-        else:
-            print(
-                "Could not retrieve LIBTPU_INIT_ARGS for"
-                f" {tpu_version}/{tpu_strategy}."
-            )
-    except KeyError as e:
-        print(f"Missing key in YAML {config_path}: {e}")
-    except TypeError:  # If config is None or doesn't have keys
-        print(f"Invalid config structure in {config_path}")

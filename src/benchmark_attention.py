@@ -29,8 +29,12 @@ import jax
 from jax.experimental.pallas.ops.tpu import flash_attention as pallas_flash_attention
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask
-from tokamax._src.ops.experimental.tpu.splash_attention import splash_attention_kernel as splash
-from tokamax._src.ops.experimental.tpu.splash_attention import splash_attention_mask as mask_lib
+from tokamax._src.ops.experimental.tpu.splash_attention import (
+    splash_attention_kernel as splash,
+)
+from tokamax._src.ops.experimental.tpu.splash_attention import (
+    splash_attention_mask as mask_lib,
+)
 import tune_jax
 import jax.numpy as jnp
 import numpy as np
@@ -68,7 +72,7 @@ def generate_qkv_separate_dims(
     kv_heads: int,
     qk_head_dim: int,
     v_head_dim: int,
-    seed: int = 0
+    seed: int = 0,
 ) -> Tuple[jax.Array, jax.Array, jax.Array]:
     """Generates QKV with potentially different shapes for Q, K, and V."""
     key = jax.random.PRNGKey(seed)
@@ -487,10 +491,7 @@ def _pallas_call_hlo_pattern(mode: str, mqa: bool) -> str:
 
 
 def _get_tokamax_benchmark_fn(
-    mask: mask_lib.Mask,
-    config: splash.SplashConfig, 
-    mode: str, 
-    mqa: bool
+    mask: mask_lib.Mask, config: splash.SplashConfig, mode: str, mqa: bool
 ) -> Callable:
     """Gets the benchmark function for Tokamax Splash Attention."""
     config = dataclasses.replace(config, use_base2_exp=True)
@@ -529,160 +530,158 @@ def tokamax_splash_attention_benchmark(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-  """Benchmarks the Tokamax Splash attention kernel."""
+    """Benchmarks the Tokamax Splash attention kernel."""
 
-  if tune_pallas_only:
-    event_filter_regex = _pallas_call_hlo_pattern(mode, q_heads != kv_heads)
-  else:
-    event_filter_regex = None
+    if tune_pallas_only:
+        event_filter_regex = _pallas_call_hlo_pattern(mode, q_heads != kv_heads)
+    else:
+        event_filter_regex = None
 
-  hyperparams_override = {}
-  if mode == "bwd":
-    # Don't tune fwd only hyperparams
-    hyperparams_override = dict(
-        block_q=min(512, q_seq_len),
-        block_kv=min(1024, kv_seq_len),
-        block_kv_compute=min(512, kv_seq_len),
-    )
-  elif mode == "combined":
-    mode = "bwd"
+    hyperparams_override = {}
+    if mode == "bwd":
+        # Don't tune fwd only hyperparams
+        hyperparams_override = dict(
+            block_q=min(512, q_seq_len),
+            block_kv=min(1024, kv_seq_len),
+            block_kv_compute=min(512, kv_seq_len),
+        )
+    elif mode == "combined":
+        mode = "bwd"
 
-  # Generate QKV.
-  q, k, v = generate_qkv_separate_dims(
-      batch_size,
-      q_seq_len,
-      kv_seq_len,
-      q_heads,
-      kv_heads,
-      qk_head_dim,
-      v_head_dim,
-  )
-
-  # Attention mask
-  mask = mask_lib.FullMask(_shape=(q_seq_len, kv_seq_len))
-  if causal:
-    # Pick offset for causal masks for a "representative" slice of the causal
-    offset = (
-        0
-        if q.shape[-2] == v.shape[-2]
-        else (v.shape[-2] // 2 - q.shape[-2] // 2)
-    )
-    mask = mask_lib.CausalMask(shape=(q_seq_len, kv_seq_len), offset=offset)
-
-  def attention_fn(
-      q: jax.Array,
-      k: jax.Array,
-      v: jax.Array,
-      block_q: int,
-      block_kv: int,
-      block_kv_compute: int,
-      block_q_dkv: int | None,
-      block_kv_dkv: int | None,
-      block_kv_dkv_compute: int | None,
-      block_q_dq: int | None,
-      block_kv_dq: int | None,
-      q_layout: splash.QKVLayout,
-      k_layout: splash.QKVLayout,
-      v_layout: splash.QKVLayout,
-      mask: mask_lib.Mask,
-      mode: str,
-      mqa: bool,
-  ):
-    config = splash.SplashConfig(
-        block_q=block_q,
-        block_kv=block_kv,
-        block_kv_compute=block_kv_compute,
-        block_q_dkv=block_q_dkv,
-        block_kv_dkv=block_kv_dkv,
-        block_kv_dkv_compute=block_kv_dkv_compute,
-        block_q_dq=block_q_dq,
-        block_kv_dq=block_kv_dq,
-        q_layout=q_layout,
-        k_layout=k_layout,
-        v_layout=v_layout,
+    # Generate QKV.
+    q, k, v = generate_qkv_separate_dims(
+        batch_size,
+        q_seq_len,
+        kv_seq_len,
+        q_heads,
+        kv_heads,
+        qk_head_dim,
+        v_head_dim,
     )
 
-    f = _get_tokamax_benchmark_fn(mask, config, mode, mqa=mqa)
-    return f(q, k, v)
+    # Attention mask
+    mask = mask_lib.FullMask(_shape=(q_seq_len, kv_seq_len))
+    if causal:
+        # Pick offset for causal masks for a "representative" slice of the causal
+        offset = (
+            0 if q.shape[-2] == v.shape[-2] else (v.shape[-2] // 2 - q.shape[-2] // 2)
+        )
+        mask = mask_lib.CausalMask(shape=(q_seq_len, kv_seq_len), offset=offset)
 
-  attention_fn = partial(
-      attention_fn,
-      mask=mask,
-      mode=mode,
-      mqa=q_heads != kv_heads,  # Determine if it's Multi-Query Attention
-  )
+    def attention_fn(
+        q: jax.Array,
+        k: jax.Array,
+        v: jax.Array,
+        block_q: int,
+        block_kv: int,
+        block_kv_compute: int,
+        block_q_dkv: int | None,
+        block_kv_dkv: int | None,
+        block_kv_dkv_compute: int | None,
+        block_q_dq: int | None,
+        block_kv_dq: int | None,
+        q_layout: splash.QKVLayout,
+        k_layout: splash.QKVLayout,
+        v_layout: splash.QKVLayout,
+        mask: mask_lib.Mask,
+        mode: str,
+        mqa: bool,
+    ):
+        config = splash.SplashConfig(
+            block_q=block_q,
+            block_kv=block_kv,
+            block_kv_compute=block_kv_compute,
+            block_q_dkv=block_q_dkv,
+            block_kv_dkv=block_kv_dkv,
+            block_kv_dkv_compute=block_kv_dkv_compute,
+            block_q_dq=block_q_dq,
+            block_kv_dq=block_kv_dq,
+            q_layout=q_layout,
+            k_layout=k_layout,
+            v_layout=v_layout,
+        )
 
-  # Define the search space for tokamax splash attention hyperparameters.
-  tiles = [256, 512, 1024, 2048]
-  layouts = [splash.QKVLayout.HEAD_DIM_MINOR, splash.QKVLayout.SEQ_MINOR]
-  hyperparams = {
-      "block_q": tiles,
-      "block_kv": tiles,
-      "block_kv_compute": tiles,
-      "block_q_dkv": [None],
-      "block_kv_dkv": [None],
-      "block_kv_dkv_compute": [None],
-      "block_q_dq": [None],
-      "block_kv_dq": [None],
-      "q_layout": layouts,
-      "k_layout": layouts,
-      "v_layout": layouts,
-  }
+        f = _get_tokamax_benchmark_fn(mask, config, mode, mqa=mqa)
+        return f(q, k, v)
 
-  if mode == "bwd":
-    # If mode is backward, enable tuning for dKV-related block sizes.
-    # These parameters are only used during the backward pass.
-    hyperparams["block_q_dkv"] = tiles
-    hyperparams["block_kv_dkv"] = tiles
-    hyperparams["block_kv_dkv_compute"] = tiles
-    hyperparams["block_q_dq"] = tiles
-    hyperparams["block_kv_dq"] = tiles
+    attention_fn = partial(
+        attention_fn,
+        mask=mask,
+        mode=mode,
+        mqa=q_heads != kv_heads,  # Determine if it's Multi-Query Attention
+    )
 
-  # Incorporate any potentially previously tuned hyperparameters
-  hyperparams = dict(hyperparams, **hyperparams_override)
+    # Define the search space for tokamax splash attention hyperparameters.
+    tiles = [256, 512, 1024, 2048]
+    layouts = [splash.QKVLayout.HEAD_DIM_MINOR, splash.QKVLayout.SEQ_MINOR]
+    hyperparams = {
+        "block_q": tiles,
+        "block_kv": tiles,
+        "block_kv_compute": tiles,
+        "block_q_dkv": [None],
+        "block_kv_dkv": [None],
+        "block_kv_dkv_compute": [None],
+        "block_q_dq": [None],
+        "block_kv_dq": [None],
+        "q_layout": layouts,
+        "k_layout": layouts,
+        "v_layout": layouts,
+    }
 
-  # Prepare the attention function for tuning.
-  tune_jax.CONFIG.allow_fallback_timing = False
-  splash_fn = jax.jit(
-      attention_fn,
-      static_argnames=(
-          "block_q",
-          "block_kv",
-          "block_kv_compute",
-          "block_q_dkv",
-          "block_kv_dkv",
-          "block_kv_dkv_compute",
-          "block_q_dq",
-          "block_kv_dq",
-          "q_layout",
-          "k_layout",
-          "v_layout",
-      ),
-  )
+    if mode == "bwd":
+        # If mode is backward, enable tuning for dKV-related block sizes.
+        # These parameters are only used during the backward pass.
+        hyperparams["block_q_dkv"] = tiles
+        hyperparams["block_kv_dkv"] = tiles
+        hyperparams["block_kv_dkv_compute"] = tiles
+        hyperparams["block_q_dq"] = tiles
+        hyperparams["block_kv_dq"] = tiles
 
-  # Tune the hyperparameters with tune_jax
-  tuned_splash = tune_jax.tune(
-      splash_fn,
-      hyperparams=hyperparams,
-      event_filter_regex=event_filter_regex,
-      sample_num=num_samples,
-  )
+    # Incorporate any potentially previously tuned hyperparameters
+    hyperparams = dict(hyperparams, **hyperparams_override)
 
-  # Run once
-  output = tuned_splash(q, k, v)
-  jax.block_until_ready(output)
+    # Prepare the attention function for tuning.
+    tune_jax.CONFIG.allow_fallback_timing = False
+    splash_fn = jax.jit(
+        attention_fn,
+        static_argnames=(
+            "block_q",
+            "block_kv",
+            "block_kv_compute",
+            "block_q_dkv",
+            "block_kv_dkv",
+            "block_kv_dkv_compute",
+            "block_q_dq",
+            "block_kv_dq",
+            "q_layout",
+            "k_layout",
+            "v_layout",
+        ),
+    )
 
-  # Run benchmark
-  time_ms_list = simple_timeit(
-      tuned_splash,
-      q,
-      k,
-      v,
-      tries=num_runs,
-      task="flax_attention",
-      trace_dir=trace_dir,
-  )
-  return {"time_ms_list": time_ms_list, "output": output}
+    # Tune the hyperparameters with tune_jax
+    tuned_splash = tune_jax.tune(
+        splash_fn,
+        hyperparams=hyperparams,
+        event_filter_regex=event_filter_regex,
+        sample_num=num_samples,
+    )
+
+    # Run once
+    output = tuned_splash(q, k, v)
+    jax.block_until_ready(output)
+
+    # Run benchmark
+    time_ms_list = simple_timeit(
+        tuned_splash,
+        q,
+        k,
+        v,
+        tries=num_runs,
+        task="flax_attention",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list, "output": output}
 
 
 def tokamax_splash_attention_benchmark_calculate_metrics(
@@ -705,4 +704,3 @@ def tokamax_splash_attention_benchmark_calculate_metrics(
     # Build dictionary of all the parameters in the function
     params = locals().items()
     return get_metrics_helper(params)
-

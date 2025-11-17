@@ -1,19 +1,21 @@
 import csv
 
-file_name = "/home/sanbao_google_com/cvs/self microbenchmarks for TPU v7 - gemm_numerics.csv"
+file_name = (
+    "/home/sanbao_google_com/cvs/self microbenchmarks for TPU v7 - gemm_numerics.csv"
+)
 
 try:
-    with open(file_name, mode='r', encoding='utf-8') as file:
+    with open(file_name, mode="r", encoding="utf-8") as file:
         # Use DictReader to read the CSV rows as dictionaries
         reader = csv.DictReader(file)
-        
+
         # Iterate over each row in the CSV
         for row in reader:
             # Extract M and N, strip whitespace, and convert to integer
-            m_val = int(row['M'].strip())
-            k_val = int(row['K'].strip())
-            n_val = int(row['N'].strip())
-            
+            m_val = int(row["M"].strip())
+            k_val = int(row["K"].strip())
+            n_val = int(row["N"].strip())
+
             # Print in the desired format
             print(f"- {{m: {m_val}, k: {k_val}, n: {n_val}}}")
 

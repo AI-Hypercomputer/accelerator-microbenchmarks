@@ -10,11 +10,20 @@ Considered ops:
 """
 
 import os
-from typing import Any, Dict, Tuple, Callable
+from typing import Any, Dict, Callable
 
 
 # pylint: disable=g-importing-member
-from benchmark_utils import iteration_timeit, ShardingStrategy, get_lhs_named_shading, get_rhs_named_shading, get_out_sharding, get_rowwise_named_shading, get_output_named_shading, create_mesh, handle_based_on_sharding, unified_flops_metrics, unified_bytes_metrics
+from benchmark_utils import (
+    iteration_timeit,
+    ShardingStrategy,
+    get_lhs_named_shading,
+    get_rhs_named_shading,
+    get_out_sharding,
+    create_mesh,
+    handle_based_on_sharding,
+    unified_flops_metrics,
+)
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
@@ -50,12 +59,19 @@ M_MAX_SIZE = 50000
 LAYERS = 2
 WITH_SHARDING = True
 
-SHARDING_STRATEGY=ShardingStrategy.NO_SHARDING
+SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 SEED = 0
-PEAK_FLOPS_PER_DEVICE=2307 # TFLOP/s for single core(device) of FP8 under p_state=7
+PEAK_FLOPS_PER_DEVICE = 2307  # TFLOP/s for single core(device) of FP8 under p_state=7
+
 
 def gemm_fp8_quantization(
-    m: int, k: int, n: int, f: Callable, num_runs: int = 1, trace_dir: str = None, task_name: str = "gemm_fp8_quantization"
+    m: int,
+    k: int,
+    n: int,
+    f: Callable,
+    num_runs: int = 1,
+    trace_dir: str = None,
+    task_name: str = "gemm_fp8_quantization",
 ) -> Dict[str, Any]:
     """FP8-Rowwise GEMM."""
     mesh = create_mesh(SHARDING_STRATEGY)
@@ -82,17 +98,17 @@ def gemm_fp8_quantization(
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
-        nonlocal key # Use and update the outer 'key'
+        nonlocal key  # Use and update the outer 'key'
         key, key_lhs, key_rhs = jax.random.split(key, 3)
-        
+
         # Create random data on host
         lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
         rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
-        
+
         # Put on device (HBM)
         lhs_device = jax.device_put(lhs_host, lhs_sharding)
         rhs_device = jax.device_put(rhs_host, rhs_sharding)
-        
+
         return (lhs_device, rhs_device)
 
     # Run the benchmark
@@ -106,36 +122,78 @@ def gemm_fp8_quantization(
     )
     return {"time_ms_list": time_ms_list}
 
+
 def gemm_fp8_rowwise(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """FP8-Rowwise GEMM with dynamic scaling factors."""
+
     def f(x, y):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
-            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
-            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
+            qx = qpl.quantize(
+                x,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="absmax",
+                channelwise_axes=[0],
+            )
+            qy = qpl.quantize(
+                y,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="absmax",
+                channelwise_axes=[0],
+            )
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+            )
             return acc.astype(jnp.bfloat16)
-    return gemm_fp8_quantization(m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_rowwise")
-    
+
+    return gemm_fp8_quantization(
+        m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_rowwise"
+    )
+
 
 def gemm_fp8_rowwise_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY
+    )
+    return unified_flops_metrics(
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE,
+    )
+
 
 def gemm_fp8_rowwise_w_dequantize(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """FP8-Rowwise GEMM with dynamic scaling factors."""
+
     def f(x, qy):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0])
-            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32).astype(jnp.float32)
-            final_result = acc * (qx.scale.astype(jnp.float32) * qy.scale.astype(jnp.float32))
+            qx = qpl.quantize(
+                x,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="absmax",
+                channelwise_axes=[0],
+            )
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+            ).astype(jnp.float32)
+            final_result = acc * (
+                qx.scale.astype(jnp.float32) * qy.scale.astype(jnp.float32)
+            )
             return final_result.astype(jnp.bfloat16)
+
     mesh = create_mesh(SHARDING_STRATEGY)
     lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
     rhs_sharding = get_rhs_named_shading(mesh, SHARDING_STRATEGY)
@@ -160,18 +218,24 @@ def gemm_fp8_rowwise_w_dequantize(
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
-        nonlocal key # Use and update the outer 'key'
+        nonlocal key  # Use and update the outer 'key'
         key, key_lhs, key_rhs = jax.random.split(key, 3)
-        
+
         # Create random data on host
         lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
         rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
-        
+
         # Put on device (HBM)
         lhs_device = jax.device_put(lhs_host, lhs_sharding)
         rhs_device = jax.device_put(rhs_host, rhs_sharding)
-        rhs_device = qpl.quantize(rhs_device, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[1])
-        
+        rhs_device = qpl.quantize(
+            rhs_device,
+            qtype=jnp.float8_e4m3fn,
+            scale_dtype=jnp.float32,
+            calibration_method="absmax",
+            channelwise_axes=[1],
+        )
+
         return (lhs_device, rhs_device)
 
     # Run the benchmark
@@ -185,111 +249,249 @@ def gemm_fp8_rowwise_w_dequantize(
     )
     return {"time_ms_list": time_ms_list}
 
+
 def gemm_fp8_rowwise_w_dequantize_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY
+    )
+    return unified_flops_metrics(
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE,
+    )
 
 
 def gemm_fp8_b128_fp32(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """FP8 GEMM as DeepSeek-stype quantization, block size: 1x128. Use dynamic scaling factors."""
+
     def f(x, y):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0], tiled_axes={1: 128})
-            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="absmax", channelwise_axes=[0], tiled_axes={1: 128})
-            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
+            qx = qpl.quantize(
+                x,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="absmax",
+                channelwise_axes=[0],
+                tiled_axes={1: 128},
+            )
+            qy = qpl.quantize(
+                y,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="absmax",
+                channelwise_axes=[0],
+                tiled_axes={1: 128},
+            )
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+            )
             return acc.astype(jnp.bfloat16)
 
-    return gemm_fp8_quantization(m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_b128_fp32")
+    return gemm_fp8_quantization(
+        m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_b128_fp32"
+    )
+
 
 def gemm_fp8_b128_fp32_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY
+    )
+    return unified_flops_metrics(
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE,
+    )
+
 
 def gemm_fp8_rowwise_static_scaling(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """FP8-Rowwise GEMM with static scaling factors."""
+
     def f(x, y):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
-            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0])
-            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
+            qx = qpl.quantize(
+                x,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="fixed, -224, 224",
+                channelwise_axes=[0],
+            )
+            qy = qpl.quantize(
+                y,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="fixed, -224, 224",
+                channelwise_axes=[0],
+            )
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+            )
             return acc.astype(jnp.bfloat16)
-    return gemm_fp8_quantization(m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_rowwise_static_scaling")
+
+    return gemm_fp8_quantization(
+        m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_rowwise_static_scaling"
+    )
+
 
 def gemm_fp8_rowwise_static_scaling_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY
+    )
+    return unified_flops_metrics(
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE,
+    )
+
 
 def gemm_fp8_b128_fp32_static_scaling(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """FP8 GEMM as DeepSeek-stype quantization, block size: 1x128. Use static scaling factors."""
+
     def f(x, y):
         with jax.named_scope(MARKER):
-            qx = qpl.quantize(x, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0], tiled_axes={1: 128})
-            qy = qpl.quantize(y, qtype=jnp.float8_e4m3fn, scale_dtype=jnp.float32, calibration_method="fixed, -224, 224", channelwise_axes=[0], tiled_axes={1: 128})
-            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
+            qx = qpl.quantize(
+                x,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="fixed, -224, 224",
+                channelwise_axes=[0],
+                tiled_axes={1: 128},
+            )
+            qy = qpl.quantize(
+                y,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="fixed, -224, 224",
+                channelwise_axes=[0],
+                tiled_axes={1: 128},
+            )
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+            )
             return acc.astype(jnp.bfloat16)
 
-    return gemm_fp8_quantization(m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_b128_fp32_static_scaling")
+    return gemm_fp8_quantization(
+        m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_b128_fp32_static_scaling"
+    )
+
 
 def gemm_fp8_b128_fp32_static_scaling_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY
+    )
+    return unified_flops_metrics(
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE,
+    )
+
 
 def gemm_mxfp8_b32(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """FP8-Rowwise GEMM with dynamic scaling factors."""
+
     def f(x, y):
         with jax.named_scope(MARKER):
-            how = qarray.HowToQuantize(qtype='mxfp8', calibration_method="absmax")
+            how = qarray.HowToQuantize(qtype="mxfp8", calibration_method="absmax")
             qx = qarray.quantize(x, how=how)
             qy = qarray.quantize(y, how=how)
-            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+            )
             return acc.astype(jnp.bfloat16)
-    return gemm_fp8_quantization(m, k, n, f, num_runs, trace_dir, task_name="gemm_mxfp8_b32")
-    
+
+    return gemm_fp8_quantization(
+        m, k, n, f, num_runs, trace_dir, task_name="gemm_mxfp8_b32"
+    )
+
 
 def gemm_mxfp8_b32_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY
+    )
+    return unified_flops_metrics(
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE,
+    )
+
 
 def gemm_mxfp8_b32_static_scaling(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """FP8-Rowwise GEMM with dynamic scaling factors."""
+
     def f(x, y):
         with jax.named_scope(MARKER):
-            how = qarray.HowToQuantize(qtype='mxfp8', calibration_method="fixed, -224, 224")
+            how = qarray.HowToQuantize(
+                qtype="mxfp8", calibration_method="fixed, -224, 224"
+            )
             qx = qarray.quantize(x, how=how)
             qy = qarray.quantize(y, how=how)
-            acc = jax.numpy.einsum("ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32)
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+            )
             return acc.astype(jnp.bfloat16)
-    return gemm_fp8_quantization(m, k, n, f, num_runs, trace_dir, task_name="gemm_mxfp8_b32")
-    
+
+    return gemm_fp8_quantization(
+        m, k, n, f, num_runs, trace_dir, task_name="gemm_mxfp8_b32"
+    )
+
 
 def gemm_mxfp8_b32_static_scaling_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
     total_flops = 2 * m * k * n  # Total floating-point operations
-    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
-    return unified_flops_metrics(m, n, k, time_ms_list, total_flops, total_flops_all_devices, PEAK_FLOPS_PER_DEVICE)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY
+    )
+    return unified_flops_metrics(
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE,
+    )
