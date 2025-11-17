@@ -15,7 +15,7 @@ CONFIG_NAMES="throttling_gemm_large"
 for CONFIG in $CONFIG_NAMES
 do
   # Construct the full config file path
-  CONFIG_FILE="configs/v7x/${CONFIG}.yaml"
+  CONFIG_FILE="configs/ironwood/${CONFIG}.yaml"
   
   echo "--- Starting benchmark for ${CONFIG} ---"
   

@@ -12,13 +12,27 @@ from typing import Any, Dict, Tuple, Callable
 import datetime
 
 # pylint: disable=g-importing-member
-from benchmark_utils import iteration_timeit, ShardingStrategy, get_lhs_named_shading, get_rhs_named_shading, get_out_sharding, get_rowwise_named_shading, get_output_named_shading, create_mesh, handle_based_on_sharding, unified_flops_metrics, unified_bytes_metrics, set_libtpu_init_args_from_yaml
+from benchmark_utils import iteration_timeit, ShardingStrategy, get_lhs_named_shading, get_rhs_named_shading, get_out_sharding, get_rowwise_named_shading, get_output_named_shading, create_mesh, handle_based_on_sharding, unified_flops_metrics, unified_bytes_metrics
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 from common import MARKER
 
 # pylint: disable=g-importing-member
+
+os.environ["LIBTPU_INIT_ARGS"] = (
+    "--xla_tpu_enable_async_collective_fusion=true "
+    "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true "
+    "--xla_tpu_enable_async_collective_fusion_multiple_steps=true "
+    "--xla_tpu_overlap_compute_collective_tc=true "
+    "--xla_enable_async_all_gather=true "
+    "--xla_enable_async_collective_permute=true "
+    "--xla_tpu_enable_all_experimental_scheduler_features=true "
+    "--xla_tpu_accumulate_into_mrb=true "
+    "--xla_tpu_scoped_vmem_limit_kib=65536 "
+    "--xla_tpu_dvfs_p_state=7 "
+    "--xla_tpu_vmem_scavenging_mode=NONE "
+)
 os.environ['XPROF_E2E_ENABLE_PYTHON_TRACER'] = 'FALSE'
 
 TRACE_BASE_DIR = None
@@ -37,7 +51,7 @@ SEED = 0
 PEAK_FLOPS_PER_DEVICE=2307 # TFLOP/s for single core(device) of FP8 under p_state=7
 
 def gemm_simple(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+    m: int, k: int, n: int,  dtype: jnp.dtype, num_runs: int = 1,trace_dir: str = None, 
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
 
@@ -63,8 +77,9 @@ def gemm_simple(
 
     lhs_shape = (m, k)
     rhs_shape = (k, n)
-    lhs_dtype = jnp.float8_e4m3fn
-    rhs_dtype = jnp.float8_e4m3fn
+
+    lhs_dtype = dtype
+    rhs_dtype = dtype
 
     key = jax.random.key(SEED)
 
