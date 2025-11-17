@@ -1,0 +1,72 @@
+benchmarks:
+- benchmark_name: "inference_sigmoid"
+  trace_dir: "../microbenchmarks/inference_sigmoid_bf16"
+  csv_path: "../microbenchmarks/inference_sigmoid_bf16"
+  xlml_metrics_dir: "../microbenchmarks/inference_sigmoid_bf16"
+  xla_dump_dir: "../microbenchmarks/inference_sigmoid_bf16/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 512, n: 512, dtype: "bfloat16"}
+  - {m: 512, n: 1024, dtype: "bfloat16"}
+  - {m: 512, n: 2048, dtype: "bfloat16"}
+  - {m: 512, n: 4096, dtype: "bfloat16"}
+  - {m: 512, n: 8192, dtype: "bfloat16"}
+  - {m: 512, n: 16384, dtype: "bfloat16"}
+  - {m: 512, n: 32768, dtype: "bfloat16"}
+  - {m: 512, n: 65536, dtype: "bfloat16"}
+  - {m: 1024, n: 512, dtype: "bfloat16"}
+  - {m: 1024, n: 1024, dtype: "bfloat16"}
+  - {m: 1024, n: 2048, dtype: "bfloat16"}
+  - {m: 1024, n: 4096, dtype: "bfloat16"}
+  - {m: 1024, n: 8192, dtype: "bfloat16"}
+  - {m: 1024, n: 16384, dtype: "bfloat16"}
+  - {m: 1024, n: 32768, dtype: "bfloat16"}
+  - {m: 1024, n: 65536, dtype: "bfloat16"}
+  - {m: 2048, n: 512, dtype: "bfloat16"}
+  - {m: 2048, n: 1024, dtype: "bfloat16"}
+  - {m: 2048, n: 2048, dtype: "bfloat16"}
+  - {m: 2048, n: 4096, dtype: "bfloat16"}
+  - {m: 2048, n: 8192, dtype: "bfloat16"}
+  - {m: 2048, n: 16384, dtype: "bfloat16"}
+  - {m: 2048, n: 32768, dtype: "bfloat16"}
+  - {m: 2048, n: 65536, dtype: "bfloat16"}
+  - {m: 4096, n: 512, dtype: "bfloat16"}
+  - {m: 4096, n: 1024, dtype: "bfloat16"}
+  - {m: 4096, n: 2048, dtype: "bfloat16"}
+  - {m: 4096, n: 4096, dtype: "bfloat16"}
+  - {m: 4096, n: 8192, dtype: "bfloat16"}
+  - {m: 4096, n: 16384, dtype: "bfloat16"}
+  - {m: 4096, n: 32768, dtype: "bfloat16"}
+  - {m: 4096, n: 65536, dtype: "bfloat16"}
+  - {m: 8192, n: 512, dtype: "bfloat16"}
+  - {m: 8192, n: 1024, dtype: "bfloat16"}
+  - {m: 8192, n: 2048, dtype: "bfloat16"}
+  - {m: 8192, n: 4096, dtype: "bfloat16"}
+  - {m: 8192, n: 8192, dtype: "bfloat16"}
+  - {m: 8192, n: 16384, dtype: "bfloat16"}
+  - {m: 8192, n: 32768, dtype: "bfloat16"}
+  - {m: 8192, n: 65536, dtype: "bfloat16"}
+  - {m: 16384, n: 512, dtype: "bfloat16"}
+  - {m: 16384, n: 1024, dtype: "bfloat16"}
+  - {m: 16384, n: 2048, dtype: "bfloat16"}
+  - {m: 16384, n: 4096, dtype: "bfloat16"}
+  - {m: 16384, n: 8192, dtype: "bfloat16"}
+  - {m: 16384, n: 16384, dtype: "bfloat16"}
+  - {m: 16384, n: 32768, dtype: "bfloat16"}
+  - {m: 16384, n: 65536, dtype: "bfloat16"}
+  - {m: 32768, n: 512, dtype: "bfloat16"}
+  - {m: 32768, n: 1024, dtype: "bfloat16"}
+  - {m: 32768, n: 2048, dtype: "bfloat16"}
+  - {m: 32768, n: 4096, dtype: "bfloat16"}
+  - {m: 32768, n: 8192, dtype: "bfloat16"}
+  - {m: 32768, n: 16384, dtype: "bfloat16"}
+  - {m: 32768, n: 32768, dtype: "bfloat16"}
+  - {m: 32768, n: 65536, dtype: "bfloat16"}
+  - {m: 65536, n: 512, dtype: "bfloat16"}
+  - {m: 65536, n: 1024, dtype: "bfloat16"}
+  - {m: 65536, n: 2048, dtype: "bfloat16"}
+  - {m: 65536, n: 4096, dtype: "bfloat16"}
+  - {m: 65536, n: 8192, dtype: "bfloat16"}
+  - {m: 65536, n: 16384, dtype: "bfloat16"}
+  - {m: 65536, n: 32768, dtype: "bfloat16"}
+  - {m: 65536, n: 65536, dtype: "bfloat16"}
