@@ -48,5 +48,3 @@ You can run the benchmarks with a config file:
 ```bash
 python Ironwood/src/run_benchmark.py --config=Ironwood/configs/gemm_demo.yaml
 ```
-
-python Ironwood/src/run_benchmark.py --config=Ironwood/configs/gemm.yaml
