@@ -3,6 +3,7 @@
 # pylint: disable=g-importing-member
 from functools import partial
 from typing import Any, Dict
+import os
 
 from benchmark_utils import simple_timeit, MetricsStatistics
 import jax
@@ -255,6 +256,18 @@ def all_gather_benchmark(
     Returns:
       The measured time for the ICI benchmark.
     """
+    libtpu_init_args = [
+        "--xla_jf_debug_level=3",
+        "--xla_sc_disable_megacore_partitioning=true",
+        "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
+        "--xla_tpu_enable_all_gather_offload_tracing=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_2d_all_gather=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_3d_all_gather=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_all_gather=true",
+        "--xla_tpu_use_single_sparse_core_for_all_gather_offload=true",
+        "--xla_tpu_use_tc_device_shape_on_sc=true",
+    ]
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
     mesh, _, _ = create_mesh(ici_size, mesh_shape)
 
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
