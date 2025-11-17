@@ -588,23 +588,21 @@ def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str, str, str]:
         print(f"Error: HLO file not found at {hlo_file_path}")
         return None, None, None
 
-    # Extract input/output shapes from ENTRY line
-    # Example: ENTRY %main.0_spmd (param.1: f32[32,128]) -> f32[128,128] {
-    entry_match = re.search(
-        r"ENTRY\s+.*\([^:]*:\s*([^\s,)]+)[^)]*\)\s*->\s*([^{\s]+)", content
-    )
-    if entry_match:
-        input_shape = entry_match.group(1)
-        output_shape = entry_match.group(2)
+    # Extract input/output shapes from HloModule line
+    # Example: HloModule jit_f, ..., entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
+    layout_match = re.search(r"entry_computation_layout={\((.*?)\)->(.*?)}", content)
+    if layout_match:
+        input_shape = layout_match.group(1)
+        output_shape = layout_match.group(2)
         # Further clean shape if layout info is present, e.g., f32[1,2]{1,0} -> f32[1,2]
         input_shape = re.sub(r"{.*}", "", input_shape)
         output_shape = re.sub(r"{.*}", "", output_shape)
     else:
-        print(f"Could not find ENTRY line in {hlo_file_path} to extract shapes.")
+        print(f"Could not find entry_computation_layout in {hlo_file_path} to extract shapes.")
 
     # Extract replica groups
     # Example: replica_groups={{0,1},{2,3}}, dimensions...
-    rg_match = re.search(r"replica_groups=({.*?}),", content)
+    rg_match = re.search(r"replica_groups=({{.*?}})", content)
     if rg_match:
         replica_groups = rg_match.group(1)
     else:
