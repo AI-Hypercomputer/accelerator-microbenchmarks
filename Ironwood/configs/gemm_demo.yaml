@@ -1,0 +1,145 @@
+benchmarks:
+- benchmark_name: "gemm_simple"
+  trace_dir: "../microbenchmarks/gemm_simple"
+  csv_path: "../microbenchmarks/gemm_simple"
+  xlml_metrics_dir: "../microbenchmarks/gemm_simple"
+  xla_dump_dir: "../microbenchmarks/gemm_simple/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 18432, n: 16384}
+- benchmark_name: "gemm"
+  trace_dir: "../microbenchmarks/gemm"
+  csv_path: "../microbenchmarks/gemm"
+  xlml_metrics_dir: "../microbenchmarks/gemm"
+  xla_dump_dir: "../microbenchmarks/gemm/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 18432, n: 16384}
+- benchmark_name: "gemm_accum"
+  trace_dir: "../microbenchmarks/gemm_accum"
+  csv_path: "../microbenchmarks/gemm_accum"
+  xlml_metrics_dir: "../microbenchmarks/gemm_accum"
+  xla_dump_dir: "../microbenchmarks/gemm_accum/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 18432}
+- benchmark_name: "quantization"
+  trace_dir: "../microbenchmarks/quantization"
+  csv_path: "../microbenchmarks/quantization"
+  xlml_metrics_dir: "../microbenchmarks/quantization"
+  xla_dump_dir: "../microbenchmarks/quantization/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, n: 16384}
+- benchmark_name: "transpose_quantization"
+  trace_dir: "../microbenchmarks/transpose_quantization"
+  csv_path: "../microbenchmarks/transpose_quantization"
+  xlml_metrics_dir: "../microbenchmarks/transpose_quantization"
+  xla_dump_dir: "../microbenchmarks/transpose_quantization/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, n: 16384}
+- benchmark_name: "quantization_static_scaling"
+  trace_dir: "../microbenchmarks/quantization_static_scaling"
+  csv_path: "../microbenchmarks/quantization_static_scaling"
+  xlml_metrics_dir: "../microbenchmarks/quantization_static_scaling"
+  xla_dump_dir: "../microbenchmarks/quantization_static_scaling/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, n: 16384}
+- benchmark_name: "transpose_quantization_static_scaling"
+  trace_dir: "../microbenchmarks/transpose_quantization_static_scaling"
+  csv_path: "../microbenchmarks/transpose_quantization_static_scaling"
+  xlml_metrics_dir: "../microbenchmarks/transpose_quantization_static_scaling"
+  xla_dump_dir: "../microbenchmarks/transpose_quantization_static_scaling/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, n: 16384}
+- benchmark_name: "swiglu_fwd"
+  trace_dir: "../microbenchmarks/swiglu_fwd"
+  csv_path: "../microbenchmarks/swiglu_fwd"
+  xlml_metrics_dir: "../microbenchmarks/swiglu_fwd"
+  xla_dump_dir: "../microbenchmarks/swiglu_fwd/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 8192, n: 8192}
+- benchmark_name: "swiglu_bwd"
+  trace_dir: "../microbenchmarks/swiglu_bwd"
+  csv_path: "../microbenchmarks/swiglu_bwd"
+  xlml_metrics_dir: "../microbenchmarks/swiglu_bwd"
+  xla_dump_dir: "../microbenchmarks/swiglu_bwd/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 8192, n: 8192}
+- benchmark_name: "rmsnorm_fwd"
+  trace_dir: "../microbenchmarks/rmsnorm_fwd"
+  csv_path: "../microbenchmarks/rmsnorm_fwd"
+  xlml_metrics_dir: "../microbenchmarks/rmsnorm_fwd"
+  xla_dump_dir: "../microbenchmarks/rmsnorm_fwd/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 4096, n: 16384}
+- benchmark_name: "rmsnorm_bwd"
+  trace_dir: "../microbenchmarks/rmsnorm_bwd"
+  csv_path: "../microbenchmarks/rmsnorm_bwd"
+  xlml_metrics_dir: "../microbenchmarks/rmsnorm_bwd"
+  xla_dump_dir: "../microbenchmarks/rmsnorm_bwd/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 4096, n: 16384}
+- benchmark_name: "add"
+  trace_dir: "../microbenchmarks/add"
+  csv_path: "../microbenchmarks/add"
+  xlml_metrics_dir: "../microbenchmarks/add"
+  xla_dump_dir: "../microbenchmarks/add/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 4096, n: 16384}
+- benchmark_name: "gemm_fp8_rowwise"
+  trace_dir: "../microbenchmarks/gemm_fp8_rowwise"
+  csv_path: "../microbenchmarks/gemm_fp8_rowwise"
+  xlml_metrics_dir: "../microbenchmarks/gemm_fp8_rowwise"
+  xla_dump_dir: "../microbenchmarks/gemm_fp8_rowwise/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 4096}
+- benchmark_name: "gemm_fp8_b128_fp32"
+  trace_dir: "../microbenchmarks/gemm_fp8_b128_fp32"
+  csv_path: "../microbenchmarks/gemm_fp8_b128_fp32"
+  xlml_metrics_dir: "../microbenchmarks/gemm_fp8_b128_fp32"
+  xla_dump_dir: "../microbenchmarks/gemm_fp8_b128_fp32/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 4096}
+- benchmark_name: "gemm_fp8_rowwise_static_scaling"
+  trace_dir: "../microbenchmarks/gemm_fp8_rowwise_static_scaling"
+  csv_path: "../microbenchmarks/gemm_fp8_rowwise_static_scaling"
+  xlml_metrics_dir: "../microbenchmarks/gemm_fp8_rowwise_static_scaling"
+  xla_dump_dir: "../microbenchmarks/gemm_fp8_rowwise_static_scaling/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 4096}
+- benchmark_name: "gemm_fp8_b128_fp32_static_scaling"
+  trace_dir: "../microbenchmarks/gemm_fp8_b128_fp32_static_scaling"
+  csv_path: "../microbenchmarks/gemm_fp8_b128_fp32_static_scaling"
+  xlml_metrics_dir: "../microbenchmarks/gemm_fp8_b128_fp32_static_scaling"
+  xla_dump_dir: "../microbenchmarks/gemm_fp8_b128_fp32_static_scaling/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 4096}
+- benchmark_name: "gemm_mxfp8_b32"
+  trace_dir: "../microbenchmarks/gemm_mxfp8_b32"
+  csv_path: "../microbenchmarks/gemm_mxfp8_b32"
+  xlml_metrics_dir: "../microbenchmarks/gemm_mxfp8_b32"
+  xla_dump_dir: "../microbenchmarks/gemm_mxfp8_b32/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 4096}
+- benchmark_name: "gemm_mxfp8_b32_static_scaling"
+  trace_dir: "../microbenchmarks/gemm_mxfp8_b32_static_scaling"
+  csv_path: "../microbenchmarks/gemm_mxfp8_b32_static_scaling"
+  xlml_metrics_dir: "../microbenchmarks/gemm_mxfp8_b32_static_scaling"
+  xla_dump_dir: "../microbenchmarks/gemm_mxfp8_b32_static_scaling/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 4096}
