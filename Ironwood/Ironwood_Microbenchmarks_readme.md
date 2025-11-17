@@ -40,6 +40,7 @@ Now that you have the VM environment set up, `git clone` the accelerator-microbe
 git clone https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git
 cd accelerator-microbenchmarks/
 pip install -r requirements.txt
+pip install libtpu==0.0.26.dev20251022+nightly -f'https://storage.googleapis.com/jax-releases/libtpu_releases.html'
 ```
 
 You can run the benchmarks with a config file:
@@ -47,3 +48,5 @@ You can run the benchmarks with a config file:
 ```bash
 python Ironwood/src/run_benchmark.py --config=Ironwood/configs/gemm_demo.yaml
 ```
+
+python Ironwood/src/run_benchmark.py --config=Ironwood/configs/gemm.yaml
