@@ -53,6 +53,7 @@ def iteration_timeit_from_trace(
     tries: int = 17,
     task: str = None,
     trace_dir: str = None,
+    data_generation_strategy: str = "per_iteration",
 ) -> list[float]:
     """
     Time a function with jax.profiler and get the run time from the trace.
@@ -71,12 +72,12 @@ def iteration_timeit_from_trace(
     # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
-    # data_args = data_generator()
+    data_args_once = data_generator() if data_generation_strategy == "once" else None
     with jax.profiler.trace(tmp_trace_dir):
         for i in range(tries):
             if i % 10 == 0:
                 print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
-            data_args = data_generator()
+            data_args = data_args_once if data_generation_strategy == "once" else data_generator()
             jax.devices()
             with jax.profiler.StepTraceAnnotation(task, step_num=i):
                 with jax.named_scope(f"{MARKER}_{i}"):
@@ -123,6 +124,7 @@ def iteration_timeit(
     tries: int = 10,
     task: str = None,
     trace_dir: str = None,
+    data_generation_strategy: str = "per_iteration",
 ) -> list[float]:
     """
     Simple utility to time a function, ensuring no cache hits
@@ -167,14 +169,15 @@ def iteration_timeit(
             tries=tries,
             task=task,
             trace_dir=trace_dir,
+            data_generation_strategy=data_generation_strategy,
         )
 
     outcomes_ms = []
     print(f"[{task}] Running measurement loop with {tries} tries...")
-
+    data_args_once = data_generator() if data_generation_strategy == "once" else None
     for i in range(tries):
         # 1. Generate NEW random data (meets "no cache hit" rule)
-        data_args = data_generator()
+        data_args = data_args_once if data_generation_strategy == "once" else data_generator()
         jax.devices()  # Force synchronization across devices
 
         # Start timer just before the compute call
@@ -505,6 +508,7 @@ def rename_xla_dump(
         return
 
     new_base_name = f"{benchmark_name}_{serialized_benchmark_param}"
+    after_optimizations_path = input_shape = output_shape = replica_groups = None
 
     for original_filepath in all_related_files:
         original_filename = os.path.basename(original_filepath)
@@ -519,13 +523,17 @@ def rename_xla_dump(
             re.escape(common_jit_id_prefix) + r"(\..*)", original_filename
         )
 
-        if suffix_match:
-            original_suffix_with_extension = suffix_match.group(
-                1
-            )  # e.g., '.after_codegen.txt'
+        if not suffix_match:
+            continue
+
+        original_suffix_with_extension = suffix_match.group(
+            1
+        )  # e.g., '.after_codegen.txt'
 
         new_filename = f"{new_base_name}{original_suffix_with_extension}"
         new_filepath = os.path.join(dest_xla_dump_dir, new_filename)
+        if "after_optimizations.txt" in original_suffix_with_extension:
+            after_optimizations_path = new_filepath
 
         if original_filepath == new_filepath:
             print(
@@ -545,6 +553,64 @@ def rename_xla_dump(
         else:
             upload_to_storage(trace_dir=new_filepath, local_file=original_filepath)
     print(f"The XLA dump is stored in {dest_xla_dump_dir}")
+    print(f"After optimizations path: {after_optimizations_path}")
+    if after_optimizations_path:
+        input_shape, output_shape, replica_groups = (
+            extract_hlo_features_from_file(after_optimizations_path)
+        )
+    else:
+        print(
+            "No files found with 'after_optimizations.txt' suffix. "
+            "Please check the XLA dump directory."
+        )
+    return after_optimizations_path, input_shape, output_shape, replica_groups
+
+
+def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str, str, str]:
+    """
+    Extracts input shape, output shape, and replica groups from an HLO file.
+
+    Args:
+      hlo_file_path: Path to the HLO dump file (e.g., after_optimizations.txt).
+
+    Returns:
+      A tuple containing (input_shape, output_shape, replica_groups),
+      or (None, None, None) if extraction fails.
+    """
+    input_shape = None
+    output_shape = None
+    replica_groups = None
+
+    try:
+        with open(hlo_file_path, "r") as f:
+            content = f.read()
+    except FileNotFoundError:
+        print(f"Error: HLO file not found at {hlo_file_path}")
+        return None, None, None
+
+    # Extract input/output shapes from ENTRY line
+    # Example: ENTRY %main.0_spmd (param.1: f32[32,128]) -> f32[128,128] {
+    entry_match = re.search(
+        r"ENTRY\s+.*\([^:]*:\s*([^\s,)]+)[^)]*\)\s*->\s*([^{\s]+)", content
+    )
+    if entry_match:
+        input_shape = entry_match.group(1)
+        output_shape = entry_match.group(2)
+        # Further clean shape if layout info is present, e.g., f32[1,2]{1,0} -> f32[1,2]
+        input_shape = re.sub(r"{.*}", "", input_shape)
+        output_shape = re.sub(r"{.*}", "", output_shape)
+    else:
+        print(f"Could not find ENTRY line in {hlo_file_path} to extract shapes.")
+
+    # Extract replica groups
+    # Example: replica_groups={{0,1},{2,3}}, dimensions...
+    rg_match = re.search(r"replica_groups=({.*?}),", content)
+    if rg_match:
+        replica_groups = rg_match.group(1)
+    else:
+        print(f"Could not find replica_groups in {hlo_file_path}.")
+
+    return input_shape, output_shape, replica_groups
 
 
 def get_lhs_named_shading(mesh, strategy: ShardingStrategy):

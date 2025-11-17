@@ -67,6 +67,8 @@ def gemm_simple(
     dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
     num_runs: int = 1,
     trace_dir: str = None,
+    data_generation_strategy: str = "per_iteration",
+
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
 
@@ -126,6 +128,7 @@ def gemm_simple(
         tries=num_runs,
         task="gemm_simple",
         trace_dir=trace_dir,
+        data_generation_strategy=data_generation_strategy,
     )
     end_time = datetime.datetime.now()
     return {
@@ -140,6 +143,7 @@ def gemm_simple_calculate_metrics(
     k: int,
     n: int,
     dtype: jnp.dtype,
+    data_generation_strategy: str,
     time_ms_list: list[float],
     start_time: datetime.datetime,
     end_time: datetime.datetime,

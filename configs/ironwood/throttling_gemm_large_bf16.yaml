@@ -6,3 +6,4 @@ benchmarks:
   xla_dump_dir: "../microbenchmarks/gemm_throttling_large_bf16/hlo_graphs"
   benchmark_sweep_params:
   - {m: 16384, k: 18432, n: 16384, num_runs: 10000, dtype: 'bfloat16'}
+  - {m: 16384, k: 18432, n: 16384, num_runs: 10000, dtype: 'bfloat16', data_generation_strategy: 'once'}
