@@ -43,6 +43,7 @@ def single_chip_hbm_copy(
     time_ms_list = simple_timeit(
         jitted_f,
         a,
+        matrix_dim=f"{num_elements}",
         tries=num_runs,
         task="single_chip_hbm_copy",
         trace_dir=trace_dir,
@@ -82,6 +83,7 @@ def single_chip_hbm_copy_calculate_metrics(
             "tensor_size_gbytes": tensor_size_gbytes,
         }
     )
+
     metrics.update(time_statistics.serialize_statistics())
     metrics.update(statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}

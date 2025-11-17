@@ -30,6 +30,7 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
     "all_gather_ici_op": r"all-gather.[0-9]+",
     "psum_ici_op": r"all-reduce.[0-9]+",
     "ppermute_ici_op": r"collective-permute.[0-9]+",
+    "single_chip_hbm_copy": r"copy.[0-9]+",
 }
 
 
@@ -749,7 +750,6 @@ def unified_bytes_metrics(
     metrics.update(gigabytes_per_sec_all_devices_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
-
 
 def set_libtpu_init_args_from_yaml(config_path: str):
     """Loads LIBTPU init args from YAML based on version/strategy and sets env var."""
