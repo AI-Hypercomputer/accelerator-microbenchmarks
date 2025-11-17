@@ -6,27 +6,26 @@ Considered ops:
 3. gemm_accum
 """
 
+import datetime
 import os
 from typing import Any, Dict
 
-import datetime
-
 # pylint: disable=g-importing-member
-from benchmark_utils import (
-    iteration_timeit,
-    ShardingStrategy,
-    get_lhs_named_shading,
-    get_rhs_named_shading,
-    get_out_sharding,
-    get_output_named_shading,
-    create_mesh,
-    handle_based_on_sharding,
-    unified_flops_metrics,
-)
+from benchmark_utils import create_mesh
+from benchmark_utils import get_lhs_named_shading
+from benchmark_utils import get_out_sharding
+from benchmark_utils import get_output_named_shading
+from benchmark_utils import get_rhs_named_shading
+from benchmark_utils import handle_based_on_sharding
+from benchmark_utils import iteration_timeit
+from benchmark_utils import iteration_timeit_from_trace
+from benchmark_utils import ShardingStrategy
+from benchmark_utils import unified_flops_metrics
+from common import MARKER
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
-from common import MARKER
+
 
 # pylint: disable=g-importing-member
 

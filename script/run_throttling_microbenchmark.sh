@@ -10,7 +10,7 @@
 
 # Loop through each config name in the list
 
-CONFIG_NAMES="throttling_gemm_large_fp8 throttling_gemm_large_pf16"
+CONFIG_NAMES="throttling_gemm_large_fp8 throttling_gemm_large_bf16"
 
 for CONFIG in $CONFIG_NAMES
 do
