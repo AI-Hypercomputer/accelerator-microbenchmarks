@@ -11,6 +11,7 @@ from jax.experimental import mesh_utils
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import Mesh
+import json
 from jax.sharding import PartitionSpec as P
 from common import MARKER
 # pylint: disable=g-importing-member
@@ -40,7 +41,7 @@ def create_mesh(
     device_kind = first_device.device_kind
     mesh_devices = mesh_utils.create_device_mesh(shape, devices=jax.devices())
     mesh = Mesh(mesh_devices, axis_names)
-    return mesh, ici_parallelism
+    return mesh
 
 
 def get_metrics_helper(
@@ -62,6 +63,7 @@ def psum_benchmark(
     dtype: jnp.dtype,
     ici_size: int,
     mesh_shape: str,
+    op_dimension: str = None,
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -78,18 +80,43 @@ def psum_benchmark(
     Returns:
       The measured time for the ICI benchmark.
     """
+    libtpu_init_args = [
+        "--xla_jf_debug_level=3",
+        "--xla_sc_disable_megacore_partitioning=true",
+        "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
+        "--xla_tpu_enable_all_reduce_offload_tracing=true",
+        "--xla_tpu_enable_all_reduce_scatter_fusion=false",
+        "--xla_tpu_enable_sparse_core_collective_offload_all_reduce=true",
+        "--xla_tpu_pad_operations_input_tiles=true",
+        "--xla_tpu_sparse_core_all_reduce_offload_min_size_in_bytes=0",
+        "--xla_tpu_use_tc_device_shape_on_sc=true",
+    ]
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
     mesh = create_mesh(ici_size, mesh_shape)
-    matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
+    matrix = jnp.ones((matrix_dim, BASE_SHAPE[1], BASE_SHAPE[2]), dtype=dtype)
+
     ici_average_time_ms_list = None
     # ICI benchmark
     if ici_size > 1:
+        op_dimension = op_dimension.split("x")
+        op_dimension = tuple(int(dim) for dim in op_dimension)
+        sharding_axis = tuple(
+            name for i, name in enumerate(mesh.axis_names) if op_dimension[i] > 1
+        )
 
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, None))
+        @partial(
+            shard_map,
+            mesh=mesh,
+            in_specs=P(None, None, None),
+            out_specs=P(None, None, None),
+            check_rep=False,
+        )
         def f(x):
-            return jax.lax.psum(x, "ici")
+            with jax.named_scope(MARKER):
+                return jax.lax.psum(x, sharding_axis)
 
         sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, None))
+            matrix, jax.sharding.NamedSharding(mesh, P(None, None, None))
         )
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
@@ -109,6 +136,8 @@ def psum_benchmark_calculate_metrics(
     matrix_dim: int,
     dtype: jnp.dtype,
     ici_size: int,
+    mesh_shape: str,
+    op_dimension: str,
     ici_average_time_ms_list: list[float],
 ) -> Dict[str, Any]:
     """Calculates the metrics for the psum benchmark."""
@@ -116,30 +145,13 @@ def psum_benchmark_calculate_metrics(
     params = locals().items()
     metadata = get_metrics_helper(params)
     metrics = {}
-    matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
-
-    # Calculate metrics for ICI benchmark
-    if ici_size > 1 and ici_average_time_ms_list is not None:
-        # bandwidth is claculated as psum can be done via reduce_scatter +
-        # all_gather so bandwidth is the sum of the two (formulas below)
-        ici_bandwidth_gbyte_s_list = [
-            matrix_size_gbyte
-            * (ici_size - 1)
-            * 2
-            / ici_size
-            / (ici_average_time_ms / 1e3)
-            for ici_average_time_ms in ici_average_time_ms_list
-        ]
-        ici_bandwidth_gbyte_s_statistics = MetricsStatistics(
-            metrics_list=ici_bandwidth_gbyte_s_list,
-            metrics_name="ici_bandwidth_gbyte_s",
-        )
-        print(
-            f"psum_ici: Matrix size: {matrix_dim}x{matrix_dim}, {dtype=}, "
-            f"{matrix_size_gbyte=}, achieved_bandwidth_gbyte_s (median) = {ici_bandwidth_gbyte_s_statistics.statistics['p50']}"
-        )
-        # Gather the metrics to report.
-        metrics.update(ici_bandwidth_gbyte_s_statistics.serialize_statistics())
+    input_num_elements = matrix_dim * BASE_SHAPE[1] * BASE_SHAPE[2]
+    dtype_bytes = dtype.dtype.itemsize
+    metadata.update({
+        "input_num_elements": input_num_elements,
+        "dtype_bytes": dtype_bytes,
+        "matrix_shape": json.dumps(f"({matrix_dim}, {BASE_SHAPE[1]}, {BASE_SHAPE[2]})"),
+    })
     return metadata, metrics
 
 
@@ -148,6 +160,7 @@ def psum_scatter_benchmark(
     dtype: jnp.dtype,
     ici_size: int,
     mesh_shape: str,
+    op_dimension: str = None,
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -164,19 +177,42 @@ def psum_scatter_benchmark(
     Returns:
       The measured time for the ICI benchmark.
     """
+    libtpu_init_args = [
+        "--xla_jf_debug_level=3",
+        "--xla_sc_disable_megacore_partitioning=true",
+        "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
+        "--xla_tpu_enable_reduce_scatter_offload_tracing=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
+        "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
+        "--xla_tpu_use_tc_device_shape_on_sc=true",
+    ]
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
     mesh = create_mesh(ici_size, mesh_shape)
-    matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
+    matrix = jnp.ones((matrix_dim, BASE_SHAPE[1], BASE_SHAPE[2]), dtype=dtype)
     ici_average_time_ms_list = None
 
     # ICI benchmark
     if ici_size > 1:
+        op_dimension = op_dimension.split("x")
+        op_dimension = tuple(int(dim) for dim in op_dimension)
+        sharding_axis = tuple(
+            name for i, name in enumerate(mesh.axis_names) if op_dimension[i] > 1
+        )
 
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, "ici"))
+        @partial(
+            shard_map,
+            mesh=mesh,
+            in_specs=P(None, None, None),
+            out_specs=P(sharding_axis, None, None),
+            check_rep=False,
+        )
         def f(x):
-            return jax.lax.psum_scatter(x, "ici", tiled=True)
+            with jax.named_scope(MARKER):
+                return jax.lax.psum_scatter(x, sharding_axis, tiled=True)
 
         sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, None))
+            matrix, jax.sharding.NamedSharding(mesh, P(None, None, None))
         )
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
@@ -197,6 +233,8 @@ def psum_scatter_benchmark_calculate_metrics(
     matrix_dim: int,
     dtype: jnp.dtype,
     ici_size: int,
+    mesh_shape: str,
+    op_dimension: str,
     ici_average_time_ms_list: list[float],
 ) -> Dict[str, Any]:
     """Calculates the metrics for the psum_scatter benchmark."""
@@ -204,27 +242,17 @@ def psum_scatter_benchmark_calculate_metrics(
     params = locals().items()
     metadata = get_metrics_helper(params)
     metrics = {}
-    matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
+    input_num_elements = matrix_dim * BASE_SHAPE[1] * BASE_SHAPE[2]
+    dtype_bytes = dtype.dtype.itemsize
+    matrix_size_gbyte = input_num_elements * dtype_bytes / 1e9
+    metadata.update({
+        "input_num_elements": input_num_elements,
+        "dtype_bytes": dtype_bytes,
+        "matrix_shape": json.dumps(f"({matrix_dim}, {BASE_SHAPE[1]}, {BASE_SHAPE[2]}"),
+    })
 
-    # Calculate metrics for ICI benchmark
-    if ici_size > 1 and ici_average_time_ms_list is not None:
-        # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
-        # to use (ici_size - 1) steps in a ring algorithm
-        ici_bandwidth_gbyte_s_list = [
-            matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_average_time_ms / 1e3)
-            for ici_average_time_ms in ici_average_time_ms_list
-        ]
-        ici_bandwidth_gbyte_s_statistics = MetricsStatistics(
-            metrics_list=ici_bandwidth_gbyte_s_list,
-            metrics_name="ici_bandwidth_gbyte_s",
-        )
-        print(
-            f"psum_scatter_ici: Matrix size: {matrix_dim}x{matrix_dim}, {dtype=}, "
-            f"{matrix_size_gbyte=}, achieved_bandwidth_gbyte_s (median) = {ici_bandwidth_gbyte_s_statistics.statistics['p50']}"
-        )
-        # Gather the metrics to report.
-        metrics.update(ici_bandwidth_gbyte_s_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
+
     return metadata, metrics
 
 
@@ -265,7 +293,7 @@ def all_gather_benchmark(
         "--xla_tpu_use_tc_device_shape_on_sc=true",
     ]
     os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-    mesh = create_mesh(ici_size, mesh_shape)    
+    mesh = create_mesh(ici_size, mesh_shape)
 
     matrix = jnp.ones((matrix_dim, BASE_SHAPE[1], BASE_SHAPE[2]), dtype=dtype)
     ici_average_time_ms_list = None
@@ -325,7 +353,7 @@ def all_gather_benchmark_calculate_metrics(
     metadata.update({
         "input_num_elements": input_num_elements,
         "dtype_bytes": dtype_bytes,
-        "matrix_shape": f"({matrix_dim}, 8, 128)",
+        "matrix_shape": json.dumps(f"({matrix_dim}, 8, 128)"),
     })
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
@@ -353,7 +381,7 @@ def ppermute_benchmark(
       The measured time for the ICI benchmark.
     """
     mesh = create_mesh(ici_size, mesh_shape)
-    matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
+    matrix = jnp.ones((matrix_dim, BASE_SHAPE[1], BASE_SHAPE[2]), dtype=dtype)
     ici_average_time_ms_list = None
 
     # ICI benchmark
