@@ -97,11 +97,14 @@ def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[flo
         tf_op = args.get("tf_op", "")
         if MARKER in tf_op:
             marker_done_events.append(event)
-    # print(f"marker_done_events: {marker_done_events}")
-    # for event in marker_done_events:
-    #     print(f"event: {event}")
+    # when offloaded to sparse core look for call-done events
+    marker_call_done_events = [
+        e for e in marker_done_events if e.get("name", "").endswith("call-done")
+    ]
+    if marker_call_done_events:
+        marker_done_events = marker_call_done_events
     unique_pids = set([e["pid"] for e in marker_done_events])
-    print(f"unique_pids: {unique_pids}")
+    print(f"Unique PIDs: {unique_pids}")
     if not marker_done_events:
         return []
     min_pid = min([e["pid"] for e in marker_done_events])
@@ -552,9 +555,11 @@ def rename_xla_dump(
         return
 
     new_base_name = f"{benchmark_name}_{serialized_benchmark_param}"
+    after_optimizations_path = input_shape = output_shape = replica_groups = None
 
     for original_filepath in all_related_files:
         original_filename = os.path.basename(original_filepath)
+        original_suffix_with_extension = ""
 
         # Find the specific suffix part *after* the common_jit_id_prefix.
         # This regex looks for the common_jit_id_prefix, then captures everything after it,
@@ -573,7 +578,9 @@ def rename_xla_dump(
 
         new_filename = f"{new_base_name}{original_suffix_with_extension}"
         new_filepath = os.path.join(dest_xla_dump_dir, new_filename)
-
+        if "after_optimizations.txt" in original_suffix_with_extension:
+            after_optimizations_path = new_filepath
+            
         if original_filepath == new_filepath:
             print(
                 f"Skipping: '{original_filename}' already has the desired name or path."
@@ -592,8 +599,60 @@ def rename_xla_dump(
         else:
             upload_to_storage(trace_dir=new_filepath, local_file=original_filepath)
     print(f"The XLA dump is stored in {dest_xla_dump_dir}")
+    if after_optimizations_path:
+        input_shape, output_shape, replica_groups = (
+            extract_hlo_features_from_file(after_optimizations_path)
+        )
+    else:
+        print(
+            "No files found with 'after_optimizations.txt' suffix. "
+            "Please check the XLA dump directory."
+        )
+    return after_optimizations_path, input_shape, output_shape, replica_groups
 
+def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str, str, str]:
+    """
+    Extracts input shape, output shape, and replica groups from an HLO file.
 
+    Args:
+      hlo_file_path: Path to the HLO dump file (e.g., after_optimizations.txt).
+
+    Returns:
+      A tuple containing (input_shape, output_shape, replica_groups),
+      or (None, None, None) if extraction fails.
+    """
+    input_shape = None
+    output_shape = None
+    replica_groups = None
+
+    try:
+        with open(hlo_file_path, "r") as f:
+            content = f.read()
+    except FileNotFoundError:
+        print(f"Error: HLO file not found at {hlo_file_path}")
+        return None, None, None
+
+    # Extract input/output shapes from HloModule line
+    # Example: HloModule jit_f, ..., entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
+    layout_match = re.search(r"entry_computation_layout={\((.*?)\)->(.*?)}", content)
+    if layout_match:
+        input_shape = layout_match.group(1)
+        output_shape = layout_match.group(2)
+        # Further clean shape if layout info is present, e.g., f32[1,2]{1,0} -> f32[1,2]
+        input_shape = re.sub(r"{.*}", "", input_shape)
+        output_shape = re.sub(r"{.*}", "", output_shape)
+    else:
+        print(f"Could not find entry_computation_layout in {hlo_file_path} to extract shapes.")
+
+    # Extract replica groups
+    # Example: replica_groups={{0,1},{2,3}}, dimensions...
+    rg_match = re.search(r"replica_groups=({{.*?}})", content)
+    if rg_match:
+        replica_groups = rg_match.group(1)
+    else:
+        print(f"Could not find replica_groups in {hlo_file_path}.")
+
+    return input_shape, output_shape, replica_groups
 def get_lhs_named_shading(mesh, strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:

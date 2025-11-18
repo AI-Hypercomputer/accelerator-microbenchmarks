@@ -13,7 +13,6 @@ import pathlib
 import gzip
 import json
 import re
-from collections import defaultdict
 import subprocess
 import shutil
 import time

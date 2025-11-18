@@ -5,7 +5,6 @@ Sample usage (on TPU vm):
 """
 
 import argparse
-import csv
 import datetime
 import importlib
 import inspect

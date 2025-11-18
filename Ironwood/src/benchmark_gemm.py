@@ -6,7 +6,6 @@ Considered ops:
 3. gemm_accum
 """
 
-import datetime
 import os
 from typing import Any, Dict
 

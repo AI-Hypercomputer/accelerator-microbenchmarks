@@ -361,7 +361,6 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         metadata, metrics = calculate_metrics_func(
             **filtered_benchmark_param, **filtered_benchmark_results
         )
-        calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
         if xlml_metrics_dir:
             maybe_write_metrics_file(
                 xlml_metrics_dir,
@@ -373,12 +372,22 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
             )
         # Post process the xla dump
         if xla_dump_dir:
-            rename_xla_dump(
+            (
+                after_optimizations_path,
+                hlo_input_shape,
+                hlo_output_shape,
+                hlo_replica_groups,
+            ) = rename_xla_dump(
                 tmp_xla_dump_dir=TMP_XLA_DUMP_DIR,
                 dest_xla_dump_dir=xla_dump_dir,
                 benchmark_name=benchmark_name,
                 benchmark_param=original_benchmark_param,
             )
+            metadata["after_optimizations_path"] = after_optimizations_path
+            metadata["hlo_input_shape"] = hlo_input_shape
+            metadata["hlo_output_shape"] = hlo_output_shape
+            metadata["hlo_replica_groups"] = hlo_replica_groups
+        calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
 
     # Dump metrics to file.
     if csv_path:
