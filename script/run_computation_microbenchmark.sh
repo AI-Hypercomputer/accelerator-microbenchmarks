@@ -10,7 +10,7 @@
 
 # Loop through each config name in the list
 
-CONFIG_NAMES="gemm_simple gemm"
+CONFIG_NAMES="gemm"
 
 for CONFIG in $CONFIG_NAMES
 do

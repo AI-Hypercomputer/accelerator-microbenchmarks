@@ -4,8 +4,8 @@
 
 # Loop through each config name in the list
 
-CONFIG_NAMES="all_gather_1d all_gather_2d all_gather_3d"
-CONFIG_NAMES="all_gather_1d"
+# CONFIG_NAMES="all_gather_1d all_gather_2d all_gather_3d"
+CONFIG_NAMES="all_gather_2d "
 
 for CONFIG in $CONFIG_NAMES
 do

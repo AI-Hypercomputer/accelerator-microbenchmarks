@@ -159,7 +159,7 @@ def gemm_simple_calculate_metrics(
 
 
 def gemm(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+    m: int, k: int, n: int, dtype: jnp.dtype = jax.numpy.float8_e4m3fn, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """OUT<M, N>:BF16 = matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)"""
 
@@ -199,8 +199,8 @@ def gemm(
     sf0_shape = (m, 1)
     sf1_shape = (1, n)
 
-    lhs_dtype = jnp.float8_e4m3fn
-    rhs_dtype = jnp.float8_e4m3fn
+    lhs_dtype = dtype
+    rhs_dtype = dtype
     sf0_dtype = jnp.float32
     sf1_dtype = jnp.float32
 
@@ -239,7 +239,7 @@ def gemm(
 
 
 def gemm_calculate_metrics(
-    m: int, k: int, n: int, time_ms_list: list[float]
+    m: int, k: int, n: int, time_ms_list: list[float],    dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
