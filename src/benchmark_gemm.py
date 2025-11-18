@@ -120,7 +120,6 @@ def gemm_simple(
     # Run the benchmark
 
     print("Running gemm_simple benchmark", num_runs)
-    start_time = datetime.datetime.now()
     time_ms_list = iteration_timeit_from_trace(
         jit_sharded_f,
         data_generator,
@@ -130,11 +129,8 @@ def gemm_simple(
         trace_dir=trace_dir,
         data_generation_strategy=data_generation_strategy,
     )
-    end_time = datetime.datetime.now()
     return {
         "time_ms_list": time_ms_list,
-        "start_time": start_time,
-        "end_time": end_time,
     }
 
 
@@ -143,8 +139,6 @@ def gemm_simple_calculate_metrics(
     k: int,
     n: int,
     time_ms_list: list[float],
-    start_time: datetime.datetime,
-    end_time: datetime.datetime,
     dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
     data_generation_strategy: str = "per_iteration",
 ) -> Dict[str, Any]:
@@ -161,8 +155,6 @@ def gemm_simple_calculate_metrics(
         total_flops,
         total_flops_all_devices,
         PEAK_FLOPS_PER_DEVICE,
-        start_time,
-        end_time,
     )
 
 

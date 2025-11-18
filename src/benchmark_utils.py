@@ -787,8 +787,6 @@ def unified_flops_metrics(
     total_flops: int,
     total_flops_all_devices: int,
     peak_TFLOPS_per_device: float,
-    start_time=None,
-    end_time=None,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -839,7 +837,6 @@ def unified_flops_metrics(
             ],
             "MFU": mfu_statistics.statistics["p50"],
             "total_flops": total_flops,
-            "duration": end_time - start_time,
             # "all_time_ms_list":  f"{json.dumps(time_ms_list)}",
         }
     )
