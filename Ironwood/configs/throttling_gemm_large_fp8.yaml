@@ -1,5 +1,5 @@
 benchmarks:
-- benchmark_name: "gemm_simple"
+- benchmark_name: "gemm_throttling"
   trace_dir: "../microbenchmarks/gemm_throttling_large_fp8"
   csv_path: "../microbenchmarks/gemm_throttling_large_fp8"
   xlml_metrics_dir: "../microbenchmarks/gemm_throttling_large_fp8"

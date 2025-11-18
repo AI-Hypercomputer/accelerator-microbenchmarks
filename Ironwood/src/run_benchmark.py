@@ -62,6 +62,7 @@ HBM_BENCHMARK_MAP = {
 }
 COMPUTE_BENCHMARK_MAP = {
     "gemm_simple": "benchmark_gemm.gemm_simple",
+    "gemm_throttling": "benchmark_gemm.gemm_throttling",
     "gemm": "benchmark_gemm.gemm",
     "gemm_accum": "benchmark_gemm.gemm_accum",
     "quantization": "benchmark_compute.quantization",
