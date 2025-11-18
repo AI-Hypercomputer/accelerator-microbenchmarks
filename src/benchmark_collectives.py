@@ -15,12 +15,12 @@ from jax.sharding import PartitionSpec as P
 from common import MARKER
 # pylint: disable=g-importing-member
 
+BASE_SHAPE=[1,8,128]
 
 def create_mesh(
     ici_size: int, mesh_shape: str
 ) -> tuple[Mesh, list[int], list[int]]:
     """Creates a mesh with the given ICI size."""
-    dcn_parallelism = [1, 1]
     ici_parallelism = [1, ici_size]
 
     devices_needed = ici_size
@@ -35,15 +35,12 @@ def create_mesh(
     shape = mesh_shape if mesh_shape else (ici_size,)
 
     axis_names = [f"d_{i}" for i in range(len(shape))]
-    print(shape)
-    print(axis_names)
-    # print(devices, len(devices))
+
     first_device = devices[0]
     device_kind = first_device.device_kind
-    print(f"Found device kind: {device_kind}")
     mesh_devices = mesh_utils.create_device_mesh(shape, devices=jax.devices())
     mesh = Mesh(mesh_devices, axis_names)
-    return mesh, dcn_parallelism, ici_parallelism
+    return mesh, ici_parallelism
 
 
 def get_metrics_helper(
@@ -81,7 +78,7 @@ def psum_benchmark(
     Returns:
       The measured time for the ICI benchmark.
     """
-    mesh, _, _ = create_mesh(ici_size, mesh_shape)
+    mesh = create_mesh(ici_size, mesh_shape)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     ici_average_time_ms_list = None
     # ICI benchmark
@@ -167,7 +164,7 @@ def psum_scatter_benchmark(
     Returns:
       The measured time for the ICI benchmark.
     """
-    mesh, _, _ = create_mesh(ici_size, mesh_shape)
+    mesh = create_mesh(ici_size, mesh_shape)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     ici_average_time_ms_list = None
 
@@ -268,12 +265,9 @@ def all_gather_benchmark(
         "--xla_tpu_use_tc_device_shape_on_sc=true",
     ]
     os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-    mesh, _, _ = create_mesh(ici_size, mesh_shape)
+    mesh = create_mesh(ici_size, mesh_shape)    
 
-    # first_dim = 1
-    
-
-    matrix = jnp.ones((matrix_dim, 8, 128), dtype=dtype)
+    matrix = jnp.ones((matrix_dim, BASE_SHAPE[1], BASE_SHAPE[2]), dtype=dtype)
     ici_average_time_ms_list = None
 
     # ICI benchmark
@@ -326,33 +320,13 @@ def all_gather_benchmark_calculate_metrics(
     params = locals().items()
     metadata = get_metrics_helper(params)
     metrics = {}
-    matrix_size_gbyte = matrix_dim * 8 * 128 * dtype.dtype.itemsize / 1e9
-    input_num_elements = matrix_dim * 8 * 128
+    input_num_elements = matrix_dim * BASE_SHAPE[1] * BASE_SHAPE[2]
     dtype_bytes = dtype.dtype.itemsize
     metadata.update({
         "input_num_elements": input_num_elements,
         "dtype_bytes": dtype_bytes,
-        "matrix_shape": f"{matrix_dim}, 8, 128"
+        "matrix_shape": f"({matrix_dim}, 8, 128)",
     })
-
-    # Calculate metrics for ICI benchmark
-    # if ici_size > 1 and ici_average_time_ms_list is not None:
-    #     # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
-    #     # to use (ici_size - 1) steps in a ring algorithm
-    #     ici_bandwidth_gbyte_s_list = [
-    #         matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_average_time_ms / 1e3)
-    #         for ici_average_time_ms in ici_average_time_ms_list
-    #     ]
-    #     ici_bandwidth_gbyte_s_statistics = MetricsStatistics(
-    #         metrics_list=ici_bandwidth_gbyte_s_list,
-    #         metrics_name="ici_bandwidth_gbyte_s",
-    #     )
-    #     print(
-    #         f"all_gather_ici: Matrix size: {matrix_dim}x8x128, {dtype=}, "
-    #         f"{matrix_size_gbyte=}, achieved_bandwidth_gbyte_s (median) = {ici_bandwidth_gbyte_s_statistics.statistics['p50']}"
-    #     )
-    #     # Gather the metrics to report.
-    #     metrics.update(ici_bandwidth_gbyte_s_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
@@ -378,7 +352,7 @@ def ppermute_benchmark(
     Returns:
       The measured time for the ICI benchmark.
     """
-    mesh, _, _ = create_mesh(ici_size, mesh_shape)
+    mesh = create_mesh(ici_size, mesh_shape)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     ici_average_time_ms_list = None
 
@@ -462,7 +436,7 @@ def all_to_all_benchmark(
     Returns:
       The measured time for the ICI benchmark.
     """
-    mesh, _, _ = create_mesh(ici_size, mesh_shape)
+    mesh = create_mesh(ici_size, mesh_shape)
     matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
     ici_average_time_ms_list = None
 

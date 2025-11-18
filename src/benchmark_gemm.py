@@ -142,11 +142,11 @@ def gemm_simple_calculate_metrics(
     m: int,
     k: int,
     n: int,
-    dtype: jnp.dtype,
-    data_generation_strategy: str,
     time_ms_list: list[float],
     start_time: datetime.datetime,
     end_time: datetime.datetime,
+    dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
+    data_generation_strategy: str = "per_iteration",
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations

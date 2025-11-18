@@ -10,7 +10,7 @@
 
 # Loop through each config name in the list
 
-CONFIG_NAMES="throttling_gemm_large"
+CONFIG_NAMES="gemm_simple gemm"
 
 for CONFIG in $CONFIG_NAMES
 do

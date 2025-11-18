@@ -10,7 +10,7 @@ CONFIG_NAMES="all_gather_1d"
 for CONFIG in $CONFIG_NAMES
 do
   # Construct the full config file path
-  CONFIG_FILE="configs/ironwood/${CONFIG}.yaml"
+  CONFIG_FILE="configs/ironwood/ici_collectives/${CONFIG}.yaml"
   
   echo "--- Starting benchmark for ${CONFIG} ---"
   
