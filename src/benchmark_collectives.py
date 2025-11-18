@@ -270,7 +270,10 @@ def all_gather_benchmark(
     os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
     mesh, _, _ = create_mesh(ici_size, mesh_shape)
 
-    matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
+    # first_dim = 1
+    
+
+    matrix = jnp.ones((matrix_dim, 8, 128), dtype=dtype)
     ici_average_time_ms_list = None
 
     # ICI benchmark
@@ -284,8 +287,8 @@ def all_gather_benchmark(
         @partial(
             shard_map,
             mesh=mesh,
-            in_specs=P(sharding_axis, None),
-            out_specs=P(None, None),
+            in_specs=P(None, None, None),
+            out_specs=P(None, None, None),
             check_rep=False,
         )
         def f(x):
@@ -293,7 +296,7 @@ def all_gather_benchmark(
                 return jax.lax.all_gather(x, sharding_axis, tiled=True)
 
         sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(sharding_axis, None))
+            matrix, jax.sharding.NamedSharding(mesh, P(None, None, None))
         )
         jitted_op = jax.jit(f)
         ici_average_time_ms_list = simple_timeit(
@@ -323,32 +326,33 @@ def all_gather_benchmark_calculate_metrics(
     params = locals().items()
     metadata = get_metrics_helper(params)
     metrics = {}
-    matrix_size_gbyte = matrix_dim * matrix_dim * dtype.dtype.itemsize / 1e9
-    input_num_elements = matrix_dim * matrix_dim
+    matrix_size_gbyte = matrix_dim * 8 * 128 * dtype.dtype.itemsize / 1e9
+    input_num_elements = matrix_dim * 8 * 128
     dtype_bytes = dtype.dtype.itemsize
     metadata.update({
         "input_num_elements": input_num_elements,
         "dtype_bytes": dtype_bytes,
+        "matrix_shape": f"{matrix_dim}, 8, 128"
     })
 
     # Calculate metrics for ICI benchmark
-    if ici_size > 1 and ici_average_time_ms_list is not None:
-        # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
-        # to use (ici_size - 1) steps in a ring algorithm
-        ici_bandwidth_gbyte_s_list = [
-            matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_average_time_ms / 1e3)
-            for ici_average_time_ms in ici_average_time_ms_list
-        ]
-        ici_bandwidth_gbyte_s_statistics = MetricsStatistics(
-            metrics_list=ici_bandwidth_gbyte_s_list,
-            metrics_name="ici_bandwidth_gbyte_s",
-        )
-        print(
-            f"all_gather_ici: Matrix size: {matrix_dim}x{matrix_dim}, {dtype=}, "
-            f"{matrix_size_gbyte=}, achieved_bandwidth_gbyte_s (median) = {ici_bandwidth_gbyte_s_statistics.statistics['p50']}"
-        )
-        # Gather the metrics to report.
-        metrics.update(ici_bandwidth_gbyte_s_statistics.serialize_statistics())
+    # if ici_size > 1 and ici_average_time_ms_list is not None:
+    #     # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
+    #     # to use (ici_size - 1) steps in a ring algorithm
+    #     ici_bandwidth_gbyte_s_list = [
+    #         matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_average_time_ms / 1e3)
+    #         for ici_average_time_ms in ici_average_time_ms_list
+    #     ]
+    #     ici_bandwidth_gbyte_s_statistics = MetricsStatistics(
+    #         metrics_list=ici_bandwidth_gbyte_s_list,
+    #         metrics_name="ici_bandwidth_gbyte_s",
+    #     )
+    #     print(
+    #         f"all_gather_ici: Matrix size: {matrix_dim}x8x128, {dtype=}, "
+    #         f"{matrix_size_gbyte=}, achieved_bandwidth_gbyte_s (median) = {ici_bandwidth_gbyte_s_statistics.statistics['p50']}"
+    #     )
+    #     # Gather the metrics to report.
+    #     metrics.update(ici_bandwidth_gbyte_s_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
@@ -381,7 +385,7 @@ def ppermute_benchmark(
     # ICI benchmark
     if ici_size > 1:
 
-        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, "ici"))
+        @partial(shard_map, mesh=mesh, in_specs=P(None, None), out_specs=P(None, None))
         def f(x):
             perm = [(i, (i + 1) % ici_size) for i in range(ici_size)]
             return jax.lax.ppermute(x, "ici", perm)
@@ -473,7 +477,7 @@ def all_to_all_benchmark(
             check_rep=False,
         )
         def f(x):
-            return jax.lax.all_to_all(x, "ici", split_axis=0, concat_axis=0, tiled=True)
+            return jax.lax.all_to_all(x, "ici", split_axis=0, concat_axis=0)
 
         sharded_matrix = jax.device_put(
             matrix, jax.sharding.NamedSharding(mesh, P(None, None))

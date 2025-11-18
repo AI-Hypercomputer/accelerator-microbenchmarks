@@ -34,6 +34,7 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
 }
 
 
+
 class ShardingStrategy(Enum):
     """Defines different sharding strategies for tensors."""
 
@@ -44,6 +45,7 @@ class ShardingStrategy(Enum):
     )  # Only sharding on the two core of one single chip
     SHARDING_ON_ALL_DEVICES_WITH_N = auto()
     SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
+
 
 
 def iteration_timeit_from_trace(
@@ -99,9 +101,33 @@ def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
         tf_op = args.get("tf_op", "")
         if MARKER in tf_op:
             marker_done_events.append(event)
-    # print(f"marker_done_events: {marker_done_events}")
-    # for event in marker_done_events:
-    #     print(f"event: {event}")
+
+    # print(marker_done_events)
+    min_pid = min([e["pid"] for e in marker_done_events])
+    events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
+    # print(events_from_min_pid)
+    durations_ms = [
+        sum(float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid)
+    ]
+    print("durations_ms: ", durations_ms)
+    return durations_ms
+
+
+def iteration_get_metrics_from_trace_ici(trace: dict[str, Any]) -> list[float]:
+    marker_done_events = []
+    for event in trace["traceEvents"]:
+        args = event.get("args", {})
+        tf_op = args.get("tf_op", "")
+        if MARKER in tf_op:
+            marker_done_events.append(event)
+    
+    # when offloaded to sparse core look for call-done events
+    marker_call_done_events = [
+        e for e in marker_done_events if e.get("name", "").endswith("call-done")
+    ]
+    if len(marker_call_done_events)> 0 :
+        marker_done_events = marker_call_done_events
+
     unique_pids = set([e["pid"] for e in marker_done_events])
     print(f"unique_pids: {unique_pids}")
     if not marker_done_events:
@@ -343,7 +369,7 @@ def timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return iteration_get_metrics_from_trace(trace)
+    return iteration_get_metrics_from_trace_ici(trace)
 
 
 def maybe_write_metrics_file(
