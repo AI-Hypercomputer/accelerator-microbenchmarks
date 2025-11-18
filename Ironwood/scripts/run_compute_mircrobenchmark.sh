@@ -10,12 +10,12 @@ CONFIG_NAMES="gemm_simple gemm gemm_accum quantization transpose_quantization sw
 for CONFIG in $CONFIG_NAMES
 do
   # Construct the full config file path
-  CONFIG_FILE="configs/ironwood/${CONFIG}.yaml"
+  CONFIG_FILE="Ironwood/configs/${CONFIG}.yaml"
   
   echo "--- Starting benchmark for ${CONFIG} ---"
   
   # Run the python script and wait for it to complete
-  python src/run_benchmark.py --config="${CONFIG_FILE}"
+  python Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}"
   
   echo "--- Finished benchmark for ${CONFIG} ---"
 done

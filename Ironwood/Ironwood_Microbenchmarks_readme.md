@@ -28,8 +28,8 @@ gcloud compute ssh $TPU_NAME --zone=$ZONE
 ## Create the Venv
 ```bash
 sudo apt install python3-venv
-python3 -m venv microbenchmarks
-source microbenchmarks/bin/activate
+python3 -m venv micro_venv
+source micro_venv/bin/activate
 ```
 
 

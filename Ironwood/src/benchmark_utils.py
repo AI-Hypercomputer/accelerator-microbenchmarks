@@ -45,8 +45,7 @@ class ShardingStrategy(Enum):
     SHARDING_ON_ALL_DEVICES_WITH_N = auto()
     SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
 
-
-def iteration_timeit_from_trace(
+def multiple_iteration_timeit_from_trace(
     compute_func: Callable,
     data_generator: Callable,
     matrix_dim: str = None,
@@ -88,10 +87,10 @@ def iteration_timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return iteration_get_metrics_from_trace(trace)
+    return multiple_iteration_get_metrics_from_trace(trace)
 
 
-def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
+def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
     marker_done_events = []
     for event in trace["traceEvents"]:
         args = event.get("args", {})
@@ -114,6 +113,62 @@ def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
     print(durations_ms)
     return durations_ms
 
+def iteration_timeit_from_trace(
+    compute_func: Callable,
+    data_generator: Callable,
+    matrix_dim: str=None,
+    tries: int=10, 
+    task: str = None,
+    trace_dir: str = None) -> list[float]:
+    """
+    Time a function with jax.profiler and get the run time from the trace.
+    """
+    LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+
+    if matrix_dim is not None:
+        trace_name = f"{task}_dim_{matrix_dim}"
+    else:
+        trace_name = f"t_{task}_" + "".join(
+            random.choices(string.ascii_uppercase + string.digits, k=10)
+        )
+
+    trace_full_dir = f"{trace_dir}/{trace_name}"
+    tmp_trace_dir = trace_full_dir
+    # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
+    if trace_dir and not is_local_directory_path(trace_dir):
+        tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+    with jax.profiler.trace(tmp_trace_dir):
+        for _ in range(tries):
+            data_args = data_generator()
+            jax.devices()  # Force synchronization across devices
+            with jax.profiler.TraceAnnotation(task):
+                result = compute_func(*data_args)
+                jax.block_until_ready(result)
+
+    trace = get_trace(tmp_trace_dir)
+
+    if trace_full_dir != tmp_trace_dir:
+        # Upload the traces to desired location
+        upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
+    return iteration_get_metrics_from_trace(trace)
+
+def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
+    marker_done_events = []
+    for event in trace["traceEvents"]:
+        args = event.get("args", {})
+        tf_op = args.get("tf_op", "")
+        if MARKER in tf_op:
+            marker_done_events.append(event)
+
+    # print(marker_done_events)
+    min_pid = min([e["pid"] for e in marker_done_events])
+    events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
+    # print(events_from_min_pid)
+    durations_ms = [
+        sum(float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid)
+    ]
+    print("durations_ms: ", durations_ms)
+    return durations_ms
 
 def iteration_timeit(
     compute_func: Callable,
@@ -122,7 +177,7 @@ def iteration_timeit(
     warmup_tries: int = 10,
     tries: int = 10,
     task: str = None,
-    trace_dir: str = None,
+    trace_dir: str = None
 ) -> list[float]:
     """
     Simple utility to time a function, ensuring no cache hits
@@ -138,7 +193,7 @@ def iteration_timeit(
     """
     assert task is not None
     print(f"[{task}] Running warmup loop with {warmup_tries} tries...")
-    result = None  # To hold the last result for block_until_ready
+    result = None # To hold the last result for block_until_ready
     for _ in range(warmup_tries):
         # 1. Generate new data for each iteration
         data_args = data_generator()
@@ -160,18 +215,11 @@ def iteration_timeit(
     print(f"[{task}] Verified global dtypes: {arg_dtypes} -> {result_dtypes}")
 
     if trace_dir is not None:
-        return iteration_timeit_from_trace(
-            compute_func,
-            data_generator,
-            matrix_dim=matrix_dim,
-            tries=tries,
-            task=task,
-            trace_dir=trace_dir,
-        )
+        return iteration_timeit_from_trace(compute_func, data_generator, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
 
     outcomes_ms = []
     print(f"[{task}] Running measurement loop with {tries} tries...")
-
+    
     for i in range(tries):
         # 1. Generate NEW random data (meets "no cache hit" rule)
         data_args = data_generator()
@@ -182,14 +230,13 @@ def iteration_timeit(
 
         # 2. Run the operation
         result = compute_func(*data_args)
-
+        
         # 3. Block until operation is complete
         jax.block_until_ready(result)
 
         e_time = datetime.datetime.now()
         outcomes_ms.append(1000 * (e_time - s_time).total_seconds())
     return outcomes_ms
-
 
 def simple_timeit(
     f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None
@@ -697,8 +744,6 @@ def unified_flops_metrics(
     total_flops: int,
     total_flops_all_devices: int,
     peak_TFLOPS_per_device: float,
-    start_time=None,
-    end_time=None,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -749,7 +794,6 @@ def unified_flops_metrics(
             ],
             "MFU": mfu_statistics.statistics["p50"],
             "total_flops": total_flops,
-            "duration": end_time - start_time,
             # "all_time_ms_list":  f"{json.dumps(time_ms_list)}",
         }
     )
