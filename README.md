@@ -51,3 +51,7 @@ Examples can be found in the YAML files under config/ directory.
 If you wish to generate the xprof profile, set this parameter in the YAML file:
 * `trace_dir`: Dumps the xprof profile to either a local location or GCS bucket.
 Examples can be found in the YAML files under config/ directory.
+
+## Running the microbenchmarks on Ironwood
+
+Please refer to the [README](https://github.com/AI-Hypercomputer/accelerator-microbenchmarks/blob/reproduce/Ironwood/Ironwood_Microbenchmarks_readme.md) for instructions on running microbenchmarks on Ironwood.

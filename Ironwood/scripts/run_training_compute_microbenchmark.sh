@@ -1,16 +1,13 @@
 #!/bin/bash
 
-# Run command: sh script/run_computation_mircrobenchmark.sh 
+# Run command: sh ./Ironwood/scripts/run_training_compute_microbenchmark.sh
 
-CONFIG_NAMES="gemm_simple gemm gemm_accum quantization transpose_quantization swiglu_fwd swiglu_bwd rmsnorm_fwd rmsnorm_bwd add gemm_fp8_rowwise"
-
-# Loop through each config name in the list
-
+CONFIG_NAMES="gemm_simple gemm gemm_accum gemm_fp8_rowwise swiglu_fwd swiglu_bwd rmsnorm_fwd rmsnorm_bwd add quantization transpose_quantization"
 
 for CONFIG in $CONFIG_NAMES
 do
   # Construct the full config file path
-  CONFIG_FILE="Ironwood/configs/${CONFIG}.yaml"
+  CONFIG_FILE="Ironwood/configs/training/${CONFIG}.yaml"
   
   echo "--- Starting benchmark for ${CONFIG} ---"
   

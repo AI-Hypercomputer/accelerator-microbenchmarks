@@ -46,5 +46,23 @@ pip install libtpu==0.0.26.dev20251022+nightly -f'https://storage.googleapis.com
 You can run the benchmarks with a config file:
 
 ```bash
-python Ironwood/src/run_benchmark.py --config=Ironwood/configs/gemm_demo.yaml
+python Ironwood/src/run_benchmark.py --config=Ironwood/configs/training/gemm_demo.yaml
+```
+
+## Examine the outputs
+
+The benchmarks will print metrics to the terminal. If you wish to dump formatted metrics in a file, you may set this parameter in your YAML file:
+* `csv_path`: Dumps the benchmark metrics in a CSV.
+Examples can be found in the YAML files under config/ directory.
+
+If you wish to generate the xprof profile, set this parameter in the YAML file:
+* `trace_dir`: Dumps the xprof profile to either a local location or GCS bucket.
+Examples can be found in the YAML files under config/ directory.
+
+## Microbenchmark scripts
+
+Run the training compute microbenchmark, including gemm, swiglu, rmsnorm, quantization, and transpose quantization:
+
+```bash
+sh ./Ironwood/scripts/run_training_compute_microbenchmark.sh
 ```
