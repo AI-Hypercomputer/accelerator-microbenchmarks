@@ -42,7 +42,9 @@ ssh-add ~/.ssh/google_compute_engine || { echo "ERROR: Failed to add SSH key to 
 
 echo "--- Cleaning up remote directories ---"
 CLEANUP_COMMAND=$(cat <<EOF
-rm -rf accelerator-microbenchmarks
+rm -rf accelerator-microbenchmarks && \
+sudo rm -f /tmp/libtpu_lockfile && \
+sudo fuser -k /dev/vfio/* || true &&
 EOF
 )
 run_on_all_workers "${CLEANUP_COMMAND}"
@@ -84,3 +86,4 @@ sh Ironwood/scripts/run_ici_microbenchmark.sh
 EOF
 )
 run_on_all_workers "${BENCHMARK_RUN_COMMAND}"
+
