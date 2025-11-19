@@ -47,7 +47,6 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_enable_all_experimental_scheduler_features=true "
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
-    "--xla_tpu_dvfs_p_state=7 "
 )
 
 TRACE_BASE_DIR = None
@@ -63,7 +62,7 @@ WITH_SHARDING = True
 
 SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 SEED = 0
-PEAK_FLOPS_PER_DEVICE = 2307  # TFLOP/s for single core(device) of FP8 under p_state=7
+PEAK_FLOPS_PER_DEVICE = 2307  # TFLOP/s for single core(device) of FP8
 
 
 def fp8_quantization(

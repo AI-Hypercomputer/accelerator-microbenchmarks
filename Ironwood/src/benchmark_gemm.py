@@ -4,9 +4,9 @@ Considered ops:
 1. gemm_simple
 2. gemm
 3. gemm_accum
+4. gemm_multiple_run
 """
 
-import datetime
 import os
 from typing import Any, Dict
 
@@ -41,10 +41,8 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_enable_all_experimental_scheduler_features=true "
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
-    "--xla_tpu_dvfs_p_state=7 "
     "--xla_tpu_vmem_scavenging_mode=NONE "
 )
-os.environ["XPROF_E2E_ENABLE_PYTHON_TRACER"] = "FALSE"
 
 TRACE_BASE_DIR = None
 METRICS_JSONL_DIR = None
@@ -59,9 +57,9 @@ WITH_SHARDING = True
 
 SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 SEED = 0
-PEAK_FLOPS_PER_DEVICE = 2307  # TFLOP/s for single core(device) of FP8 under p_state=7
+PEAK_FLOPS_PER_DEVICE = 2307  # TFLOP/s for single core(device) of FP8
 
-def gemm_throttling(
+def gemm_multiple_run(
     m: int,
     k: int,
     n: int,
@@ -69,7 +67,7 @@ def gemm_throttling(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype. Accumulation is FP32. Current supported dtype: float8_e4m3fn, bfloat16."""
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -118,13 +116,14 @@ def gemm_throttling(
 
     # Run the benchmark
 
-    print("Running gemm_throttling benchmark", num_runs)
+    print("Running gemm_multiple_run benchmark", num_runs)
+    dtype_str = "fp8" if dtype==jax.numpy.float8_e4m3fn else "bf16"
     time_ms_list = multiple_iteration_timeit_from_trace(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}x{k}",
+        matrix_dim=f"{dtype_str}_{m}x{n}x{k}",
         tries=num_runs,
-        task="gemm_throttling",
+        task="gemm_multiple_run",
         trace_dir=trace_dir,
     )
     return {
@@ -132,7 +131,7 @@ def gemm_throttling(
     }
 
 
-def gemm_throttling_calculate_metrics(
+def gemm_multiple_run_calculate_metrics(
     m: int,
     k: int,
     n: int,
@@ -144,6 +143,7 @@ def gemm_throttling_calculate_metrics(
     total_flops, total_flops_all_devices = handle_based_on_sharding(
         total_flops, SHARDING_STRATEGY
     )
+    peak_flops = PEAK_FLOPS_PER_DEVICE if dtype==jax.numpy.float8_e4m3fn else PEAK_FLOPS_PER_DEVICE/2
     return unified_flops_metrics(
         m,
         n,
@@ -151,7 +151,7 @@ def gemm_throttling_calculate_metrics(
         time_ms_list,
         total_flops,
         total_flops_all_devices,
-        PEAK_FLOPS_PER_DEVICE,
+        peak_flops,
     )
 
 def gemm_simple(

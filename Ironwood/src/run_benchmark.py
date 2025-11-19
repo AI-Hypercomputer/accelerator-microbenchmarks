@@ -62,13 +62,18 @@ HBM_BENCHMARK_MAP = {
 }
 COMPUTE_BENCHMARK_MAP = {
     "gemm_simple": "benchmark_gemm.gemm_simple",
-    "gemm_throttling": "benchmark_gemm.gemm_throttling",
+    "gemm_multiple_run": "benchmark_gemm.gemm_multiple_run",
+    "gemm_throttling": "benchmark_gemm_throttling.gemm_throttling",
     "gemm": "benchmark_gemm.gemm",
     "gemm_accum": "benchmark_gemm.gemm_accum",
     "quantization": "benchmark_compute.quantization",
     "transpose_quantization": "benchmark_compute.transpose_quantization",
-    "quantization_static_scaling": "benchmark_compute.quantization_static_scaling",
-    "transpose_quantization_static_scaling": "benchmark_compute.transpose_quantization_static_scaling",
+    "quantization_static_scaling": (
+        "benchmark_compute.quantization_static_scaling"
+    ),
+    "transpose_quantization_static_scaling": (
+        "benchmark_compute.transpose_quantization_static_scaling"
+    ),
     "swiglu_fwd": "benchmark_compute.swiglu_fwd",
     "swiglu_bwd": "benchmark_compute.swiglu_bwd",
     "rmsnorm_fwd": "benchmark_compute.rmsnorm_fwd",
@@ -76,11 +81,19 @@ COMPUTE_BENCHMARK_MAP = {
     "add": "benchmark_compute.add",
     "gemm_fp8_rowwise": "benchmark_gemm_numerics.gemm_fp8_rowwise",
     "gemm_fp8_b128_fp32": "benchmark_gemm_numerics.gemm_fp8_b128_fp32",
-    "gemm_fp8_rowwise_static_scaling": "benchmark_gemm_numerics.gemm_fp8_rowwise_static_scaling",
-    "gemm_fp8_b128_fp32_static_scaling": "benchmark_gemm_numerics.gemm_fp8_b128_fp32_static_scaling",
+    "gemm_fp8_rowwise_static_scaling": (
+        "benchmark_gemm_numerics.gemm_fp8_rowwise_static_scaling"
+    ),
+    "gemm_fp8_b128_fp32_static_scaling": (
+        "benchmark_gemm_numerics.gemm_fp8_b128_fp32_static_scaling"
+    ),
     "gemm_mxfp8_b32": "benchmark_gemm_numerics.gemm_mxfp8_b32",
-    "gemm_mxfp8_b32_static_scaling": "benchmark_gemm_numerics.gemm_mxfp8_b32_static_scaling",
-    "gemm_fp8_rowwise_w_dequantize": "benchmark_gemm_numerics.gemm_fp8_rowwise_w_dequantize",
+    "gemm_mxfp8_b32_static_scaling": (
+        "benchmark_gemm_numerics.gemm_mxfp8_b32_static_scaling"
+    ),
+    "gemm_fp8_rowwise_w_dequantize": (
+        "benchmark_gemm_numerics.gemm_fp8_rowwise_w_dequantize"
+    ),
     "inference_add": "benchmark_inference_compute.add",
     "inference_rmsnorm": "benchmark_inference_compute.rmsnorm",
     "inference_silu_mul": "benchmark_inference_compute.silu_mul",
@@ -337,7 +350,10 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         test_start_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )  # "Z" indicates UTC
-        print(benchmark_func)
+        print(f"Benchmark func: {benchmark_func}")
+        print(f"Benchmark param: {benchmark_param}")
+        benchmark_func_params = inspect.signature(benchmark_func).parameters
+        print(f"Benchmark func params: {benchmark_func_params}")
         benchmark_results = benchmark_func(**benchmark_param)
         test_end_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
@@ -361,7 +377,6 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         metadata, metrics = calculate_metrics_func(
             **filtered_benchmark_param, **filtered_benchmark_results
         )
-        calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
         if xlml_metrics_dir:
             maybe_write_metrics_file(
                 xlml_metrics_dir,
@@ -373,15 +388,26 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
             )
         # Post process the xla dump
         if xla_dump_dir:
-            rename_xla_dump(
+            (
+                after_optimizations_path,
+                hlo_input_shape,
+                hlo_output_shape,
+                hlo_replica_groups,
+            ) = rename_xla_dump(
                 tmp_xla_dump_dir=TMP_XLA_DUMP_DIR,
                 dest_xla_dump_dir=xla_dump_dir,
                 benchmark_name=benchmark_name,
                 benchmark_param=original_benchmark_param,
             )
+            metadata["after_optimizations_path"] = after_optimizations_path
+            metadata["hlo_input_shape"] = hlo_input_shape
+            metadata["hlo_output_shape"] = hlo_output_shape
+            metadata["hlo_replica_groups"] = hlo_replica_groups
+        calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
 
     # Dump metrics to file.
     if csv_path:
+        os.makedirs(csv_path, exist_ok=True)
         test_name = f"t_{benchmark_name}_" + "".join(
             random.choices(string.ascii_uppercase + string.digits, k=10)
         )
@@ -500,6 +526,7 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
             calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
 
     if csv_path:
+        os.makedirs(csv_path, exist_ok=True)
         write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
 
 
