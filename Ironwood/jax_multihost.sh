@@ -13,6 +13,7 @@ export GIT_BRANCH="reproduce"
 # --- Benchmark Configuration ---
 export LIBTPU_VERSION="0.0.26.dev20251022"
 
+
 run_on_all_workers() {
   local command_script="$1"
   echo "--- Executing on all workers ---"
@@ -44,7 +45,7 @@ echo "--- Cleaning up remote directories ---"
 CLEANUP_COMMAND=$(cat <<EOF
 rm -rf accelerator-microbenchmarks && \
 sudo rm -f /tmp/libtpu_lockfile && \
-sudo fuser -k /dev/vfio/* || true &&
+sudo fuser -k /dev/vfio/* || true
 EOF
 )
 run_on_all_workers "${CLEANUP_COMMAND}"
