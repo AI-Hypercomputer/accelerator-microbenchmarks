@@ -5,7 +5,7 @@ This script automates the deployment and execution of JAX-based microbenchmarks 
 ## Prerequisites
 
 - Google Cloud SDK (`gcloud`) installed and authenticated on your local machine or Cloudtop.
-- A Google Cloud project with a multi-host TPU slice provisioned (e.g., v4-8, v5p-16).
+- A Google Cloud project with a multi-host TPU slice provisioned. Current recipes are configured to work with TPU 7x-128.
 - SSH access to the TPU nodes configured. The script uses `~/.ssh/google_compute_engine` by default for authentication with `gcloud compute tpus tpu-vm ssh`.
 - If `GIT_REPO_URL` points to a private repository, ensure authentication is configured. For SSH URLs (`git@host:repo.git`), ensure your SSH key is added to the remote Git service and agent forwarding is working. For HTTPS, use a URL with an embedded token or ensure the TPU service account has access permissions.
 
