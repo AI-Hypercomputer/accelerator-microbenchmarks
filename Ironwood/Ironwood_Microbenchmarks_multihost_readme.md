@@ -20,7 +20,6 @@ All configuration is handled by environment variables set in the header of the `
 export PROJECT="my-gcp-project-id"
 export ZONE="us-central2-b"
 export TPU_NAME="my-tpu-vm-name"
-export NUM_WORKERS=4 # Example: for a v4-8, which has 4 VMs (workers)
 
 # --- Git Configuration ---
 export GIT_REPO_URL="https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git"

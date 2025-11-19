@@ -14,7 +14,7 @@ export GIT_BRANCH="reproduce"
 export LIBTPU_VERSION="0.0.26.dev20251022"
 
 
-GCLOUD_COMMAND="gcloud"
+GCLOUD_COMMAND="gcloud" # or gcloud alpha
 
 run_on_all_workers() {
   local command_script="$1"
