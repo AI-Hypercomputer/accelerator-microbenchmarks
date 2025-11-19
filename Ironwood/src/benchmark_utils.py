@@ -197,7 +197,8 @@ def iteration_timeit_from_trace(
     matrix_dim: str=None,
     tries: int=10, 
     task: str = None,
-    trace_dir: str = None) -> list[float]:
+    trace_dir: str = None,
+    event_name_str_list: list[str] = None) -> list[float]:
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
@@ -228,25 +229,76 @@ def iteration_timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return iteration_get_metrics_from_trace(trace)
+    return iteration_get_metrics_from_trace(
+            trace=trace,
+            event_name_str_list=event_name_str_list)
 
-def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
-    marker_done_events = []
+def iteration_get_metrics_from_trace(
+    trace: dict[str, Any],
+    tf_op_str_list: list[str] = None,
+    event_name_str_list: list[str] = None,
+) -> list[float]:
+    # 1. Handle default inputs
+    # If not provided, filter for MARKER in tf_op and no specific event names.
+    if tf_op_str_list is None:
+        tf_op_str_list = [MARKER]
+    if event_name_str_list is None:
+        event_name_str_list = []
+
+    # Rename the storage variable to reflect its contents
+    selected_events = []
+
+    # 2. Filtering logic
     for event in trace["traceEvents"]:
+        # Events without 'args' or 'name' cannot be filtered, skip them.
         args = event.get("args", {})
         tf_op = args.get("tf_op", "")
-        if MARKER in tf_op:
-            marker_done_events.append(event)
+        event_name = event.get("name", "")
 
-    # print(marker_done_events)
-    min_pid = min([e["pid"] for e in marker_done_events])
-    events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
-    # print(events_from_min_pid)
-    durations_ms = [
-        sum(float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid)
-    ]
-    print("durations_ms: ", durations_ms)
-    return durations_ms
+        # Check if the event matches any of the provided filters
+        tf_op_matches = any(s in tf_op for s in tf_op_str_list)
+        event_name_matches = any(s in event_name for s in event_name_str_list)
+
+        if tf_op_matches or event_name_matches:
+            selected_events.append(event)
+
+    if not selected_events:
+        print("Collected 0 events with specified filters in the trace.")
+        return []
+
+    # 3. Group events by PID (device/core) and sum durations per PID
+
+    # Dictionary structure: pid -> list of events for that pid
+    events_by_pid = defaultdict(list)
+    for event in selected_events:
+        events_by_pid[event["pid"]].append(event)
+
+    # Calculate total duration for each unique device
+    durations_ms_list = []
+
+    for pid in sorted(events_by_pid.keys()):
+        events = events_by_pid[pid]
+
+        # Sum the device_duration_ps (picoseconds) for all events belonging to this PID
+        # CAVEAT: If multiple iterations of the op runs for benchmarking, then the next
+        # instruction will sum it for all the iterations which will not be the expected
+        # behavior. Find the metadata key which is different for different iteration on
+        # same PID. Eg: `group_id`.
+        total_duration_ps = sum(
+            float(e["args"].get("device_duration_ps", 0)) for e in events
+        )
+
+        # Convert picoseconds (ps) to milliseconds (ms)
+        total_duration_ms = total_duration_ps / 1e9
+        durations_ms_list.append(total_duration_ms)
+
+    # 4. Print summary and return
+    print(f"Collected event data for {len(events_by_pid)} unique devices/PIDs.")
+    for i, pid in enumerate(sorted(events_by_pid.keys())):
+        print(f"Device {i} (PID {pid}): {durations_ms_list[i]:.6f} ms")
+
+    # Return the list of summed durations, one for each device
+    return durations_ms_list
 
 def iteration_timeit(
     compute_func: Callable,
@@ -293,7 +345,23 @@ def iteration_timeit(
     print(f"[{task}] Verified global dtypes: {arg_dtypes} -> {result_dtypes}")
 
     if trace_dir is not None:
-        return iteration_timeit_from_trace(compute_func, data_generator, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
+        if task == "rmsnorm":
+		    # If the task is RMSNorm, we specifically target "copy-done" events.
+		    # This is often done to capture the time of the asynchronous memory transfer
+		    # needed for the normalization layer's input data.
+            event_name_str_list = ["copy-done"]
+        else:
+		    # For all other tasks, use an empty list.
+            event_name_str_list = []
+
+        return iteration_timeit_from_trace(
+                compute_func,
+                data_generator,
+                matrix_dim=matrix_dim,
+                tries=tries,
+                task=task,
+                trace_dir=trace_dir,
+                event_name_str_list=event_name_str_list)
 
     outcomes_ms = []
     print(f"[{task}] Running measurement loop with {tries} tries...")
