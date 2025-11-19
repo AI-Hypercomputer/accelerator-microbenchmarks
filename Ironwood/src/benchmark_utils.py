@@ -71,17 +71,47 @@ def multiple_iteration_timeit_from_trace_throttling(
   if trace_dir and not is_local_directory_path(trace_dir):
     tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
 
-  data_args = data_generator()
-  with jax.profiler.trace(tmp_trace_dir):
-    for i in range(tries):
-      if i % 10 == 0:
-        print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
-      jax.devices()
-      with jax.profiler.StepTraceAnnotation(task, step_num=i):
-        with jax.named_scope(f"{MARKER}_{i}"):
-          result = compute_func(*data_args)
-          jax.block_until_ready(result)
+  if throtting_strategy == "data_gen_once_block_every_iter":
+    data_args = data_generator()
+    with jax.profiler.trace(tmp_trace_dir):
+      for i in range(tries):
+        if i % 10 == 0:
+          print(
+              f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+          )
+        jax.devices()
+        with jax.profiler.StepTraceAnnotation(task, step_num=i):
+          with jax.named_scope(f"{MARKER}_{i}"):
+            result = compute_func(*data_args)
+            jax.block_until_ready(result)
+  elif throtting_strategy=='data_gen_once_noblock':
+    data_args = data_generator()
+    with jax.profiler.trace(tmp_trace_dir):
+        results = []
+        for i in range(tries):
+            if i % 10 == 0:
+                print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
+            jax.devices()
+            with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                with jax.named_scope(f"{MARKER}_{i}"):
+                    result = compute_func(*data_args)
+                    results.append(result)
 
+        if results:
+          jax.block_until_ready(results)
+  elif throtting_strategy == "data_gen_every_iter_block_every_iter":
+    with jax.profiler.trace(tmp_trace_dir):
+        for i in range(tries):
+            if i % 10 == 0:
+                print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
+            data_args = data_generator()
+            jax.devices()
+            with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                with jax.named_scope(f"{MARKER}_{i}"):
+                    result = compute_func(*data_args)
+                    jax.block_until_ready(result)
+  else:
+    raise ValueError(f"Unknown throttling strategy: {throtting_strategy}")
   trace = get_trace(tmp_trace_dir)
 
   if trace_full_dir != tmp_trace_dir:

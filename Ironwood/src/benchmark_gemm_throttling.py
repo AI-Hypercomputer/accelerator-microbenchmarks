@@ -9,7 +9,7 @@ from benchmark_utils import get_lhs_named_shading
 from benchmark_utils import get_out_sharding
 from benchmark_utils import get_rhs_named_shading
 from benchmark_utils import handle_based_on_sharding
-from benchmark_utils import multiple_iteration_timeit_from_trace
+from benchmark_utils import multiple_iteration_timeit_from_trace_throttling
 from benchmark_utils import ShardingStrategy
 from benchmark_utils import unified_flops_metrics
 from common import MARKER
@@ -33,7 +33,6 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_dvfs_p_state=7 "
     "--xla_tpu_vmem_scavenging_mode=NONE "
 )
-os.environ["XPROF_E2E_ENABLE_PYTHON_TRACER"] = "FALSE"
 
 SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 SEED = 0
@@ -46,8 +45,9 @@ def gemm_throttling(
     m: int,
     k: int,
     n: int,
-    dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
     num_runs: int = 1,
+    dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
+    throttling: str = "data_gen_every_iter_block_every_iter",
     trace_dir: str = None,
 ) -> Dict[str, Any]:
   """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8.
@@ -110,6 +110,7 @@ def gemm_throttling(
       tries=num_runs,
       task="gemm_throttling",
       trace_dir=trace_dir,
+      throtting_strategy=throttling,
   )
   return {
       "time_ms_list": time_ms_list,
@@ -120,6 +121,8 @@ def gemm_throttling_calculate_metrics(
     m: int,
     k: int,
     n: int,
+    throttling: str,
+    dtype: jnp.dtype,
     time_ms_list: list[float],
 ) -> Dict[str, Any]:
   # Calculate FLOPs
