@@ -70,6 +70,21 @@ sh ./Ironwood/scripts/run_training_compute_microbenchmark.sh
 | **`quantization`** | **Dynamic Quantization.** Quantizes a BF16 input tensor to FP8 using dynamic scaling (absmax calibration). Returns quantized values and scale factors. | $S = \frac{Max}{absmax(X)}$, $O = Cast(\frac{X}{S})$ |
 | **`transpose_quantization`** | **Transpose + Quantization.** Transposes a BF16 input tensor first, then applies dynamic quantization. | $S = \frac{Max}{absmax(X^T)}$, $O = Cast(\frac{X^T}{S})$ |
 
+## GEMM Results
+
+The table below summarizes the throughput performance (in TFLOP/s per device) for gemm_multiple_run across varying matrix sizes. (Used config: gemm_multiple_run_more.yaml.)
+
+| Matrix Size (m=n=k) | Throughput (TFLOP/s/device) |
+| :--- | :--- |
+| 128 | 2.589961271 |
+| 256 | 18.28645367 |
+| 512 | 105.0783466 |
+| 1024 | 349.7270639 |
+| 2048 | 679.284728 |
+| 4096 | 892.9445127 |
+| 16384 | 950.1286983 |
+| 32768 | 956.3824592 |
+
 ## Examine the outputs
 
 The benchmarks will print metrics to the terminal. If you wish to dump formatted metrics in a file, you may set this parameter in your YAML file:
