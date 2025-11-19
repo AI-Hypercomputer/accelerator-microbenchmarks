@@ -391,6 +391,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
 
     # Dump metrics to file.
     if csv_path:
+        os.makedirs(csv_path, exist_ok=True)
         test_name = f"t_{benchmark_name}_" + "".join(
             random.choices(string.ascii_uppercase + string.digits, k=10)
         )
@@ -509,6 +510,7 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
             calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
 
     if csv_path:
+        os.makedirs(csv_path, exist_ok=True)
         write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
 
 

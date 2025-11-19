@@ -2,7 +2,6 @@
 
 # Run command: sh ./Ironwood/scripts/run_ici_microbenchmark.sh
 
-# CONFIG_NAMES= "all_gather_1d all_gather_2d all_gather_3d"
 CONFIG_NAMES="all_gather_1d all_reduce_1d"
 
 for CONFIG in $CONFIG_NAMES
@@ -13,7 +12,7 @@ do
   echo "--- Starting benchmark for ${CONFIG} ---"
   
   # Run the python script and wait for it to complete
-  python Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}" 
+  python Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}"  --output_path=gs://rahulasharma-bucket/jax_mb
   wait 
 #   --output_path=gs://rahulasharma-bucket/jax_mb
   
