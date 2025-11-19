@@ -118,10 +118,11 @@ def gemm_multiple_run(
     # Run the benchmark
 
     print("Running gemm_multiple_run benchmark", num_runs)
+    dtype_str = "fp8" if dtype==jax.numpy.float8_e4m3fn else "bf16"
     time_ms_list = multiple_iteration_timeit_from_trace(
         jit_sharded_f,
         data_generator,
-        matrix_dim=f"{m}x{n}x{k}",
+        matrix_dim=f"{dtype_str}_{m}x{n}x{k}",
         tries=num_runs,
         task="gemm_multiple_run",
         trace_dir=trace_dir,
