@@ -13,11 +13,13 @@ Setup the cloud TPU environment. For more information about how to set up a TPU 
 The following command sets up a Ironwood TPU VM:
 
 ```bash
-gcloud compute tpus tpu-vm create $TPU_NAME /
+gcloud alpha compute tpus queued-resources create ${TPU_NAME} /
+        --reserved /
         --zone=${ZONE} /
         --accelerator-type=tpu7x-8  /
-        --version=v2-alpha-tpu7-ubuntu2404 /
-        --project=${PROJECT_ID}
+        --runtime-version=v2-alpha-tpu7-ubuntu2404 /
+        --project=${PROJECT_ID} /
+        --node-id=${TPU_NAME}
 ```
 
 You may ssh into the VM for subsequent testing:
