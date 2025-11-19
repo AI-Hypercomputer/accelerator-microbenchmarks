@@ -464,6 +464,7 @@ def all_to_all_benchmark(
     dtype: jnp.dtype,
     ici_size: int,
     mesh_shape: str,
+    op_dimension: str = None,
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -480,38 +481,60 @@ def all_to_all_benchmark(
     Returns:
       The measured time for the ICI benchmark.
     """
+    libtpu_init_args = [
+        "--xla_jf_debug_level=3",
+        "--xla_sc_disable_megacore_partitioning=true",
+        "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
+        "--xla_tpu_use_tc_device_shape_on_sc=true",
+    ]
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
     mesh = create_mesh(ici_size, mesh_shape)
-    matrix = jnp.ones((matrix_dim, matrix_dim), dtype=dtype)
-    ici_average_time_ms_list = None
+    key = jax.random.key(SEED)
+    lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
+    out_sharding = get_out_sharding(SHARDING_STRATEGY)
+    op_dimension_tuple = op_dimension.split("x")
+    op_dimension_tuple = tuple(int(dim) for dim in op_dimension_tuple)
+    sharding_axis = tuple(
+        name
+        for i, name in enumerate(mesh.axis_names)
+        if op_dimension_tuple[i] > 1
+    )
 
-    # ICI benchmark
-    if ici_size > 1:
+    def f(x):
+        with jax.named_scope(MARKER):
+            return jax.lax.all_to_all(x, sharding_axis, split_axis=0, concat_axis=0, tiled=True)
 
-        @partial(
-            shard_map,
-            mesh=mesh,
-            in_specs=P(None, None),
-            out_specs=P(None, None),
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=lhs_sharding.spec,
+            out_specs=out_sharding,
             check_rep=False,
         )
-        def f(x):
-            return jax.lax.all_to_all(x, "ici", split_axis=0, concat_axis=0)
+    )
+    m = matrix_dim
+    n = BASE_SHAPE[1]
+    k = BASE_SHAPE[2]
 
-        sharded_matrix = jax.device_put(
-            matrix, jax.sharding.NamedSharding(mesh, P(None, None))
-        )
-        jitted_op = jax.jit(f)
-        ici_average_time_ms_list = simple_timeit(
-            jitted_op,
-            sharded_matrix,
-            matrix_dim=matrix_dim,
-            tries=num_runs,
-            task="all_to_all_ici_op",
-            trace_dir=trace_dir,
-        )
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key  # Use and update the outer 'key'
 
+        matrix = jnp.ones((m, n, k), dtype=dtype)
+        return (matrix,)
+
+    print("Running all_to_all benchmark", num_runs, matrix_dim)
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
+        tries=num_runs,
+        task="all_to_all_ici_op",
+        trace_dir=trace_dir,
+    )
     return {
-        "ici_average_time_ms_list": ici_average_time_ms_list,
+        "ici_average_time_ms_list": time_ms_list,
     }
 
 
@@ -519,6 +542,8 @@ def all_to_all_benchmark_calculate_metrics(
     matrix_dim: int,
     dtype: jnp.dtype,
     ici_size: int,
+    mesh_shape: str,
+    op_dimension: str,
     ici_average_time_ms_list: list[float],
 ) -> Dict[str, Any]:
     """Calculates the metrics for the all_to_all benchmark."""
@@ -526,23 +551,10 @@ def all_to_all_benchmark_calculate_metrics(
     params = locals().items()
     metadata = get_metrics_helper(params)
     metrics = {}
-    matrix_size_gbyte = matrix_dim * matrix_dim * dtype.itemsize / 1e9
-
-    # Calculate metrics for ICI benchmark
-    if ici_size > 1 and ici_average_time_ms_list is not None:
-        ici_bandwidth_gbyte_s_list = [
-            matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_average_time_ms / 1e3)
-            for ici_average_time_ms in ici_average_time_ms_list
-        ]
-        ici_bandwidth_gbyte_s_statistics = MetricsStatistics(
-            metrics_list=ici_bandwidth_gbyte_s_list,
-            metrics_name="ici_bandwidth_gbyte_s",
-        )
-        print(
-            f"all_to_all_ici: Matrix size: {matrix_dim}x{matrix_dim}, {dtype=}, "
-            f"{matrix_size_gbyte=}, achieved_bandwidth_gbyte_s (median) = {ici_bandwidth_gbyte_s_statistics.statistics['p50']}"
-        )
-        # Gather the metrics to report.
-        metrics.update(ici_bandwidth_gbyte_s_statistics.serialize_statistics())
+    input_num_elements = matrix_dim * BASE_SHAPE[1] * BASE_SHAPE[2]
+    metadata.update({
+        "input_num_elements": input_num_elements,
+        "matrix_shape": json.dumps(f"({matrix_dim}, {BASE_SHAPE[1]}, {BASE_SHAPE[2]})"),
+    })
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
