@@ -14,10 +14,8 @@ export GIT_BRANCH="reproduce"
 export LIBTPU_VERSION="0.0.26.dev20251022"
 
 
+GCLOUD_COMMAND="gcloud"
 
-
-GCLOUD_COMMAND="/google/data/ro/teams/cloud-sdk/gcloud"
-rm -rf ${RESULTS_SUBDIR}/*
 run_on_all_workers() {
   local command_script="$1"
   echo "--- Executing on all workers ---"

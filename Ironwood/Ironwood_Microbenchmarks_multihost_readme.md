@@ -29,13 +29,6 @@ export GIT_BRANCH="reproduce"
 # --- Benchmark Configuration ---
 export LIBTPU_VERSION="0.0.26.dev20251022"
 
-# --- Results ---
-# Local directory to copy results into.
-# Creates a timestamped subdirectory for each run.
-export RESULTS_SUBDIR="results/${TPU_NAME}_$(date +%Y%m%d_%H%M%S)"
-# Set to "true" to only copy results from worker 0.
-# Set to "false" to copy from all workers specified in NUM_WORKERS.
-export COPY_FROM_WORKER0_ONLY="true"
 ```
 
 ## Usage
