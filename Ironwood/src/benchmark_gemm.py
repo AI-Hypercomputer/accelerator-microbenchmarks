@@ -4,6 +4,7 @@ Considered ops:
 1. gemm_simple
 2. gemm
 3. gemm_accum
+4. gemm_multiple_run
 """
 
 import os
@@ -43,7 +44,6 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_dvfs_p_state=3 "
     "--xla_tpu_vmem_scavenging_mode=NONE "
 )
-os.environ["XPROF_E2E_ENABLE_PYTHON_TRACER"] = "FALSE"
 
 TRACE_BASE_DIR = None
 METRICS_JSONL_DIR = None
@@ -68,7 +68,7 @@ def gemm_multiple_run(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype. Accumulation is FP32."""
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype. Accumulation is FP32. Current supported dtype: float8_e4m3fn, bfloat16."""
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -143,6 +143,7 @@ def gemm_multiple_run_calculate_metrics(
     total_flops, total_flops_all_devices = handle_based_on_sharding(
         total_flops, SHARDING_STRATEGY
     )
+    peak_flops = PEAK_FLOPS_PER_DEVICE if dtype==jax.numpy.float8_e4m3fn else PEAK_FLOPS_PER_DEVICE/2
     return unified_flops_metrics(
         m,
         n,
@@ -150,7 +151,7 @@ def gemm_multiple_run_calculate_metrics(
         time_ms_list,
         total_flops,
         total_flops_all_devices,
-        PEAK_FLOPS_PER_DEVICE,
+        peak_flops,
     )
 
 def gemm_simple(
