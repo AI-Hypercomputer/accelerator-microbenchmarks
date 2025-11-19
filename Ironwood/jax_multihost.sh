@@ -13,15 +13,12 @@ export GIT_BRANCH="reproduce"
 # --- Benchmark Configuration ---
 export LIBTPU_VERSION="0.0.26.dev20251022"
 
-
-GCLOUD_COMMAND="gcloud" # or gcloud alpha
-
 run_on_all_workers() {
   local command_script="$1"
   echo "--- Executing on all workers ---"
   echo "${command_script}"
 
-  if ! "${GCLOUD_COMMAND}" compute tpus tpu-vm ssh "${TPU_NAME}" \
+  if ! gcloud alpha compute tpus tpu-vm ssh "${TPU_NAME}" \
     --zone="${ZONE}" \
     --project="${PROJECT}" \
     --worker=all \
@@ -41,6 +38,15 @@ echo "--- Ensuring ssh-agent is running ---"
 eval "$(ssh-agent -s)" || { echo "ERROR: Failed to start ssh-agent. Exiting."; exit 1; }
 echo "--- Adding SSH key to agent ---"
 ssh-add ~/.ssh/google_compute_engine || { echo "ERROR: Failed to add SSH key to agent. Exiting."; exit 1; }
+
+
+echo "--- Cleaning up remote directories ---"
+CLEANUP_COMMAND=$(cat <<EOF
+rm -rf accelerator-microbenchmarks
+EOF
+)
+run_on_all_workers "${CLEANUP_COMMAND}"
+
 
 
 echo "--- Cloning repository on all workers ---"

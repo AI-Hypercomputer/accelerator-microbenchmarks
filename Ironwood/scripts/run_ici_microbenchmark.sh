@@ -19,7 +19,6 @@ do
   # python Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}"  --output_path=gs://rahulasharma-bucket/jax_mb
 
   wait 
-#   --output_path=gs://rahulasharma-bucket/jax_mb
   
   echo "--- Finished benchmark for ${CONFIG} ---"
 done

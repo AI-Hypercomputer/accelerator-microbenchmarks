@@ -5,70 +5,66 @@ import json
 import os
 from typing import Any, Dict
 
+from benchmark_utils import (
+    MetricsStatistics,
+    ShardingStrategy,
+    get_lhs_named_shading,
+    get_out_sharding,
+    multiple_iteration_timeit_from_trace,
+    simple_timeit,
+)
+from common import MARKER
 import jax
 from jax.experimental import mesh_utils
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import Mesh, PartitionSpec as P
 
-from benchmark_utils import (
-    get_lhs_named_shading,
-    get_out_sharding,
-    MetricsStatistics,
-    multiple_iteration_timeit_from_trace,
-    ShardingStrategy,
-    simple_timeit,
-)
-from common import MARKER
 
-
-BASE_SHAPE= [1,8,128]
+BASE_SHAPE = [1, 8, 128]
 SEED = 0
 SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 
 
-def create_mesh(
-    ici_size: int, mesh_shape: str
-) -> Mesh:
-    """Creates a mesh with the given ICI size."""
-    devices_needed = ici_size
-    devices = jax.devices()
+def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
+  """Creates a mesh with the given ICI size."""
+  devices_needed = ici_size
+  devices = jax.devices()
 
-    if len(devices) < devices_needed:
-        raise ValueError(f"Need {devices_needed} devices, but found {len(devices)}")
-    devices = devices[:devices_needed]
-    mesh_shape = mesh_shape.split("x")
-    mesh_shape = [int(i) for i in mesh_shape]
+  if len(devices) < devices_needed:
+    raise ValueError(f"Need {devices_needed} devices, but found {len(devices)}")
+  devices = devices[:devices_needed]
+  mesh_shape = mesh_shape.split("x")
+  mesh_shape = [int(i) for i in mesh_shape]
 
-    shape = mesh_shape if mesh_shape else (ici_size,)
+  shape = mesh_shape if mesh_shape else (ici_size,)
 
-    axis_names = [f"d_{i}" for i in range(len(shape))]
+  axis_names = [f"d_{i}" for i in range(len(shape))]
 
-    first_device = devices[0]
-    device_kind = first_device.device_kind
-    print("Device kind: ", device_kind)
-    mesh_devices = mesh_utils.create_device_mesh(shape, devices=jax.devices())
-    mesh = Mesh(mesh_devices, axis_names)
-    return mesh
+  first_device = devices[0]
+  device_kind = first_device.device_kind
+  print("Device kind: ", device_kind)
+  mesh_devices = mesh_utils.create_device_mesh(shape, devices=jax.devices())
+  mesh = Mesh(mesh_devices, axis_names)
+  return mesh
 
 
 def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Helper function to build the metrics and metadata for the benchmark."""
-    exclude_keys = ["ici_average_time_ms"]
-    metadata = {
-        key: value
-        for key, value in params
-        if value is not None and key not in exclude_keys
-    }
-    metadata["dtype"] = metadata["dtype"].dtype.itemsize
-    return metadata
+  """Helper function to build the metrics and metadata for the benchmark."""
+  exclude_keys = ["ici_average_time_ms"]
+  metadata = {
+      key: value
+      for key, value in params
+      if value is not None and key not in exclude_keys
+  }
+  metadata["dtype"] = metadata["dtype"].dtype.itemsize
+  return metadata
+
 
 def psum_benchmark(
     matrix_dim: int,
-    dtype: jnp.dtype,
-    ici_size: int,
     mesh_shape: str,
     op_dimension: str = None,
     num_runs: int = 1,
@@ -99,6 +95,7 @@ def psum_benchmark(
       "--xla_tpu_use_tc_device_shape_on_sc=true",
   ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+  ici_size = 8
   mesh = create_mesh(ici_size, mesh_shape)
   key = jax.random.key(SEED)
   lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
