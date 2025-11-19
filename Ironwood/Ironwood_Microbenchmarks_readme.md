@@ -57,6 +57,17 @@ Run the training compute microbenchmark, including gemm, add, quantization, and 
 sh ./Ironwood/scripts/run_training_compute_microbenchmark.sh
 ```
 
+| Operation | Function Description | Formula / Logic |
+| :--- | :--- | :--- |
+| **`gemm_multiple_run`** | **Configurable GEMM.** Benchmarks matmul with configurable input types (supports `float8_e4m3fn`, `bfloat16`). Accumulation is FP32, output cast to BF16. Rerun multiple times and record all profilers. | $O_{bf16} = (A \times B)$ |
+| **`gemm_simple`** | **Basic FP8 GEMM.** Benchmarks pure FP8 matmul with FP32 accumulation. | $O_{bf16} = (A_{fp8} \times B_{fp8})$ |
+| **`gemm`** | **FP8 GEMM + Scaling.** Performs FP8 matmul and applies scaling factors (dequantization) to the result. | $O_{bf16} = (A_{fp8} \times B_{fp8}) \times (S_A \times S_B^T)$ |
+| **`gemm_accum`** | **FP8 GEMM + Accumulation.** Performs FP8 matmul with scaling factors and accumulates the result into an existing FP32 output buffer. | $O_{fp32} \ += (A_{fp8} \times B_{fp8}) \times (S_A \times S_B^T)$ |
+| **`gemm_fp8_rowwise`** | **FP8 Row-wise GEMM.** Quantizes inputs dynamically (row-wise/channel-wise) using absmax calibration before performing the matrix multiplication. | $O_{bf16} = (Quant(A) \times Quant(B))$ |
+| **`add`** | **Element-wise Addition.** Adds two BF16 tensors. | $Z = X + Y$ |
+| **`quantization`** | **Dynamic Quantization.** Quantizes a BF16 input tensor to FP8 using dynamic scaling (absmax calibration). Returns quantized values and scale factors. | $S = \frac{Max}{absmax(X)}$, $O = Cast(\frac{X}{S})$ |
+| **`transpose_quantization`** | **Transpose + Quantization.** Transposes a BF16 input tensor first, then applies dynamic quantization. | $S = \frac{Max}{absmax(X^T)}$, $O = Cast(\frac{X^T}{S})$ |
+
 ## Examine the outputs
 
 The benchmarks will print metrics to the terminal. If you wish to dump formatted metrics in a file, you may set this parameter in your YAML file:
