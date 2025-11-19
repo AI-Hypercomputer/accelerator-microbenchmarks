@@ -2,7 +2,7 @@
 
 # Run command: sh ./Ironwood/scripts/run_training_compute_microbenchmark.sh
 
-CONFIG_NAMES="gemm_simple gemm gemm_accum gemm_fp8_rowwise swiglu_fwd swiglu_bwd rmsnorm_fwd rmsnorm_bwd add quantization transpose_quantization"
+CONFIG_NAMES="gemm_simple gemm gemm_accum gemm_fp8_rowwise add quantization transpose_quantization"
 
 for CONFIG in $CONFIG_NAMES
 do

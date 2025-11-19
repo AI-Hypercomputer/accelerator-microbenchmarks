@@ -215,6 +215,7 @@ def iteration_timeit_from_trace(
     # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+    print("tries: ", tries)
     with jax.profiler.trace(tmp_trace_dir):
         for _ in range(tries):
             data_args = data_generator()
