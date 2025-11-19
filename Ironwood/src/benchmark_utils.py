@@ -35,15 +35,60 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
 
 
 class ShardingStrategy(Enum):
-    """Defines different sharding strategies for tensors."""
+  """Defines different sharding strategies for tensors."""
 
-    NO_SHARDING = auto()
-    SHARDING_ON_ALL_DEVICES_WITH_M = auto()
-    SHARDING_ON_SINGLE_CHIP_WITH_M = (
-        auto()
-    )  # Only sharding on the two core of one single chip
-    SHARDING_ON_ALL_DEVICES_WITH_N = auto()
-    SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
+  NO_SHARDING = auto()
+  SHARDING_ON_ALL_DEVICES_WITH_M = auto()
+  SHARDING_ON_SINGLE_CHIP_WITH_M = (
+      auto()
+  )  # Only sharding on the two core of one single chip
+  SHARDING_ON_ALL_DEVICES_WITH_N = auto()
+  SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
+
+
+def multiple_iteration_timeit_from_trace_throttling(
+    compute_func: Callable,
+    data_generator: Callable,
+    matrix_dim: str = None,
+    tries: int = 17,
+    task: str = None,
+    trace_dir: str = None,
+    throtting_strategy: str = None,
+) -> list[float]:
+  """Time a function with jax.profiler and get the run time from the trace."""
+  LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+
+  if matrix_dim is not None:
+    trace_name = f"{task}_dim_{matrix_dim}"
+  else:
+    trace_name = f"t_{task}_" + "".join(
+        random.choices(string.ascii_uppercase + string.digits, k=10)
+    )
+
+  trace_full_dir = f"{trace_dir}/{trace_name}"
+  tmp_trace_dir = trace_full_dir
+  # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
+  if trace_dir and not is_local_directory_path(trace_dir):
+    tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+
+  data_args = data_generator()
+  with jax.profiler.trace(tmp_trace_dir):
+    for i in range(tries):
+      if i % 10 == 0:
+        print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
+      jax.devices()
+      with jax.profiler.StepTraceAnnotation(task, step_num=i):
+        with jax.named_scope(f"{MARKER}_{i}"):
+          result = compute_func(*data_args)
+          jax.block_until_ready(result)
+
+  trace = get_trace(tmp_trace_dir)
+
+  if trace_full_dir != tmp_trace_dir:
+    # Upload the traces to desired location
+    upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
+  return multiple_iteration_get_metrics_from_trace(trace)
+
 
 def multiple_iteration_timeit_from_trace(
     compute_func: Callable,

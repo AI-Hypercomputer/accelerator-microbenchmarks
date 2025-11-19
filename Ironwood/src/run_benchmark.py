@@ -62,13 +62,17 @@ HBM_BENCHMARK_MAP = {
 }
 COMPUTE_BENCHMARK_MAP = {
     "gemm_simple": "benchmark_gemm.gemm_simple",
-    "gemm_throttling": "benchmark_gemm.gemm_throttling",
+    "gemm_throttling": "benchmark_gemm_throttling.gemm_throttling",
     "gemm": "benchmark_gemm.gemm",
     "gemm_accum": "benchmark_gemm.gemm_accum",
     "quantization": "benchmark_compute.quantization",
     "transpose_quantization": "benchmark_compute.transpose_quantization",
-    "quantization_static_scaling": "benchmark_compute.quantization_static_scaling",
-    "transpose_quantization_static_scaling": "benchmark_compute.transpose_quantization_static_scaling",
+    "quantization_static_scaling": (
+        "benchmark_compute.quantization_static_scaling"
+    ),
+    "transpose_quantization_static_scaling": (
+        "benchmark_compute.transpose_quantization_static_scaling"
+    ),
     "swiglu_fwd": "benchmark_compute.swiglu_fwd",
     "swiglu_bwd": "benchmark_compute.swiglu_bwd",
     "rmsnorm_fwd": "benchmark_compute.rmsnorm_fwd",
@@ -76,11 +80,19 @@ COMPUTE_BENCHMARK_MAP = {
     "add": "benchmark_compute.add",
     "gemm_fp8_rowwise": "benchmark_gemm_numerics.gemm_fp8_rowwise",
     "gemm_fp8_b128_fp32": "benchmark_gemm_numerics.gemm_fp8_b128_fp32",
-    "gemm_fp8_rowwise_static_scaling": "benchmark_gemm_numerics.gemm_fp8_rowwise_static_scaling",
-    "gemm_fp8_b128_fp32_static_scaling": "benchmark_gemm_numerics.gemm_fp8_b128_fp32_static_scaling",
+    "gemm_fp8_rowwise_static_scaling": (
+        "benchmark_gemm_numerics.gemm_fp8_rowwise_static_scaling"
+    ),
+    "gemm_fp8_b128_fp32_static_scaling": (
+        "benchmark_gemm_numerics.gemm_fp8_b128_fp32_static_scaling"
+    ),
     "gemm_mxfp8_b32": "benchmark_gemm_numerics.gemm_mxfp8_b32",
-    "gemm_mxfp8_b32_static_scaling": "benchmark_gemm_numerics.gemm_mxfp8_b32_static_scaling",
-    "gemm_fp8_rowwise_w_dequantize": "benchmark_gemm_numerics.gemm_fp8_rowwise_w_dequantize",
+    "gemm_mxfp8_b32_static_scaling": (
+        "benchmark_gemm_numerics.gemm_mxfp8_b32_static_scaling"
+    ),
+    "gemm_fp8_rowwise_w_dequantize": (
+        "benchmark_gemm_numerics.gemm_fp8_rowwise_w_dequantize"
+    ),
     "inference_add": "benchmark_inference_compute.add",
     "inference_rmsnorm": "benchmark_inference_compute.rmsnorm",
     "inference_silu_mul": "benchmark_inference_compute.silu_mul",
