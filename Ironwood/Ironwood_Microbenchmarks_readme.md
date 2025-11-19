@@ -72,7 +72,7 @@ sh ./Ironwood/scripts/run_training_compute_microbenchmark.sh
 
 ## GEMM Results
 
-The table below summarizes the throughput performance (in TFLOP/s per device) for gemm_multiple_run across varying matrix sizes. (Used config: gemm_multiple_run_more.yaml.)
+The table below summarizes the throughput performance (in TFLOP/s per device) for gemm_multiple_run across varying bfloat16 matrix sizes. (Used config: gemm_multiple_run_more.yaml.)
 
 | Matrix Size (m=n=k) | Throughput (TFLOP/s/device) |
 | :--- | :--- |
