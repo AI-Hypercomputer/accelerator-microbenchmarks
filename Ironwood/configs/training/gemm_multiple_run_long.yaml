@@ -1,0 +1,29 @@
+benchmarks:
+- benchmark_name: "gemm_multiple_run"
+  trace_dir: "../microbenchmarks/gemm_multiple_run_bf16"
+  csv_path: "../microbenchmarks/gemm_multiple_run_bf16"
+  xlml_metrics_dir: "../microbenchmarks/gemm_multiple_run_bf16"
+  xla_dump_dir: "../microbenchmarks/gemm_multiple_run_bf16/hlo_graphs"
+  benchmark_sweep_params:
+  - {m: 128, k: 128, n: 128, num_runs: 100, dtype: 'bfloat16'}
+  - {m: 256, k: 256, n: 256, num_runs: 100, dtype: 'bfloat16'}
+  - {m: 512, k: 512, n: 512, num_runs: 100, dtype: 'bfloat16'}
+  - {m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'bfloat16'}
+  - {m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'bfloat16'}
+  - {m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'bfloat16'}
+  - {m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'bfloat16'}
+  - {m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'bfloat16'}
+- benchmark_name: "gemm_multiple_run"
+  trace_dir: "../microbenchmarks/gemm_multiple_run_fp8"
+  csv_path: "../microbenchmarks/gemm_multiple_run_fp8"
+  xlml_metrics_dir: "../microbenchmarks/gemm_multiple_run_fp8"
+  xla_dump_dir: "../microbenchmarks/gemm_multiple_run_fp8/hlo_graphs"
+  benchmark_sweep_params:
+  - {m: 128, k: 128, n: 128, num_runs: 100, dtype: 'float8'}
+  - {m: 256, k: 256, n: 256, num_runs: 100, dtype: 'float8'}
+  - {m: 512, k: 512, n: 512, num_runs: 100, dtype: 'float8'}
+  - {m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'float8'}
+  - {m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'float8'}
+  - {m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'float8'}
+  - {m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'float8'}
+  - {m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'float8'}
