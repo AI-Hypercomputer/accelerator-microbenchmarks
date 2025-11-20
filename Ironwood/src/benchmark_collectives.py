@@ -13,12 +13,15 @@ from benchmark_utils import ShardingStrategy
 from benchmark_utils import simple_timeit
 from common import MARKER
 import jax
+from jax import core
+from jax._src.core import Primitive
 from jax.experimental import mesh_utils
 from jax.experimental.shard_map import shard_map
+import jax.ffi as ffi
+from jax.interpreters import mlir
 import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
-
 
 BASE_SHAPE = [1, 8, 128]
 SEED = 0
@@ -87,7 +90,7 @@ def psum_benchmark(
   Returns:
     The measured time for the ICI benchmark.
   """
-  
+
   libtpu_init_args = [
       "--xla_jf_debug_level=3",
       "--xla_sc_disable_megacore_partitioning=true",
@@ -112,10 +115,42 @@ def psum_benchmark(
       if op_dimension_tuple[i] > 1
   )
 
+  # 1. Define the Primitive
+  zero_crop_p = Primitive("zero_crop")
+
+  # 2. Implement Abstract Evaluation (output shape/dtype is same as input)
+  def zero_crop_abstract_eval(x):
+    return core.ShapedArray(x.shape, x.dtype)
+
+  zero_crop_p.def_abstract_eval(zero_crop_abstract_eval)
+
+  # 3. Implement the Lowering Rule using jax.ffi
+  def zero_crop_lowering(ctx, x):
+    (aval_in,) = ctx.avals_in
+    (aval_out,) = ctx.avals_out
+
+    return ffi.ffi_lowering(
+        "ZeroCrop",
+        operands=[x],
+        operand_layouts=mlir.default_layouts(ctx, aval_in),
+        result_layouts=mlir.default_layouts(ctx, aval_out),
+    )(ctx, x)
+
+  mlir.register_lowering(zero_crop_p, zero_crop_lowering)
+
+  # 4. Create a Python Wrapper using jax.ffi.ffi_call
+  def zero_crop(x):
+    return ffi.ffi_call(
+        "ZeroCrop",
+        result_shape_dtypes=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        has_side_effect=True,
+    )(x)
+
   def f(x):
     with jax.named_scope(MARKER):
-      return jax.lax.psum(x, sharding_axis)
-      # return True
+      y = jax.lax.psum(x, sharding_axis)
+      # Insert the custom call to prevent y from being a live out buffer
+      return zero_crop(y)
 
   jit_sharded_f = jax.jit(
       shard_map(
@@ -143,7 +178,7 @@ def psum_benchmark(
       data_generator,
       matrix_dim=f"{m}x{n}x{k}",
       tries=num_runs,
-      task="gemm_throttling",
+      task="psum_ici_op",
       trace_dir=trace_dir,
   )
   return {
