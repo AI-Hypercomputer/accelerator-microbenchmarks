@@ -87,6 +87,7 @@ def psum_benchmark(
   Returns:
     The measured time for the ICI benchmark.
   """
+  
   libtpu_init_args = [
       "--xla_jf_debug_level=3",
       "--xla_sc_disable_megacore_partitioning=true",
@@ -114,6 +115,7 @@ def psum_benchmark(
   def f(x):
     with jax.named_scope(MARKER):
       return jax.lax.psum(x, sharding_axis)
+      # return True
 
   jit_sharded_f = jax.jit(
       shard_map(

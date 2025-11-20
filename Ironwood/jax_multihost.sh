@@ -13,6 +13,8 @@ export GIT_BRANCH="reproduce"
 # --- Benchmark Configuration ---
 export LIBTPU_VERSION="0.0.26.dev20251022"
 
+source "$(dirname "$0")/../../../config.sh"
+
 
 run_on_all_workers() {
   local command_script="$1"

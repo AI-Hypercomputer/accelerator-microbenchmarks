@@ -47,7 +47,7 @@ def gemm_throttling(
     n: int,
     num_runs: int = 1,
     dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
-    throttling: str = "data_gen_every_iter_block_every_iter",
+    gap_strategy: str = "data_gen_every_iter_block_every_iter",
     trace_dir: str = None,
 ) -> Dict[str, Any]:
   """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8.
@@ -110,7 +110,7 @@ def gemm_throttling(
       tries=num_runs,
       task="gemm_throttling",
       trace_dir=trace_dir,
-      throtting_strategy=throttling,
+      gap_strategy=gap_strategy,
   )
   return {
       "time_ms_list": time_ms_list,
@@ -121,7 +121,7 @@ def gemm_throttling_calculate_metrics(
     m: int,
     k: int,
     n: int,
-    throttling: str,
+    gap_strategy: str,
     dtype: jnp.dtype,
     time_ms_list: list[float],
 ) -> Dict[str, Any]:
