@@ -342,32 +342,40 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
 
     # Run the benchmark
     calculate_metrics_results = []
-    for benchmark_param in benchmark_params:
+    for id, benchmark_param in enumerate(benchmark_params):
         original_benchmark_param = copy.deepcopy(benchmark_param)
         benchmark_param = preprocess_benchmark_param(
-            benchmark_param, trace_dir=trace_dir
+            benchmark_param, trace_dir=os.path.join(trace_dir, f"benchmark_{id}")
         )
         print(f"Running benchmark: {benchmark_name} with params: {benchmark_param}")
         test_start_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )  # "Z" indicates UTC
-        print(f"Benchmark func: {benchmark_func}")
-        print(f"Benchmark param: {benchmark_param}")
         benchmark_func_params = inspect.signature(benchmark_func).parameters
-        print(f"Benchmark func params: {benchmark_func_params}")
         benchmark_results = benchmark_func(**benchmark_param)
         test_end_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )
-
+        xla_output = None
+        if xla_dump_dir:
+            xla_output = rename_xla_dump(
+                tmp_xla_dump_dir=TMP_XLA_DUMP_DIR,
+                dest_xla_dump_dir=xla_dump_dir,
+                benchmark_name=benchmark_name,
+                benchmark_param=original_benchmark_param,
+            )
+        benchmark_results["xla_output"] = xla_output
         # Filter benchmark_results to include only keys present in
         # calculate_metrics_func
-        calculate_metrics_params = inspect.signature(calculate_metrics_func).parameters
+        calculate_metrics_params = inspect.signature(
+            calculate_metrics_func
+        ).parameters
         filtered_benchmark_results = {
             key: value
             for key, value in benchmark_results.items()
             if key in calculate_metrics_params
         }
+
         # Filter out certain parameters from benchmark_param, eg. "num_runs".
         benchmark_params_to_filter = ["num_runs", "trace_dir"]
         filtered_benchmark_param = {
@@ -388,23 +396,10 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
                 test_end_time,
             )
         # Post process the xla dump
-        if xla_dump_dir:
-            (
-                after_optimizations_path,
-                hlo_input_shape,
-                hlo_output_shape,
-                hlo_replica_groups,
-            ) = rename_xla_dump(
-                tmp_xla_dump_dir=TMP_XLA_DUMP_DIR,
-                dest_xla_dump_dir=xla_dump_dir,
-                benchmark_name=benchmark_name,
-                benchmark_param=original_benchmark_param,
-            )
-            metadata["after_optimizations_path"] = after_optimizations_path
-            metadata["hlo_input_shape"] = hlo_input_shape
-            metadata["hlo_output_shape"] = hlo_output_shape
-            metadata["hlo_replica_groups"] = hlo_replica_groups
-        calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
+        calculate_metrics_results.append({
+            "metadata": metadata,
+            "metrics": metrics
+        })
 
     # Dump metrics to file.
     if csv_path:

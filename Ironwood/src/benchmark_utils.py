@@ -54,7 +54,7 @@ def multiple_iteration_timeit_from_trace_throttling(
     tries: int = 17,
     task: str = None,
     trace_dir: str = None,
-    throtting_strategy: str = None,
+    gap_strategy: str = None,
 ) -> list[float]:
   """Time a function with jax.profiler and get the run time from the trace."""
   LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
@@ -72,7 +72,7 @@ def multiple_iteration_timeit_from_trace_throttling(
   if trace_dir and not is_local_directory_path(trace_dir):
     tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
 
-  if throtting_strategy == "data_gen_once_block_every_iter":
+  if gap_strategy == "data_gen_once_block_every_iter":
     data_args = data_generator()
     with jax.profiler.trace(tmp_trace_dir):
       for i in range(tries):
@@ -85,7 +85,7 @@ def multiple_iteration_timeit_from_trace_throttling(
           with jax.named_scope(f"{MARKER}_{i}"):
             result = compute_func(*data_args)
             jax.block_until_ready(result)
-  elif throtting_strategy=='data_gen_once_noblock':
+  elif gap_strategy=='data_gen_once_noblock':
     data_args = data_generator()
     with jax.profiler.trace(tmp_trace_dir):
         results = []
@@ -95,12 +95,12 @@ def multiple_iteration_timeit_from_trace_throttling(
             jax.devices()
             with jax.profiler.StepTraceAnnotation(task, step_num=i):
                 with jax.named_scope(f"{MARKER}_{i}"):
-                    result = compute_func(*data_args)
-                    results.append(result)
+                    compute_func(*data_args)
+                    results.append(True)
 
         if results:
           jax.block_until_ready(results)
-  elif throtting_strategy == "data_gen_every_iter_block_every_iter":
+  elif gap_strategy == "data_gen_every_iter_block_every_iter":
     with jax.profiler.trace(tmp_trace_dir):
         for i in range(tries):
             if i % 10 == 0:
@@ -112,7 +112,7 @@ def multiple_iteration_timeit_from_trace_throttling(
                     result = compute_func(*data_args)
                     jax.block_until_ready(result)
   else:
-    raise ValueError(f"Unknown throttling strategy: {throtting_strategy}")
+    raise ValueError(f"Unknown gap strategy: {gap_strategy}")
   trace = get_trace(tmp_trace_dir)
 
   if trace_full_dir != tmp_trace_dir:
@@ -234,6 +234,7 @@ def iteration_timeit_from_trace(
             trace=trace,
             event_name_str_list=event_name_str_list)
 
+
 def iteration_get_metrics_from_trace(
     trace: dict[str, Any],
     tf_op_str_list: list[str] = None,
@@ -300,6 +301,55 @@ def iteration_get_metrics_from_trace(
 
     # Return the list of summed durations, one for each device
     return durations_ms_list
+
+
+def iteration_get_event_metrics_from_trace(
+    trace: dict[str, Any],
+    event_name_str_list: list[str],
+) -> list[float]:
+    # Rename the storage variable to reflect its contents
+    selected_events = []
+
+    # 1. Filtering logic
+    for event in trace["traceEvents"]:
+        # Events without 'args' or 'name' cannot be filtered, skip them.
+        args = event.get("args", {})
+        event_name = event.get("name", "")
+
+        # Check if the event matches any of the provided filters
+        event_name_matches = any(s in event_name for s in event_name_str_list)
+
+        if event_name_matches:
+            selected_events.append(event)
+
+    if not selected_events:
+        print("Collected 0 events with specified filters in the trace.")
+        return []
+
+    # 2. Group events by PID (device/core)
+
+    # Dictionary structure: pid -> list of events for that pid
+    events_by_pid = defaultdict(list)
+    for event in selected_events:
+        events_by_pid[event["pid"]].append(event)
+
+    # Calculate total duration for each unique device
+    durations_ms_lists = []
+
+    for pid in sorted(events_by_pid.keys()):
+        events = events_by_pid[pid]
+
+        # Collect the durarion_ms for each run
+        durations_ms_lists.append([
+            float(e["args"].get("device_duration_ps", 0)) / 1e9 for e in events
+        ])
+
+    # 3. Print summary from the first device and return
+    print(f"Average Execution time: {np.mean(durations_ms_lists[0]):.6f} ms")
+
+    # Return the list of durations from the first device
+    return durations_ms_lists[0]
+
 
 def iteration_timeit(
     compute_func: Callable,
@@ -501,7 +551,7 @@ def is_local_directory_path(dir: str) -> bool:
 
 
 def timeit_from_trace(
-    f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None
+    f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None, event_name_str_list: list[str] = None
 ) -> float:
     """
     Time a function with jax.profiler and get the run time from the trace.
@@ -534,6 +584,10 @@ def timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
+
+    if event_name_str_list is not None:
+        iteration_get_event_metrics_from_trace(trace, event_name_str_list=event_name_str_list)
+
     return iteration_get_metrics_from_trace(trace)
 
 
@@ -699,7 +753,7 @@ def rename_xla_dump(
         return
 
     new_base_name = f"{benchmark_name}_{serialized_benchmark_param}"
-    after_optimizations_path = input_shape = output_shape = replica_groups = None
+    after_optimizations_path = input_shape = output_shape = replica_groups = first_replica_group = None
 
     for original_filepath in all_related_files:
         original_filename = os.path.basename(original_filepath)
@@ -744,7 +798,7 @@ def rename_xla_dump(
             upload_to_storage(trace_dir=new_filepath, local_file=original_filepath)
     print(f"The XLA dump is stored in {dest_xla_dump_dir}")
     if after_optimizations_path:
-        input_shape, output_shape, replica_groups = (
+        input_shape, output_shape, replica_groups, first_replica_group = (
             extract_hlo_features_from_file(after_optimizations_path)
         )
     else:
@@ -752,9 +806,15 @@ def rename_xla_dump(
             "No files found with 'after_optimizations.txt' suffix. "
             "Please check the XLA dump directory."
         )
-    return after_optimizations_path, input_shape, output_shape, replica_groups
+    return json.dumps({
+        "after_optimizations_path": after_optimizations_path,
+        "hlo_input_shape": input_shape,
+        "hlo_output_shape": output_shape,
+        "hlo_replica_groups": replica_groups,
+        "hlo_first_replica_group": first_replica_group,
+    })
 
-def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str, str, str]:
+def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str | None, str | None, str | None, list[int] | None]:
     """
     Extracts input shape, output shape, and replica groups from an HLO file.
 
@@ -762,19 +822,20 @@ def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str, str, str]:
       hlo_file_path: Path to the HLO dump file (e.g., after_optimizations.txt).
 
     Returns:
-      A tuple containing (input_shape, output_shape, replica_groups),
-      or (None, None, None) if extraction fails.
+      A tuple containing (input_shape, output_shape, replica_groups_str, first_replica_group),
+      or (None, None, None, None) if extraction fails.
     """
     input_shape = None
     output_shape = None
-    replica_groups = None
+    replica_groups_str = None
+    first_replica_group = None
 
     try:
         with open(hlo_file_path, "r") as f:
             content = f.read()
     except FileNotFoundError:
         print(f"Error: HLO file not found at {hlo_file_path}")
-        return None, None, None
+        return None, None, None, None
 
     # Extract input/output shapes from HloModule line
     # Example: HloModule jit_f, ..., entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
@@ -790,13 +851,20 @@ def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str, str, str]:
 
     # Extract replica groups
     # Example: replica_groups={{0,1},{2,3}}, dimensions...
-    rg_match = re.search(r"replica_groups=({{.*?}})", content)
+    rg_match = re.search(r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL)
     if rg_match:
-        replica_groups = rg_match.group(1)
+        replica_groups_str = rg_match.group(1)
+        try:
+            content_rg = replica_groups_str[2:-2]
+            first_group_str = content_rg.split('},{')[0]
+            first_replica_group = [int(x) for x in first_group_str.split(',')]
+        except Exception as e:
+            print(f'Could not parse replica_groups in hlo_text: {e}')
+            first_replica_group = None
     else:
         print(f"Could not find replica_groups in {hlo_file_path}.")
 
-    return input_shape, output_shape, replica_groups
+    return input_shape, output_shape, replica_groups_str, first_replica_group
 def get_lhs_named_shading(mesh, strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
