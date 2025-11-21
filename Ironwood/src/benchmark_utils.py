@@ -7,6 +7,7 @@ import glob
 import yaml
 
 import jax
+import jax.numpy as jnp
 import jsonlines
 import numpy as np
 import random
@@ -1129,3 +1130,36 @@ def unified_bytes_metrics(
     metrics.update(gigabytes_per_sec_all_devices_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
+
+def str_to_dtype(dtype_str: str) -> jnp.dtype:
+    """Converts a string identifier to a JAX numpy dtype."""
+    if dtype_str.lower() == "fp8":
+        return jnp.float8_e4m3fn
+    elif dtype_str.lower() == "bf16":
+        return jnp.bfloat16
+    elif dtype_str.lower() == "fp16":
+        return jnp.float16
+    elif dtype_str.lower() == "fp32":
+        return jnp.float32
+    else:
+        raise ValueError(f"Unsupported dtype string: {dtype_str}")
+
+def get_peak_flops_multiplier(in_dtype_str: str) -> float:
+    """
+    Returns the peak FLOPS multiplier relative to the baseline
+    (PEAK_FLOPS_PER_DEVICE) based on the input data type.
+    """
+    in_dtype_lower = in_dtype_str.lower()
+    if in_dtype_lower == "fp8":
+        # FP8 is 2x faster than BF16
+        # The baseline PEAK_FLOPS_PER_DEVICE is 1153.5 * 2 = 2307, which is FP8 peak.
+        # So the multiplier should be 1.0
+        return 1.0
+    elif in_dtype_lower == "bf16" or in_dtype_lower == "fp16":
+        # BF16/FP16 is 2x slower than FP8 peak
+        return 0.5
+    elif in_dtype_lower == "fp32":
+        # FP32 is 4x slower than FP8 peak
+        return 0.25
+    else:
+        raise RuntimeError(f"{in_dtype_lower} is not supported for setting peak_flops_multiplier.")
