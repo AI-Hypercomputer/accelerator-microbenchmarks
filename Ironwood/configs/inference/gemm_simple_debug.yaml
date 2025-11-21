@@ -1,9 +1,0 @@
-benchmarks:
-- benchmark_name: "gemm_simple_with_dtype"
-  trace_dir: "../microbenchmarks/gemm_simple_inference"
-  csv_path: "../microbenchmarks/gemm_simple_inference"
-  xlml_metrics_dir: "../microbenchmarks/gemm_simple_inference"
-  num_runs: 1000
-  benchmark_sweep_params:
-  - {m: {start: 1024, end: 2048, multiplier: 2}, k: {start: 128, end: 256, multiplier: 2}, n: {start: 128, end: 256, multiplier: 2}, in_dtype_str: "bf16", out_dtype_str: "bf16"}
-  - {m: {start: 1024, end: 2048, multiplier: 2}, k: {start: 128, end: 256, multiplier: 2}, n: {start: 128, end: 256, multiplier: 2}, in_dtype_str: "fp8", out_dtype_str: "bf16"}
