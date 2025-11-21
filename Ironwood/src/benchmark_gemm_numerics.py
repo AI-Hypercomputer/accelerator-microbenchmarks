@@ -176,7 +176,7 @@ def gemm_fp8_rowwise_w_dequantize(
 ) -> Dict[str, Any]:
     """FP8-Rowwise GEMM with dynamic scaling factors."""
 
-    def f(x, qy):
+    def f(x, y):
         with jax.named_scope(MARKER):
             qx = qpl.quantize(
                 x,
@@ -184,6 +184,13 @@ def gemm_fp8_rowwise_w_dequantize(
                 scale_dtype=jnp.float32,
                 calibration_method="absmax",
                 channelwise_axes=[0],
+            )
+            qy = qpl.quantize(
+                y,
+                qtype=jnp.float8_e4m3fn,
+                scale_dtype=jnp.float32,
+                calibration_method="absmax",
+                channelwise_axes=[1]
             )
             acc = jax.numpy.einsum(
                 "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
@@ -227,13 +234,6 @@ def gemm_fp8_rowwise_w_dequantize(
         # Put on device (HBM)
         lhs_device = jax.device_put(lhs_host, lhs_sharding)
         rhs_device = jax.device_put(rhs_host, rhs_sharding)
-        rhs_device = qpl.quantize(
-            rhs_device,
-            qtype=jnp.float8_e4m3fn,
-            scale_dtype=jnp.float32,
-            calibration_method="absmax",
-            channelwise_axes=[1],
-        )
 
         return (lhs_device, rhs_device)
 
