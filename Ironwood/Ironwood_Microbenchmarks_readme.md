@@ -1,63 +1,220 @@
 # Microbenchmarks
-Microbenchmarks that assess the performance of individual operations and components on accelerators with JAX.
+Microbenchmarks that assess the performance of individual operations and components on Ironwood accelerators with JAX.
+
+## Prerequisites
+
+- Ensure [gcloud CLI](https://docs.cloud.google.com/sdk/docs/install) is installed in your local machine.
+- Ensure `kubectl` is installed in your local machine: `gcloud components install kubectl
+`
+- Create a Cloud TPU GKE cluster
+- Ensure at least 68 Ironwood chips of capacity as this guide uses one `2x2x1` (single host) slice and one `4x4x4` (multi host) slice
+
+Refer to ["Deploy TPU workloads in GKE" guide](https://cloud.google.com/kubernetes-engine/docs/how-to/tpus) for more information about how to set up a TPU GKE cluster with sufficient resources.
 
 ## Setup
 
-Setup the cloud TPU environment. For more information about how to set up a TPU environment, refer to one of the following references:
-
-* GCE: [Manage TPU resources | Google Cloud](https://cloud.google.com/kubernetes-engine/docs/how-to/tpus)
-* GKE: [Deploy TPU workloads in GKE Standard | Google Kubernetes Engine (GKE)](https://cloud.google.com/kubernetes-engine/docs/how-to/tpus)
-
-### Quick Start
-
-The following command sets up a Ironwood TPU VM:
+Create one `2x2x1` nodepool in your GKE cluster:
 
 ```bash
-gcloud alpha compute tpus queued-resources create ${TPU_NAME} /
-        --reserved /
-        --zone=${ZONE} /
-        --accelerator-type=tpu7x-8  /
-        --runtime-version=v2-alpha-tpu7-ubuntu2404 /
-        --project=${PROJECT_ID} /
-        --node-id=${TPU_NAME}
+gcloud container node-pools create ${SINGLE_SLICE_NODE_POOL_NAME} \
+    --cluster=${CLUSTER_NAME} \
+    --machine-type=tpu7x-standard-4t \
+    --location=${LOCATION} \
+    --node-locations=${LOCATION} \
+    --project=${PROJECT_ID} \
+    --num-nodes=1 \
+    --reservation=${RESERVATION_NAME} \
+    --reservation-affinity=specific
 ```
 
-You may ssh into the VM for subsequent testing:
+Create one `4x4x4` nodepool in your GKE cluster using workload policy:
+
 ```bash
-gcloud compute ssh $TPU_NAME --zone=$ZONE
+gcloud compute resource-policies create workload-policy ${WORKLOAD_POLICY_NAME} \
+    --type HIGH_THROUGHPUT \
+    --accelerator-topology 4x4x4 \
+    --project ${PROJECT_ID} \
+    --region ${REGION}
+
+gcloud container node-pools create ${MULTI_SLICE_NODE_POOL_NAME} \
+    --cluster=${CLUSTER_NAME} \
+    --machine-type=tpu7x-standard-4t \
+    --placement-policy=${WORKLOAD_POLICY_NAME} \
+    --project ${PROJECT_ID} \
+    --location=${LOCATION} \
+    --reservation=${RESERVATION_NAME} \
+    --reservation-affinity=specific
+
 ```
 
-## Create the Venv
+Note: `$LOCATION` can either be the GCP zone or region depending on the GKE cluster configuration.
+
+Nodepool provisioning commands may vary depending on the GKE cluster setup. Please refer to ["Deploy TPU workloads in GKE" guide](https://cloud.google.com/kubernetes-engine/docs/how-to/tpus#create-node-pool) for all of the options.
+
+
+## Running the microbenchmarks in the GKE cluster
+
+Get credentials for the GKE cluster:
+
 ```bash
-sudo apt install python3-venv
-python3 -m venv micro_venv
-source micro_venv/bin/activate
+gcloud container clusters get-credentials ${CLUSTER_NAME} --location ${LOCATION} --project ${PROJECT_ID}
 ```
 
+Verify that you have sufficient `gke-tpu-.*` nodes:
 
-## Running the microbenchmarks on VM
-
-Now that you have the VM environment set up, `git clone` the accelerator-microbenchmarks on the VM and install the dependencies:
 ```bash
-git clone https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git
-cd accelerator-microbenchmarks/
-pip install -r requirements.txt
-pip install libtpu==0.0.26.dev20251022+nightly -f'https://storage.googleapis.com/jax-releases/libtpu_releases.html'
+kubectl get nodes
 ```
 
-You can run the benchmarks with a config file:
+### Deploying a single host job
+
+Create a job manifest to run `2x2x1` microbenchmarks (`tpu7x-2x2x1-micobenchmarks.yaml`):
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tpu7x-single-host-microbenchmark
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    cloud.google.com/gke-tpu-accelerator: tpu7x
+    cloud.google.com/gke-tpu-topology: 2x2x1
+  containers:
+  - name: tpu-job
+    image: python:3.12
+    ports:
+    - containerPort: 8431
+    securityContext:
+      privileged: false
+    command:
+    - bash
+    - -c
+    - |
+      set -ex
+
+      git clone https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git
+      cd accelerator-microbenchmarks
+      pip install -r requirements.txt
+
+      sh ./Ironwood/scripts/run_training_compute_microbenchmark.sh
+
+    resources:
+      requests:
+        google.com/tpu: 4
+      limits:
+        google.com/tpu: 4
+```
+
+Deploy the 2x2x1 microbenchmarks:
 
 ```bash
-python Ironwood/src/run_benchmark.py --config=Ironwood/configs/training/compute_microbenchmark_demo.yaml
+kubectl apply -f tpu7x-2x2x1-micobenchmarks.yaml
+```
+
+Monitor the results:
+
+```bash
+kubectl logs tpu7x-single-host-microbenchmark
+```
+
+Cleanup the job:
+
+```bash
+kubectl delete pod tpu7x-single-host-microbenchmark
+```
+
+### Deploying a multi host job
+
+Create a job manifest to run `4x4x4` microbenchmarks (`tpu7x-4x4x4-micobenchmarks.yaml`):
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: headless-svc
+spec:
+  clusterIP: None
+  selector:
+    job-name: tpu7x-multi-host-microbenchmark
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tpu7x-multi-host-microbenchmark
+spec:
+  completionMode: Indexed
+  parallelism: 16
+  completions: 16
+  backoffLimit: 0
+  template:
+    spec:
+      subdomain: headless-svc
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-tpu-accelerator: tpu7x
+        cloud.google.com/gke-tpu-topology: 4x4x4
+      containers:
+      - name: jax-tpu
+        image: python:3.12
+        securityContext:
+          privileged: false
+        env:
+        - name: JAX_PLATFORMS
+          value: "tpu,cpu"
+        - name: TPU_VMODULE
+          value: "singleton_tpu_system_manager=10,tpu_version_flag=10,device_util=10,device_scanner=10,mesh_builder=10,master=10"
+        - name: XLA_IR_DEBUG
+          value: "1"
+        - name: XLA_HLO_DEBUG
+          value: "1"
+        command:
+        - bash
+        - -c
+        - |
+          set -ex
+
+          git clone https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git
+          cd accelerator-microbenchmarks
+          pip install -r requirements.txt
+
+          sh ./Ironwood/scripts/run_ici_microbenchmark_full.sh
+
+        resources:
+          requests:
+            google.com/tpu: 4
+          limits:
+            google.com/tpu: 4
+```
+
+Deploy the 4x4x4 microbenchmarks:
+
+```bash
+kubectl apply -f tpu7x-4x4x4-micobenchmarks.yaml
+```
+
+List all the jobs in the pod to get the name of a job:
+```bash
+kubectl get pods
+```
+
+Monitor the results of the job name picked above (monitoring only a single job is sufficient as all jobs will have the same logs):
+
+```bash
+kubectl logs tpu7x-multi-host-microbenchmark-0-XXXXX
+```
+
+Cleanup the job:
+
+```bash
+kubectl delete -f tpu7x-4x4x4-micobenchmarks.yaml
 ```
 
 ## Microbenchmark scripts
 
-Run the training compute microbenchmark, including gemm, add, quantization, and transpose quantization:
+### Compute
 
-```bash
-sh ./Ironwood/scripts/run_training_compute_microbenchmark.sh
-```
+`Ironwood/scripts/run_training_compute_microbenchmark.sh` script runs the training compute microbenchmark, including gemm, add, quantization, and transpose quantization:
 
 | Operation | Function Description | Formula / Logic |
 | :--- | :--- | :--- |
@@ -70,11 +227,14 @@ sh ./Ironwood/scripts/run_training_compute_microbenchmark.sh
 | **`quantization`** | **Dynamic Quantization.** Quantizes a BF16 input tensor to FP8 using dynamic scaling (absmax calibration). Returns quantized values and scale factors. | $S = \frac{Max}{absmax(X)}$, $O = Cast(\frac{X}{S})$ |
 | **`transpose_quantization`** | **Transpose + Quantization.** Transposes a BF16 input tensor first, then applies dynamic quantization. | $S = \frac{Max}{absmax(X^T)}$, $O = Cast(\frac{X^T}{S})$ |
 
-## GEMM Results
+### TODO: add other scripts' details
 
-The table below summarizes the throughput performance (in TFLOP/s per device) for gemm_multiple_run across varying bfloat16 matrix sizes. (Used config: gemm_multiple_run_more.yaml.)
+## Results
 
-| Matrix Size (m=n=k) | Throughput (TFLOP/s/device) |
+### GEMM
+The table below summarizes the throughput performance (in `TFLOP/s` per device) for gemm_multiple_run across varying bfloat16 matrix sizes. (Used config: gemm_multiple_run_more.yaml.)
+
+| Matrix Size (m=n=k) | Throughput (`TFLOP/s/device`) |
 | :--- | :--- |
 | 128 | 2.589961271 |
 | 256 | 18.28645367 |
@@ -84,6 +244,8 @@ The table below summarizes the throughput performance (in TFLOP/s per device) fo
 | 4096 | 892.9445127 |
 | 16384 | 950.1286983 |
 | 32768 | 956.3824592 |
+
+### TODO: add other results
 
 ## Examine the outputs
 
