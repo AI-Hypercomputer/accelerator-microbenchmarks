@@ -233,6 +233,7 @@ def iteration_timeit_from_trace(
             trace=trace,
             event_name_str_list=event_name_str_list)
 
+
 def iteration_get_metrics_from_trace(
     trace: dict[str, Any],
     tf_op_str_list: list[str] = None,
@@ -299,6 +300,55 @@ def iteration_get_metrics_from_trace(
 
     # Return the list of summed durations, one for each device
     return durations_ms_list
+
+
+def iteration_get_event_metrics_from_trace(
+    trace: dict[str, Any],
+    event_name_str_list: list[str],
+) -> list[float]:
+    # Rename the storage variable to reflect its contents
+    selected_events = []
+
+    # 1. Filtering logic
+    for event in trace["traceEvents"]:
+        # Events without 'args' or 'name' cannot be filtered, skip them.
+        args = event.get("args", {})
+        event_name = event.get("name", "")
+
+        # Check if the event matches any of the provided filters
+        event_name_matches = any(s in event_name for s in event_name_str_list)
+
+        if event_name_matches:
+            selected_events.append(event)
+
+    if not selected_events:
+        print("Collected 0 events with specified filters in the trace.")
+        return []
+
+    # 2. Group events by PID (device/core)
+
+    # Dictionary structure: pid -> list of events for that pid
+    events_by_pid = defaultdict(list)
+    for event in selected_events:
+        events_by_pid[event["pid"]].append(event)
+
+    # Calculate total duration for each unique device
+    durations_ms_lists = []
+
+    for pid in sorted(events_by_pid.keys()):
+        events = events_by_pid[pid]
+
+        # Collect the durarion_ms for each run
+        durations_ms_lists.append([
+            float(e["args"].get("device_duration_ps", 0)) / 1e9 for e in events
+        ])
+
+    # 3. Print summary from the first device and return
+    print(f"Average Execution time: {np.mean(durations_ms_lists[0]):.6f} ms")
+
+    # Return the list of durations from the first device
+    return durations_ms_lists[0]
+
 
 def iteration_timeit(
     compute_func: Callable,
@@ -500,7 +550,7 @@ def is_local_directory_path(dir: str) -> bool:
 
 
 def timeit_from_trace(
-    f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None
+    f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None, event_name_str_list: list[str] = None
 ) -> float:
     """
     Time a function with jax.profiler and get the run time from the trace.
@@ -533,6 +583,10 @@ def timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
+
+    if event_name_str_list is not None:
+        iteration_get_event_metrics_from_trace(trace, event_name_str_list=event_name_str_list)
+
     return iteration_get_metrics_from_trace(trace)
 
 
