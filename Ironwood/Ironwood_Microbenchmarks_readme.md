@@ -7,7 +7,7 @@ Microbenchmarks that assess the performance of individual operations and compone
 - Ensure `kubectl` is installed in your local machine: `gcloud components install kubectl
 `
 - Create a Cloud TPU GKE cluster
-- Ensure at least 68 Ironwood chips of capacity as this guide uses one `2x2x1` (single host) slice and one `4x4x4` (multi host) slice
+- Ensure you have sufficient number of chips. This guide provisions two slices; one `2x2x1` (single host) slice and one `4x4x4` (multi host) slice and therefore requires 68 chips.
 
 Refer to ["Deploy TPU workloads in GKE" guide](https://cloud.google.com/kubernetes-engine/docs/how-to/tpus) for more information about how to set up a TPU GKE cluster with sufficient resources.
 
