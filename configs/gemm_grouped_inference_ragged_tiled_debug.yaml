@@ -1,0 +1,9 @@
+benchmarks:
+- benchmark_name: "gemm_grouped_ragged_dot"
+  trace_dir: "../microbenchmarks/gemm_grouped_ragged_dot_inference_tiled_debug"
+  csv_path: "../microbenchmarks/gemm_grouped_ragged_dot_inference_tiled_debug"
+  xlml_metrics_dir: "../microbenchmarks/gemm_grouped_ragged_dot_inference_tiled_debug"
+  xla_dump_dir: "../microbenchmarks/gemm_grouped_ragged_dot_inference_tiled_debug/hlo_graphs"
+  num_runs: 1000
+  benchmark_sweep_params:
+    - {b: 256, m: 64, k: 8192, n: 128, in_dtype_str: "bf16", out_dtype_str: "bf16", ragged_dot_tiling: "64, 2048, 128"}

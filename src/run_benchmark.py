@@ -23,6 +23,7 @@ import copy
 import pandas as pd
 import ast
 import json
+import absl.flags
 
 COLLECTIVE_BENCHMARK_MAP = {
     "all_gather": "benchmark_collectives.all_gather_benchmark",
@@ -277,7 +278,7 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
                 flattened_dict["ici_average_time_ms_list"]
             )
 
-        df = pd.DataFrame(flattened_dict, index=[0])
+        df = pd.DataFrame([flattened_dict])
         return df
 
     # TODO(hylin2002@)
@@ -385,6 +386,8 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
 def main(args):
     """Main function."""
     # Load configuration
+    absl.flags.FLAGS(["run_benchmark.py"])
+
     config_path = args.config
     multithreaded = args.multithreaded
     output_path = args.output_path
