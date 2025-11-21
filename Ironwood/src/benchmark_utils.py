@@ -698,7 +698,7 @@ def rename_xla_dump(
         return
 
     new_base_name = f"{benchmark_name}_{serialized_benchmark_param}"
-    after_optimizations_path = input_shape = output_shape = replica_groups = None
+    after_optimizations_path = input_shape = output_shape = replica_groups = first_replica_group = None
 
     for original_filepath in all_related_files:
         original_filename = os.path.basename(original_filepath)
@@ -743,7 +743,7 @@ def rename_xla_dump(
             upload_to_storage(trace_dir=new_filepath, local_file=original_filepath)
     print(f"The XLA dump is stored in {dest_xla_dump_dir}")
     if after_optimizations_path:
-        input_shape, output_shape, replica_groups = (
+        input_shape, output_shape, replica_groups, first_replica_group = (
             extract_hlo_features_from_file(after_optimizations_path)
         )
     else:
@@ -751,9 +751,15 @@ def rename_xla_dump(
             "No files found with 'after_optimizations.txt' suffix. "
             "Please check the XLA dump directory."
         )
-    return after_optimizations_path, input_shape, output_shape, replica_groups
+    return json.dumps({
+        "after_optimizations_path": after_optimizations_path,
+        "hlo_input_shape": input_shape,
+        "hlo_output_shape": output_shape,
+        "hlo_replica_groups": replica_groups,
+        "hlo_first_replica_group": first_replica_group,
+    })
 
-def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str, str, str]:
+def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str | None, str | None, str | None, list[int] | None]:
     """
     Extracts input shape, output shape, and replica groups from an HLO file.
 
@@ -761,19 +767,20 @@ def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str, str, str]:
       hlo_file_path: Path to the HLO dump file (e.g., after_optimizations.txt).
 
     Returns:
-      A tuple containing (input_shape, output_shape, replica_groups),
-      or (None, None, None) if extraction fails.
+      A tuple containing (input_shape, output_shape, replica_groups_str, first_replica_group),
+      or (None, None, None, None) if extraction fails.
     """
     input_shape = None
     output_shape = None
-    replica_groups = None
+    replica_groups_str = None
+    first_replica_group = None
 
     try:
         with open(hlo_file_path, "r") as f:
             content = f.read()
     except FileNotFoundError:
         print(f"Error: HLO file not found at {hlo_file_path}")
-        return None, None, None
+        return None, None, None, None
 
     # Extract input/output shapes from HloModule line
     # Example: HloModule jit_f, ..., entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
@@ -789,13 +796,20 @@ def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str, str, str]:
 
     # Extract replica groups
     # Example: replica_groups={{0,1},{2,3}}, dimensions...
-    rg_match = re.search(r"replica_groups=({{.*?}})", content)
+    rg_match = re.search(r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL)
     if rg_match:
-        replica_groups = rg_match.group(1)
+        replica_groups_str = rg_match.group(1)
+        try:
+            content_rg = replica_groups_str[2:-2]
+            first_group_str = content_rg.split('},{')[0]
+            first_replica_group = [int(x) for x in first_group_str.split(',')]
+        except Exception as e:
+            print(f'Could not parse replica_groups in hlo_text: {e}')
+            first_replica_group = None
     else:
         print(f"Could not find replica_groups in {hlo_file_path}.")
 
-    return input_shape, output_shape, replica_groups
+    return input_shape, output_shape, replica_groups_str, first_replica_group
 def get_lhs_named_shading(mesh, strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:

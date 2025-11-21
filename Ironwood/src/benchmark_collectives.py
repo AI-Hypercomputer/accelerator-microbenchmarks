@@ -2,6 +2,7 @@
 
 from functools import partial
 import json
+import math
 import os
 from typing import Any, Dict
 
@@ -14,10 +15,10 @@ from benchmark_utils import simple_timeit
 from common import MARKER
 import jax
 from jax import core
+from jax import ffi
 from jax._src.core import Primitive
 from jax.experimental import mesh_utils
 from jax.experimental.shard_map import shard_map
-import jax.ffi as ffi
 from jax.interpreters import mlir
 import jax.numpy as jnp
 from jax.sharding import Mesh
@@ -25,7 +26,7 @@ from jax.sharding import PartitionSpec as P
 
 BASE_SHAPE = [1, 8, 128]
 SEED = 0
-SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
+GLOBAL_SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 
 
 def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
@@ -51,11 +52,21 @@ def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
   return mesh
 
 
+def get_sharding_axis(dim_str: str, mesh: Mesh) -> tuple[str, ...]:
+  """Computes sharding axis names from dimension string like '1x4' and mesh."""
+  dim_tuple = dim_str.split("x")
+  dim_tuple = tuple(int(dim) for dim in dim_tuple)
+  sharding_axis = tuple(
+      name for i, name in enumerate(mesh.axis_names) if dim_tuple[i] > 1
+  )
+  return sharding_axis
+
+
 def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
   """Helper function to build the metrics and metadata for the benchmark."""
-  exclude_keys = ["ici_average_time_ms"]
+  exclude_keys = ["ici_average_time_ms" ,"xla_output"]
   metadata = {
       key: value
       for key, value in params
@@ -65,10 +76,111 @@ def get_metrics_helper(
   return metadata
 
 
+def unified_ici_collectives_metrics(
+    xla_output: str,
+    matrix_shape: tuple[int, int, int],
+    dtype: jnp.dtype,
+    mesh_shape: str,
+    op_dimension: str,
+    sharding_strategy: str,
+    ici_average_time_ms_list: list[float],
+    iteration: int,
+    op_type: str,
+) -> Dict[str, Any]:
+  """Calculates the metrics for the ICI collectives benchmark."""
+
+
+  average_time_ms_statistics = MetricsStatistics(
+        metrics_list=ici_average_time_ms_list, metrics_name="step_time_ms"
+    )
+  hlo_input_shape = hlo_output_shape = hlo_replica_groups = None
+  hlo_first_replica_group = []
+
+  input_num_elements = matrix_shape[0] * matrix_shape[1] * matrix_shape[2]
+  dtype_bytes = dtype.dtype.itemsize
+  if xla_output:
+    xla_output_json = json.loads(xla_output)
+    hlo_input_shape = xla_output_json.get("hlo_input_shape")
+    hlo_output_shape = xla_output_json.get("hlo_output_shape")
+    hlo_replica_groups = xla_output_json.get("hlo_replica_groups")
+    hlo_first_replica_group = xla_output_json.get("hlo_first_replica_group")
+
+  rank = max(len(hlo_first_replica_group), 1)
+
+  if all(i % 2 == 0 for i in hlo_first_replica_group):
+    replica_group_type = "parallel"
+  else:
+    replica_group_type = "non-parallel"
+
+  if replica_group_type == "parallel":
+    participating_ranks = rank - 1
+    tf_multiplier = 2
+  else:
+    participating_ranks = rank - 2
+    tf_multiplier = 1
+
+  transferred_data = 0
+  if op_type == "AG":
+    transferred_data = (
+        input_num_elements
+        * participating_ranks
+        * dtype_bytes
+        * 0.000000001
+        * tf_multiplier
+    )
+  elif op_type == "AR":
+    transferred_data = (
+        input_num_elements
+        * participating_ranks
+        * dtype_bytes
+        * 0.000000001
+        * tf_multiplier
+        * 2
+    )
+  elif op_type in ["RS", "A2A"]:
+    transferred_data = (
+        input_num_elements
+        * participating_ranks
+        * dtype_bytes
+        * 0.000000001
+        * tf_multiplier
+        / rank
+    )
+
+  
+  print("hlo first replica group: ", hlo_first_replica_group)
+  metadata = {
+      "iteration": iteration,
+      "op_type": op_type,
+      "replica_group_type": replica_group_type,
+      "rank": rank,
+      "mesh_shape": mesh_shape,
+      "op_dimension": op_dimension,
+      "sharding_strategy": sharding_strategy,
+      "input_num_elements": input_num_elements,
+      "matrix_shape": json.dumps(f"({matrix_shape})"),
+      "transferred_data (GB)": transferred_data,
+      "dtype_bytes": dtype_bytes,
+      "hlo_input_shape": json.dumps(hlo_input_shape),
+      "hlo_output_shape": json.dumps(hlo_output_shape),
+      "hlo_replica_groups": json.dumps(hlo_replica_groups),
+  }
+  # metrics = {
+  #     "ici_average_time_ms_list": ici_average_time_ms_list,
+  # }z
+  metrics = {}
+  metrics.update(average_time_ms_statistics.serialize_statistics())
+
+  print("metadata: ", metadata)
+  print("metrics: ", metrics)
+  return metadata, metrics
+
+
 def psum_benchmark(
     matrix_dim: int,
     mesh_shape: str,
-    op_dimension: str = None,
+    sharding_strategy: str,
+    op_dimension: int = 1,
     ici_size: int = 1,
     dtype: jnp.dtype = jax.numpy.bfloat16,
     num_runs: int = 1,
@@ -105,15 +217,9 @@ def psum_benchmark(
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
   key = jax.random.key(SEED)
-  lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
-  out_sharding = get_out_sharding(SHARDING_STRATEGY)
-  op_dimension_tuple = op_dimension.split("x")
-  op_dimension_tuple = tuple(int(dim) for dim in op_dimension_tuple)
-  sharding_axis = tuple(
-      name
-      for i, name in enumerate(mesh.axis_names)
-      if op_dimension_tuple[i] > 1
-  )
+  lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
+  out_sharding = get_out_sharding(GLOBAL_SHARDING_STRATEGY)
+  sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   # 1. Define the Primitive
   zero_crop_p = Primitive("zero_crop")
@@ -183,6 +289,8 @@ def psum_benchmark(
   )
   return {
       "ici_average_time_ms_list": time_ms_list,
+      "matrix_shape": (m, n, k),
+      "op_type": "AR",
   }
 
 
@@ -192,29 +300,34 @@ def psum_benchmark_calculate_metrics(
     ici_size: int,
     mesh_shape: str,
     op_dimension: str,
+    sharding_strategy: str,
     ici_average_time_ms_list: list[float],
+    matrix_shape: tuple[int, int, int],
+    xla_output: str,
+    op_type: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the psum benchmark."""
   # Build dictionary of all the parameters in the function
-  params = locals().items()
-  metadata = get_metrics_helper(params)
-  metrics = {}
-  input_num_elements = matrix_dim * BASE_SHAPE[1] * BASE_SHAPE[2]
-  metadata.update({
-      "input_num_elements": input_num_elements,
-      "matrix_shape": json.dumps(
-          f"({matrix_dim}, {BASE_SHAPE[1]}, {BASE_SHAPE[2]})"
-      ),
-  })
-  return metadata, metrics
 
+  return unified_ici_collectives_metrics(
+      xla_output,
+      matrix_shape,
+      dtype,
+      mesh_shape,
+      op_dimension,
+      sharding_strategy,
+      ici_average_time_ms_list,
+      matrix_dim,
+      op_type,
+  )
 
 def psum_scatter_benchmark(
     matrix_dim: int,
     dtype: jnp.dtype,
     ici_size: int,
     mesh_shape: str,
-    op_dimension: str = None,
+    sharding_strategy: str = None,
+    op_dimension: int = 1,
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -228,6 +341,7 @@ def psum_scatter_benchmark(
       is run.
     mesh_shape: The shape of the mesh.
     op_dimension: The dimension of the operation.
+    sharding_strategy: The sharding strategy of the operation.
     num_runs: The number of runs to perform.
     trace_dir: The directory to save the trace to.
 
@@ -247,13 +361,7 @@ def psum_scatter_benchmark(
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
 
-  op_dimension_tuple = op_dimension.split("x")
-  op_dimension_tuple = tuple(int(dim) for dim in op_dimension_tuple)
-  sharding_axis = tuple(
-      name
-      for i, name in enumerate(mesh.axis_names)
-      if op_dimension_tuple[i] > 1
-  )
+  sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   def f(x):
     with jax.named_scope(MARKER):
@@ -268,10 +376,11 @@ def psum_scatter_benchmark(
           check_rep=False,
       )
   )
-
-  m = matrix_dim
-  n = BASE_SHAPE[1]
-  k = BASE_SHAPE[2]
+  sharding_strategy_tuple = tuple(map(int, sharding_strategy.split("x")))
+  op_dimension_tuple_multiplier = math.prod(sharding_strategy_tuple)
+  m = op_dimension_tuple_multiplier * 2
+  n = matrix_dim
+  k = 256
 
   def data_generator():
     """Creates new random data on host and puts it on device."""
@@ -287,8 +396,11 @@ def psum_scatter_benchmark(
       trace_dir=trace_dir,
   )
   print("Running psum_scatter benchmark", num_runs, matrix_dim)
+  print("Matrix shape: ", m, n, k)
   return {
       "ici_average_time_ms_list": time_ms_list,
+      "matrix_shape": (m, n, k),
+      "op_type": "RS",
   }
 
 
@@ -298,32 +410,34 @@ def psum_scatter_benchmark_calculate_metrics(
     ici_size: int,
     mesh_shape: str,
     op_dimension: str,
+    sharding_strategy: str,
     ici_average_time_ms_list: list[float],
+    matrix_shape: tuple[int, int, int],
+    xla_output: str,
+    op_type: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the psum_scatter benchmark."""
   # Build dictionary of all the parameters in the function
-  params = locals().items()
-  metadata = get_metrics_helper(params)
-  metrics = {}
-  input_num_elements = matrix_dim * BASE_SHAPE[1] * BASE_SHAPE[2]
-  metadata.update({
-      "input_num_elements": input_num_elements,
-      "matrix_shape": json.dumps(
-          f"({matrix_dim}, {BASE_SHAPE[1]}, {BASE_SHAPE[2]})"
-      ),
-  })
 
-  metrics = {key: value for key, value in metrics.items() if value is not None}
-
-  return metadata, metrics
-
+  return unified_ici_collectives_metrics(
+      xla_output,
+      matrix_shape,
+      dtype,
+      mesh_shape,
+      op_dimension,
+      sharding_strategy,
+      ici_average_time_ms_list,
+      matrix_dim,
+      op_type,
+  )
 
 def all_gather_benchmark(
     matrix_dim: int,
     dtype: jnp.dtype,
     ici_size: int,
     mesh_shape: str,
-    op_dimension: str = None,
+    sharding_strategy: str,
+    op_dimension: int = 1,
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -336,6 +450,7 @@ def all_gather_benchmark(
     ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
       is run.
     mesh_shape: The shape of the mesh.
+    sharding_strategy: The sharding strategy of the operation.
     op_dimension: The dimension of the operation.
     num_runs: The number of runs to perform.
     trace_dir: The directory to save the trace to.
@@ -357,13 +472,7 @@ def all_gather_benchmark(
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
 
-  op_dimension_tuple = op_dimension.split("x")
-  op_dimension_tuple = tuple(int(dim) for dim in op_dimension_tuple)
-  sharding_axis = tuple(
-      name
-      for i, name in enumerate(mesh.axis_names)
-      if op_dimension_tuple[i] > 1
-  )
+  sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   def f(x):
     with jax.named_scope(MARKER):
@@ -398,6 +507,8 @@ def all_gather_benchmark(
   print("Running all_gather benchmark", num_runs, matrix_dim)
   return {
       "ici_average_time_ms_list": time_ms_list,
+      "matrix_shape": (m, n, k),
+      "op_type": "AG"
   }
 
 
@@ -407,20 +518,26 @@ def all_gather_benchmark_calculate_metrics(
     ici_size: int,
     mesh_shape: str,
     op_dimension: str,
+    sharding_strategy: str,
     ici_average_time_ms_list: list[float],
+    matrix_shape: tuple[int, int, int],
+    xla_output: str,
+    op_type: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the all_gather benchmark."""
   # Build dictionary of all the parameters in the function
-  params = locals().items()
-  metadata = get_metrics_helper(params)
-  metrics = {}
-  input_num_elements = matrix_dim * BASE_SHAPE[1] * BASE_SHAPE[2]
-  metadata.update({
-      "input_num_elements": input_num_elements,
-      "matrix_shape": json.dumps(f"({matrix_dim}, 8, 128)"),
-  })
-  metrics = {key: value for key, value in metrics.items() if value is not None}
-  return metadata, metrics
+
+  return unified_ici_collectives_metrics(
+      xla_output,
+      matrix_shape,
+      dtype,
+      mesh_shape,
+      op_dimension,
+      sharding_strategy,
+      ici_average_time_ms_list,
+      matrix_dim,
+      op_type,
+  )
 
 
 def all_to_all_benchmark(
@@ -428,7 +545,8 @@ def all_to_all_benchmark(
     dtype: jnp.dtype,
     ici_size: int,
     mesh_shape: str,
-    op_dimension: str = None,
+    sharding_strategy: str,
+    op_dimension: int = 1,
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -454,15 +572,9 @@ def all_to_all_benchmark(
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
   key = jax.random.key(SEED)
-  lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
-  out_sharding = get_out_sharding(SHARDING_STRATEGY)
-  op_dimension_tuple = op_dimension.split("x")
-  op_dimension_tuple = tuple(int(dim) for dim in op_dimension_tuple)
-  sharding_axis = tuple(
-      name
-      for i, name in enumerate(mesh.axis_names)
-      if op_dimension_tuple[i] > 1
-  )
+  lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
+  out_sharding = get_out_sharding(GLOBAL_SHARDING_STRATEGY)
+  sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   def f(x):
     with jax.named_scope(MARKER):
@@ -501,6 +613,8 @@ def all_to_all_benchmark(
   )
   return {
       "ici_average_time_ms_list": time_ms_list,
+      "matrix_shape": (m, n, k),
+      "op_type": "A2A",
   }
 
 
@@ -510,19 +624,24 @@ def all_to_all_benchmark_calculate_metrics(
     ici_size: int,
     mesh_shape: str,
     op_dimension: str,
+    sharding_strategy: str,
     ici_average_time_ms_list: list[float],
+    matrix_shape: tuple[int, int, int],
+    xla_output: str,
+    op_type: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the all_to_all benchmark."""
   # Build dictionary of all the parameters in the function
-  params = locals().items()
-  metadata = get_metrics_helper(params)
-  metrics = {}
-  input_num_elements = matrix_dim * BASE_SHAPE[1] * BASE_SHAPE[2]
-  metadata.update({
-      "input_num_elements": input_num_elements,
-      "matrix_shape": json.dumps(
-          f"({matrix_dim}, {BASE_SHAPE[1]}, {BASE_SHAPE[2]})"
-      ),
-  })
-  metrics = {key: value for key, value in metrics.items() if value is not None}
-  return metadata, metrics
+
+  return unified_ici_collectives_metrics(
+      xla_output,
+      matrix_shape,
+      dtype,
+      mesh_shape,
+      op_dimension,
+      sharding_strategy,
+      ici_average_time_ms_list,
+      matrix_dim,
+      op_type,
+  )
+
