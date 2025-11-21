@@ -586,7 +586,7 @@ def timeit_from_trace(
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
 
     if event_name_str_list is not None:
-        iteration_get_event_metrics_from_trace(trace, event_name_str_list=event_name_str_list)
+        return iteration_get_event_metrics_from_trace(trace, event_name_str_list=event_name_str_list)
 
     return iteration_get_metrics_from_trace(trace)
 
