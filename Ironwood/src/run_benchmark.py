@@ -336,6 +336,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
 
     # Get the benchmark function
+    
     benchmark_func, calculate_metrics_func = get_benchmark_functions(benchmark_name)
 
     print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
@@ -352,7 +353,11 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )  # "Z" indicates UTC
         benchmark_func_params = inspect.signature(benchmark_func).parameters
-        benchmark_results = benchmark_func(**benchmark_param)
+        try:
+            benchmark_results = benchmark_func(**benchmark_param)
+        except Exception as e:  # pylint: disable=broad-except
+            print(f"Benchmark func failed: {e}")
+            continue
         test_end_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )

@@ -136,6 +136,7 @@ def unified_ici_collectives_metrics(
         * 0.000000001
         * tf_multiplier
         * 2
+        /rank
     )
   elif op_type in ["RS", "A2A"]:
     transferred_data = (
@@ -165,11 +166,13 @@ def unified_ici_collectives_metrics(
       "hlo_output_shape": json.dumps(hlo_output_shape),
       "hlo_replica_groups": json.dumps(hlo_replica_groups),
   }
-  # metrics = {
-  #     "ici_average_time_ms_list": ici_average_time_ms_list,
-  # }z
+  achieved_bw = [transferred_data*1000/my_time for my_time in ici_average_time_ms_list]
+  achieved_bw_statistics = MetricsStatistics(
+        metrics_list=achieved_bw, metrics_name="achieved_bw (GB/s)"
+    )
   metrics = {}
   metrics.update(average_time_ms_statistics.serialize_statistics())
+  metrics.update(achieved_bw_statistics.serialize_statistics())
 
   print("metadata: ", metadata)
   print("metrics: ", metrics)
