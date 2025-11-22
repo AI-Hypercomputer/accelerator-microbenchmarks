@@ -2,6 +2,8 @@
 
 """
 
+import os
+
 # pylint: disable=g-importing-member,g-bad-import-order
 from functools import partial
 from typing import Any, Callable, Dict, Tuple
@@ -21,6 +23,10 @@ import tune_jax
 tune_jax.tune_logger.setLevel(logging.ERROR)
 
 # pylint: disable=g-importing-member,g-bad-import-order
+
+os.environ["LIBTPU_INIT_ARGS"] = (
+    "--xla_tpu_dvfs_p_state=7"
+)
 
 def generate_qkv_separate_dims(
     batch_size: int,
