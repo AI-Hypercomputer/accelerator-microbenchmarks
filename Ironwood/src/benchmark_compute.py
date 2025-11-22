@@ -47,6 +47,7 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_enable_all_experimental_scheduler_features=true "
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
+    "--xla_tpu_dvfs_p_state=7"
 )
 
 TRACE_BASE_DIR = None

@@ -31,6 +31,7 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_vmem_scavenging_mode=NONE "
+    "--xla_tpu_dvfs_p_state=7"
 )
 
 SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING

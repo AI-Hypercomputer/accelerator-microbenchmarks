@@ -216,6 +216,7 @@ def psum_benchmark(
       "--xla_tpu_pad_operations_input_tiles=true",
       "--xla_tpu_sparse_core_all_reduce_offload_min_size_in_bytes=0",
       "--xla_tpu_use_tc_device_shape_on_sc=true",
+      "--xla_tpu_dvfs_p_state=7",
   ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
@@ -360,6 +361,7 @@ def psum_scatter_benchmark(
       "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
       "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
       "--xla_tpu_use_tc_device_shape_on_sc=true",
+      "--xla_tpu_dvfs_p_state=7",
   ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
@@ -471,6 +473,7 @@ def all_gather_benchmark(
       "--xla_tpu_enable_sparse_core_collective_offload_all_gather=true",
       "--xla_tpu_use_single_sparse_core_for_all_gather_offload=true",
       "--xla_tpu_use_tc_device_shape_on_sc=true",
+      "--xla_tpu_dvfs_p_state=7",
   ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
