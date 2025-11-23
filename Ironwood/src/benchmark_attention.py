@@ -8,7 +8,6 @@ import os
 from functools import partial
 from typing import Any, Callable, Dict, Tuple
 import dataclasses
-from common import MARKER
 
 from benchmark_utils import timeit_from_trace, MetricsStatistics
 import jax

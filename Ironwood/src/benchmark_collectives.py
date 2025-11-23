@@ -1,6 +1,5 @@
 """A script to run the microbenchmarks in Jax over ICI collectives."""
 
-from functools import partial
 import json
 import math
 import os
@@ -11,7 +10,6 @@ from benchmark_utils import get_out_sharding
 from benchmark_utils import MetricsStatistics
 from benchmark_utils import multiple_iteration_timeit_from_trace
 from benchmark_utils import ShardingStrategy
-from benchmark_utils import simple_timeit
 from common import MARKER
 import jax
 from jax import core
@@ -27,6 +25,7 @@ from jax.sharding import PartitionSpec as P
 BASE_SHAPE = [1, 8, 128]
 SEED = 0
 GLOBAL_SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
+GLOBAL_PSTATE = 7
 
 
 def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
@@ -216,7 +215,7 @@ def psum_benchmark(
       "--xla_tpu_pad_operations_input_tiles=true",
       "--xla_tpu_sparse_core_all_reduce_offload_min_size_in_bytes=0",
       "--xla_tpu_use_tc_device_shape_on_sc=true",
-      "--xla_tpu_dvfs_p_state=7",
+      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
   ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
@@ -361,7 +360,7 @@ def psum_scatter_benchmark(
       "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
       "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
       "--xla_tpu_use_tc_device_shape_on_sc=true",
-      "--xla_tpu_dvfs_p_state=7",
+      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
   ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
@@ -473,7 +472,7 @@ def all_gather_benchmark(
       "--xla_tpu_enable_sparse_core_collective_offload_all_gather=true",
       "--xla_tpu_use_single_sparse_core_for_all_gather_offload=true",
       "--xla_tpu_use_tc_device_shape_on_sc=true",
-      "--xla_tpu_dvfs_p_state=7",
+      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
   ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
@@ -574,6 +573,7 @@ def all_to_all_benchmark(
   """
   libtpu_init_args = [
       "--xla_jf_debug_level=3",
+      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
   ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
