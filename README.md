@@ -54,4 +54,4 @@ Examples can be found in the YAML files under config/ directory.
 
 ## Running the microbenchmarks on Ironwood
 
-Please refer to the [README](https://github.com/AI-Hypercomputer/accelerator-microbenchmarks/blob/reproduce/Ironwood/Ironwood_Microbenchmarks_readme.md) for instructions on running microbenchmarks on Ironwood.
+Please refer to the [README](Ironwood/Ironwood_Microbenchmarks_readme.md) for instructions on running microbenchmarks on Ironwood.
