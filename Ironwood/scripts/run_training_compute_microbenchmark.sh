@@ -8,11 +8,11 @@ for CONFIG in $CONFIG_NAMES
 do
   # Construct the full config file path
   CONFIG_FILE="Ironwood/configs/training/${CONFIG}.yaml"
-  
+
   echo "--- Starting benchmark for ${CONFIG} ---"
-  
+
   # Run the python script and wait for it to complete
   python Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}"
-  
+
   echo "--- Finished benchmark for ${CONFIG} ---"
 done
