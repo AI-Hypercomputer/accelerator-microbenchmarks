@@ -227,7 +227,17 @@ kubectl delete -f tpu7x-4x4x4-micobenchmarks.yaml
 | **`quantization`** | **Dynamic Quantization.** Quantizes a BF16 input tensor to FP8 using dynamic scaling (absmax calibration). Returns quantized values and scale factors. | $S = \frac{Max}{absmax(X)}$, $O = Cast(\frac{X}{S})$ |
 | **`transpose_quantization`** | **Transpose + Quantization.** Transposes a BF16 input tensor first, then applies dynamic quantization. | $S = \frac{Max}{absmax(X^T)}$, $O = Cast(\frac{X^T}{S})$ |
 
-### TODO: add other scripts' details
+### Collectives
+
+`Ironwood/scripts/run_ici_microbenchmark_full.sh` script runs the collective microbenchmarks, including psum, psum_scatter, all_gather, and all_to_all:
+
+| Operation | Function Description | Formula / Logic |
+| :--- | :--- | :--- |
+| **`psum`** | **All-Reduce (Sum).** Sums tensors across devices. | $O = \sum X_i$ |
+| **`psum_scatter`** | **Reduce-Scatter (Sum).** Sums tensors and scatters results. | $O_i = \sum X_i$ (scattered) |
+| **`all_gather`** | **All-Gather.** Gathers tensors from all devices. | $O = [X_0, X_1, ...]$ |
+| **`all_to_all`** | **All-to-All.** Scatters and gathers data between all devices. | Scatters/Gathers across devices |
+
 
 ## Results
 
