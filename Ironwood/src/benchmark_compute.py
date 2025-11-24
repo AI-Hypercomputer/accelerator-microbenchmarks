@@ -145,7 +145,7 @@ def quantization(
 
 
 def quantization_calculate_metrics(
-    m: int, n: int, quant_dtype: str, time_ms_list: list[float]
+    m: int, n: int, time_ms_list: list[float], quant_dtype: str = "float8_e4m3fn"
 ) -> Dict[str, Any]:
     quant_jnp_dtype = jnp.dtype(quant_dtype)
     info_fn = jnp.iinfo if jnp.issubdtype(quant_jnp_dtype, jnp.integer) else jnp.finfo
