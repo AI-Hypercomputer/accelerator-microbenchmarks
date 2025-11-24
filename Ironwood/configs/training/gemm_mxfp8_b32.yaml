@@ -1,0 +1,20 @@
+benchmarks:
+- benchmark_name: "gemm_mxfp8_b32"
+  trace_dir: "../microbenchmarks/gemm_mxfp8_b32"
+  csv_path: "../microbenchmarks/gemm_mxfp8_b32"
+  xlml_metrics_dir: "../microbenchmarks/gemm_mxfp8_b32"
+  xla_dump_dir: "../microbenchmarks/gemm_mxfp8_b32/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 4096}
+  - {m: 4096, k: 16384, n: 16384}
+  - {m: 16384, k: 16384, n: 16384}
+  - {m: 1024, k: 16384, n: 4096}
+  - {m: 4096, k: 16384, n: 1024}
+  - {m: 1024, k: 16384, n: 1024}
+  - {m: 16384, k: 1024, n: 4096}
+  - {m: 4096, k: 1024, n: 16384}
+  - {m: 16384, k: 1024, n: 16384}
+  - {m: 1024, k: 1024, n: 4096}
+  - {m: 4096, k: 1024, n: 1024}
+  - {m: 1024, k: 1024, n: 1024}

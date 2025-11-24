@@ -28,14 +28,14 @@ gcloud compute ssh $TPU_NAME --zone=$ZONE
 
 Now that you have the VM environment set up, `git clone` the accelerator-microbenchmarks on the VM and install the dependencies:
 ```bash
-git clone https://github.com/qinyiyan/accelerator-microbenchmarks.git
+git clone https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git
+cd accelerator-microbenchmarks/
 pip install -r requirements.txt
 ```
 
 You can run the benchmarks with a config file:
 
 ```bash
-cd accelerator-microbenchmarks
 python src/run_benchmark.py --config=configs/sample_benchmark_matmul.yaml
 ```
 
@@ -51,3 +51,7 @@ Examples can be found in the YAML files under config/ directory.
 If you wish to generate the xprof profile, set this parameter in the YAML file:
 * `trace_dir`: Dumps the xprof profile to either a local location or GCS bucket.
 Examples can be found in the YAML files under config/ directory.
+
+## Running the microbenchmarks on Ironwood
+
+Please refer to the [README](Ironwood/Ironwood_Microbenchmarks_readme.md) for instructions on running microbenchmarks on Ironwood.

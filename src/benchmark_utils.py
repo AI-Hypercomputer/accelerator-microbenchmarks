@@ -1,6 +1,5 @@
 """Utility functions for microbenchmarking."""
 
-import datetime
 import os
 from typing import Dict, Any, Callable
 import glob
@@ -14,161 +13,48 @@ import pathlib
 import gzip
 import json
 import re
-from collections import defaultdict
 import subprocess
 import shutil
-from common import MARKER
-
-# The dictionary to map a JAX (collective) function to its main HLO.
-TARGET_TASK_NAME_COLLECTIVES_MAP = {
-    "all_to_all_ici_op": r"all-to-all.[0-9]+",
-    "all_gather_ici_op": r"all-gather.[0-9]+",
-    "psum_ici_op": r"all-reduce.[0-9]+",
-    "ppermute_ici_op": r"collective-permute.[0-9]+",
-}
-
-def iteration_timeit_from_trace(
-    compute_func: Callable,
-    data_generator: Callable,
-    matrix_dim: str=None,
-    tries: int=10, 
-    task: str = None,
-    trace_dir: str = None) -> list[float]:
-    """
-    Time a function with jax.profiler and get the run time from the trace.
-    """
-    LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
-
-    if matrix_dim is not None:
-        trace_name = f"{task}_dim_{matrix_dim}"
-    else:
-        trace_name = f"t_{task}_" + "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=10)
-        )
-
-    trace_full_dir = f"{trace_dir}/{trace_name}"
-    tmp_trace_dir = trace_full_dir
-    # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
-    if trace_dir and not is_local_directory_path(trace_dir):
-        tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
-    with jax.profiler.trace(tmp_trace_dir):
-        for _ in range(tries):
-            data_args = data_generator()
-            jax.devices()  # Force synchronization across devices
-            with jax.profiler.TraceAnnotation(task):
-                result = compute_func(*data_args)
-                jax.block_until_ready(result)
-
-    trace = get_trace(tmp_trace_dir)
-
-    if trace_full_dir != tmp_trace_dir:
-        # Upload the traces to desired location
-        upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return iteration_get_metrics_from_trace(trace)
-
-def iteration_get_metrics_from_trace(trace: dict[str, Any]) -> list[float]:
-    marker_done_events = []
-    for event in trace["traceEvents"]:
-        args = event.get("args", {})
-        tf_op = args.get("tf_op", "")
-        if MARKER in tf_op:
-            marker_done_events.append(event)
-
-    # print(marker_done_events)
-    min_pid = min([e["pid"] for e in marker_done_events])
-    events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
-    # print(events_from_min_pid)
-    durations_ms = [
-        sum(float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid)
-    ]
-    print("durations_ms: ", durations_ms)
-    return durations_ms
-
-def iteration_timeit(
-    compute_func: Callable,
-    data_generator: Callable,
-    matrix_dim: str = None,
-    warmup_tries: int = 10,
-    tries: int = 10,
-    task: str = None,
-    trace_dir: str = None
-) -> list[float]:
-    """
-    Simple utility to time a function, ensuring no cache hits
-    by generating new data for each iteration.
-
-    Args:
-        compute_func: The jitted function to benchmark.
-        data_generator: A function that returns a tuple of device-placed args
-                        for the compute_func.
-        warmup_tries: Number of warmup iterations.
-        tries: Number of timed measurement iterations.
-        task: Name of the task for logging.
-    """
-    assert task is not None
-    print(f"[{task}] Running warmup loop with {warmup_tries} tries...")
-    result = None # To hold the last result for block_until_ready
-    for _ in range(warmup_tries):
-        # 1. Generate new data for each iteration
-        data_args = data_generator()
-        # 2. Run compute
-        result = compute_func(*data_args)
-        # 3. Block on the run
-        jax.block_until_ready(result)
-    print(f"[{task}] Warmup complete.")
-
-    arg_shapes = [arg.shape for arg in data_args]
-    arg_dtypes = [arg.dtype for arg in data_args]
-    if isinstance(result, list) or isinstance(result, tuple):
-        result_shapes = [r.shape for r in result]
-        result_dtypes = [r.dtype for r in result]
-    else:
-        result_shapes = result.shape
-        result_dtypes = result.dtype
-    print(f"[{task}] Verified global shapes: {arg_shapes} -> {result_shapes}")
-    print(f"[{task}] Verified global dtypes: {arg_dtypes} -> {result_dtypes}")
-
-    if trace_dir is not None:
-        return iteration_timeit_from_trace(compute_func, data_generator, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
-
-    outcomes_ms = []
-    print(f"[{task}] Running measurement loop with {tries} tries...")
-    
-    for i in range(tries):
-        # 1. Generate NEW random data (meets "no cache hit" rule)
-        data_args = data_generator()
-        jax.devices()  # Force synchronization across devices
-
-        # Start timer just before the compute call
-        s_time = datetime.datetime.now()
-
-        # 2. Run the operation
-        result = compute_func(*data_args)
-        
-        # 3. Block until operation is complete
-        jax.block_until_ready(result)
-
-        e_time = datetime.datetime.now()
-        outcomes_ms.append(1000 * (e_time - s_time).total_seconds())
-    return outcomes_ms
+import time
+from jax.experimental import multihost_utils
 
 
-
-def simple_timeit(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None) -> float:
+def simple_timeit(f, *args, matrix_dim=None, warmup_tries = 10, tries=10, task=None, trace_dir=None) -> list[float]:
     """Simple utility to time a function for multiple runs."""
     assert task is not None
 
     if trace_dir:
-        return timeit_from_trace(f, *args, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir)
+        return timeit_from_trace(f, *args, matrix_dim=matrix_dim, warmup_tries=warmup_tries, tries=tries, task=task, trace_dir=trace_dir)
 
+    is_multihost = jax.process_count() > 1
+
+    # --- Warmup Loop ---
+    print(f"Running warmup loop with {warmup_tries} tries...")
+    for _ in range(warmup_tries):
+        result = f(*args)
+    # Block until the final warmup run is complete on the local host.
+    jax.block_until_ready(result)
+    print("Warmup complete.")
+    # --- Measurement Loop ---
     outcomes_ms = []
-    jax.block_until_ready(f(*args))  # warm it up!
-    for _ in range(tries):
-        jax.devices()  # Force synchronization across devices
-        s = datetime.datetime.now()
+
+    # Final barrier after warmup to ensure all hosts are ready to start measuring together.
+    if is_multihost:
+        multihost_utils.sync_global_devices(f'warmup_done_{task}')
+
+    print(f"Running measurement loop with {tries} tries...")
+    for i in range(tries):
+        s_time = time.perf_counter()
+
         jax.block_until_ready(f(*args))
-        e = datetime.datetime.now()
-        outcomes_ms.append(1000 * (e - s).total_seconds())
+
+        # Synchronize (Multi-Host Only): Wait for ALL hosts to finish the operation.
+        if is_multihost:
+            multihost_utils.sync_global_devices(f'end_run_{i}_{task}')
+
+        e_time = time.perf_counter()
+        outcomes_ms.append(1000 * (e_time - s_time))
+
     return outcomes_ms
 
 
@@ -206,7 +92,7 @@ def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
         except:
             return [-1.]
     event_matcher = re.compile(task)
-    
+
     if "traceEvents" not in trace:
         raise KeyError("Key 'traceEvents' not found in trace.")
 
@@ -215,16 +101,11 @@ def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
         if "name" in e and event_matcher.match(e["name"]):
             events.append(e)
 
-    events_by_run_id = defaultdict(list)
-    for e in events:
-        run_id = e["args"]["run_id"] if "args" in e and "run_id" in e["args"] else "0"
-        events_by_run_id[run_id].append(e)
     durations_ms = []
     try:
         # Duration is in us.
-        durations_ms = [
-            max([e["dur"] for e in es]) / 1e3 for run_id, es in events_by_run_id.items()
-        ]
+        for e in events:
+            durations_ms.append(e["dur"] / 1e3)
     except KeyError:
         print("KeyError: Key 'dur' not found in the event object")
         raise
@@ -235,12 +116,12 @@ def get_metrics_from_trace_tpu(trace: dict[str, Any], task: str) -> list[float]:
 
     if "traceEvents" not in trace:
         raise KeyError("Key 'traceEvents' not found in trace.")
-    
+
     events = []
     for e in trace["traceEvents"]:
         if "name" in e and event_matcher.match(e["name"]):
             events.append(e)
-    
+
     # For each trace, find the TPU with smallest `pid` value and consider it to be TPU-0
     min_pid = min([e["pid"] for e in events])
     events_from_min_pid = [e for e in events if e["pid"] == min_pid]
@@ -262,13 +143,20 @@ def is_local_directory_path(dir: str) -> bool:
     return dir.startswith("/") or dir.startswith("./") or dir.startswith("../")
 
 
-def timeit_from_trace(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None) -> float:
+def timeit_from_trace(f, *args, matrix_dim=None, warmup_tries=10, tries=10, task=None, trace_dir=None) -> list[float]:
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
     LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+    is_multihost = jax.process_count() > 1
 
-    jax.block_until_ready(f(*args))  # warm it up!
+    # warmup loop
+    print(f"Running warmup loop with {warmup_tries} tries...")
+    for _ in range(warmup_tries):
+        data = f(*args)
+    jax.block_until_ready(data)
+    if is_multihost:
+        multihost_utils.sync_global_devices(f'warmup_done_{task}')
 
     if matrix_dim is not None:
         trace_name = f"{task}_dim_{matrix_dim}"
@@ -283,11 +171,11 @@ def timeit_from_trace(f, *args, matrix_dim=None, tries=10, task=None, trace_dir=
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
     with jax.profiler.trace(tmp_trace_dir):
-        for _ in range(tries):
-            jax.devices()  # Force synchronization across devices
+        for i in range(tries):
             with jax.profiler.TraceAnnotation(task):
                 jax.block_until_ready(f(*args))
-
+            if is_multihost:
+                    multihost_utils.sync_global_devices(f'end_run_{i}_{task}')
     trace = get_trace(tmp_trace_dir)
 
     if trace_full_dir != tmp_trace_dir:
@@ -301,9 +189,18 @@ def maybe_write_metrics_file(
 ):
     """Writes metrics to a JSONL file to be consumed by the XLML metrics pipeline."""
 
-    # Only write metrics from one host.
-    if jax.process_index() != 0:
-        return
+    local_devices = jax.local_devices()
+    tpu_worker_id = int(os.getenv("TPU_WORKER_ID", "0"))
+    is_multislice = hasattr(local_devices[0], "slice_index")
+
+    # For multi-slice workload, the result is only written by the first host on the first slice (slice_index=0, tpu_worker_id=0).
+    # For single-slice workload, the result is only written by the first host (tpu_worker_id=0).
+    if is_multislice:
+        if local_devices[0].slice_index != 0 or tpu_worker_id != 0:
+            return
+    else:
+        if tpu_worker_id != 0:
+            return
 
     jsonl_name = "metrics_report.jsonl"
     jsonl_path = metrics_dir + "/" + jsonl_name

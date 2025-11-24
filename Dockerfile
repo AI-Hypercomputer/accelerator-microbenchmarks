@@ -22,7 +22,7 @@ ENV PATH="/usr/local/google-cloud-sdk/bin:/usr/local/bin/python3.10:${PATH}"
 WORKDIR /app
 
 # Clone the repository
-RUN git clone https://github.com/qinyiyan/accelerator-microbenchmarks.git
+RUN git clone https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git
 
 # Navigate to the repository directory
 WORKDIR /app/accelerator-microbenchmarks

@@ -1,10 +1,17 @@
 """Benchmarks HBM(High Bandwidth Memory) bandwidth."""
 
+from common import MARKER
 from typing import Any, Dict, Tuple
 
-from benchmark_utils import simple_timeit, MetricsStatistics
+from benchmark_utils import (
+    multiple_iteration_timeit_from_trace,
+    MetricsStatistics,
+)
 import jax
 import jax.numpy as jnp
+
+
+SEED = 0
 
 
 def get_metrics_helper(
@@ -26,27 +33,29 @@ def single_chip_hbm_copy(
     dtype: jnp.dtype,
     num_runs: int = 1,
     trace_dir: str = None,
-    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks HBM with copy(read and write) on a single device."""
 
     def f(a):
-        return a.copy()
+        with jax.named_scope(MARKER):
+            return a.copy()
 
     a = jax.random.normal(jax.random.key(0), (num_elements,)).astype(dtype)
-
+    a = jax.device_put(a)
+    print(a.shape)
+    print(a.dtype)
     jitted_f = jax.jit(f)
     # Run once
     output = jitted_f(a)
     jax.block_until_ready(output)
 
     # Run the benchmark
-    time_ms_list = simple_timeit(
-        jitted_f,
-        a,
-        warmup_tries=warmup_tries,
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        compute_func=jitted_f,
+        data_generator=lambda: (a,),
+        matrix_dim=f"{num_elements}",
         tries=num_runs,
-        task="single_chip_hbm_copy",
+        task="copy",
         trace_dir=trace_dir,
     )
     return {"time_ms_list": time_ms_list}

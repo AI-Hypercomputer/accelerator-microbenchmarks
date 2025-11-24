@@ -1,0 +1,18 @@
+benchmarks:
+- benchmark_name: "swiglu_bwd"
+  trace_dir: "../microbenchmarks/swiglu_bwd"
+  csv_path: "../microbenchmarks/swiglu_bwd"
+  xlml_metrics_dir: "../microbenchmarks/swiglu_bwd"
+  xla_dump_dir: "../microbenchmarks/swiglu_bwd/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 4096, n: 1024}
+  - {m: 1024, n: 512}
+  - {m: 128, n: 2048}
+  - {m: 256, n: 4096}
+  - {m: 8192, n: 1024}
+  - {m: 2048, n: 8192}
+  - {m: 8192, n: 8192}
+  - {m: 16384, n: 1024}
+  - {m: 16384, n: 4096}
+  - {m: 128, n: 8192}

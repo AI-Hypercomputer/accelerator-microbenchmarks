@@ -1,0 +1,12 @@
+benchmarks:
+- benchmark_name: "tokamax_splash_attention"
+  benchmark_sweep_params:
+  - {batch_size: 1, q_seq_len: 4096, kv_seq_len: 4096, q_heads: 128, kv_heads: 8, qk_head_dim: 256, v_head_dim: 256, mode: ["fwd", "bwd"], causal: [true, false], num_samples: 3500, tune_pallas_only: true}
+  - {batch_size: 1, q_seq_len: 8192, kv_seq_len: 8192, q_heads: 128, kv_heads: 8, qk_head_dim: 256, v_head_dim: 256, mode: ["fwd", "bwd"], causal: [true, false], num_samples: 3500, tune_pallas_only: true}
+  - {batch_size: 1, q_seq_len: 16384, kv_seq_len: 16384, q_heads: 128, kv_heads: 8, qk_head_dim: 256, v_head_dim: 256, mode: ["fwd", "bwd"], causal: [true, false], num_samples: 3500, tune_pallas_only: true}
+  - {batch_size: 1, q_seq_len: 32768, kv_seq_len: 32768, q_heads: 128, kv_heads: 8, qk_head_dim: 256, v_head_dim: 256, mode: ["fwd", "bwd"], causal: [true, false], num_samples: 3500, tune_pallas_only: true}
+  - {batch_size: 1, q_seq_len: 65536, kv_seq_len: 65536, q_heads: 128, kv_heads: 8, qk_head_dim: 256, v_head_dim: 256, mode: ["fwd", "bwd"], causal: [true, false], num_samples: 3500, tune_pallas_only: true}
+  - {batch_size: 1, q_seq_len: 131072, kv_seq_len: 131072, q_heads: 128, kv_heads: 8, qk_head_dim: 256, v_head_dim: 256, mode: ["fwd", "bwd"], causal: [true, false], num_samples: 3500, tune_pallas_only: true}
+  trace_dir: "/tmp/microbenchmarks/attention"
+  csv_path: "/tmp/microbenchmarks/attention"
+  xlml_metrics_dir: "/tmp/microbenchmarks/attention"

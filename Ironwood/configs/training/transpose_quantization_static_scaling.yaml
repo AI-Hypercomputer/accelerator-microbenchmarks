@@ -1,0 +1,18 @@
+benchmarks:
+- benchmark_name: "transpose_quantization_static_scaling"
+  trace_dir: "../microbenchmarks/transpose_quantization_static_scaling"
+  csv_path: "../microbenchmarks/transpose_quantization_static_scaling"
+  xlml_metrics_dir: "../microbenchmarks/transpose_quantization_static_scaling"
+  xla_dump_dir: "../microbenchmarks/transpose_quantization_static_scaling/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m: 512, n: 4096}
+  - {m: 4096, n: 1024}
+  - {m: 512, n: 16384}
+  - {m: 8192, n: 1024}
+  - {m: 256, n: 7168}
+  - {m: 16384, n: 512}
+  - {m: 16384, n: 4096}
+  - {m: 8192, n: 16384}
+  - {m: 512, n: 1024}
+  - {m: 8192, n: 7168}

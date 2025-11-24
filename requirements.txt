@@ -11,3 +11,6 @@ tensorboard-plugin-profile
 # Install tensorflow to avoid spurring "Can't import tensorflow.python.profiler.trace" error from jax.profiler.
 tensorflow
 qwix@git+https://github.com/google/qwix.git
+tokamax
+tune-jax
+immutabledict

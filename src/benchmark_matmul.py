@@ -67,7 +67,7 @@ def get_metrics_helper(
 
 
 def naive_matmul(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks the jax.numpy.einsum."""
 
@@ -99,6 +99,7 @@ def naive_matmul(
         jit_sharded_f,
         lhs,
         rhs,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="naive_matmul",
         trace_dir=trace_dir,
@@ -154,7 +155,7 @@ def naive_matmul_calculate_metrics(
 
 
 def single_host_naive_matmul(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks matmul on a single device without any sharding."""
 
@@ -174,6 +175,7 @@ def single_host_naive_matmul(
         jitted_f,
         lhs,
         rhs,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="single_host_naive_matmul",
         trace_dir=trace_dir,
@@ -229,7 +231,7 @@ def single_host_naive_matmul_calculate_metrics(
 
 
 def collective_matmul_one_direction(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks the collective matmul that does permute in one direction."""
 
@@ -287,6 +289,7 @@ def collective_matmul_one_direction(
         jit_sharded_f,
         lhs,
         rhs,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="collective_matmul_one_direction",
         trace_dir=trace_dir,
@@ -329,7 +332,7 @@ def collective_matmul_one_direction_calculate_metrics(
 
 
 def collective_matmul_two_directions(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks the collective matmul that does permute in two directions."""
 
@@ -424,6 +427,7 @@ def collective_matmul_two_directions(
         jit_sharded_f,
         lhs,
         rhs,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="collective_matmul_two_directions",
         trace_dir=trace_dir,
@@ -466,7 +470,7 @@ def collective_matmul_two_directions_calculate_metrics(
 
 
 def multilayer_collective_matmul(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
+    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """Benchmarks the multilayer collective matmul."""
 
@@ -506,6 +510,8 @@ def multilayer_collective_matmul(
         jit_sharded_f,
         activation,
         weights,
+        warmup_tries=warmup_tries,
+        tries=num_runs,
         task="collective_multilayer_matmul",
         trace_dir=trace_dir,
     )

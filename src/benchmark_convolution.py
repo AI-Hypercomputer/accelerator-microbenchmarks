@@ -25,6 +25,7 @@ def convolve_common(
     task_name: str,
     num_runs: int,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
     """A helper function to run the convolution benchmark.
 
@@ -64,6 +65,7 @@ def convolve_common(
         x,
         kernel,
         padding_mode,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task=task_name,
         trace_dir=trace_dir,
@@ -129,6 +131,7 @@ def numpy_convolve(
     padding_mode: str = "same",
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> float:
     """Benchmarks 1D convolution with jax.numpy.convolve."""
 
@@ -145,6 +148,7 @@ def numpy_convolve(
         "numpy_convolve",
         num_runs=num_runs,
         trace_dir=trace_dir,
+        warmup_tries=warmup_tries,
     )
 
 
@@ -174,6 +178,7 @@ def scipy_signal_convolve(
     padding_mode: str = "same",
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> float:
     """Benchmarks N-dimensional convolution using jax.scipy.signal.convolve."""
 
@@ -190,6 +195,7 @@ def scipy_signal_convolve(
         "scipy_signal_convolve",
         num_runs=num_runs,
         trace_dir=trace_dir,
+        warmup_tries=warmup_tries,
     )
 
 
@@ -219,6 +225,7 @@ def scipy_signal_convolve2d(
     padding_mode: str = "same",
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> float:
     """Benchmarks 2D convolution using jax.scipy.signal.convolve2d."""
     input_shape = (input_size, input_size)
@@ -235,6 +242,7 @@ def scipy_signal_convolve2d(
         "scipy_signal_convolve2d",
         num_runs=num_runs,
         trace_dir=trace_dir,
+        warmup_tries=warmup_tries,
     )
 
 
@@ -272,6 +280,7 @@ def lax_conv_general_dilated(
     dimension_numbers: Tuple[str, str, str] = ("NHWC", "HWIO", "NHWC"),
     num_runs: int = 1,
     trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> float:
     """Benchmarks convolution with jax.lax.conv_general_dilated."""
 
@@ -312,6 +321,7 @@ def lax_conv_general_dilated(
         stride,
         dilation,
         padding_mode,
+        warmup_tries=warmup_tries,
         tries=num_runs,
         task="lax_conv_general_dilated",
         trace_dir=trace_dir,

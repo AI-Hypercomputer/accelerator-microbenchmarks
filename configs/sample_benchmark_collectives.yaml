@@ -2,23 +2,27 @@ benchmarks:
 - benchmark_name: ppermute
   benchmark_sweep_params:
   - {matrix_dim_range: {start: 1024, end: 20000, increase_by: 1024}, dtype: "bfloat16", dcn_size_range: 1, ici_size_range: 4}
+  warmup_tries: 10
   trace_dir: "/tmp/microbenchmarks/collectives"
   csv_path: "/tmp/microbenchmarks/collectives"
   xla_dump_dir: "/tmp/microbenchmarks/collective/hlo_graphs"
 - benchmark_name: all_gather
   benchmark_sweep_params:
   - {matrix_dim_range: {start: 1024, end: 20000, increase_by: 1024}, dtype: "bfloat16", dcn_size_range: 1, ici_size_range: 4}
+  warmup_tries: 10
   trace_dir: "/tmp/microbenchmarks/collectives"
   csv_path: "/tmp/microbenchmarks/collectives"
   xla_dump_dir: "/tmp/microbenchmarks/collective/hlo_graphs"
 - benchmark_name: psum
   benchmark_sweep_params:
   - {matrix_dim_range: {start: 1024, end: 20000, increase_by: 1024}, dtype: "bfloat16", dcn_size_range: 1, ici_size_range: 4}
+  warmup_tries: 10
   trace_dir: "/tmp/microbenchmarks/collectives"
   csv_path: "/tmp/microbenchmarks/collectives"
   xla_dump_dir: "/tmp/microbenchmarks/collective/hlo_graphs"
 - benchmark_name: psum_scatter
   benchmark_sweep_params:
   - {matrix_dim_range: {start: 1024, end: 20000, increase_by: 1024}, dtype: "bfloat16", dcn_size_range: 1, ici_size_range: 4}
+  warmup_tries: 10
   trace_dir: "/tmp/microbenchmarks/collectives"
   csv_path: "/tmp/microbenchmarks/collectives"
