@@ -49,12 +49,6 @@ CONVOLUTION_BENCHMARK_MAP = {
     "lax_conv_general_dilated": ("benchmark_convolution.lax_conv_general_dilated"),
 }
 ATTENTION_BENCHMARK_MAP = {
-    "naive_attention": "benchmark_attention.naive_attention_benchmark",
-    "pallas_flash_attention": ("benchmark_attention.pallas_flash_attention_benchmark"),
-    "splash_attention": "benchmark_attention.splash_attention_benchmark",
-    "flax_nnx_attention": "benchmark_attention.flax_nnx_attention_benchmark",
-    "flax_linen_attention": ("benchmark_attention.flax_linen_attention_benchmark"),
-    "keras_attention": "benchmark_attention.keras_attention_benchmark",
     "tokamax_splash_attention": "benchmark_attention.tokamax_splash_attention_benchmark",
 }
 HBM_BENCHMARK_MAP = {

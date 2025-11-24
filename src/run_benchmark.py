@@ -282,7 +282,6 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
             benchmark_param, trace_dir=trace_dir
         )
         print(f"Running benchmark: {benchmark_name} with params: {benchmark_param}")
-        print(f"Benchmark func: {benchmark_func}")
         test_start_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )  # "Z" indicates UTC
