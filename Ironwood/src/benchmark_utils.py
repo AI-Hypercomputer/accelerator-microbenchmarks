@@ -185,7 +185,7 @@ def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str =
         event_matcher = re.compile(task)
 
         if "traceEvents" not in trace:
-          raise KeyError("Key 'traceEvents' not found in trace.")     
+          raise KeyError("Key 'traceEvents' not found in trace.")
         events = []
         for e in trace["traceEvents"]:
             if "name" in e and event_matcher.match(e["name"]):
@@ -218,7 +218,7 @@ def iteration_timeit_from_trace(
     compute_func: Callable,
     data_generator: Callable,
     matrix_dim: str=None,
-    tries: int=10, 
+    tries: int=10,
     task: str = None,
     trace_dir: str = None,
     event_name_str_list: list[str] = None) -> list[float]:
@@ -438,7 +438,7 @@ def iteration_timeit(
 
     outcomes_ms = []
     print(f"[{task}] Running measurement loop with {tries} tries...")
-    
+
     for i in range(tries):
         # 1. Generate NEW random data (meets "no cache hit" rule)
         data_args = data_generator()
@@ -449,7 +449,7 @@ def iteration_timeit(
 
         # 2. Run the operation
         result = compute_func(*data_args)
-        
+
         # 3. Block until operation is complete
         jax.block_until_ready(result)
 
@@ -800,7 +800,7 @@ def rename_xla_dump(
         new_filepath = os.path.join(dest_xla_dump_dir, new_filename)
         if "after_optimizations.txt" in original_suffix_with_extension:
             after_optimizations_path = new_filepath
-            
+
         if original_filepath == new_filepath:
             print(
                 f"Skipping: '{original_filename}' already has the desired name or path."
@@ -1104,6 +1104,7 @@ def unified_bytes_metrics(
     time_ms_list: list[float],
     total_bytes: int,
     total_bytes_all_devices: int = 1e9,
+    quant_dtype: str = None,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -1135,6 +1136,9 @@ def unified_bytes_metrics(
     )
     print()
     # Gather the metrics to report.
+    if quant_dtype is not None:
+        metadata.update({"quant_dtype": quant_dtype})
+        metrics.update({"quant_dtype": quant_dtype})
     metadata.update(
         {
             "StepTime(median,ms)": average_time_ms_statistics.statistics["p50"],

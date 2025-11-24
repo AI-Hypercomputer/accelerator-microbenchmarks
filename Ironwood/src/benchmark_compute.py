@@ -145,10 +145,11 @@ def quantization(
 
 
 def quantization_calculate_metrics(
-    m: int, n: int, quant_dtype: jnp.dtype, time_ms_list: list[float]
+    m: int, n: int, quant_dtype: str, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    info_fn = jnp.iinfo if jnp.issubdtype(quant_dtype, jnp.integer) else jnp.finfo
-    width_in_bytes = info_fn(quant_dtype).bits / 8
+    quant_jnp_dtype = jnp.dtype(quant_dtype)
+    info_fn = jnp.iinfo if jnp.issubdtype(quant_jnp_dtype, jnp.integer) else jnp.finfo
+    width_in_bytes = info_fn(quant_jnp_dtype).bits / 8
     output_flops_based_on_dtype = m * n * width_in_bytes
     #       calculate scale     apply quant    write quant output       write scale factor
     # NOTE: (2 * m * n)     +  (2 * m * n)   + (1 * m * n)          +      (4 * m)
@@ -157,7 +158,7 @@ def quantization_calculate_metrics(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices
+        m, n, time_ms_list, total_bytes, total_bytes_all_devices, quant_dtype=quant_dtype
     )
 
 
