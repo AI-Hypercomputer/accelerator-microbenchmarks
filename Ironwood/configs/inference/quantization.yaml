@@ -1,0 +1,10 @@
+benchmarks:
+- benchmark_name: "quantization"
+  trace_dir: "../microbenchmarks/quantization_infernece"
+  csv_path: "../microbenchmarks/quantization_infernece"
+  xlml_metrics_dir: "../microbenchmarks/quantization_infernece"
+  xla_dump_dir: "../microbenchmarks/quantization_infernece/hlo_graphs"
+  num_runs: 100
+  benchmark_sweep_params:
+  - {m_range: {start: 1, end: 66000, multiplier: 2}, n_range: {start: 128, end: 66000, multiplier: 2}, quant_dtype: "float8_e4m3fn"}
+  - {m_range: {start: 1, end: 66000, multiplier: 2}, n_range: {start: 128, end: 66000, multiplier: 2}, quant_dtype: "float4_e2m1fn"}

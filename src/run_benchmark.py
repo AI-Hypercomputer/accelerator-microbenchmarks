@@ -246,7 +246,7 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
 
         print(f"Metrics written to CSV at {csv_path}.")
     except Exception as e:
-        # Temporary workaround to catch all exceptions and print a warning as 
+        # Temporary workaround to catch all exceptions and print a warning as
         # `lax_conv_general_dilated` benchmark fails during nightly test runs at `convert_dict_to_df`.
         print(f"Failed to write metrics to CSV: {e}")
 

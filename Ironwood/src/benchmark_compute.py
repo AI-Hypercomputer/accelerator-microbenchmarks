@@ -119,6 +119,7 @@ def fp8_quantization(
 def quantization(
     m: int,
     n: int,
+    quant_dtype=jnp.float8_e4m3fn,
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -133,7 +134,7 @@ def quantization(
         with jax.named_scope(MARKER):
             qx = qpl.quantize(
                 x,
-                qtype=jnp.float8_e4m3fn,
+                qtype=quant_dtype,
                 scale_dtype=jnp.float32,
                 calibration_method="absmax",
                 channelwise_axes=[0],
@@ -144,9 +145,14 @@ def quantization(
 
 
 def quantization_calculate_metrics(
-    m: int, n: int, time_ms_list: list[float]
+    m: int, n: int, quant_dtype: jnp.dtype, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    total_bytes = 5 * m * n + 4 * m  # Total floating-point operations
+    info_fn = jnp.iinfo if jnp.issubdtype(quant_dtype, jnp.integer) else jnp.finfo
+    width_in_bytes = info_fn(quant_dtype).bits / 8
+    output_flops_based_on_dtype = m * n * width_in_bytes
+    #       calculate scale     apply quant    write quant output       write scale factor
+    # NOTE: (2 * m * n)     +  (2 * m * n)   + (1 * m * n)          +      (4 * m)
+    total_bytes = (2 * m * n) + (2 * m * n) + (4 * m) + output_flops_based_on_dtype
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(
         total_bytes, SHARDING_STRATEGY
     )
