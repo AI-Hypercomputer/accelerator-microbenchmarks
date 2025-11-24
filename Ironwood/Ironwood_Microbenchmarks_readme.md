@@ -255,7 +255,6 @@ The table below summarizes the throughput performance (in `TFLOP/s` per device) 
 | 16384 | 950.1286983 |
 | 32768 | 956.3824592 |
 
-### TODO: add other results
 
 ## Examine the outputs
 
