@@ -142,7 +142,7 @@ def gemm_fp8_rowwise(
                 qtype=jnp.float8_e4m3fn,
                 scale_dtype=jnp.float32,
                 calibration_method="absmax",
-                channelwise_axes=[0],
+                channelwise_axes=[1],
             )
             acc = jax.numpy.einsum(
                 "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
@@ -288,7 +288,7 @@ def gemm_fp8_b128_fp32(
                 qtype=jnp.float8_e4m3fn,
                 scale_dtype=jnp.float32,
                 calibration_method="absmax",
-                channelwise_axes=[0],
+                channelwise_axes=[1],
                 tiled_axes={1: 128},
             )
             acc = jax.numpy.einsum(
@@ -338,7 +338,7 @@ def gemm_fp8_rowwise_static_scaling(
                 qtype=jnp.float8_e4m3fn,
                 scale_dtype=jnp.float32,
                 calibration_method="fixed, -224, 224",
-                channelwise_axes=[0],
+                channelwise_axes=[1],
             )
             acc = jax.numpy.einsum(
                 "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
@@ -388,7 +388,7 @@ def gemm_fp8_b128_fp32_static_scaling(
                 qtype=jnp.float8_e4m3fn,
                 scale_dtype=jnp.float32,
                 calibration_method="fixed, -224, 224",
-                channelwise_axes=[0],
+                channelwise_axes=[1],
                 tiled_axes={1: 128},
             )
             acc = jax.numpy.einsum(
