@@ -24,7 +24,8 @@ gcloud container node-pools create ${SINGLE_SLICE_NODE_POOL_NAME} \
     --project=${PROJECT_ID} \
     --num-nodes=1 \
     --reservation=${RESERVATION_NAME} \
-    --reservation-affinity=specific
+    --reservation-affinity=specific \
+    --node-version="1.34.1-gke.2037001"
 ```
 
 Create one `4x4x4` nodepool in your GKE cluster using workload policy:
@@ -43,7 +44,8 @@ gcloud container node-pools create ${MULTI_SLICE_NODE_POOL_NAME} \
     --project ${PROJECT_ID} \
     --location=${LOCATION} \
     --reservation=${RESERVATION_NAME} \
-    --reservation-affinity=specific
+    --reservation-affinity=specific \
+    --node-version="1.34.1-gke.2037001"
 
 ```
 
