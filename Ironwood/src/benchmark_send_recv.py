@@ -1,0 +1,151 @@
+"""Benchmarking p2p source target transfer."""
+
+import os
+from typing import Any, Dict, List, Tuple
+
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
+os.environ['JAX_PLATFORMS'] = 'tpu'
+
+import jax
+from jax.experimental import mesh_utils
+import jax.numpy as jnp
+import jax.sharding
+from benchmark_utils import MetricsStatistics, multiple_iteration_timeit_from_trace
+from common import MARKER
+
+P = jax.sharding.PartitionSpec
+
+os.environ['LIBTPU_INIT_ARGS'] = (
+    '--xla_tpu_collect_sflag_wait_stats_trace=true '
+    '--xla_tpu_force_global_barriers=true '
+    '--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1 '
+)
+
+
+def get_metrics_helper(
+    params: Dict[str, Any],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Helper function to build the metrics and metadata for the benchmark."""
+    exclude_keys = {'time_ms_list'}
+    metadata = {
+        key: value
+        for key, value in params
+        if value is not None and key not in exclude_keys
+    }
+    metadata['dtype'] = metadata['dtype'].dtype.itemsize
+    return metadata
+
+
+def send_recv_benchmark(
+    source_id: int,
+    target_id: int,
+    num_elements: int,
+    n_repeats: int,
+    dtype: jnp.dtype,
+    trace_dir: str,
+):
+    """Runs p2p communication, sending tensor_size_bytes from source to target device."""
+    device_count = jax.local_device_count()
+    devices = mesh_utils.create_device_mesh((device_count,))
+    mesh = jax.sharding.Mesh(devices, 'x')
+    item_size = jnp.dtype(dtype).itemsize
+    tensor_size_bytes = num_elements * item_size
+    last_dim = tensor_size_bytes // (1 * 8 * item_size)
+
+    def p2p_send(source_id, target_id):
+        # Get the ID of the current device this code is running on
+        device_id = jax.lax.axis_index('x')
+        axis_size = jax.lax.axis_size('x')
+        input_offsets = jnp.zeros((axis_size,), dtype=jnp.int32)
+        output_offsets = jnp.zeros((axis_size,), dtype=jnp.int32)
+        no_sends = jnp.zeros((axis_size,), dtype=jnp.int32)
+        no_recvs = jnp.zeros((axis_size,), dtype=jnp.int32)
+
+        # Only device `source_id` sends, and it sends to `target_id`.
+        sender_send_sizes = jax.nn.one_hot(target_id, axis_size, dtype=jnp.int32)
+        # Only device `target_id` receives, and it receives from `source_id`.
+        target_recv_sizes = jax.nn.one_hot(source_id, axis_size, dtype=jnp.int32)
+
+        final_send_sizes = jax.lax.select(
+            device_id == source_id,
+            sender_send_sizes,
+            no_sends,
+        )
+        final_recv_sizes = jax.lax.select(
+            device_id == target_id,
+            target_recv_sizes,
+            no_recvs,
+        )
+        input = jnp.ones((1, 8, last_dim), dtype=dtype)
+        output = jnp.zeros((1, 8, last_dim), dtype=dtype)
+
+        with jax.named_scope(MARKER):
+            ra2a = jax.lax.ragged_all_to_all(
+                operand=input,
+                output=output,
+                input_offsets=input_offsets,
+                send_sizes=final_send_sizes,
+                output_offsets=output_offsets,
+                recv_sizes=final_recv_sizes,
+                axis_name='x',
+            )
+        max_val = jax.lax.reduce_max(ra2a, axes=(0, 1, 2))
+        return max_val
+
+    compiled_function = (
+        jax.jit(
+            jax.shard_map(
+                p2p_send, mesh=mesh, out_specs=P(), in_specs=(P(), P())
+            ),
+            static_argnums=(0, 1),
+        )
+        .lower(source_id, target_id)
+        .compile()
+    )
+
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        compute_func=compiled_function,
+        data_generator=lambda: [],
+        tries=n_repeats,
+        task=f'p2p_{source_id}_to_{target_id}',
+        trace_dir=trace_dir,
+    )
+
+    return {'time_ms_list': time_ms_list}
+
+
+def send_recv_benchmark_calculate_metrics(
+    source_id: int,
+    target_id: int,
+    num_elements: int,
+    n_repeats: int,
+    dtype: jnp.dtype,
+    time_ms_list: List[float],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Calculates metrics for p2p benchmark."""
+    params = locals().items()
+
+    metadata = get_metrics_helper(params)
+    metrics = {}
+
+    tensor_size_bytes = num_elements * jnp.dtype(dtype).itemsize
+
+    tensor_size_gbytes = tensor_size_bytes / 10**9
+    time_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name='time_ms'
+    )
+    time_s_list = [time_ms / 10**3 for time_ms in time_ms_list]
+    bw_gbyte_sec_list = [tensor_size_gbytes / time_s for time_s in time_s_list]
+    statistics = MetricsStatistics(
+        metrics_list=bw_gbyte_sec_list, metrics_name='bw_gbyte_sec'
+    )
+    # Gather the metrics to report.
+    metadata.update({
+        'tensor_size_gbytes': tensor_size_gbytes,
+    })
+    metrics.update(time_statistics.serialize_statistics())
+    metrics.update(statistics.serialize_statistics())
+    metrics = {key: value for key, value in metrics.items() if value is not None}
+    print(metadata)
+    print(metrics)
+    return metadata, metrics

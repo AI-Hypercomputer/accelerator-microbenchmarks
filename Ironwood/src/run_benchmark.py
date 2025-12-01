@@ -29,6 +29,7 @@ COLLECTIVE_BENCHMARK_MAP = {
     "psum_scatter": "benchmark_collectives.psum_scatter_benchmark",
     "all_to_all": "benchmark_collectives.all_to_all_benchmark",
     "ppermute": "benchmark_collectives.ppermute_benchmark",
+    "send_recv": "benchmark_send_recv.send_recv_benchmark",
 }
 
 MATMUL_BENCHMARK_MAP = {
