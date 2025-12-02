@@ -39,11 +39,11 @@ def _run_under_xprof(
             result = function(*inputs)
             jax.block_until_ready(result)
     jtrace = get_trace(tmp_trace_dir)
-    longest_ici_wait_time = 0
+    longest_wait_time = 0
     for e in jtrace['traceEvents']:
       if e.get('name') == 'sf-ici-wait' and 'dur' in e:
-        longest_ici_wait_time = max(longest_ici_wait_time, e['dur'])
-    return longest_ici_wait_time  / 1e3
+        longest_wait_time = max(longest_wait_time, e['dur'])
+    return longest_wait_time  / 1e3
 
 
 def get_metrics_helper(
@@ -127,12 +127,12 @@ def send_recv_benchmark(
         .compile()
     )
 
-  # Measures the longest ICI wait time in milliseconds, across all the runs.
-    longest_ici_wait_time = _run_under_xprof(
+  # Measures the longest wait time in milliseconds, across all the runs.
+    runtime_ms = _run_under_xprof(
         compiled_function, [], n_repeats, f'p2p_{source_id}_to_{target_id}'
     )
 
-    return {'longest_ici_wait_time': longest_ici_wait_time}
+    return {'runtime_ms': runtime_ms}
 
 
 def send_recv_benchmark_calculate_metrics(
@@ -141,7 +141,7 @@ def send_recv_benchmark_calculate_metrics(
     num_elements: int,
     n_repeats: int,
     dtype: jnp.dtype,
-    longest_ici_wait_time: float,
+    runtime_ms: float,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Calculates metrics for p2p benchmark."""
     params = locals().items()
@@ -152,8 +152,8 @@ def send_recv_benchmark_calculate_metrics(
     tensor_size_bytes = num_elements * jnp.dtype(dtype).itemsize
     tensor_size_gbytes = tensor_size_bytes / 10**9
 
-    metrics['longest_ici_wait_time (ms)'] = longest_ici_wait_time
-    longest_ici_wait_time_s = longest_ici_wait_time / 10**3
+    metrics['runtime_ms (ms)'] = runtime_ms
+    longest_ici_wait_time_s = runtime_ms / 10**3
     metrics['achieved_bw (GB/s)'] = tensor_size_gbytes / longest_ici_wait_time_s
 
     # Gather the metrics to report.
