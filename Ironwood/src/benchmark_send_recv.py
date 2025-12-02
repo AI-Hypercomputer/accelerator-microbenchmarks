@@ -100,7 +100,7 @@ def send_recv_benchmark(
             target_recv_sizes,
             no_recvs,
         )
-        input = jnp.ones((1, 8, last_dim), dtype=dtype)
+        input = jax.random.normal(jax.random.key(0), (1, 8, last_dim), dtype=dtype)
         output = jnp.zeros((1, 8, last_dim), dtype=dtype)
 
         with jax.named_scope(MARKER):
@@ -127,6 +127,7 @@ def send_recv_benchmark(
         .compile()
     )
 
+  # Measures the longest ICI wait time in milliseconds, across all the runs.
     longest_ici_wait_time = _run_under_xprof(
         compiled_function, [], n_repeats, f'p2p_{source_id}_to_{target_id}'
     )
