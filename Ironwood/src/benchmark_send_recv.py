@@ -153,8 +153,8 @@ def send_recv_benchmark_calculate_metrics(
     tensor_size_gbytes = tensor_size_bytes / 10**9
 
     metrics['runtime_ms (ms)'] = runtime_ms
-    longest_ici_wait_time_s = runtime_ms / 10**3
-    metrics['achieved_bw (GB/s)'] = tensor_size_gbytes / longest_ici_wait_time_s
+    runtime_s = runtime_ms / 10**3
+    metrics['achieved_bw (GB/s)'] = tensor_size_gbytes / runtime_s
 
     # Gather the metrics to report.
     metadata.update({
