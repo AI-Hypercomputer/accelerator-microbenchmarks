@@ -2,10 +2,6 @@
 
 import os
 from typing import Any, Dict, List, Tuple
-
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
-os.environ['JAX_PLATFORMS'] = 'tpu'
-
 import jax
 from jax.experimental import mesh_utils
 import jax.numpy as jnp
