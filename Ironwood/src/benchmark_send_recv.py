@@ -10,8 +10,12 @@ import jax
 from jax.experimental import mesh_utils
 import jax.numpy as jnp
 import jax.sharding
-from benchmark_utils import MetricsStatistics, multiple_iteration_timeit_from_trace
+from benchmark_utils import (
+    MetricsStatistics,
+    get_trace,
+)
 from common import MARKER
+import tempfile
 
 P = jax.sharding.PartitionSpec
 
@@ -20,6 +24,27 @@ os.environ['LIBTPU_INIT_ARGS'] = (
     '--xla_tpu_force_global_barriers=true '
     '--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1 '
 )
+
+
+def _run_under_xprof(
+    function: jax.stages.Compiled, inputs: list[jax.Array], n_repeats: int, task: str,
+):
+  """Runs a function under xprof."""
+  # warmup
+  jax.block_until_ready(function(*inputs))
+  with tempfile.TemporaryDirectory() as tmp_trace_dir:
+    with jax.profiler.trace(tmp_trace_dir, create_perfetto_link=False):
+      for i in range(n_repeats):
+        with jax.profiler.StepTraceAnnotation(task, step_num=i):
+          with jax.named_scope(f"{MARKER}_{i}"):
+            result = function(*inputs)
+            jax.block_until_ready(result)
+    jtrace = get_trace(tmp_trace_dir)
+    longest_ici_wait_time = 0
+    for e in jtrace['traceEvents']:
+      if e.get('name') == 'sf-ici-wait' and 'dur' in e:
+        longest_ici_wait_time = max(longest_ici_wait_time, e['dur'])
+    return longest_ici_wait_time  / 1e3
 
 
 def get_metrics_helper(
@@ -103,15 +128,18 @@ def send_recv_benchmark(
         .compile()
     )
 
-    time_ms_list = multiple_iteration_timeit_from_trace(
-        compute_func=compiled_function,
-        data_generator=lambda: [],
-        tries=n_repeats,
-        task=f'p2p_{source_id}_to_{target_id}',
-        trace_dir=trace_dir,
+    longest_ici_wait_time = _run_under_xprof(
+        compiled_function, [], n_repeats, f'p2p_{source_id}_to_{target_id}'
     )
+    # time_ms_list = multiple_iteration_timeit_from_trace(
+    #     compute_func=compiled_function,
+    #     data_generator=lambda: [],
+    #     tries=n_repeats,
+    #     task=f'p2p_{source_id}_to_{target_id}',
+    #     trace_dir=trace_dir,
+    # )
 
-    return {'time_ms_list': time_ms_list}
+    return {'time_ms_list': [longest_ici_wait_time]}
 
 
 def send_recv_benchmark_calculate_metrics(
