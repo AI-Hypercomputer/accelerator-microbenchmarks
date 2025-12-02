@@ -1,4 +1,4 @@
-# Inference Attention Microbenchmars
+# Inference Attention Microbenchmarks
 This microbenchmark captures the performance of the Ragged-Paged Attention (RPAv3) kernel, with proper tuning.
 
 ## Prerequisites and Setup
