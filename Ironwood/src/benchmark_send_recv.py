@@ -27,7 +27,10 @@ os.environ['LIBTPU_INIT_ARGS'] = (
 
 
 def _run_under_xprof(
-    function: jax.stages.Compiled, inputs: list[jax.Array], n_repeats: int, task: str,
+    function: jax.stages.Compiled,
+    inputs: list[jax.Array],
+    n_repeats: int,
+    task: str,
 ):
   """Runs a function under xprof."""
   # warmup
@@ -131,15 +134,8 @@ def send_recv_benchmark(
     longest_ici_wait_time = _run_under_xprof(
         compiled_function, [], n_repeats, f'p2p_{source_id}_to_{target_id}'
     )
-    # time_ms_list = multiple_iteration_timeit_from_trace(
-    #     compute_func=compiled_function,
-    #     data_generator=lambda: [],
-    #     tries=n_repeats,
-    #     task=f'p2p_{source_id}_to_{target_id}',
-    #     trace_dir=trace_dir,
-    # )
 
-    return {'time_ms_list': [longest_ici_wait_time]}
+    return {'longest_ici_wait_time': longest_ici_wait_time}
 
 
 def send_recv_benchmark_calculate_metrics(
@@ -148,7 +144,7 @@ def send_recv_benchmark_calculate_metrics(
     num_elements: int,
     n_repeats: int,
     dtype: jnp.dtype,
-    time_ms_list: List[float],
+    longest_ici_wait_time: float,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Calculates metrics for p2p benchmark."""
     params = locals().items()
@@ -157,22 +153,17 @@ def send_recv_benchmark_calculate_metrics(
     metrics = {}
 
     tensor_size_bytes = num_elements * jnp.dtype(dtype).itemsize
-
     tensor_size_gbytes = tensor_size_bytes / 10**9
-    time_statistics = MetricsStatistics(
-        metrics_list=time_ms_list, metrics_name='time_ms'
-    )
-    time_s_list = [time_ms / 10**3 for time_ms in time_ms_list]
-    bw_gbyte_sec_list = [tensor_size_gbytes / time_s for time_s in time_s_list]
-    statistics = MetricsStatistics(
-        metrics_list=bw_gbyte_sec_list, metrics_name='bw_gbyte_sec'
-    )
+
+    metrics['longest_ici_wait_time (ms)'] = longest_ici_wait_time
+    longest_ici_wait_time_s = longest_ici_wait_time / 10**3
+    metrics['achieved_bw (GB/s)'] = tensor_size_gbytes / longest_ici_wait_time_s
+
     # Gather the metrics to report.
     metadata.update({
         'tensor_size_gbytes': tensor_size_gbytes,
     })
-    metrics.update(time_statistics.serialize_statistics())
-    metrics.update(statistics.serialize_statistics())
+
     metrics = {key: value for key, value in metrics.items() if value is not None}
     print(metadata)
     print(metrics)
