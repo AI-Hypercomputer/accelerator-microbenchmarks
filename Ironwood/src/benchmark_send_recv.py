@@ -19,6 +19,7 @@ os.environ['LIBTPU_INIT_ARGS'] = (
     '--xla_tpu_collect_sflag_wait_stats_trace=true '
     '--xla_tpu_force_global_barriers=true '
     '--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1 '
+    '--xla_tpu_dvfs_p_state=7 '
 )
 
 
@@ -39,11 +40,23 @@ def _run_under_xprof(
             result = function(*inputs)
             jax.block_until_ready(result)
     jtrace = get_trace(tmp_trace_dir)
-    longest_wait_time = 0
-    for e in jtrace['traceEvents']:
-      if e.get('name') == 'sf-ici-wait' and 'dur' in e:
-        longest_wait_time = max(longest_wait_time, e['dur'])
-    return longest_wait_time  / 1e3
+
+    marker_done_events = []
+    for event in jtrace["traceEvents"]:
+        args = event.get("args", {})
+        tf_op = args.get("tf_op", "")
+        if MARKER in tf_op:
+            marker_done_events.append(event)
+    # when offloaded to sparse core look for call-done events
+    marker_call_done_events = [
+        e for e in marker_done_events if e.get("name", "").endswith("call-done")
+    ]
+    if marker_call_done_events:
+        marker_done_events = marker_call_done_events
+    durations_ms = [
+        float(e["args"]["device_duration_ps"]) / 1e9 for e in marker_done_events
+    ]
+    return max(durations_ms)
 
 
 def get_metrics_helper(
