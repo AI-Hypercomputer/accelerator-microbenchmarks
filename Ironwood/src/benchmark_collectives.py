@@ -27,7 +27,7 @@ BASE_SHAPE = [1, 8, 128]
 SEED = 0
 GLOBAL_SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 GLOBAL_PSTATE = 7
-
+LOG_SPARSECORE_USAGE = False
 
 def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
   """Creates a mesh with the given ICI size."""
@@ -149,11 +149,13 @@ def unified_ici_collectives_metrics(
         / rank
     )
 
+
   sparsecore_used = "NA"
-  print("trace_dir: ", trace_dir)
-  if trace_dir:
-    sparsecore_used = find_sparsecore_usage_from_xplane(trace_dir)
-  print("sparsecore_used: ", sparsecore_used)
+  if LOG_SPARSECORE_USAGE:
+    print("trace_dir: ", trace_dir)
+    if trace_dir:
+      sparsecore_used = find_sparsecore_usage_from_xplane(trace_dir)
+    print("sparsecore_used: ", sparsecore_used)
   print("hlo first replica group: ", hlo_first_replica_group)
   
   metadata = {
