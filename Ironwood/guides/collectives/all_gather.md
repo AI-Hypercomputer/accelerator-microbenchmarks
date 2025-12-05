@@ -1,31 +1,13 @@
 # All Gather Microbenchmark
 
-This guide demonstrates how to performance collectives benchmark for the `2x2x1` and `2x2x2` topologies.
+This guide demonstrates how to performance collective benchmark for the `2x2x1` and `2x2x2` topologies.
 
 ## Setup
 Please follow the prerequisites setup [here](../../Ironwood_Microbenchmarks_readme.md#prerequisites).
 
 ### Create Node Pool
 
-Create a `2x2x2` node pool in your GKE cluster. For the `2x2x1` topology, please follow the instructions provided [here](../../Ironwood_Microbenchmarks_readme.md#setup).
-
-```bash
-gcloud compute resource-policies create workload-policy ${WORKLOAD_POLICY_NAME} \
-    --type HIGH_THROUGHPUT \
-    --accelerator-topology 2x2x2 \
-    --project ${PROJECT_ID} \
-    --region ${REGION}
-
-gcloud container node-pools create ${TPU7X_2X2X2_NODE_POOL_NAME} \
-    --cluster=${CLUSTER_NAME} \
-    --machine-type=tpu7x-standard-4t \
-    --placement-policy=${WORKLOAD_POLICY_NAME} \
-    --project ${PROJECT_ID} \
-    --location=${LOCATION} \
-    --reservation=${RESERVATION_NAME} \
-    --reservation-affinity=specific
-
-```
+Refer to the instructions [here](../../Ironwood_Microbenchmarks_readme.md#setup) to create `2x2x1` and `2x2x2` node pools, making sure to adjust the accelerator-topology from `4x4x4` to `2x2x2`.
 
 ## Run Benchmarks
 
@@ -48,10 +30,10 @@ Once the benchmark completes, you should see logs similar to the example below:
 metadata:  {'iteration': 16384, 'op_type': 'AG' ... }
 metrics:  {... 'achieved_bw (GB/s)_max': np.float64(159.35667369827922) ...}
 Writing metrics to JSONL file: ../microbenchmarks/all_gather/metrics_report.jsonl
-Metrics written to CSV at ../microbenchmarks/all_gather/t_all_gather_XC9DQ60YW6.tsv.
+Metrics written to CSV at ../microbenchmarks/all_gather/t_all_gather_[A-Z0-9]+.tsv.
 ```
 
-To retrieve the complete results, use the `kubectl cp` command to copy the TSV report file, typically named `t_all_gather_xxxx.tsv`, from the `/microbenchmarks` directory within the pod.
+To retrieve the complete results, use the `kubectl cp` command to copy the TSV report file, typically named `t_all_gather_[A-Z0-9]+.tsv`, from the `/microbenchmarks` directory within the pod.
 
 ### Cleanup
 
