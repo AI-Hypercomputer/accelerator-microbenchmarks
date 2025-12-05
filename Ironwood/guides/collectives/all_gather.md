@@ -2,8 +2,8 @@
 
 This guide demonstrates how to performance collectives benchmark for the `2x2x1` and `2x2x2` topologies.
 
-## Step
-Please follow the prerequisites setup [here](../../Ironwood_Microbenchmarks_readme.md#prerequisites)
+## Setup
+Please follow the prerequisites setup [here](../../Ironwood_Microbenchmarks_readme.md#prerequisites).
 
 ### Create Node Pool
 
