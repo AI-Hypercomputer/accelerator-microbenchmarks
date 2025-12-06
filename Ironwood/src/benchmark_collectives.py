@@ -5,6 +5,7 @@ import math
 import os
 from typing import Any, Dict
 
+from benchmark_utils import find_sparsecore_usage_from_xplane
 from benchmark_utils import get_lhs_named_shading
 from benchmark_utils import get_out_sharding
 from benchmark_utils import MetricsStatistics
@@ -26,7 +27,7 @@ BASE_SHAPE = [1, 8, 128]
 SEED = 0
 GLOBAL_SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 GLOBAL_PSTATE = 7
-
+LOG_SPARSECORE_USAGE = False
 
 def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
   """Creates a mesh with the given ICI size."""
@@ -85,6 +86,7 @@ def unified_ici_collectives_metrics(
     ici_average_time_ms_list: list[float],
     iteration: int,
     op_type: str,
+    trace_dir: str = None,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the ICI collectives benchmark."""
 
@@ -147,8 +149,15 @@ def unified_ici_collectives_metrics(
         / rank
     )
 
-  
+
+  sparsecore_used = "NA"
+  if LOG_SPARSECORE_USAGE:
+    print("trace_dir: ", trace_dir)
+    if trace_dir:
+      sparsecore_used = find_sparsecore_usage_from_xplane(trace_dir)
+    print("sparsecore_used: ", sparsecore_used)
   print("hlo first replica group: ", hlo_first_replica_group)
+  
   metadata = {
       "iteration": iteration,
       "op_type": op_type,
@@ -164,6 +173,7 @@ def unified_ici_collectives_metrics(
       "hlo_input_shape": json.dumps(hlo_input_shape),
       "hlo_output_shape": json.dumps(hlo_output_shape),
       "hlo_replica_groups": json.dumps(hlo_replica_groups),
+      "sparsecore_used": sparsecore_used,
   }
   achieved_bw = [transferred_data*1000/my_time for my_time in ici_average_time_ms_list]
   achieved_bw_statistics = MetricsStatistics(
@@ -294,6 +304,7 @@ def psum_benchmark(
       "ici_average_time_ms_list": time_ms_list,
       "matrix_shape": (m, n, k),
       "op_type": "AR",
+      "trace_dir": trace_dir,
   }
 
 
@@ -308,6 +319,7 @@ def psum_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
+    trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the psum benchmark."""
   # Build dictionary of all the parameters in the function
@@ -322,7 +334,9 @@ def psum_benchmark_calculate_metrics(
       ici_average_time_ms_list,
       matrix_dim,
       op_type,
+      trace_dir,
   )
+
 
 def psum_scatter_benchmark(
     matrix_dim: int,
@@ -382,7 +396,7 @@ def psum_scatter_benchmark(
   )
   sharding_strategy_tuple = tuple(map(int, sharding_strategy.split("x")))
   op_dimension_tuple_multiplier = math.prod(sharding_strategy_tuple)
-  m = op_dimension_tuple_multiplier * 2
+  m = op_dimension_tuple_multiplier
   n = matrix_dim
   k = 256
 
@@ -405,6 +419,7 @@ def psum_scatter_benchmark(
       "ici_average_time_ms_list": time_ms_list,
       "matrix_shape": (m, n, k),
       "op_type": "RS",
+      "trace_dir": trace_dir,
   }
 
 
@@ -419,6 +434,7 @@ def psum_scatter_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
+    trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the psum_scatter benchmark."""
   # Build dictionary of all the parameters in the function
@@ -433,6 +449,7 @@ def psum_scatter_benchmark_calculate_metrics(
       ici_average_time_ms_list,
       matrix_dim,
       op_type,
+      trace_dir,
   )
 
 def all_gather_benchmark(
@@ -473,7 +490,9 @@ def all_gather_benchmark(
       "--xla_tpu_use_single_sparse_core_for_all_gather_offload=true",
       "--xla_tpu_use_tc_device_shape_on_sc=true",
       f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
+      "--xla_tpu_scoped_vmem_limit_kib=65536",
   ]
+  # libtpu_init_args=[ ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
 
@@ -513,7 +532,8 @@ def all_gather_benchmark(
   return {
       "ici_average_time_ms_list": time_ms_list,
       "matrix_shape": (m, n, k),
-      "op_type": "AG"
+      "op_type": "AG",
+      "trace_dir": trace_dir,
   }
 
 
@@ -528,6 +548,7 @@ def all_gather_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
+    trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the all_gather benchmark."""
   # Build dictionary of all the parameters in the function
@@ -542,6 +563,7 @@ def all_gather_benchmark_calculate_metrics(
       ici_average_time_ms_list,
       matrix_dim,
       op_type,
+      trace_dir,
   )
 
 
@@ -621,6 +643,7 @@ def all_to_all_benchmark(
       "ici_average_time_ms_list": time_ms_list,
       "matrix_shape": (m, n, k),
       "op_type": "A2A",
+      "trace_dir": trace_dir,
   }
 
 
@@ -635,6 +658,7 @@ def all_to_all_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
+    trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the all_to_all benchmark."""
   # Build dictionary of all the parameters in the function
@@ -649,5 +673,6 @@ def all_to_all_benchmark_calculate_metrics(
       ici_average_time_ms_list,
       matrix_dim,
       op_type,
+      trace_dir,
   )
 
