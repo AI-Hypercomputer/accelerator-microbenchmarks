@@ -10,7 +10,7 @@ CONFIG_NAMES='reduce_scatter_1d reduce_scatter_2d all_gather_3d all_reduce_3d al
 for CONFIG in $CONFIG_NAMES
 do
   # Construct the full config file path
-  CONFIG_FILE="Ironwood/configs/collectives/${CONFIG}.yaml"
+  CONFIG_FILE="Ironwood/configs/collectives/8x8x8/${CONFIG}.yaml"
   
   echo "--- Starting benchmark for ${CONFIG} ---"
   
