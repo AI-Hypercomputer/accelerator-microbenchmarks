@@ -1,13 +1,12 @@
 """Benchmarking p2p source target transfer."""
 
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 import jax
 from jax.experimental import mesh_utils
 import jax.numpy as jnp
 import jax.sharding
 from benchmark_utils import (
-    MetricsStatistics,
     get_trace,
 )
 from common import MARKER

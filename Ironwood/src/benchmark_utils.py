@@ -24,6 +24,9 @@ from enum import Enum, auto
 from jax.sharding import Mesh
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
+import gc
+import jax.extend
+from tensorflow.tsl.profiler.protobuf import xplane_pb2
 
 # The dictionary to map a JAX (collective) function to its main HLO.
 TARGET_TASK_NAME_COLLECTIVES_MAP = {
@@ -121,6 +124,13 @@ def multiple_iteration_timeit_from_trace_throttling(
   return multiple_iteration_get_metrics_from_trace(trace)
 
 
+def clear_jax_memory():
+    backend = jax.extend.backend.get_backend()
+    for buf in backend.live_buffers():
+        buf.delete()
+    gc.collect()
+
+
 def multiple_iteration_timeit_from_trace(
     compute_func: Callable,
     data_generator: Callable,
@@ -153,11 +163,13 @@ def multiple_iteration_timeit_from_trace(
                 print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
             data_args = data_generator()
             jax.devices()
+
             with jax.profiler.StepTraceAnnotation(task, step_num=i):
                 with jax.named_scope(f"{MARKER}_{i}"):
+
                     result = compute_func(*data_args)
                     jax.block_until_ready(result)
-
+            clear_jax_memory()
     trace = get_trace(tmp_trace_dir)
 
     if trace_full_dir != tmp_trace_dir:
@@ -500,6 +512,65 @@ def get_trace(log_dir: str) -> dict[str, Any]:
         trace = json.load(f)
 
     return trace
+
+
+def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
+    """Extract the XSpace object from the log directory.
+
+    Returns:
+      An XSpace protobuf object.
+    """
+    print("find_sparsecore_usage_from_xplane: ", log_dir)
+
+    # Handle partial log_dir
+    if not (pathlib.Path(log_dir) / "plugins" / "profile").exists():
+        potential_dirs = glob.glob(f"{log_dir}*")
+        potential_dirs = [d for d in potential_dirs if os.path.isdir(d)]
+        potential_dirs.sort(key=os.path.getmtime, reverse=True)
+
+        for d in potential_dirs:
+            d_path = pathlib.Path(d)
+            if (d_path / "plugins" / "profile").exists():
+                log_dir = d
+                print(f"Updated log_dir to match partial path: {log_dir}")
+                break
+
+            # Check subdirectories recursively
+            candidates = list(d_path.glob("**/plugins/profile"))
+            if candidates:
+                latest = max(candidates, key=lambda p: p.stat().st_mtime)
+                log_dir = str(latest.parent.parent)
+                print(f"Updated log_dir via recursive search: {log_dir}")
+                break
+
+    trace_folders = (
+        pathlib.Path(log_dir).absolute() / "plugins" / "profile"
+    ).iterdir()
+    latest_trace_folder = max(trace_folders, key=os.path.getmtime)
+
+    # XPlane files usually end with .xplane.pb
+    xplane_files = list(latest_trace_folder.glob("*.xplane.pb"))
+    try:
+        (xplane_file,) = xplane_files
+    except ValueError as value_error:
+        raise ValueError(
+            f"Invalid trace folder: {latest_trace_folder}. Expected 1"
+            f" '*.xplane.pb' file, but found {len(xplane_files)}."
+        ) from value_error
+
+    with open(xplane_file, "rb") as f:
+        serialized_space = f.read()
+
+    space = xplane_pb2.XSpace()
+    space.ParseFromString(serialized_space)
+    # print("space: ", space)
+    sparsecore_found = False
+    for _, plane in enumerate(space.planes):
+        print("plane: ", plane.name)
+        if "SparseCore" in plane.name:
+            sparsecore_found = True
+            break
+    return sparsecore_found
 
 
 def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
