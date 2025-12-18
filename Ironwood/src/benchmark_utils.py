@@ -570,7 +570,7 @@ def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
         if "SparseCore" in plane.name:
             sparsecore_found = True
             break
-    return sparsecore_found
+    return sparsecore_found, space
 
 
 def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
@@ -846,7 +846,7 @@ def rename_xla_dump(
         return
 
     new_base_name = f"{benchmark_name}_{serialized_benchmark_param}"
-    after_optimizations_path = input_shape = output_shape = replica_groups = first_replica_group = None
+    after_optimizations_path = before_optimizations_path = input_shape = output_shape = replica_groups = first_replica_group = None
 
     for original_filepath in all_related_files:
         original_filename = os.path.basename(original_filepath)
@@ -872,6 +872,10 @@ def rename_xla_dump(
         if "after_optimizations.txt" in original_suffix_with_extension:
             after_optimizations_path = new_filepath
 
+        if "before_optimizations.txt" in original_suffix_with_extension:
+            before_optimizations_path = new_filepath
+
+
         if original_filepath == new_filepath:
             print(
                 f"Skipping: '{original_filename}' already has the desired name or path."
@@ -890,17 +894,18 @@ def rename_xla_dump(
         else:
             upload_to_storage(trace_dir=new_filepath, local_file=original_filepath)
     print(f"The XLA dump is stored in {dest_xla_dump_dir}")
-    if after_optimizations_path:
+    if before_optimizations_path:
         input_shape, output_shape, replica_groups, first_replica_group = (
-            extract_hlo_features_from_file(after_optimizations_path)
+            extract_hlo_features_from_file(before_optimizations_path)
         )
     else:
         print(
-            "No files found with 'after_optimizations.txt' suffix. "
+            "No files found with 'before_optimizations.txt' suffix. "
             "Please check the XLA dump directory."
         )
     return json.dumps({
         "after_optimizations_path": after_optimizations_path,
+        "before_optimizations_path": before_optimizations_path,
         "hlo_input_shape": input_shape,
         "hlo_output_shape": output_shape,
         "hlo_replica_groups": replica_groups,
