@@ -131,7 +131,7 @@ def _run_under_xprof(
     events_from_min_pid = marker_call_done_events
   print("events_from_min_pid: ", events_from_min_pid)
   durations_ms = [
-      float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid
+      float(e["device_duration_ps"]) / 1e9 for e in events_from_min_pid
   ]
   print("durations_ms: ", durations_ms)
   print(trace_full_dir)
