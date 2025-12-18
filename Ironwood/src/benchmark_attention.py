@@ -114,11 +114,7 @@ def tokamax_splash_attention_benchmark(
     trace_dir: str = None,
 ) -> Dict[str, Any]:
     """Benchmarks the Tokamax Splash attention kernel."""
-
-    if tune_pallas_only:
-        event_filter_regex = _pallas_call_hlo_pattern(mode, q_heads != kv_heads)
-    else:
-        event_filter_regex = None
+    event_filter_regex = _pallas_call_hlo_pattern(mode, q_heads != kv_heads)
 
     hyperparams_override = {}
     if mode == "bwd":
@@ -146,9 +142,7 @@ def tokamax_splash_attention_benchmark(
     mask = mask_lib.FullMask(_shape=(q_seq_len, kv_seq_len))
     if causal:
         # Pick offset for causal masks for a "representative" slice of the causal
-        offset = (
-            0 if q.shape[-2] == v.shape[-2] else (v.shape[-2] // 2 - q.shape[-2] // 2)
-        )
+        offset = v.shape[-2] - q.shape[-2]
         mask = mask_lib.CausalMask(shape=(q_seq_len, kv_seq_len), offset=offset)
 
     def attention_fn(
@@ -250,7 +244,7 @@ def tokamax_splash_attention_benchmark(
     tuned_splash = tune_jax.tune(
         splash_fn,
         hyperparams=hyperparams,
-        event_filter_regex=event_filter_regex,
+        event_filter_regex=event_filter_regex if tune_pallas_only else None,
         sample_num=num_samples,
     )
 
@@ -268,8 +262,7 @@ def tokamax_splash_attention_benchmark(
         task="tokamax_splash_attentionatt",
         trace_dir=trace_dir,
         event_name_str_list=[
-            "splash_mqa_fwd_no_residuals.1",
-            "splash_mqa_dkv_no_residuals.1",
+            f"{event_filter_regex}_no_residuals.1",
         ]
     )
     return {"time_ms_list": time_ms_list, "output": output}
