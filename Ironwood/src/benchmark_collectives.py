@@ -444,10 +444,7 @@ def psum_scatter_benchmark(
 
   sharding_strategy_tuple = tuple(map(int, sharding_strategy.split("x")))
   op_dimension_tuple_multiplier = math.prod(sharding_strategy_tuple)
-  if op_dimension == 3:
-    multiplier = 6
-  else:
-    multiplier = 1
+  multiplier = 6
   m = op_dimension_tuple_multiplier * multiplier
   n = matrix_dim
   k = 256
