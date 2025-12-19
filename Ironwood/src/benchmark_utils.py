@@ -694,7 +694,7 @@ def maybe_write_metrics_file(
         return
 
     jsonl_name = "metrics_report.jsonl"
-    jsonl_path = metrics_dir + "/" + jsonl_name
+    jsonl_path = f"/tmp/{jsonl_name}"
     metadata.update(
         {
             "testsuite": "microbenchmark",
@@ -713,11 +713,15 @@ def maybe_write_metrics_file(
 
     # Ensure the directory exists
     os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)
+    
+    # Write the metrics file to the local directory
 
     print(f"Writing metrics to JSONL file: {jsonl_path}")
     with jsonlines.open(jsonl_path, mode="a") as writer:
         writer.write(metrics_data)
 
+    # Upload the metrics file to the storage location
+    upload_to_storage(f"{metrics_dir}/{jsonl_name}", jsonl_path)
 
 def upload_to_storage(trace_dir: str, local_file: str):
     """
