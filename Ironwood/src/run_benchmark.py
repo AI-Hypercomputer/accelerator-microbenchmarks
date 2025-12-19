@@ -326,7 +326,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         # csv_path = os.path.join(output_path, benchmark_name)
         trace_dir = os.path.join(output_path, benchmark_name, "trace")
         xla_dump_dir = os.path.join(output_path, benchmark_name, "hlo_graphs")
-
+        xlml_metrics_dir = os.path.join(output_path, benchmark_name, "metrics")
     if not benchmark_name:
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
 
