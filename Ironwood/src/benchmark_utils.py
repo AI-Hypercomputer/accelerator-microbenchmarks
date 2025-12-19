@@ -723,6 +723,7 @@ def maybe_write_metrics_file(
     # Upload the metrics file to the storage location
     upload_to_storage(f"{metrics_dir}/{jsonl_name}", jsonl_path)
 
+
 def upload_to_storage(trace_dir: str, local_file: str):
     """
     Uploads a local file to a specified storage location.

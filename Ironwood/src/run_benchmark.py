@@ -412,6 +412,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
 
 def main(args):
     """Main function."""
+    print(f"Running benchmark with args: {args}")
     # Load configuration
     config_path = args.config
     multithreaded = args.multithreaded
