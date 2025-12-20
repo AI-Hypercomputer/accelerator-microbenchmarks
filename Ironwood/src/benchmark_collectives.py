@@ -34,6 +34,11 @@ def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
   devices_needed = ici_size
   devices = jax.devices()
 
+  print("-"*40)
+  print("jax.devices():")
+  print(devices)
+  print("-"*40)
+
   if len(devices) < devices_needed:
     raise ValueError(f"Need {devices_needed} devices, but found {len(devices)}")
   devices = devices[:devices_needed]
