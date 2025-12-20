@@ -5,7 +5,7 @@ This microbenchmark captures the performance of the Ragged-Paged Attention (RPAv
 
 Please follow the instructions located [here](https://github.com/AI-Hypercomputer/accelerator-microbenchmarks/blob/main/Ironwood/Ironwood_Microbenchmarks_readme.md#prerequisites) to set up GKE and [here](https://github.com/AI-Hypercomputer/accelerator-microbenchmarks/blob/main/Ironwood/Ironwood_Microbenchmarks_readme.md#setup) to setup your specific GKE resources.
 
-## Running the Infernece Attention Microbenchmarks in a GKE cluster
+## Running the Inference Attention Microbenchmarks in a GKE cluster
 
 Get credentials for the GKE cluster:
 
