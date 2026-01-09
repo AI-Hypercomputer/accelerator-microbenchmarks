@@ -1,0 +1,9 @@
+benchmarks:
+- benchmark_name: psum
+  benchmark_sweep_params:
+  - {matrix_dim_range: {start: 2, end: 131072, multiplier: 2}, dtype: "float32",  mesh_shape: "8x8x16", ici_size_range: 1024, sharding_strategy: "1x1x8", op_dimension: 1,  num_runs: 5} # Non-Parallel Replica
+  - {matrix_dim_range: {start: 2, end: 131072, multiplier: 2}, dtype: "float32",  mesh_shape: "64x8x2", ici_size_range: 1024, sharding_strategy: "1x8x1", op_dimension: 1,  num_runs: 5} # Parallel Replica  
+  trace_dir: "../microbenchmarks/all_reduce_1d"
+  csv_path: "../microbenchmarks/all_reduce_1d"
+  xlml_metrics_dir: "../microbenchmarks/all_reduce_1d"
+  xla_dump_dir: "../microbenchmarks/all_reduce_1d/hlo_graphs"
