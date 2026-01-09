@@ -709,6 +709,20 @@ def maybe_write_metrics_file(
 
     jsonl_name = "metrics_report.jsonl"
     jsonl_path = metrics_dir + "/" + jsonl_name
+    
+    # Check if metrics_dir is a GCS path
+    is_gcs = metrics_dir.startswith("gs://")
+    local_jsonl_path = jsonl_path
+    
+    if is_gcs:
+        # Use a local temporary directory for writing if GCS
+        local_dir = "/tmp/microbenchmarks_metrics"
+        os.makedirs(local_dir, exist_ok=True)
+        local_jsonl_path = os.path.join(local_dir, jsonl_name)
+    else:
+        # Ensure the directory exists for local paths
+        os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)
+
     metadata.update(
         {
             "testsuite": "microbenchmark",
@@ -725,13 +739,13 @@ def maybe_write_metrics_file(
     for key, value in metadata.items():
         metadata[key] = str(value)
 
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)
-
-    print(f"Writing metrics to JSONL file: {jsonl_path}")
-    with jsonlines.open(jsonl_path, mode="a") as writer:
+    print(f"Writing metrics to JSONL file: {local_jsonl_path}")
+    with jsonlines.open(local_jsonl_path, mode="a") as writer:
         writer.write(metrics_data)
-
+        
+    if is_gcs:
+        print(f"Uploading metrics to GCS: {jsonl_path}")
+        upload_to_storage(trace_dir=jsonl_path, local_file=local_jsonl_path)
 
 def upload_to_storage(trace_dir: str, local_file: str):
     """

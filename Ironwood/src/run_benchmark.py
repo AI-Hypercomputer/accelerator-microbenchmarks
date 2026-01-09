@@ -332,6 +332,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         # csv_path = os.path.join(output_path, benchmark_name)
         trace_dir = os.path.join(output_path, benchmark_name, "trace")
         xla_dump_dir = os.path.join(output_path, benchmark_name, "hlo_graphs")
+        xlml_metrics_dir = os.path.join(output_path, benchmark_name, "metrics")
     # Inject num_runs from config if not present in params
     global_num_runs = benchmark_config.get("num_runs")
     if global_num_runs is not None:
