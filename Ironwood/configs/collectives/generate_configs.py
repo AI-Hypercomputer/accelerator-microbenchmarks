@@ -26,7 +26,7 @@ class TopologyConfig:
         self._create_param(self.mesh_shapes_1d[0], self.sharding_1d[0], 1)
     )
     # Non-Parallel Replica Z, Y, X (Indices 1, 2, 3)
-    for i in range(1, 4):
+    for i in range(1, 2):
       params.append(
           self._create_param(self.mesh_shapes_1d[i], self.sharding_1d[i], 1)
       )
@@ -78,8 +78,8 @@ TOPOLOGIES = [
         4,
         4,
         4,
-        mesh_shapes_1d=["16x4x2", "4x4x8", "4x8x4", "8x4x4"],
-        sharding_1d=["1x4x1", "1x1x8", "1x8x1", "8x1x1"],
+        mesh_shapes_1d=["16x4x2", "4x4x8"],
+        sharding_1d=["1x4x1", "1x1x8"],
     ),
     TopologyConfig(
         "8x8x8",
@@ -87,16 +87,16 @@ TOPOLOGIES = [
         8,
         8,
         # Corrected 32x8x2 -> 64x8x2 to match ici_size 1024
-        mesh_shapes_1d=["64x8x2", "8x8x16", "8x16x8", "16x8x8"],
-        sharding_1d=["1x8x1", "1x1x16", "1x16x1", "16x1x1"],
+        mesh_shapes_1d=["64x8x2", "8x8x16"],
+        sharding_1d=["1x8x1", "1x1x16"],
     ),
     TopologyConfig(
         "8x8x16",
         8,
         8,
         16,
-        mesh_shapes_1d=["64x16x2", "8x8x32", "8x32x8", "32x8x8"],
-        sharding_1d=["1x16x1", "1x1x32", "1x32x1", "32x1x1"],
+        mesh_shapes_1d=["64x16x2", "8x8x32"],
+        sharding_1d=["1x16x1", "1x1x32"],
     ),
 ]
 

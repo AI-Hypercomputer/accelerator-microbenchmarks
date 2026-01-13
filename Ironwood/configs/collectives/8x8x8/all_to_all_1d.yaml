@@ -2,8 +2,6 @@ benchmarks:
 - benchmark_name: all_to_all
   benchmark_sweep_params:
   - {matrix_dim_range: {start: 2, end: 131072, multiplier: 2}, dtype: float32, mesh_shape: 8x8x16, ici_size_range: 1024, sharding_strategy: 1x1x16, op_dimension: 1, num_runs: 5}
-  - {matrix_dim_range: {start: 2, end: 131072, multiplier: 2}, dtype: float32, mesh_shape: 8x16x8, ici_size_range: 1024, sharding_strategy: 1x16x1, op_dimension: 1, num_runs: 5}
-  - {matrix_dim_range: {start: 2, end: 131072, multiplier: 2}, dtype: float32, mesh_shape: 16x8x8, ici_size_range: 1024, sharding_strategy: 16x1x1, op_dimension: 1, num_runs: 5}
   trace_dir: ../microbenchmarks/all_to_all_1d
   csv_path: ../microbenchmarks/all_to_all_1d
   xlml_metrics_dir: ../microbenchmarks/all_to_all_1d
