@@ -1,0 +1,46 @@
+benchmarks:
+- benchmark_name: 'send_recv ## To be run on a single host'
+  benchmark_sweep_params:
+  - source_id: 0
+    target_id_list:
+    - 2
+    - 3
+    - 4
+    - 5
+    num_elements_range:
+      start: 524288
+      end: 268435456
+      multiplier: 2
+    n_repeats: 10
+    dtype: float32
+  - source_id: 0
+    target_id_list:
+    - 1
+    num_elements_range:
+      start: 524288
+      end: 268435456
+      multiplier: 2
+    n_repeats: 10
+    dtype: float32
+  - source_id: 2
+    target_id_list:
+    - 3
+    num_elements_range:
+      start: 524288
+      end: 268435456
+      multiplier: 2
+    n_repeats: 10
+    dtype: float32
+  - source_id: 4
+    target_id_list:
+    - 5
+    num_elements_range:
+      start: 524288
+      end: 268435456
+      multiplier: 2
+    n_repeats: 10
+    dtype: float32
+  trace_dir: ../microbenchmarks/p2p
+  csv_path: ../microbenchmarks/p2p
+  xlml_metrics_dir: ../microbenchmarks/p2p
+  xla_dump_dir: ../microbenchmarks/p2p/hlo_graphs

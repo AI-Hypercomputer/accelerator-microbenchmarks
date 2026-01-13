@@ -1,9 +1,9 @@
 benchmarks:
 - benchmark_name: psum
   benchmark_sweep_params:
-  - {matrix_dim_range: {start: 2, end: 131072, multiplier: 2}, dtype: "float32",  mesh_shape: "64x2", ici_size_range: 128, sharding_strategy: "64x1", op_dimension: 3, num_runs: 5} # Parallel Replica Groups
-  - {matrix_dim_range: {start: 2, end: 131072, multiplier: 2}, dtype: "float32",  mesh_shape: "4x4x8", ici_size_range: 128, sharding_strategy: "4x4x8", op_dimension: 3, num_runs: 5} # Non Parallel Replica Groups
-  trace_dir: "../microbenchmarks/all_reduce_3d"
-  csv_path: "../microbenchmarks/all_reduce_3d"
-  xlml_metrics_dir: "../microbenchmarks/all_reduce_3d"
-  xla_dump_dir: "../microbenchmarks/all_reduce_3d/hlo_graphs"
+  - {matrix_dim_range: {start: 2, end: 131072, multiplier: 2}, dtype: float32, mesh_shape: 64x2, ici_size_range: 128, sharding_strategy: 64x1, op_dimension: 3, num_runs: 5}
+  - {matrix_dim_range: {start: 2, end: 131072, multiplier: 2}, dtype: float32, mesh_shape: 4x4x8, ici_size_range: 128, sharding_strategy: 4x4x8, op_dimension: 3, num_runs: 5}
+  trace_dir: ../microbenchmarks/psum_3d
+  csv_path: ../microbenchmarks/psum_3d
+  xlml_metrics_dir: ../microbenchmarks/psum_3d
+  xla_dump_dir: ../microbenchmarks/psum_3d/hlo_graphs
