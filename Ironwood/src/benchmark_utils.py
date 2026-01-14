@@ -1259,6 +1259,9 @@ def unified_bytes_metrics(
                 "p50"
             ],
             "total_bytes": total_bytes,
+            "benchmark_type": "compute",
+            "num_runs": len(time_ms_list),
+            "dtype": quant_dtype,
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())

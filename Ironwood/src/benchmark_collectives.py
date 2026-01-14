@@ -176,6 +176,9 @@ def unified_ici_collectives_metrics(
       "hlo_output_shape": json.dumps(hlo_output_shape),
       "hlo_replica_groups": json.dumps(hlo_replica_groups),
       "sparsecore_used": sparsecore_used,
+      "benchmark_type": "collective",
+      "dtype": str(dtype),
+      "num_runs": len(ici_average_time_ms_list),
   }
   achieved_bw = [transferred_data*1000/my_time for my_time in ici_average_time_ms_list]
   achieved_bw_statistics = MetricsStatistics(
@@ -321,6 +324,7 @@ def psum_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
+    num_runs: int,
     trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the psum benchmark."""
@@ -444,6 +448,7 @@ def psum_scatter_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
+    num_runs: int = 1,
     trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the psum_scatter benchmark."""
@@ -558,6 +563,7 @@ def all_gather_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
+    num_runs: int = 1,
     trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the all_gather benchmark."""
@@ -668,6 +674,7 @@ def all_to_all_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
+    num_runs: int = 1,
     trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the all_to_all benchmark."""
