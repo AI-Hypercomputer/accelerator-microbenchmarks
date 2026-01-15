@@ -748,24 +748,42 @@ def maybe_write_metrics_file(
         upload_to_storage(trace_dir=jsonl_path, local_file=local_jsonl_path)
 
 def upload_to_storage(trace_dir: str, local_file: str):
-    """
+  """
     Uploads a local file to a specified storage location.
     """
 
-    if trace_dir.startswith("gs://"):  # Google Cloud Storage (GCS)
-        try:
-            subprocess.run(
+  if trace_dir.startswith("gs://"):  # Google Cloud Storage (GCS)
+    try:
+      subprocess.run(
                 ["gsutil", "cp", "-r", local_file, trace_dir],
                 check=True,
                 capture_output=True,
             )
 
-        except subprocess.CalledProcessError as e:
-            print(
+    except subprocess.CalledProcessError as e:
+      print(
                 f"Failed to upload '{local_file}' to GCS: '{trace_dir}'. Error: {e.stderr.decode()}"
             )
-    else:
-        raise KeyError(f"{trace_dir} is not a valid GCS path.")
+  else:
+    raise KeyError(f"{trace_dir} is not a valid GCS path.")
+
+
+def read_from_storage(file_path: str) -> str:
+  """Reads content from a file, supporting both local and GCS paths."""
+  if file_path.startswith("gs://"):
+    try:
+      result = subprocess.run(
+          ["gsutil", "cat", file_path],
+          check=True,
+          capture_output=True,
+          text=True,
+      )
+      return result.stdout
+    except subprocess.CalledProcessError as e:
+      raise FileNotFoundError(f"Failed to read {file_path}: {e.stderr}") from e
+  else:
+    with open(file_path, "r") as f:
+      return f.read()
 
 
 def load_yaml_config(config_path: str) -> Dict[str, Any] | None:
@@ -936,7 +954,7 @@ def rename_xla_dump(
     })
 
 def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str | None, str | None, str | None, list[int] | None]:
-    """
+  """
     Extracts input shape, output shape, and replica groups from an HLO file.
 
     Args:
@@ -946,46 +964,45 @@ def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str | None, str 
       A tuple containing (input_shape, output_shape, replica_groups_str, first_replica_group),
       or (None, None, None, None) if extraction fails.
     """
-    input_shape = None
-    output_shape = None
-    replica_groups_str = None
-    first_replica_group = None
+  input_shape = None
+  output_shape = None
+  replica_groups_str = None
+  first_replica_group = None
 
+  try:
+    content = read_from_storage(hlo_file_path)
+  except FileNotFoundError:
+    print(f"Error: HLO file not found at {hlo_file_path}")
+    return None, None, None, None
+
+  # Extract input/output shapes from HloModule line
+  # Example: HloModule jit_f, ..., entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
+  layout_match = re.search(r"entry_computation_layout={\((.*?)\)->(.*?)}", content)
+  if layout_match:
+    input_shape = layout_match.group(1)
+    output_shape = layout_match.group(2)
+    # Further clean shape if layout info is present, e.g., f32[1,2]{1,0} -> f32[1,2]
+    input_shape = re.sub(r"{.*}", "", input_shape)
+    output_shape = re.sub(r"{.*}", "", output_shape)
+  else:
+    print(f"Could not find entry_computation_layout in {hlo_file_path} to extract shapes.")
+
+  # Extract replica groups
+  # Example: replica_groups={{0,1},{2,3}}, dimensions...
+  rg_match = re.search(r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL)
+  if rg_match:
+    replica_groups_str = rg_match.group(1)
     try:
-        with open(hlo_file_path, "r") as f:
-            content = f.read()
-    except FileNotFoundError:
-        print(f"Error: HLO file not found at {hlo_file_path}")
-        return None, None, None, None
+      content_rg = replica_groups_str[2:-2]
+      first_group_str = content_rg.split("},{")[0]
+      first_replica_group = [int(x) for x in first_group_str.split(",")]
+    except Exception as e:
+      print(f"Could not parse replica_groups in hlo_text: {e}")
+      first_replica_group = None
+  else:
+    print(f"Could not find replica_groups in {hlo_file_path}.")
 
-    # Extract input/output shapes from HloModule line
-    # Example: HloModule jit_f, ..., entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
-    layout_match = re.search(r"entry_computation_layout={\((.*?)\)->(.*?)}", content)
-    if layout_match:
-        input_shape = layout_match.group(1)
-        output_shape = layout_match.group(2)
-        # Further clean shape if layout info is present, e.g., f32[1,2]{1,0} -> f32[1,2]
-        input_shape = re.sub(r"{.*}", "", input_shape)
-        output_shape = re.sub(r"{.*}", "", output_shape)
-    else:
-        print(f"Could not find entry_computation_layout in {hlo_file_path} to extract shapes.")
-
-    # Extract replica groups
-    # Example: replica_groups={{0,1},{2,3}}, dimensions...
-    rg_match = re.search(r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL)
-    if rg_match:
-        replica_groups_str = rg_match.group(1)
-        try:
-            content_rg = replica_groups_str[2:-2]
-            first_group_str = content_rg.split('},{')[0]
-            first_replica_group = [int(x) for x in first_group_str.split(',')]
-        except Exception as e:
-            print(f'Could not parse replica_groups in hlo_text: {e}')
-            first_replica_group = None
-    else:
-        print(f"Could not find replica_groups in {hlo_file_path}.")
-
-    return input_shape, output_shape, replica_groups_str, first_replica_group
+  return input_shape, output_shape, replica_groups_str, first_replica_group
 def get_lhs_named_shading(mesh, strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
