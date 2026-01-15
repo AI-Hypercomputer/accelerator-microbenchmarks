@@ -125,9 +125,10 @@ os.environ["XLA_FLAGS"] = f"--xla_dump_to={TMP_XLA_DUMP_DIR}"
 
 
 def get_benchmark_config(config_path: str) -> Dict[str, Any]:
-    """Load benchmark configuration from a YAML file."""
-    with open(config_path, "r") as file:
-        return yaml.safe_load(file)
+  print(f"Loading benchmark configuration from {config_path}")
+  """Load benchmark configuration from a YAML file."""
+  with open(config_path, "r") as file:
+    return yaml.safe_load(file)
 
 
 # Dynamically load the benchmark functions.
