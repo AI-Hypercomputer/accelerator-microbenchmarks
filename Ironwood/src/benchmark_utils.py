@@ -19,6 +19,7 @@ import re
 from collections import defaultdict
 import subprocess
 import shutil
+import tempfile
 from common import MARKER
 from enum import Enum, auto
 from jax.sharding import Mesh
@@ -536,44 +537,108 @@ def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
     """
     print("find_sparsecore_usage_from_xplane: ", log_dir)
 
-    # Handle partial log_dir
-    if not (pathlib.Path(log_dir) / "plugins" / "profile").exists():
-        potential_dirs = glob.glob(f"{log_dir}*")
-        potential_dirs = [d for d in potential_dirs if os.path.isdir(d)]
-        potential_dirs.sort(key=os.path.getmtime, reverse=True)
+    if log_dir.startswith("gs://"):
+        try:
+            # Find *.xplane.pb file in GCS
+            profile_dir = os.path.join(log_dir, "plugins", "profile")
+            xplane_pattern = os.path.join(profile_dir, "**/*.xplane.pb")
+            xplane_file_list_proc = subprocess.run(
+                ["gsutil", "ls", xplane_pattern],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            xplane_files = xplane_file_list_proc.stdout.strip().split("\n")
+            xplane_files = [x for x in xplane_files if x]
+            if not xplane_files:
+                raise ValueError(
+                    f"No '*.xplane.pb' file found in GCS path: {profile_dir}"
+                )
 
-        for d in potential_dirs:
-            d_path = pathlib.Path(d)
-            if (d_path / "plugins" / "profile").exists():
-                log_dir = d
-                print(f"Updated log_dir to match partial path: {log_dir}")
-                break
+            if len(xplane_files) > 1:
+                file_mtimes = {}
+                for f in xplane_files:
+                    try:
+                        stat_out = subprocess.run(
+                            ["gsutil", "stat", f],
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                        ).stdout
+                        mtime_line = next(
+                            line
+                            for line in stat_out.split("\n")
+                            if "Modification time" in line
+                        )
+                        # Example: Modification time: Thu, 16 Jan 2025 00:06:03 GMT
+                        file_mtimes[f] = datetime.datetime.strptime(
+                            mtime_line.split(":", 1)[1].strip(),
+                            "%a, %d %b %Y %H:%M:%S %Z",
+                        )
+                    except:
+                        # if stat fails, assign old time
+                        file_mtimes[f] = datetime.datetime.strptime(
+                            "Wed, 01 Jan 2000 00:00:00 GMT", "%a, %d %b %Y %H:%M:%S %Z"
+                        )
+                xplane_file = max(xplane_files, key=lambda f: file_mtimes[f])
+            else:
+                xplane_file = xplane_files[0]
 
-            # Check subdirectories recursively
-            candidates = list(d_path.glob("**/plugins/profile"))
-            if candidates:
-                latest = max(candidates, key=lambda p: p.stat().st_mtime)
-                log_dir = str(latest.parent.parent)
-                print(f"Updated log_dir via recursive search: {log_dir}")
-                break
+            with tempfile.NamedTemporaryFile() as tmp_f:
+                print(f"Copying GCS file {xplane_file} to {tmp_f.name}")
+                subprocess.run(
+                    ["gsutil", "cp", xplane_file, tmp_f.name],
+                    check=True,
+                    capture_output=True,
+                )
+                with open(tmp_f.name, "rb") as f:
+                    serialized_space = f.read()
+        except subprocess.CalledProcessError as e:
+            raise ValueError(
+                f"Failed to access GCS path for xplane file: {e.stderr.decode()}"
+            ) from e
+        except Exception as e:
+            raise ValueError(f"Could not process xplane file from GCS: {e}") from e
 
-    trace_folders = (
-        pathlib.Path(log_dir).absolute() / "plugins" / "profile"
-    ).iterdir()
-    latest_trace_folder = max(trace_folders, key=os.path.getmtime)
+    else:  # local path
+        # Handle partial log_dir
+        if not (pathlib.Path(log_dir) / "plugins" / "profile").exists():
+            potential_dirs = glob.glob(f"{log_dir}*")
+            potential_dirs = [d for d in potential_dirs if os.path.isdir(d)]
+            potential_dirs.sort(key=os.path.getmtime, reverse=True)
 
-    # XPlane files usually end with .xplane.pb
-    xplane_files = list(latest_trace_folder.glob("*.xplane.pb"))
-    try:
-        (xplane_file,) = xplane_files
-    except ValueError as value_error:
-        raise ValueError(
-            f"Invalid trace folder: {latest_trace_folder}. Expected 1"
-            f" '*.xplane.pb' file, but found {len(xplane_files)}."
-        ) from value_error
+            for d in potential_dirs:
+                d_path = pathlib.Path(d)
+                if (d_path / "plugins" / "profile").exists():
+                    log_dir = d
+                    print(f"Updated log_dir to match partial path: {log_dir}")
+                    break
 
-    with open(xplane_file, "rb") as f:
-        serialized_space = f.read()
+                # Check subdirectories recursively
+                candidates = list(d_path.glob("**/plugins/profile"))
+                if candidates:
+                    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+                    log_dir = str(latest.parent.parent)
+                    print(f"Updated log_dir via recursive search: {log_dir}")
+                    break
+
+        trace_folders = (
+            pathlib.Path(log_dir).absolute() / "plugins" / "profile"
+        ).iterdir()
+        latest_trace_folder = max(trace_folders, key=os.path.getmtime)
+
+        # XPlane files usually end with .xplane.pb
+        xplane_files = list(latest_trace_folder.glob("*.xplane.pb"))
+        try:
+            (xplane_file,) = xplane_files
+        except ValueError as value_error:
+            raise ValueError(
+                f"Invalid trace folder: {latest_trace_folder}. Expected 1"
+                f" '*.xplane.pb' file, but found {len(xplane_files)}."
+            ) from value_error
+
+        with open(xplane_file, "rb") as f:
+            serialized_space = f.read()
 
     space = xplane_pb2.XSpace()
     space.ParseFromString(serialized_space)
@@ -748,42 +813,23 @@ def maybe_write_metrics_file(
         upload_to_storage(trace_dir=jsonl_path, local_file=local_jsonl_path)
 
 def upload_to_storage(trace_dir: str, local_file: str):
-  """
-    Uploads a local file to a specified storage location.
-    """
+  """Uploads a local file to a specified storage location."""
 
   if trace_dir.startswith("gs://"):  # Google Cloud Storage (GCS)
     try:
       subprocess.run(
-                ["gsutil", "cp", "-r", local_file, trace_dir],
-                check=True,
-                capture_output=True,
-            )
+          ["gsutil", "cp", "-r", local_file, trace_dir],
+          check=True,
+          capture_output=True,
+      )
 
     except subprocess.CalledProcessError as e:
       print(
-                f"Failed to upload '{local_file}' to GCS: '{trace_dir}'. Error: {e.stderr.decode()}"
-            )
+          f"Failed to upload '{local_file}' to GCS: '{trace_dir}'. Error:"
+          f" {e.stderr.decode()}"
+      )
   else:
     raise KeyError(f"{trace_dir} is not a valid GCS path.")
-
-
-def read_from_storage(file_path: str) -> str:
-  """Reads content from a file, supporting both local and GCS paths."""
-  if file_path.startswith("gs://"):
-    try:
-      result = subprocess.run(
-          ["gsutil", "cat", file_path],
-          check=True,
-          capture_output=True,
-          text=True,
-      )
-      return result.stdout
-    except subprocess.CalledProcessError as e:
-      raise FileNotFoundError(f"Failed to read {file_path}: {e.stderr}") from e
-  else:
-    with open(file_path, "r") as f:
-      return f.read()
 
 
 def load_yaml_config(config_path: str) -> Dict[str, Any] | None:
@@ -954,30 +1000,45 @@ def rename_xla_dump(
     })
 
 def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str | None, str | None, str | None, list[int] | None]:
+  """Extracts input shape, output shape, and replica groups from an HLO file.
+
+  Args:
+    hlo_file_path: Path to the HLO dump file (e.g., after_optimizations.txt).
+
+  Returns:
+    A tuple containing (input_shape, output_shape, replica_groups_str,
+    first_replica_group),
+    or (None, None, None, None) if extraction fails.
   """
-    Extracts input shape, output shape, and replica groups from an HLO file.
-
-    Args:
-      hlo_file_path: Path to the HLO dump file (e.g., after_optimizations.txt).
-
-    Returns:
-      A tuple containing (input_shape, output_shape, replica_groups_str, first_replica_group),
-      or (None, None, None, None) if extraction fails.
-    """
   input_shape = None
   output_shape = None
   replica_groups_str = None
   first_replica_group = None
 
-  try:
-    content = read_from_storage(hlo_file_path)
-  except FileNotFoundError:
-    print(f"Error: HLO file not found at {hlo_file_path}")
-    return None, None, None, None
+  if hlo_file_path.startswith("gs://"):
+    try:
+      content = subprocess.run(
+          ["gsutil", "cat", hlo_file_path],
+          check=True,
+          capture_output=True,
+          text=True,
+      ).stdout
+    except subprocess.CalledProcessError as e:
+      print(f"Error: HLO file not found at {hlo_file_path}: {e.stderr}")
+      return None, None, None, None
+  else:
+    try:
+      with open(hlo_file_path, "r") as f:
+        content = f.read()
+    except FileNotFoundError:
+      print(f"Error: HLO file not found at {hlo_file_path}")
+      return None, None, None, None
 
   # Extract input/output shapes from HloModule line
   # Example: HloModule jit_f, ..., entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
-  layout_match = re.search(r"entry_computation_layout={\((.*?)\)->(.*?)}", content)
+  layout_match = re.search(
+      r"entry_computation_layout={\((.*?)\)->(.*?)}", content
+  )
   if layout_match:
     input_shape = layout_match.group(1)
     output_shape = layout_match.group(2)
@@ -985,11 +1046,16 @@ def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str | None, str 
     input_shape = re.sub(r"{.*}", "", input_shape)
     output_shape = re.sub(r"{.*}", "", output_shape)
   else:
-    print(f"Could not find entry_computation_layout in {hlo_file_path} to extract shapes.")
+    print(
+        f"Could not find entry_computation_layout in {hlo_file_path} to extract"
+        " shapes."
+    )
 
   # Extract replica groups
   # Example: replica_groups={{0,1},{2,3}}, dimensions...
-  rg_match = re.search(r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL)
+  rg_match = re.search(
+      r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL
+  )
   if rg_match:
     replica_groups_str = rg_match.group(1)
     try:
