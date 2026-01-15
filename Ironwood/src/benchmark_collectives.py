@@ -322,7 +322,6 @@ def psum_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
-    num_runs: int,
     trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the psum benchmark."""
@@ -446,7 +445,6 @@ def psum_scatter_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
-    num_runs: int = 1,
     trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the psum_scatter benchmark."""
@@ -464,6 +462,7 @@ def psum_scatter_benchmark_calculate_metrics(
       op_type,
       trace_dir,
   )
+
 
 def all_gather_benchmark(
     matrix_dim: int,
@@ -561,7 +560,6 @@ def all_gather_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
-    num_runs: int = 1,
     trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the all_gather benchmark."""
@@ -672,7 +670,6 @@ def all_to_all_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
-    num_runs: int = 1,
     trace_dir: str,
 ) -> Dict[str, Any]:
   """Calculates the metrics for the all_to_all benchmark."""
@@ -690,4 +687,3 @@ def all_to_all_benchmark_calculate_metrics(
       op_type,
       trace_dir,
   )
-
