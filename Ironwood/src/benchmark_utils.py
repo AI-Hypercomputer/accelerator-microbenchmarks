@@ -590,13 +590,11 @@ def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
 
         # XPlane files usually end with .xplane.pb
         xplane_files = list(latest_trace_folder.glob("*.xplane.pb"))
-        try:
-            (xplane_file,) = xplane_files
-        except ValueError as value_error:
+        if not xplane_files:
             raise ValueError(
-                f"Invalid trace folder: {latest_trace_folder}. Expected 1"
-                f" '*.xplane.pb' file, but found {len(xplane_files)}."
-            ) from value_error
+                f"Invalid trace folder: {latest_trace_folder}. No '*.xplane.pb' file found."
+            )
+        xplane_file = xplane_files[0]
 
         with open(xplane_file, "rb") as f:
             serialized_space = f.read()
