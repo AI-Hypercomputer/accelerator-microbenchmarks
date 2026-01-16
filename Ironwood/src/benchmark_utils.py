@@ -536,71 +536,32 @@ def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
       An XSpace protobuf object.
     """
     print("find_sparsecore_usage_from_xplane: ", log_dir)
-
+    
+    tmpdir_obj = None
     if log_dir.startswith("gs://"):
         try:
-            # Find *.xplane.pb file in GCS
-            profile_dir = os.path.join(log_dir, "plugins", "profile")
-            xplane_pattern = os.path.join(profile_dir, "**/*.xplane.pb")
-            xplane_file_list_proc = subprocess.run(
-                ["gsutil", "ls", xplane_pattern],
+            tmpdir_obj = tempfile.TemporaryDirectory()
+            new_log_dir = tmpdir_obj.name
+            print(f"Copying GCS directory {log_dir} to local temporary directory {new_log_dir}")
+            subprocess.run(
+                ["gsutil", "rsync", "-r", log_dir, new_log_dir],
                 check=True,
                 capture_output=True,
-                text=True,
             )
-            xplane_files = xplane_file_list_proc.stdout.strip().split("\n")
-            xplane_files = [x for x in xplane_files if x]
-            if not xplane_files:
-                raise ValueError(
-                    f"No '*.xplane.pb' file found in GCS path: {profile_dir}"
-                )
-
-            if len(xplane_files) > 1:
-                file_mtimes = {}
-                for f in xplane_files:
-                    try:
-                        stat_out = subprocess.run(
-                            ["gsutil", "stat", f],
-                            check=True,
-                            capture_output=True,
-                            text=True,
-                        ).stdout
-                        mtime_line = next(
-                            line
-                            for line in stat_out.split("\n")
-                            if "Modification time" in line
-                        )
-                        # Example: Modification time: Thu, 16 Jan 2025 00:06:03 GMT
-                        file_mtimes[f] = datetime.datetime.strptime(
-                            mtime_line.split(":", 1)[1].strip(),
-                            "%a, %d %b %Y %H:%M:%S %Z",
-                        )
-                    except:
-                        # if stat fails, assign old time
-                        file_mtimes[f] = datetime.datetime.strptime(
-                            "Wed, 01 Jan 2000 00:00:00 GMT", "%a, %d %b %Y %H:%M:%S %Z"
-                        )
-                xplane_file = max(xplane_files, key=lambda f: file_mtimes[f])
-            else:
-                xplane_file = xplane_files[0]
-
-            with tempfile.NamedTemporaryFile() as tmp_f:
-                print(f"Copying GCS file {xplane_file} to {tmp_f.name}")
-                subprocess.run(
-                    ["gsutil", "cp", xplane_file, tmp_f.name],
-                    check=True,
-                    capture_output=True,
-                )
-                with open(tmp_f.name, "rb") as f:
-                    serialized_space = f.read()
+            print(f"Using local path for parsing: {new_log_dir}")
+            log_dir = new_log_dir
         except subprocess.CalledProcessError as e:
+            if tmpdir_obj:
+                tmpdir_obj.cleanup()
             raise ValueError(
-                f"Failed to access GCS path for xplane file: {e.stderr.decode()}"
+                f"Failed to copy GCS directory to local: {e.stderr.decode()}"
             ) from e
         except Exception as e:
+            if tmpdir_obj:
+                tmpdir_obj.cleanup()
             raise ValueError(f"Could not process xplane file from GCS: {e}") from e
 
-    else:  # local path
+    try:
         # Handle partial log_dir
         if not (pathlib.Path(log_dir) / "plugins" / "profile").exists():
             potential_dirs = glob.glob(f"{log_dir}*")
@@ -640,16 +601,19 @@ def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
         with open(xplane_file, "rb") as f:
             serialized_space = f.read()
 
-    space = xplane_pb2.XSpace()
-    space.ParseFromString(serialized_space)
-    # print("space: ", space)
-    sparsecore_found = False
-    for _, plane in enumerate(space.planes):
-        print("plane: ", plane.name)
-        if "SparseCore" in plane.name:
-            sparsecore_found = True
-            break
-    return sparsecore_found
+        space = xplane_pb2.XSpace()
+        space.ParseFromString(serialized_space)
+        # print("space: ", space)
+        sparsecore_found = False
+        for _, plane in enumerate(space.planes):
+            print("plane: ", plane.name)
+            if "SparseCore" in plane.name:
+                sparsecore_found = True
+                break
+        return sparsecore_found
+    finally:
+        if tmpdir_obj:
+            tmpdir_obj.cleanup()
 
 
 def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
