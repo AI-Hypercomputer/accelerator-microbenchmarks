@@ -95,6 +95,9 @@ COMPUTE_BENCHMARK_MAP = {
     "inference_silu_mul": "benchmark_inference_compute.silu_mul",
     "inference_sigmoid": "benchmark_inference_compute.sigmoid",
 }
+HOST_DEVICE_BENCHMARK_MAP = {
+    "host_device": "benchmark_host_device.benchmark_host_device",
+}
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)
 BENCHMARK_MAP.update(MATMUL_BENCHMARK_MAP)
@@ -102,6 +105,7 @@ BENCHMARK_MAP.update(CONVOLUTION_BENCHMARK_MAP)
 BENCHMARK_MAP.update(ATTENTION_BENCHMARK_MAP)
 BENCHMARK_MAP.update(HBM_BENCHMARK_MAP)
 BENCHMARK_MAP.update(COMPUTE_BENCHMARK_MAP)
+BENCHMARK_MAP.update(HOST_DEVICE_BENCHMARK_MAP)
 
 
 # Mapping from dtype string to actual dtype object
@@ -326,6 +330,12 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         # csv_path = os.path.join(output_path, benchmark_name)
         trace_dir = os.path.join(output_path, benchmark_name, "trace")
         xla_dump_dir = os.path.join(output_path, benchmark_name, "hlo_graphs")
+    # Inject num_runs from config if not present in params
+    global_num_runs = benchmark_config.get("num_runs")
+    if global_num_runs is not None:
+        for param in benchmark_params:
+            if "num_runs" not in param:
+                param["num_runs"] = global_num_runs
 
     if not benchmark_name:
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
@@ -467,6 +477,12 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
     if output_path != "":
         csv_path = os.path.join(output_path, benchmark_name)
         os.makedirs(csv_path, exist_ok=True)
+    # Inject num_runs from config if not present in params
+    global_num_runs = benchmark_config.get("num_runs")
+    if global_num_runs is not None:
+        for param in benchmark_params:
+            if "num_runs" not in param:
+                param["num_runs"] = global_num_runs
 
     # Get the benchmark function
     benchmark_func, calculate_metrics_func = get_benchmark_functions(benchmark_name)
