@@ -2,7 +2,7 @@
 
 This guide provides instructions for running Host Device (Host-to-Device and Device-to-Host) microbenchmarks on tpu7x-2x2x1 Google Kubernetes Engine (GKE) clusters. It covers creating a node pool, running the benchmarks, and viewing the output.
 
-> [!WARNING]
+> [!NOTE]
 > This benchmark is currently a Work In Progress (WIP). Expected bandwidth numbers are not yet finalized.
 
 ## Create Node Pools

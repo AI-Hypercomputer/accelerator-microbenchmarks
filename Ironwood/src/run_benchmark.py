@@ -97,6 +97,7 @@ COMPUTE_BENCHMARK_MAP = {
 }
 HOST_DEVICE_BENCHMARK_MAP = {
     "host_device": "benchmark_host_device.benchmark_host_device",
+    "host_device_smart_chunking": "benchmark_host_device.benchmark_host_device_smart_chunking",
 }
 BENCHMARK_MAP = {}
 BENCHMARK_MAP.update(COLLECTIVE_BENCHMARK_MAP)

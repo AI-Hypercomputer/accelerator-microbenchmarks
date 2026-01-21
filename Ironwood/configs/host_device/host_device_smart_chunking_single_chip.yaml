@@ -1,0 +1,11 @@
+benchmarks:
+- benchmark_name: host_device_smart_chunking
+  num_runs: 20
+  benchmark_sweep_params:
+  # Single Chip (1 Chip, 2 Devices)
+  - {
+      num_devices: 2,
+      data_size_mb_list: [1, 16, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
+    }
+  csv_path: "../microbenchmarks/host_device/single_chip_smart"
+  trace_dir: "../microbenchmarks/host_device/single_chip_smart/trace"

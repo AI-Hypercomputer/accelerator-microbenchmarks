@@ -27,13 +27,8 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 echo "--- Starting Host-Device Transfer Benchmark (H2D/D2H) ---"
-echo "********************************************************"
-echo "WARNING: This benchmark is currently a WORK IN PROGRESS"
-echo "********************************************************"
-echo ""
-echo "Configuration:"
-echo "    Interleaved: $INTERLEAVED"
-echo ""
+echo "Note: This benchmark is work in progress"
+echo "Interleaved: $INTERLEAVED"
 
 if [ -n "$SPECIFIC_CONFIG" ]; then
     CONFIGS=("$SPECIFIC_CONFIG")
