@@ -24,8 +24,7 @@ spec:
       cd accelerator-microbenchmarks
       pip install -r requirements.txt
 
-      export TPU_VISIBLE_CHIPS=0
-      bash ./Ironwood/scripts/run_host_device_benchmark.sh --config Ironwood/configs/host_device/host_device_single_chip.yaml
+      bash ./Ironwood/scripts/run_host_device_benchmark.sh --config Ironwood/configs/host_device/host_device.yaml
 
     resources:
       requests:
