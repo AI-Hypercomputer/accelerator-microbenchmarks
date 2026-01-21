@@ -98,6 +98,14 @@ TOPOLOGIES = [
         mesh_shapes_1d=["64x16x2", "8x8x32"],
         sharding_1d=["1x16x1", "1x1x32"],
     ),
+    TopologyConfig(
+        "8x16x16",
+        8,
+        16,
+        16,
+        mesh_shapes_1d=["64x32x2", "8x16x32"],
+        sharding_1d=["1x32x1", "1x1x32"],
+    ),
 ]
 
 
