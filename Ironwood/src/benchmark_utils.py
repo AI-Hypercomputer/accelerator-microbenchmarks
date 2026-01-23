@@ -1110,6 +1110,7 @@ def unified_flops_metrics(
     total_flops: int,
     total_flops_all_devices: int,
     peak_TFLOPS_per_device: float,
+    dtype: str = None,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -1178,6 +1179,7 @@ def unified_bytes_metrics(
     total_bytes: int,
     total_bytes_all_devices: int = 1e9,
     quant_dtype: str = None,
+    dtype: str = None,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -1212,6 +1214,9 @@ def unified_bytes_metrics(
     if quant_dtype is not None:
         metadata.update({"quant_dtype": quant_dtype})
         metrics.update({"quant_dtype": quant_dtype})
+    if dtype is not None:
+        metadata.update({"dtype": dtype})
+        metrics.update({"dtype": dtype})
     metadata.update(
         {
             "StepTime(median,ms)": average_time_ms_statistics.statistics["p50"],
