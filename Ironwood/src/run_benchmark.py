@@ -408,13 +408,15 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         **filtered_benchmark_param, **filtered_benchmark_results
     )
 
+    package_str = ""
     for package in RELEVANT_PACKAGE_LIST:
       package_version = None
       try:
         package_version = pkg_resources.get_distribution(package).version
       except pkg_resources.DistributionNotFound:
         package_version = "Not Found"
-      metadata[f"Package Version: {package}"] = package_version
+      package_str += f"{package}: {package_version}\n"
+    metadata["Package Versions"] = package_str
 
     if xlml_metrics_dir:
       maybe_write_metrics_file(
