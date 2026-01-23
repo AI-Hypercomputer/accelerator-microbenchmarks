@@ -2,7 +2,7 @@ import os
 import yaml
 
 # Constants
-COMMON_MATRIX_DIM_RANGE = {"start": 2, "end": 131072, "multiplier": 2}
+COMMON_MATRIX_DIM_RANGE = {"start": 2, "end": 524288, "multiplier": 2}
 COMMON_DTYPE = "float32"
 COMMON_NUM_RUNS = 5
 
