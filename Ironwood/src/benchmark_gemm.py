@@ -557,12 +557,12 @@ def gemm_multiple_devices(
                 "ij,jk->ik", x, y, preferred_element_type=jnp.float32
             )
             return acc.astype(jnp.bfloat16)
-    SHARDING_STRATEGY = ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M
+    SHARDING_STRATEGY_MULTI_DEVICES = ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M
 
-    mesh = create_mesh(SHARDING_STRATEGY)
-    lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
-    rhs_sharding = get_rhs_named_shading(mesh, SHARDING_STRATEGY)
-    out_sharding = get_out_sharding(SHARDING_STRATEGY)
+    mesh = create_mesh(SHARDING_STRATEGY_MULTI_DEVICES)
+    lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY_MULTI_DEVICES)
+    rhs_sharding = get_rhs_named_shading(mesh, SHARDING_STRATEGY_MULTI_DEVICES)
+    out_sharding = get_out_sharding(SHARDING_STRATEGY_MULTI_DEVICES)
 
     jit_sharded_f = jax.jit(
         shard_map(
@@ -599,7 +599,7 @@ def gemm_multiple_devices(
 
     # Run the benchmark
 
-    print("Running gemm_multiple_run benchmark", num_runs)
+    print("Running gemm_multiple_devices benchmark", num_runs)
     dtype_str = "fp8" if dtype==jax.numpy.float8_e4m3fn else "bf16"
     time_ms_list = multiple_iteration_timeit_from_trace(
         jit_sharded_f,
@@ -622,10 +622,10 @@ def gemm_multiple_devices_calculate_metrics(
     time_ms_list: list[float],
 ) -> Dict[str, Any]:
     # Calculate FLOPs
-    SHARDING_STRATEGY = ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M
+    SHARDING_STRATEGY_MULTI_DEVICES = ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M
     total_flops = 2 * m * k * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(
-        total_flops, SHARDING_STRATEGY
+        total_flops, SHARDING_STRATEGY_MULTI_DEVICES
     )
     peak_flops = PEAK_FLOPS_PER_DEVICE if dtype==jax.numpy.float8_e4m3fn else PEAK_FLOPS_PER_DEVICE/2
     return unified_flops_metrics(

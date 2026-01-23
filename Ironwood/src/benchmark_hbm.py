@@ -107,16 +107,15 @@ def single_device_hbm_copy_calculate_metrics(
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
-SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
-
-def multiple_device_hbm_copy(
+def multiple_devices_hbm_copy(
     num_elements: int,
     dtype: jnp.dtype,
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks HBM with copy(read and write) on a single device."""
+    """Benchmarks HBM with copy(read and write) on multiple devices."""
 
+    SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
     def f(a):
         with jax.named_scope(MARKER):
             return a.copy()
@@ -143,10 +142,10 @@ def multiple_device_hbm_copy(
     )
     return {"time_ms_list": time_ms_list}
 
-def multiple_device_hbm_copy_calculate_metrics(
+def multiple_devices_hbm_copy_calculate_metrics(
     num_elements: int, dtype: jnp.dtype, time_ms_list: list
 ) -> Dict[str, Any]:
-    """Calculates the metrics for the single device hbm copy benchmark."""
+    """Calculates the metrics for the multiple devices hbm copy benchmark."""
     # Build dictionary of all the parameters in the function
     params = locals().items()
     metadata = get_metrics_helper(params)
