@@ -155,6 +155,7 @@ def gemm_multiple_run_calculate_metrics(
         total_flops,
         total_flops_all_devices,
         peak_flops,
+        dtype=dtype.dtype.name,
     )
 
 def gemm_simple(

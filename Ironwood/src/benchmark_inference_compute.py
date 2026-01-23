@@ -124,7 +124,7 @@ def add_calculate_metrics(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices
+        m, n, time_ms_list, total_bytes, total_bytes_all_devices, dtype=dtype.dtype.name
     )
 
 
@@ -191,7 +191,7 @@ def rmsnorm_calculate_metrics(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices
+        m, n, time_ms_list, total_bytes, total_bytes_all_devices, dtype=dtype.dtype.name
     )
 
 
@@ -264,7 +264,7 @@ def silu_mul_calculate_metrics(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices
+        m, n, time_ms_list, total_bytes, total_bytes_all_devices, dtype=dtype.dtype.name
     )
 
 
@@ -325,7 +325,7 @@ def sigmoid_calculate_metrics(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices
+        m, n, time_ms_list, total_bytes, total_bytes_all_devices, dtype=dtype.dtype.name
     )
 
 
@@ -413,4 +413,4 @@ def sigmoid_calculate_metrics(
 #     scale = 2 if dtype == jnp.bfloat16 else 1
 #     total_bytes = scale * 3 * m
 #     total_bytes, total_bytes_all_devices = handle_based_on_sharding(total_bytes, SHARDING_STRATEGY)
-#     return unified_bytes_metrics(m, 0,  time_ms_list, total_bytes, total_bytes_all_devices)
+#     return unified_bytes_metrics(m, 0,  time_ms_list, total_bytes, total_bytes_all_devices, dtype=dtype.dtype.name)
