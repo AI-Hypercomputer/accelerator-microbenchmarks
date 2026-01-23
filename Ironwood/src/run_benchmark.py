@@ -54,6 +54,7 @@ ATTENTION_BENCHMARK_MAP = {
 }
 HBM_BENCHMARK_MAP = {
     "single_device_hbm_copy": "benchmark_hbm.single_device_hbm_copy",
+    "multiple_device_hbm_copy": "benchmark_hbm.multiple_device_hbm_copy",
 }
 COMPUTE_BENCHMARK_MAP = {
     "gemm_simple": "benchmark_gemm.gemm_simple",
