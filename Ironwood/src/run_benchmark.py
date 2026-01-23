@@ -5,23 +5,26 @@ Sample usage (on TPU vm):
 """
 
 import argparse
+import ast
+from concurrent.futures import ThreadPoolExecutor
+import copy
 import datetime
 import importlib
 import inspect
 import itertools
+import json
+import os
 import random
 import string
 from typing import Any, Callable, Dict, List, Tuple
-from benchmark_utils import maybe_write_metrics_file, rename_xla_dump, MetricsStatistics
+from benchmark_utils import MetricsStatistics, maybe_write_metrics_file, rename_xla_dump
 import jax
-import yaml
-import ray
-from concurrent.futures import ThreadPoolExecutor
-import os
-import copy
 import pandas as pd
-import ast
-import json
+import pkg_resources
+import ray
+import yaml
+
+RELEVANT_PACKAGE_LIST = ["jax", "libtpu", "qwix"]
 
 COLLECTIVE_BENCHMARK_MAP = {
     "all_gather": "benchmark_collectives.all_gather_benchmark",
@@ -318,22 +321,24 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
 
 
 def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
-    """Run a single benchmark with one or more configurations."""
-    # Extract benchmark details
-    benchmark_name = benchmark_config.get("benchmark_name")
-    benchmark_params = benchmark_config.get("benchmark_params", [])
-    benchmark_sweep_params = benchmark_config.get("benchmark_sweep_params", {})
-    if benchmark_sweep_params:
-        benchmark_params += generate_benchmark_params_sweeping(benchmark_sweep_params)
-    csv_path = benchmark_config.get("csv_path")
-    trace_dir = benchmark_config.get("trace_dir")
-    xlml_metrics_dir = benchmark_config.get("xlml_metrics_dir")
-    xla_dump_dir = benchmark_config.get("xla_dump_dir")
-    if output_path != "":
-        # csv_path = os.path.join(output_path, benchmark_name)
-        trace_dir = os.path.join(output_path, benchmark_name, "trace")
-        xla_dump_dir = os.path.join(output_path, benchmark_name, "hlo_graphs")
-        xlml_metrics_dir = os.path.join(output_path, benchmark_name, "metrics")
+  """Run a single benchmark with one or more configurations."""
+  # Extract benchmark details
+  benchmark_name = benchmark_config.get("benchmark_name")
+  benchmark_params = benchmark_config.get("benchmark_params", [])
+  benchmark_sweep_params = benchmark_config.get("benchmark_sweep_params", {})
+  if benchmark_sweep_params:
+    benchmark_params += generate_benchmark_params_sweeping(
+        benchmark_sweep_params
+    )
+  csv_path = benchmark_config.get("csv_path")
+  trace_dir = benchmark_config.get("trace_dir")
+  xlml_metrics_dir = benchmark_config.get("xlml_metrics_dir")
+  xla_dump_dir = benchmark_config.get("xla_dump_dir")
+  if output_path != "":
+    # csv_path = os.path.join(output_path, benchmark_name)
+    trace_dir = os.path.join(output_path, benchmark_name, "trace")
+    xla_dump_dir = os.path.join(output_path, benchmark_name, "hlo_graphs")
+    xlml_metrics_dir = os.path.join(output_path, benchmark_name, "metrics")
     # Inject num_runs from config if not present in params
     global_num_runs = benchmark_config.get("num_runs")
     if global_num_runs is not None:
@@ -341,87 +346,95 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
             if "num_runs" not in param:
                 param["num_runs"] = global_num_runs
 
-    if not benchmark_name:
-        raise ValueError("Each benchmark must have a 'benchmark_name'.")
+  if not benchmark_name:
+    raise ValueError("Each benchmark must have a 'benchmark_name'.")
 
-    # Get the benchmark function
-    
-    benchmark_func, calculate_metrics_func = get_benchmark_functions(benchmark_name)
+  # Get the benchmark function
 
-    print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
+  benchmark_func, calculate_metrics_func = get_benchmark_functions(
+      benchmark_name
+  )
 
-    # Run the benchmark
-    calculate_metrics_results = []
-    for id, benchmark_param in enumerate(benchmark_params):
-        original_benchmark_param = copy.deepcopy(benchmark_param)
-        benchmark_param = preprocess_benchmark_param(
-            benchmark_param, trace_dir=os.path.join(trace_dir, f"benchmark_{id}")
-        )
-        print(f"Running benchmark: {benchmark_name} with params: {benchmark_param}")
-        test_start_time = (
-            datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
-        )  # "Z" indicates UTC
-        benchmark_func_params = inspect.signature(benchmark_func).parameters
-        try:
-            benchmark_results = benchmark_func(**benchmark_param)
-        except Exception as e:  # pylint: disable=broad-except
-            print(f"Benchmark func failed: {e}")
-            continue
-        test_end_time = (
-            datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
-        )
-        xla_output = None
-        if xla_dump_dir:
-            xla_output = rename_xla_dump(
-                tmp_xla_dump_dir=TMP_XLA_DUMP_DIR,
-                dest_xla_dump_dir=xla_dump_dir,
-                benchmark_name=benchmark_name,
-                benchmark_param=original_benchmark_param,
-            )
-        benchmark_results["xla_output"] = xla_output
-        # Filter benchmark_results to include only keys present in
-        # calculate_metrics_func
-        calculate_metrics_params = inspect.signature(
-            calculate_metrics_func
-        ).parameters
-        filtered_benchmark_results = {
-            key: value
-            for key, value in benchmark_results.items()
-            if key in calculate_metrics_params
-        }
+  print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
 
-        # Filter out certain parameters from benchmark_param, eg. "num_runs".
-        benchmark_params_to_filter = ["num_runs", "trace_dir"]
-        filtered_benchmark_param = {
-            key: value
-            for key, value in benchmark_param.items()
-            if key not in benchmark_params_to_filter
-        }
-        metadata, metrics = calculate_metrics_func(
-            **filtered_benchmark_param, **filtered_benchmark_results
-        )
-        if xlml_metrics_dir:
-            maybe_write_metrics_file(
-                xlml_metrics_dir,
-                metrics,
-                metadata,
-                benchmark_name,
-                test_start_time,
-                test_end_time,
-            )
-        # Post process the xla dump
-        calculate_metrics_results.append({
-            "metadata": metadata,
-            "metrics": metrics
-        })
+  # Run the benchmark
+  calculate_metrics_results = []
+  for id, benchmark_param in enumerate(benchmark_params):
+    original_benchmark_param = copy.deepcopy(benchmark_param)
+    benchmark_param = preprocess_benchmark_param(
+        benchmark_param, trace_dir=os.path.join(trace_dir, f"benchmark_{id}")
+    )
+    print(f"Running benchmark: {benchmark_name} with params: {benchmark_param}")
+    test_start_time = (
+        datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
+    )  # "Z" indicates UTC
+    benchmark_func_params = inspect.signature(benchmark_func).parameters
+    try:
+      benchmark_results = benchmark_func(**benchmark_param)
+    except Exception as e:  # pylint: disable=broad-except
+      print(f"Benchmark func failed: {e}")
+      continue
+    test_end_time = (
+        datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
+    )
+    xla_output = None
+    if xla_dump_dir:
+      xla_output = rename_xla_dump(
+          tmp_xla_dump_dir=TMP_XLA_DUMP_DIR,
+          dest_xla_dump_dir=xla_dump_dir,
+          benchmark_name=benchmark_name,
+          benchmark_param=original_benchmark_param,
+      )
+    benchmark_results["xla_output"] = xla_output
+    # Filter benchmark_results to include only keys present in
+    # calculate_metrics_func
+    calculate_metrics_params = inspect.signature(
+        calculate_metrics_func
+    ).parameters
+    filtered_benchmark_results = {
+        key: value
+        for key, value in benchmark_results.items()
+        if key in calculate_metrics_params
+    }
 
-    # Dump metrics to file.
-    if csv_path:
-        os.makedirs(csv_path, exist_ok=True)
-        test_name = f"t_{benchmark_name}_" + "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=10)
-        )
-        write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
+    # Filter out certain parameters from benchmark_param, eg. "num_runs".
+    benchmark_params_to_filter = ["num_runs", "trace_dir"]
+    filtered_benchmark_param = {
+        key: value
+        for key, value in benchmark_param.items()
+        if key not in benchmark_params_to_filter
+    }
+    metadata, metrics = calculate_metrics_func(
+        **filtered_benchmark_param, **filtered_benchmark_results
+    )
+
+    for package in RELEVANT_PACKAGE_LIST:
+      package_version = None
+      try:
+        package_version = pkg_resources.get_distribution(package).version
+      except pkg_resources.DistributionNotFound:
+        package_version = "Not Found"
+      metadata[f"Package Version: {package}"] = package_version
+
+    if xlml_metrics_dir:
+      maybe_write_metrics_file(
+          xlml_metrics_dir,
+          metrics,
+          metadata,
+          benchmark_name,
+          test_start_time,
+          test_end_time,
+      )
+    # Post process the xla dump
+    calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
+
+  # Dump metrics to file.
+  if csv_path:
+    os.makedirs(csv_path, exist_ok=True)
+    test_name = f"t_{benchmark_name}_" + "".join(
+        random.choices(string.ascii_uppercase + string.digits, k=10)
+    )
+    write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
 
 
 def main(args):
