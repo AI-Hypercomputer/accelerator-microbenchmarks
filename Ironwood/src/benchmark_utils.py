@@ -1140,7 +1140,9 @@ def unified_flops_metrics(
         metrics_list=tflops_per_sec_all_devices, metrics_name="tflops_per_sec"
     )
     mfu_statistics = MetricsStatistics(metrics_list=mfu, metrics_name="MFU")
+    dtype_prefix = f"[{dtype}] " if dtype is not None else ""
     print(
+        f"{dtype_prefix}"
         f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, "
         f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOP / second / device, "
         f"TotalThroughput (median): {tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} TFLOP / second, "
@@ -1204,19 +1206,23 @@ def unified_bytes_metrics(
     gigabytes_per_sec_all_devices_statistics = MetricsStatistics(
         metrics_list=digabytes_per_sec_all_devices, metrics_name="Gbytes_per_sec"
     )
+    type_prefix = ""
+    # Gather the metrics to report.
+    if quant_dtype is not None:
+        metadata.update({"quant_dtype": quant_dtype})
+        metrics.update({"quant_dtype": quant_dtype})
+        type_prefix = f"[q={quant_dtype}] "
+    if dtype is not None:
+        metadata.update({"dtype": dtype})
+        metrics.update({"dtype": dtype})
+        type_prefix = f"[d={dtype}] "
     print(
+        f"{type_prefix}"
         f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Throughput (median):"
         f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second / device,"
         f" TotalThroughput (median): {gigabytes_per_sec_all_devices_statistics.statistics['p50']:.2f} GBytes / second"
     )
     print()
-    # Gather the metrics to report.
-    if quant_dtype is not None:
-        metadata.update({"quant_dtype": quant_dtype})
-        metrics.update({"quant_dtype": quant_dtype})
-    if dtype is not None:
-        metadata.update({"dtype": dtype})
-        metrics.update({"dtype": dtype})
     metadata.update(
         {
             "StepTime(median,ms)": average_time_ms_statistics.statistics["p50"],
