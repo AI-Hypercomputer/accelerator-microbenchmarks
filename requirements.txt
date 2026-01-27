@@ -14,3 +14,4 @@ qwix@git+https://github.com/google/qwix.git
 tokamax
 tune-jax
 immutabledict
+gcsfs
