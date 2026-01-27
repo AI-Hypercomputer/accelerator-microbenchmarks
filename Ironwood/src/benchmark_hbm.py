@@ -6,11 +6,15 @@ from typing import Any, Dict, Tuple
 from benchmark_utils import (
     MetricsStatistics,
     multiple_iteration_timeit_from_trace,
+    ShardingStrategy,
+    create_mesh,
 )
 from common import MARKER
 import jax
 import jax.numpy as jnp
 
+from jax.sharding import NamedSharding
+from jax.sharding import PartitionSpec as P
 
 SEED = 0
 os.environ["LIBTPU_INIT_ARGS"] = (
@@ -70,6 +74,78 @@ def single_device_hbm_copy_calculate_metrics(
     num_elements: int, dtype: jnp.dtype, time_ms_list: list
 ) -> Dict[str, Any]:
     """Calculates the metrics for the single device hbm copy benchmark."""
+    # Build dictionary of all the parameters in the function
+    params = locals().items()
+    metadata = get_metrics_helper(params)
+    metrics = {}
+
+    # Calculate throughput.
+    tensor_size_bytes = num_elements * dtype.dtype.itemsize
+
+    tensor_size_gbytes = (tensor_size_bytes * 2) / 10**9
+    time_statistics = MetricsStatistics(
+        metrics_list=time_ms_list, metrics_name="time_ms"
+    )
+    time_s_list = [time_ms / 10**3 for time_ms in time_ms_list]
+    bw_gbyte_sec_list = [tensor_size_gbytes / time_s for time_s in time_s_list]
+    statistics = MetricsStatistics(
+        metrics_list=bw_gbyte_sec_list, metrics_name="bw_gbyte_sec"
+    )
+    print(
+        f"Tensor size: {tensor_size_bytes / 1024**2} MB, time taken (median):"
+        f" {time_statistics.statistics['p50']:.4f} ms, bandwidth (median): {statistics.statistics['p50']:.3f} GB/s"
+    )
+    print()
+    # Gather the metrics to report.
+    metadata.update(
+        {
+            "tensor_size_gbytes": tensor_size_gbytes,
+        }
+    )
+    metrics.update(time_statistics.serialize_statistics())
+    metrics.update(statistics.serialize_statistics())
+    metrics = {key: value for key, value in metrics.items() if value is not None}
+    return metadata, metrics
+
+def multiple_devices_hbm_copy(
+    num_elements: int,
+    dtype: jnp.dtype,
+    num_runs: int = 1,
+    trace_dir: str = None,
+) -> Dict[str, Any]:
+    """Benchmarks HBM with copy(read and write) on multiple devices."""
+
+    SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
+    def f(a):
+        with jax.named_scope(MARKER):
+            return a.copy()
+
+    mesh = create_mesh(SHARDING_STRATEGY)
+    sharding = NamedSharding(mesh, P(None,))
+
+    a = jax.random.normal(jax.random.key(0), (num_elements,), out_sharding=sharding).astype(dtype)
+    print(a.shape)
+    print(a.dtype)
+    jitted_f = jax.jit(f)
+    # Run once
+    output = jitted_f(a)
+    jax.block_until_ready(output)
+
+    # Run the benchmark
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        compute_func=jitted_f,
+        data_generator=lambda: (a,),
+        matrix_dim=f"{num_elements}",
+        tries=num_runs,
+        task="copy",
+        trace_dir=trace_dir,
+    )
+    return {"time_ms_list": time_ms_list}
+
+def multiple_devices_hbm_copy_calculate_metrics(
+    num_elements: int, dtype: jnp.dtype, time_ms_list: list
+) -> Dict[str, Any]:
+    """Calculates the metrics for the multiple devices hbm copy benchmark."""
     # Build dictionary of all the parameters in the function
     params = locals().items()
     metadata = get_metrics_helper(params)
