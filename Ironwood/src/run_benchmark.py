@@ -316,7 +316,30 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
     print(f"Metrics written to CSV at {csv_path}.")
 
 
-def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
+def write_metrics_to_gcs(
+    gcs_bucket_csv_dir: str,
+    config_path: str,
+    test_name: str,
+    calculate_metrics_results: List[Dict[str, Any]],
+):
+    """Writes metrics to GCS bucket defined by gcs_bucket_csv_dir."""
+    if not gcs_bucket_csv_dir:
+        return
+
+    config_dir = os.path.dirname(config_path)
+    if not config_dir:
+        print("No config directory found, the config path is: ", config_path)
+        config_category = "root"
+    else:
+        config_category = os.path.basename(config_dir)
+
+    config_stem = os.path.splitext(os.path.basename(config_path))[0]
+
+    gcs_path = os.path.join(gcs_bucket_csv_dir, config_category, config_stem)
+    write_to_csv(f"{gcs_path}/{test_name}.tsv", calculate_metrics_results)
+
+
+def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str, gcs_bucket_csv_dir: str = None, config_path: str = None):
     """Run a single benchmark with one or more configurations."""
     # Extract benchmark details
     benchmark_name = benchmark_config.get("benchmark_name")
@@ -413,13 +436,18 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
             "metrics": metrics
         })
 
-    # Dump metrics to file.
+    test_name = f"t_{benchmark_name}_" + "".join(
+        random.choices(string.ascii_uppercase + string.digits, k=10)
+    )
+
     if csv_path:
         os.makedirs(csv_path, exist_ok=True)
-        test_name = f"t_{benchmark_name}_" + "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=10)
-        )
         write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
+
+    if gcs_bucket_csv_dir:
+        write_metrics_to_gcs(
+            gcs_bucket_csv_dir, config_path, test_name, calculate_metrics_results
+        )
 
 
 def main(args):
@@ -428,6 +456,7 @@ def main(args):
     config_path = args.config
     multithreaded = args.multithreaded
     output_path = args.output_path
+    gcs_bucket_csv_dir = args.gcs_bucket_csv_dir
     config = get_benchmark_config(config_path)
     benchmarks = config.get("benchmarks")
     if not benchmarks or not isinstance(benchmarks, list):
@@ -459,14 +488,14 @@ def main(args):
         # print("Num hosts detected: %d", num_hosts)
 
         for benchmark_config in benchmarks:
-            run_benchmark_multithreaded(benchmark_config, output_path)
+            run_benchmark_multithreaded(benchmark_config, output_path, gcs_bucket_csv_dir, config_path)
 
     else:
         for benchmark_config in benchmarks:
-            run_single_benchmark(benchmark_config, output_path)
+            run_single_benchmark(benchmark_config, output_path, gcs_bucket_csv_dir, config_path)
 
 
-def run_benchmark_multithreaded(benchmark_config, output_path):
+def run_benchmark_multithreaded(benchmark_config, output_path, gcs_bucket_csv_dir=None, config_path=None):
     # Extract benchmark details
     benchmark_name = benchmark_config.get("benchmark_name")
     benchmark_params = benchmark_config.get("benchmark_params", [])
@@ -543,6 +572,11 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
         os.makedirs(csv_path, exist_ok=True)
         write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
 
+    if gcs_bucket_csv_dir:
+        write_metrics_to_gcs(
+            gcs_bucket_csv_dir, config_path, test_name, calculate_metrics_results
+        )
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -559,6 +593,12 @@ if __name__ == "__main__":
         type=str,
         default="",
         help="Path to output.",
+    )
+    parser.add_argument(
+        "--gcs-bucket-csv-dir",
+        type=str,
+        default=None,
+        help="GCS bucket directory to write CSVs to.",
     )
     parser.add_argument(
         "--multithreaded",
