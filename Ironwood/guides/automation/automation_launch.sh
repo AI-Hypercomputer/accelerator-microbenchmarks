@@ -6,7 +6,6 @@
 export GCS_PATH=""
 
 yaml_names=("tpu7x-2x2x1-hbm.yaml" "tpu7x-2x2x2-hbm.yaml")
-job_names=("tpu7x-8-hbm" "tpu7x-16-hbm")
 
 ######################################################################
 #                        VALIDATION & SETUP
@@ -28,26 +27,127 @@ fi
 #                 LAUNCH JOBS & WAIT FOR COMPLETION
 ######################################################################
 
-length=${#yaml_names[@]}
-for (( i=0; i<length; i++ )); do
-    yaml_file=${yaml_names[${i}]}
-    export JOB_NAME=${job_names[${i}]}
-    echo "Launch job: ${yaml_file}"
-    envsubst '${JOB_NAME} ${GCS_PATH}' < ${yaml_file} | kubectl apply -f -
-    (
-        echo "Job launched successfully!"
-        if kubectl wait --for=condition=complete job/${JOB_NAME} --timeout=1800s &> /dev/null; then
-            echo "Job from ${yaml_file} is completed!"
-        else
-            echo "Job from ${yaml_file} failed!"
-            
+
+# Function to wait for a job to complete or fail
+wait_for_job_completion() {
+    local job_name="$1"
+    local timeout="$2"
+    local start_time=$(date +%s)
+    local end_time=$((start_time + timeout))
+
+    while true; do
+        current_time=$(date +%s)
+        if [[ $current_time -gt $end_time ]]; then
+            echo "Timeout waiting for job ${job_name}"
+            return 2
         fi
-        envsubst '${JOB_NAME} ${GCS_PATH}' < ${yaml_file} | kubectl delete -f -
-    ) &
+
+        # Check for Complete condition
+        if kubectl get job "${job_name}" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null | grep -q "True"; then
+            echo "Job ${job_name} completed successfully!"
+            return 0
+        fi
+
+        # Check for Failed condition
+        if kubectl get job "${job_name}" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null | grep -q "True"; then
+            echo "Job ${job_name} FAILED!"
+            return 1
+        fi
+
+        sleep 5
+    done
+}
+
+# Function to apply jobs and wait for them to complete
+# Returns a list of failed yaml files in the variable FAILED_JOBS
+apply_and_wait() {
+    local yaml_files=("$@")
+    local pids=()
+    local job_names_in_batch=()
+    FAILED_JOBS=()
+
+    echo "Processing batch of ${#yaml_files[@]} jobs..."
+
+    # Launch all jobs
+    for yaml_file in "${yaml_files[@]}"; do
+        local filepath="${SCRIPT_DIR}/${yaml_file}"
+        # Derive job name: remove .yaml, lowercase, replace _ with -
+        local job_name=$(basename "${yaml_file}" .yaml | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+        export JOB_NAME="${job_name}"
+        
+        echo "Launching job: ${filepath} (name: ${JOB_NAME})"
+        envsubst '${JOB_NAME} ${GCS_PATH}' < "${filepath}" | kubectl apply -f -
+        job_names_in_batch+=("${JOB_NAME}")
+    done
+
+    # Wait for completion in background
+    for i in "${!yaml_files[@]}"; do
+        local yaml_file="${yaml_files[$i]}"
+        local filepath="${SCRIPT_DIR}/${yaml_file}"
+        local job_name="${job_names_in_batch[$i]}"
+
+        (
+            wait_for_job_completion "${job_name}" 1800
+            wait_status=$?
+
+            export JOB_NAME="${job_name}"
+            envsubst '${JOB_NAME} ${GCS_PATH}' < "${filepath}" | kubectl delete -f - &> /dev/null
+            exit $wait_status
+        ) &
+        pids+=($!)
+    done
+
+    # Collect results
+    for i in "${!pids[@]}"; do
+        wait "${pids[$i]}"
+        if [[ $? -ne 0 ]]; then
+            FAILED_JOBS+=("${yaml_files[$i]}")
+        fi
+    done
+}
+
+# Retry loop
+current_batch=("${yaml_names[@]}")
+MAX_RETRIES=3
+
+for (( retry=1; retry<=MAX_RETRIES; retry++ )); do
+    apply_and_wait "${current_batch[@]}"
+    
+    if [[ ${#FAILED_JOBS[@]} -eq 0 ]]; then
+        echo "All jobs completed successfully in Round ${retry}!"
+        break
+    fi
+    
+    echo "Round ${retry} finished. ${#FAILED_JOBS[@]} jobs failed."
+    current_batch=("${FAILED_JOBS[@]}")
+    
+    if [[ ${retry} -lt ${MAX_RETRIES} ]]; then
+        echo "Retrying failed jobs..."
+        echo "========================================"
+        echo "$((retry + 1)) / ${MAX_RETRIES}" max retries
+        echo "========================================"
+    else
+        echo "Max retries reached. ¯\_(ツ)_/¯"
+    fi
 done
 
-echo "All jobs dispatched. Waiting for results..."
-wait
-echo "All processing done."
+echo ""
+echo "Jobs completed. Aggregating results..."
+echo ""
 
 kubectl apply -f aggregator.yaml
+
+# Print the failed jobs at the end for better visibility.
+
+if [[ ${#FAILED_JOBS[@]} -gt 0 ]]; then
+    echo "The following jobs finally failed after ${MAX_RETRIES} rounds:"
+    printf '%s\n' "${FAILED_JOBS[@]}"
+
+    echo -e "\nTo retry manually, run:"
+    for yaml_file in "${FAILED_JOBS[@]}"; do
+        job_name=$(basename "${yaml_file}" .yaml | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+        echo "JOB_NAME=\"${job_name}\" GCS_PATH=\"${GCS_PATH}\" envsubst '\${JOB_NAME} \${GCS_PATH}' < \"${SCRIPT_DIR}/${yaml_file}\" | kubectl apply -f -"
+    done
+else
+    echo "Success! All jobs finished."
+fi
