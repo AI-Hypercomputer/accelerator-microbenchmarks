@@ -583,13 +583,13 @@ if __name__ == "__main__":
   )
   parser.add_argument(
       "--multithreaded",
-      type=bool,
+      action="store_true",
       default=False,
-      help="Path to the YAML configuration file.",
+      help="Run in multithreaded mode.",
   )
   parser.add_argument(
       "--demo",
-      type=bool,
+      action="store_true",
       default=False,
       help="Run a demo.",
   )
