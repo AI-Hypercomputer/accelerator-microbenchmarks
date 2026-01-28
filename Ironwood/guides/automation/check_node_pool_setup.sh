@@ -1,7 +1,11 @@
 #!/bin/bash
 
 required_chip="tpu7x"
-required_topologies=("2x2x1" "2x2x2" "2x2x4" "2x4x4" "4x4x4")
+if [[ $# -gt 0 ]]; then
+  required_topologies=("$@")
+else
+  required_topologies=("2x2x1" "2x2x2" "2x2x4" "2x4x4" "4x4x4")
+fi
 
 echo "Checking for required GKE TPU configurations..."
 echo "Required TPU Type: ${required_chip}"

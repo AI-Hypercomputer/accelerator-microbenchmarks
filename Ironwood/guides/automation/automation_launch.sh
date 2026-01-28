@@ -18,8 +18,10 @@ fi
 
 echo "The intermediate result will be written to ${GCS_PATH}"
 
+required_topologies=($(printf "%s\n" "${yaml_names[@]}" | grep -oE '[0-9]+x[0-9]+x[0-9]+' | sort -u))
+
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-if ! bash "${SCRIPT_DIR}/check_node_pool_setup.sh"; then
+if ! bash "${SCRIPT_DIR}/check_node_pool_setup.sh" "${required_topologies[@]}"; then
   exit 1
 fi
 
