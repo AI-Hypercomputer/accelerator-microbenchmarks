@@ -252,75 +252,78 @@ def generate_benchmark_params_sweeping(
 
 
 def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]]):
-    """Writes benchmark metrics to a CSV file.
+  """Writes benchmark metrics to a CSV file.
 
-    This function takes a list of dictionaries, where each dictionary contains
-    the 'metadata' and 'metrics' from a benchmark run. It processes each
-    dictionary by flattening it, calculating additional statistics for specific
-    fields (like 'ici_average_time_ms_list'), and then converting it into a
-    pandas DataFrame. All resulting DataFrames are concatenated and written to
-    the specified CSV file.
+  This function takes a list of dictionaries, where each dictionary contains
+  the 'metadata' and 'metrics' from a benchmark run. It processes each
+  dictionary by flattening it, calculating additional statistics for specific
+  fields (like 'ici_average_time_ms_list'), and then converting it into a
+  pandas DataFrame. All resulting DataFrames are concatenated and written to
+  the specified CSV file.
 
-    Args:
-        csv_path: The path to the output CSV file.
-        calculate_metrics_results: A list of dictionaries with benchmark results.
-    """
-    if not calculate_metrics_results:
-        raise ValueError("0 metrics results are collected.")
-    if not isinstance(calculate_metrics_results[0], dict):
-        raise ValueError("metrics result is not a dict.")
+  Args:
+      csv_path: The path to the output CSV file.
+      calculate_metrics_results: A list of dictionaries with benchmark results.
+  """
 
-    def flatten_dict(current_dict: Dict) -> Dict:
-        """Recursively flattens a nested dictionary."""
-        output_dict = {}
-        for key, val in current_dict.items():
-            if isinstance(val, Dict):
-                output_dict.update(flatten_dict(val))
-            else:
-                # Try to evaluate string-formatted literals (e.g., "[1, 2, 3]")
-                try:
-                    output_dict[key] = ast.literal_eval(val)
-                except (ValueError, SyntaxError, TypeError):
-                    # If it's not a valid literal, keep it as a string.
-                    output_dict[key] = val
-        return output_dict
+  if not calculate_metrics_results:
+    raise ValueError("0 metrics results are collected.")
+  if not isinstance(calculate_metrics_results[0], dict):
+    raise ValueError("metrics result is not a dict.")
 
-    def convert_dict_to_df(target_dict: Dict) -> pd.DataFrame:
-        """Converts a single benchmark result dictionary to a pandas DataFrame."""
-        flattened_dict = flatten_dict(target_dict)
+  def flatten_dict(current_dict: Dict) -> Dict:
+    """Recursively flattens a nested dictionary."""
+    output_dict = {}
+    for key, val in current_dict.items():
+      if isinstance(val, Dict):
+        output_dict.update(flatten_dict(val))
+      else:
+        # Try to evaluate string-formatted literals (e.g., "[1, 2, 3]")
+        try:
+          output_dict[key] = ast.literal_eval(val)
+        except (ValueError, SyntaxError, TypeError):
+          # If it's not a valid literal, keep it as a string.
+          output_dict[key] = val
+    return output_dict
 
-        # This section is specific to collective benchmarks that produce
-        # 'ici_average_time_ms_list'.
-        if "ici_average_time_ms_list" in flattened_dict:
-            # Calculate statistics for the timing list.
-            ici_average_time_ms_statistics = MetricsStatistics(
-                metrics_list=flattened_dict["ici_average_time_ms_list"],
-                metrics_name="ici_average_time_ms",
-            ).statistics
-            for key, val in ici_average_time_ms_statistics.items():
-                flattened_dict["ici_average_time_ms_" + key] = val
+  def convert_dict_to_df(target_dict: Dict) -> pd.DataFrame:
+    """Converts a single benchmark result dictionary to a pandas DataFrame."""
+    flattened_dict = flatten_dict(target_dict)
 
-            # Convert list to JSON string for CSV storage.
-            flattened_dict["ici_average_time_ms_list"] = json.dumps(
-                flattened_dict["ici_average_time_ms_list"]
-            )
+    # This section is specific to collective benchmarks that produce
+    # 'ici_average_time_ms_list'.
+    if "ici_average_time_ms_list" in flattened_dict:
+      # Calculate statistics for the timing list.
+      ici_average_time_ms_statistics = MetricsStatistics(
+          metrics_list=flattened_dict["ici_average_time_ms_list"],
+          metrics_name="ici_average_time_ms",
+      ).statistics
+      for key, val in ici_average_time_ms_statistics.items():
+        flattened_dict["ici_average_time_ms_" + key] = val
 
-        df = pd.DataFrame(flattened_dict, index=[0])
-        return df
+      # Convert list to JSON string for CSV storage.
+      flattened_dict["ici_average_time_ms_list"] = json.dumps(
+          flattened_dict["ici_average_time_ms_list"]
+      )
 
-    # TODO(hylin2002@)
-    # This is a temporary workaround to generate a properly formatted CSV file for the output metrics.
-    # We should revert this PR and refactor the code such that metrics object is a flatten dict that can be easily exported as a CSV.
-    # For other information that requires nested structures, we should serialize it into a json file."
-    df_list = [convert_dict_to_df(each) for each in calculate_metrics_results]
-    df = pd.concat(df_list, ignore_index=True)
+    df = pd.DataFrame(flattened_dict, index=[0])
+    return df
 
-    df.to_csv(csv_path, index=False, sep="\t")
+  # TODO(hylin2002@)
+  # This is a temporary workaround to generate a properly formatted CSV file for the output metrics.
+  # We should revert this PR and refactor the code such that metrics object is a flatten dict that can be easily exported as a CSV.
+  # For other information that requires nested structures, we should serialize it into a json file."
+  df_list = [convert_dict_to_df(each) for each in calculate_metrics_results]
+  df = pd.concat(df_list, ignore_index=True)
 
-    print(f"Metrics written to CSV at {csv_path}.")
+  df.to_csv(csv_path, index=False, sep="\t")
+
+  print(f"Metrics written to CSV at {csv_path}.")
 
 
-def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
+def run_single_benchmark(
+    benchmark_config: Dict[str, Any], output_path: str, demo: bool = False
+):
   """Run a single benchmark with one or more configurations."""
   # Extract benchmark details
   benchmark_name = benchmark_config.get("benchmark_name")
@@ -429,7 +432,8 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
       )
     # Post process the xla dump
     calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
-
+    if demo:
+      break
   # Dump metrics to file.
   if csv_path:
     os.makedirs(csv_path, exist_ok=True)
@@ -440,47 +444,47 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
 
 
 def main(args):
-    """Main function."""
-    # Load configuration
-    config_path = args.config
-    multithreaded = args.multithreaded
-    output_path = args.output_path
-    config = get_benchmark_config(config_path)
-    benchmarks = config.get("benchmarks")
-    if not benchmarks or not isinstance(benchmarks, list):
-        raise ValueError("Configuration must contain a 'benchmarks' list.")
+  """Main function."""
+  # Load configuration
+  config_path = args.config
+  multithreaded = args.multithreaded
+  output_path = args.output_path
+  config = get_benchmark_config(config_path)
+  benchmarks = config.get("benchmarks")
+  if not benchmarks or not isinstance(benchmarks, list):
+    raise ValueError("Configuration must contain a 'benchmarks' list.")
 
-    # Clear the tmp dirs.
-    if os.path.exists(TMP_XLA_DUMP_DIR):
-        for filename in os.listdir(TMP_XLA_DUMP_DIR):
-            file_path = os.path.join(TMP_XLA_DUMP_DIR, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
+  # Clear the tmp dirs.
+  if os.path.exists(TMP_XLA_DUMP_DIR):
+    for filename in os.listdir(TMP_XLA_DUMP_DIR):
+      file_path = os.path.join(TMP_XLA_DUMP_DIR, filename)
+      if os.path.isfile(file_path):
+        os.remove(file_path)
 
-    if multithreaded:
-        ray.init(
-            runtime_env=ray.runtime_env.RuntimeEnv(
-                address="ray://tpu-ray-cluster-head-svc:10001",
-                env_vars={
-                    "XLA_IR_DEBUG": "1",
-                    "XLA_HLO_DEBUG": "1",
-                    "PJRT_DEVICE": "TPU",
-                    # "LIBTPU_INIT_ARGS": "--xla_tpu_scoped_vmem_limit_kib=25602",
-                },
-            )
+  if multithreaded:
+    ray.init(
+        runtime_env=ray.runtime_env.RuntimeEnv(
+            address="ray://tpu-ray-cluster-head-svc:10001",
+            env_vars={
+                "XLA_IR_DEBUG": "1",
+                "XLA_HLO_DEBUG": "1",
+                "PJRT_DEVICE": "TPU",
+                # "LIBTPU_INIT_ARGS": "--xla_tpu_scoped_vmem_limit_kib=25602",
+            },
         )
+    )
 
-        # Calculate the number of TPU hosts within our Ray cluster...
-        # num_hosts = int(ray.available_resources()["TPU"]) // 4
-        print(ray.available_resources())
-        # print("Num hosts detected: %d", num_hosts)
+    # Calculate the number of TPU hosts within our Ray cluster...
+    # num_hosts = int(ray.available_resources()["TPU"]) // 4
+    print(ray.available_resources())
+    # print("Num hosts detected: %d", num_hosts)
 
-        for benchmark_config in benchmarks:
-            run_benchmark_multithreaded(benchmark_config, output_path)
+    for benchmark_config in benchmarks:
+      run_benchmark_multithreaded(benchmark_config, output_path)
 
-    else:
-        for benchmark_config in benchmarks:
-            run_single_benchmark(benchmark_config, output_path)
+  else:
+    for benchmark_config in benchmarks:
+      run_single_benchmark(benchmark_config, output_path, args.demo)
 
 
 def run_benchmark_multithreaded(benchmark_config, output_path):
@@ -562,26 +566,32 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Run microbenchmarks and collect metrics."
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        required=True,
-        help="Path to the YAML configuration file.",
-    )
-    parser.add_argument(
-        "--output_path",
-        type=str,
-        default="",
-        help="Path to output.",
-    )
-    parser.add_argument(
-        "--multithreaded",
-        type=bool,
-        default=False,
-        help="Path to the YAML configuration file.",
-    )
-    args = parser.parse_args()
-    main(args)
+  parser = argparse.ArgumentParser(
+      description="Run microbenchmarks and collect metrics."
+  )
+  parser.add_argument(
+      "--config",
+      type=str,
+      required=True,
+      help="Path to the YAML configuration file.",
+  )
+  parser.add_argument(
+      "--output_path",
+      type=str,
+      default="",
+      help="Path to output.",
+  )
+  parser.add_argument(
+      "--multithreaded",
+      type=bool,
+      default=False,
+      help="Path to the YAML configuration file.",
+  )
+  parser.add_argument(
+      "--demo",
+      type=bool,
+      default=False,
+      help="Run a demo.",
+  )
+  args = parser.parse_args()
+  main(args)

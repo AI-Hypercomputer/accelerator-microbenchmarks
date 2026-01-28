@@ -4,21 +4,18 @@
 
 
 
+CONFIG_DIR="Ironwood/configs/collectives/8x8x8"
 
-CONFIG_NAMES='reduce_scatter_1d reduce_scatter_2d reduce_scatter_3d all_gather_1d all_gather_2d all_gather_3d all_reduce_1d all_reduce_2d all_reduce_3d all_to_all_1d all_to_all_2d all_to_all_3d'
-
-
-for CONFIG in $CONFIG_NAMES
+for CONFIG_FILE in "$CONFIG_DIR"/*.yaml
 do
-  # Construct the full config file path
-  CONFIG_FILE="Ironwood/configs/collectives/8x8x8/${CONFIG}.yaml"
+  CONFIG_NAME=$(basename "$CONFIG_FILE" .yaml)
   
-  echo "--- Starting benchmark for ${CONFIG} ---"
+  echo "--- Starting benchmark for ${CONFIG_NAME} ---"
   
   # Run the python script and wait for it to complete
   python Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}"
 
   wait 
   
-  echo "--- Finished benchmark for ${CONFIG} ---"
+  echo "--- Finished benchmark for ${CONFIG_NAME} ---"
 done
