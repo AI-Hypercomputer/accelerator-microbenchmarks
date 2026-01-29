@@ -10,10 +10,10 @@ MAX_RETRIES=3
 TIMEOUT_SECOND=3600
 
 yaml_names=(
-    "tpu7x-2x2x1-hbm.yaml" "tpu7x-2x2x1-h2d.yaml" "tpu7x-2x2x1-gemm.yaml" "tpu7x-2x2x1-collectives.yaml"
-    "tpu7x-2x2x2-hbm.yaml" "tpu7x-2x2x2-h2d.yaml" "tpu7x-2x2x2-gemm.yaml" "tpu7x-2x2x2-collectives.yaml"
-    "tpu7x-2x2x4-hbm.yaml" "tpu7x-2x2x4-h2d.yaml" "tpu7x-2x2x4-gemm.yaml" "tpu7x-2x2x4-collectives.yaml"
-    "tpu7x-2x4x4-hbm.yaml" "tpu7x-2x4x4-h2d.yaml" "tpu7x-2x4x4-gemm.yaml" "tpu7x-2x4x4-collectives.yaml"
+    "tpu7x-2x2x1-hbm.yaml" "tpu7x-2x2x1-host_device.yaml" "tpu7x-2x2x1-gemm.yaml" "tpu7x-2x2x1-collectives.yaml"
+    "tpu7x-2x2x2-hbm.yaml" "tpu7x-2x2x2-host_device.yaml" "tpu7x-2x2x2-gemm.yaml" "tpu7x-2x2x2-collectives.yaml"
+    "tpu7x-2x2x4-hbm.yaml" "tpu7x-2x2x4-host_device.yaml" "tpu7x-2x2x4-gemm.yaml" "tpu7x-2x2x4-collectives.yaml"
+    "tpu7x-2x4x4-hbm.yaml" "tpu7x-2x4x4-host_device.yaml" "tpu7x-2x4x4-gemm.yaml" "tpu7x-2x4x4-collectives.yaml"
 )
 
 ######################################################################
