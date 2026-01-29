@@ -11,8 +11,11 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: ${JOB_NAME}
+  labels:
+    kueue.x-k8s.io/queue-name: user-queue-2x2x2
 spec:
   completionMode: Indexed
+  suspend: true
   parallelism: 2
   completions: 2
   backoffLimit: 0

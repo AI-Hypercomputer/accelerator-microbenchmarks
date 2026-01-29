@@ -34,6 +34,12 @@ if ! bash "${SCRIPT_DIR}/check_node_pool_setup.sh" "${required_topologies[@]}"; 
   exit 1
 fi
 
+for topology in "${required_topologies[@]}"; do
+    export TOPOLOGY="${topology}"
+    export TPUS=$(echo "${TOPOLOGY}" | sed 's/x/*/g' | bc)
+    envsubst '${TOPOLOGY} ${TPUS}' < ${SCRIPT_DIR}/job-queue.yaml | kubectl apply -f -
+done
+
 ######################################################################
 #                 LAUNCH JOBS & WAIT FOR COMPLETION
 ######################################################################
@@ -85,7 +91,7 @@ apply_and_wait() {
         # Derive job name: remove .yaml, lowercase, replace _ with -
         local job_name=$(basename "${yaml_file}" .yaml | tr '[:upper:]' '[:lower:]' | tr '_' '-')
         export JOB_NAME="${job_name}"
-        local GCS_PATH="${GCS_BUCKET_ROOT_DIR}/${job_name}"
+        export GCS_PATH="${GCS_BUCKET_ROOT_DIR}/${job_name}"
         
         echo "Launching job: ${filepath} (name: ${JOB_NAME})"
         envsubst '${JOB_NAME} ${GCS_PATH}' < "${filepath}" | kubectl apply -f -
@@ -97,7 +103,7 @@ apply_and_wait() {
         local yaml_file="${yaml_files[$i]}"
         local filepath="${SCRIPT_DIR}/${yaml_file}"
         local job_name="${job_names_in_batch[$i]}"
-        local GCS_PATH="${GCS_BUCKET_ROOT_DIR}/${job_name}"
+        export GCS_PATH="${GCS_BUCKET_ROOT_DIR}/${job_name}"
         (
             wait_for_job_completion "${job_name}" ${TIMEOUT_SECOND}
             wait_status=$?
