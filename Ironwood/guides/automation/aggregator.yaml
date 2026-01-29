@@ -7,10 +7,17 @@ spec:
     spec:
       containers:
       - name: main-app
-        image: ubuntu
-        command: ["/bin/sh", "-c"]
-        args:
+        image: python:3.12
+        command:
+        - bash
+        - -c
         - |
-          echo "Collectives job is finally done."
-          echo "Everything is all fine!"
+          set -ex
+          git clone https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git
+          cd accelerator-microbenchmarks
+          git checkout tpu7x-auto
+
+          GCS_BUCKET_DIR=${GCS_PATH}
+          python Ironwood/guides/automation/aggregator.py --bucket_path=${GCS_BUCKET_DIR}
+          sleep infinity
       restartPolicy: Never

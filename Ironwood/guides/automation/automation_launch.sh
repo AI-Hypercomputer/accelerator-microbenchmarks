@@ -152,7 +152,7 @@ echo ""
 echo "Jobs completed. Aggregating results..."
 echo ""
 
-kubectl apply -f aggregator.yaml
+envsubst '${GCS_BUCKET_ROOT_DIR}' < ${SCRIPT_DIR}/aggregator.yaml | kubectl apply -f -
 
 # Print the failed jobs at the end for better visibility.
 
