@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: aggregator
+  name: wait
 spec:
   template:
     spec:
@@ -20,5 +20,4 @@ spec:
 
           GCS_BUCKET_DIR=${GCS_BUCKET_ROOT_DIR}
           python Ironwood/guides/automation/aggregator.py --bucket_path=${GCS_BUCKET_DIR}
-          sleep infinity
       restartPolicy: Never
