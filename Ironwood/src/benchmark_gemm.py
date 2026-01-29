@@ -213,6 +213,8 @@ def gemm_simple(
         return (lhs_device, rhs_device)
 
     # Run the benchmark
+    num_runs = 1 
+    ## Need to fix gemm timing logic to handle num_runs > 1
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
@@ -299,6 +301,9 @@ def gemm_simple_with_dtype(
         rhs_device = jax.device_put(rhs_host, rhs_sharding)
 
         return (lhs_device, rhs_device)
+
+    num_runs = 1 
+    ## Need to fix gemm timing logic to handle num_runs > 1
 
     # Run the benchmark
     time_ms_list = iteration_timeit(
@@ -401,6 +406,9 @@ def gemm(
         sf1_device = jax.device_put(sf1_host, sf1_sharding)
 
         return (lhs_device, rhs_device, sf0_device, sf1_device)
+
+    num_runs = 1 
+    ## Need to fix gemm timing logic to handle num_runs > 1
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
@@ -512,6 +520,10 @@ def gemm_accum(
         sf1_device = jax.device_put(sf1_host, sf1_sharding)
 
         return (out_buffer_device, lhs_device, rhs_device, sf0_device, sf1_device)
+
+
+    num_runs = 1 
+    ## Need to fix gemm timing logic to handle num_runs > 1
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
