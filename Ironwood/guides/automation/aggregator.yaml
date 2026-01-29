@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: wait
+  name: aggregator
 spec:
   template:
     spec:
@@ -16,7 +16,7 @@ spec:
           git clone https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git
           cd accelerator-microbenchmarks
           git checkout tpu7x-auto
-          pip install -r requirements.txt
+          pip install gcsfs pandas
 
           GCS_BUCKET_DIR=${GCS_BUCKET_ROOT_DIR}
           python Ironwood/guides/automation/aggregator.py --bucket_path=${GCS_BUCKET_DIR}

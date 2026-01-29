@@ -6,35 +6,38 @@ import gcsfs
 
 columns_mapping = {
     "collectives": [
-        "topology", "input_num_elements", "transferred_data (GB)", "dtype_bytes", "hlo_input_shape", "hlo_output_shape", "test_name",
-        'step_time_ms_p50', 'step_time_ms_p90', 'step_time_ms_p95', 'step_time_ms_p99', 'step_time_ms_avg', 'step_time_ms_max', 'step_time_ms_num_runs', 'step_time_ms_min',
-        'achieved_bw (GB/s)_p50', 'achieved_bw (GB/s)_p90', 'achieved_bw (GB/s)_p95', 'achieved_bw (GB/s)_p99', 'achieved_bw (GB/s)_avg', 'achieved_bw (GB/s)_max', 'achieved_bw (GB/s)_num_runs', 'achieved_bw (GB/s)_min',
+        "topology", "op_type", "input_num_elements", "transferred_data (GB)", "dtype_bytes", "hlo_input_shape", "hlo_output_shape",
+        "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_max", "step_time_ms_num_runs", "step_time_ms_min",
+        "achieved_bw (GB/s)_p50", "achieved_bw (GB/s)_p90", "achieved_bw (GB/s)_p95", "achieved_bw (GB/s)_p99", "achieved_bw (GB/s)_avg", "achieved_bw (GB/s)_max", "achieved_bw (GB/s)_num_runs", "achieved_bw (GB/s)_min",
     ],
     "hbm": [
-        'num_elements', 'dtype', 'tensor_size_gbytes', 'test_name',
-        'time_ms_p50', 'time_ms_p90', 'time_ms_p95', 'time_ms_p99', 'time_ms_avg', 'time_ms_max', 'time_ms_num_runs', 'time_ms_min',
-        'bw_gbyte_sec_p50', 'bw_gbyte_sec_p90', 'bw_gbyte_sec_p95', 'bw_gbyte_sec_p99', 'bw_gbyte_sec_avg', 'bw_gbyte_sec_max', 'bw_gbyte_sec_num_runs', 'bw_gbyte_sec_min',
+        "num_elements", "dtype", "tensor_size_gbytes",
+        "time_ms_p50", "time_ms_p90", "time_ms_p95", "time_ms_p99", "time_ms_avg", "time_ms_max", "time_ms_num_runs", "time_ms_min",
+        "bw_gbyte_sec_p50", "bw_gbyte_sec_p90", "bw_gbyte_sec_p95", "bw_gbyte_sec_p99", "bw_gbyte_sec_avg", "bw_gbyte_sec_max", "bw_gbyte_sec_num_runs", "bw_gbyte_sec_min",
     ],
     "host_device": [
-        'data_size_mib', 'H2D_bw (GiB/s)_p50', 'H2D_bw (GiB/s)_p90',
-       'H2D_bw (GiB/s)_p95', 'H2D_bw (GiB/s)_p99', 'H2D_bw (GiB/s)_avg',
-       'H2D_bw (GiB/s)_max', 'H2D_bw (GiB/s)_num_runs', 'H2D_bw (GiB/s)_min',
-       'D2H_bw (GiB/s)_p50', 'D2H_bw (GiB/s)_p90', 'D2H_bw (GiB/s)_p95',
-       'D2H_bw (GiB/s)_p99', 'D2H_bw (GiB/s)_avg', 'D2H_bw (GiB/s)_max',
-       'D2H_bw (GiB/s)_num_runs', 'D2H_bw (GiB/s)_min'],
-    "training": ['m', 'n', 'k', 'dtype', 'StepTime(median,ms)',
-       'Throughput(median,TFLOP/s/device)', 'TotalThroughput(median,TFLOP/s)',
-       'MFU', 'total_flops', 'test_name', 'step_time_ms_p50', 'step_time_ms_p90',
-       'step_time_ms_p95', 'step_time_ms_p99', 'step_time_ms_avg',
-       'step_time_ms_max', 'step_time_ms_num_runs', 'step_time_ms_min',
-       'tflops_per_sec_pre_device_p50', 'tflops_per_sec_pre_device_p90',
-       'tflops_per_sec_pre_device_p95', 'tflops_per_sec_pre_device_p99',
-       'tflops_per_sec_pre_device_avg', 'tflops_per_sec_pre_device_max',
-       'tflops_per_sec_pre_device_num_runs', 'tflops_per_sec_pre_device_min',
-       'tflops_per_sec_p50', 'tflops_per_sec_p90', 'tflops_per_sec_p95',
-       'tflops_per_sec_p99', 'tflops_per_sec_avg', 'tflops_per_sec_max',
-       'tflops_per_sec_num_runs', 'tflops_per_sec_min', 'MFU_p50', 'MFU_p90',
-       'MFU_p95', 'MFU_p99', 'MFU_avg', 'MFU_max', 'MFU_num_runs', 'MFU_min']
+        "data_size_mib", "H2D_bw (GiB/s)_p50", "H2D_bw (GiB/s)_p90",
+        "H2D_bw (GiB/s)_p95", "H2D_bw (GiB/s)_p99", "H2D_bw (GiB/s)_avg",
+        "H2D_bw (GiB/s)_max", "H2D_bw (GiB/s)_num_runs", "H2D_bw (GiB/s)_min",
+        "D2H_bw (GiB/s)_p50", "D2H_bw (GiB/s)_p90", "D2H_bw (GiB/s)_p95",
+        "D2H_bw (GiB/s)_p99", "D2H_bw (GiB/s)_avg", "D2H_bw (GiB/s)_max",
+        "D2H_bw (GiB/s)_num_runs", "D2H_bw (GiB/s)_min"
+    ],
+    "training": [
+        "m", "n", "k", "dtype", "StepTime(median,ms)",
+        "Throughput(median,TFLOP/s/device)", "TotalThroughput(median,TFLOP/s)",
+        "MFU", "total_flops", "step_time_ms_p50", "step_time_ms_p90",
+        "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg",
+        "step_time_ms_max", "step_time_ms_num_runs", "step_time_ms_min",
+        "tflops_per_sec_pre_device_p50", "tflops_per_sec_pre_device_p90",
+        "tflops_per_sec_pre_device_p95", "tflops_per_sec_pre_device_p99",
+        "tflops_per_sec_pre_device_avg", "tflops_per_sec_pre_device_max",
+        "tflops_per_sec_pre_device_num_runs", "tflops_per_sec_pre_device_min",
+        "tflops_per_sec_p50", "tflops_per_sec_p90", "tflops_per_sec_p95",
+        "tflops_per_sec_p99", "tflops_per_sec_avg", "tflops_per_sec_max",
+        "tflops_per_sec_num_runs", "tflops_per_sec_min", "MFU_p50", "MFU_p90",
+        "MFU_p95", "MFU_p99", "MFU_avg", "MFU_max", "MFU_num_runs", "MFU_min"
+    ],
 }
 
 def download_from_gcs(bucket_path: str, local_dir: str):
@@ -107,7 +110,7 @@ def aggregate_results(bucket_path: str, local_dir: str):
         directories[category] = sorted(glob.glob(f"{local_dir}/*/{category}/*", recursive=True))
         results[category] = aggregate_function[category](directories[category], columns_mapping[category])
         if results[category] is not None:
-            results[category].to_csv(f"{bucket_path}/aggregated_results/{category}.csv", index=False)
+            results[category].to_csv(f"{bucket_path}/aggregated_results/{category}.tsv", index=False, sep='\t')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download from GCS and aggregate results locally.")
