@@ -6,7 +6,7 @@ import gcsfs
 
 columns_mapping = {
     "collectives": [
-        "topology", "op_type", "input_num_elements", "transferred_data (GB)", "dtype_bytes", "step_time_ms_num_runs",
+        "topology", "op_type", "input_num_elements", "transferred_data (GB)", "dtype", "step_time_ms_num_runs",
         "achieved_bw (GB/s)_p50", "achieved_bw (GB/s)_p90", "achieved_bw (GB/s)_p95", "achieved_bw (GB/s)_p99", "achieved_bw (GB/s)_avg", "achieved_bw (GB/s)_min", "achieved_bw (GB/s)_max",
         "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_min", "step_time_ms_max",
     ],

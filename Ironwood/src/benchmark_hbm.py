@@ -29,7 +29,7 @@ def get_metrics_helper(
         for key, value in params
         if value is not None and key not in exclude_keys
     }
-    metadata["dtype"] = metadata["dtype"].dtype.itemsize
+    metadata["dtype"] = metadata["dtype"].dtype.name
     return metadata
 
 

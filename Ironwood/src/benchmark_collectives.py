@@ -98,6 +98,7 @@ def unified_ici_collectives_metrics(
   hlo_first_replica_group = []
 
   input_num_elements = matrix_shape[0] * matrix_shape[1] * matrix_shape[2]
+  dtype_name = dtype.dtype.name
   dtype_bytes = dtype.dtype.itemsize
   if xla_output:
     xla_output_json = json.loads(xla_output)
@@ -169,6 +170,7 @@ def unified_ici_collectives_metrics(
       "input_num_elements": input_num_elements,
       "matrix_shape": json.dumps(f"({matrix_shape})"),
       "transferred_data (GB)": transferred_data,
+      "dtype": dtype_name,
       "dtype_bytes": dtype_bytes,
       "hlo_input_shape": json.dumps(hlo_input_shape),
       "hlo_output_shape": json.dumps(hlo_output_shape),
