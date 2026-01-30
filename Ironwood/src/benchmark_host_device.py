@@ -5,7 +5,6 @@ import os
 from typing import Any, Dict, Tuple, List
 
 import jax
-from jax import sharding
 import numpy as np
 from benchmark_utils import MetricsStatistics
 
@@ -23,6 +22,7 @@ def benchmark_host_device(
     data_size_mib: int,
     num_runs: int = 100,
     trace_dir: str = None,
+    h2d_type: str = "simple",
 ) -> Dict[str, Any]:
     """Benchmarks H2D/D2H transfer using simple device_put/device_get."""
     
@@ -32,8 +32,18 @@ def benchmark_host_device(
     column = 128
     host_data = np.random.normal(size=(num_elements // column, column)).astype(np.float32)
     
+    # Used in pipelined flow
+    num_devices_to_perform_h2d = 1
+    tensor_size = 4 * 1024 * 1024
+    target_device = jax.devices()[:num_devices_to_perform_h2d]
+    mesh = jax.sharding.Mesh(np.array(target_device), axis_names=["x"])
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    pipelined_array = None
+    if h2d_type == "pipelined":
+        pipelined_array = np.random.normal(size=(tensor_size,)).astype(np.float32)
+
     print(
-        f"Benchmarking Transfer with Data Size: {data_size_mib} MB for {num_runs} iterations",
+        f"Benchmarking Transfer with Data Size: {data_size_mib} MB for {num_runs} iterations with {h2d_type=}",
         flush=True
     )
 
@@ -65,29 +75,52 @@ def benchmark_host_device(
             
             with step_context:
                  # H2D
-                t0 = time.perf_counter()
+                if h2d_type == "simple":
+                    t0 = time.perf_counter()
+                    # Simple device_put
+                    device_array = jax.device_put(host_data)
+                    device_array.block_until_ready()
+                    t1 = time.perf_counter()
+                    
+                    # Verify H2D shape
+                    assert device_array.shape == host_data.shape
+
+                    h2d_perf.append((t1 - t0) * 1000)
                 
-                # Simple device_put
-                device_array = jax.device_put(host_data)
-                device_array.block_until_ready()
-                
-                t1 = time.perf_counter()
-                h2d_perf.append((t1 - t0) * 1000)
-                
-                # Verify H2D shape
-                assert device_array.shape == host_data.shape
-                
-                # D2H
-                t2 = time.perf_counter()
-                
-                # Simple device_get
-                # Note: device_get returns a numpy array (copy)
-                _ = jax.device_get(device_array)
-                
-                t3 = time.perf_counter()
-                d2h_perf.append((t3 - t2) * 1000)
-                
-                device_array.delete()
+                    # D2H
+                    t2 = time.perf_counter()
+                    
+                    # Simple device_get
+                    # Note: device_get returns a numpy array (copy)
+                    _ = jax.device_get(device_array)
+                    
+                    t3 = time.perf_counter()
+                    d2h_perf.append((t3 - t2) * 1000)
+                    
+                    device_array.delete()
+                elif h2d_type == "pipelined":
+                    tensors_on_device = []
+                    if data_size_mib * 1024 * 1024 < pipelined_array.nbytes:
+                        print(f"Warning: {data_size_mib=} is smaller than pipeline unit, no data will be transferred.")
+                    t0 = time.perf_counter()
+                    # Assume data_size_mib is total across devices for now
+                    bytes_left = 1024 * 1024 * data_size_mib
+                    while bytes_left >= pipelined_array.nbytes:
+                        with jax.profiler.StepTraceAnnotation("device_put", step_num=1):
+                            x_device = jax.device_put(pipelined_array, sharding)
+                            tensors_on_device.append(x_device)
+                            bytes_left -= pipelined_array.nbytes
+                    
+                    total_bytes_transferred = 0
+                    for tensor in tensors_on_device:
+                        tensor.block_until_ready()
+                        total_bytes_transferred += tensor.nbytes
+                        tensor.delete()
+                    t1 = time.perf_counter()
+
+                    h2d_perf.append((t1 - t0) * 1000)
+                    # Implement D2H at a later time after we establish H2D
+                    d2h_perf.append(0)
 
     return {
         "H2D_Bandwidth_ms": h2d_perf,
@@ -98,6 +131,7 @@ def benchmark_host_device_calculate_metrics(
     data_size_mib: int,
     H2D_Bandwidth_ms: List[float],
     D2H_Bandwidth_ms: List[float],
+    h2d_type: str = "simple",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Calculates metrics for Host-Device transfer."""
     params = locals().items()
