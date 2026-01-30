@@ -157,6 +157,8 @@ echo "Jobs completed. Aggregating results..."
 echo ""
 
 envsubst '${GCS_BUCKET_ROOT_DIR}' < ${SCRIPT_DIR}/aggregator.yaml | kubectl apply -f -
+wait_for_job_completion "aggregator" ${TIMEOUT_SECOND}
+envsubst '${GCS_BUCKET_ROOT_DIR}' < ${SCRIPT_DIR}/aggregator.yaml | kubectl delete -f -
 
 # Print the failed jobs at the end for better visibility.
 
