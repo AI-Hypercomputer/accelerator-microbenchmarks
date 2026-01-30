@@ -52,7 +52,7 @@ spec:
           pip install -r requirements.txt
 
           GCS_BUCKET_DIR=${GCS_PATH}
-          python Ironwood/src/run_benchmark.py --config="Ironwood/configs/training/gemm_multiple_run_more.yaml" --gcs-bucket-csv-dir=${GCS_BUCKET_DIR}
+          python Ironwood/src/run_benchmark.py --config="Ironwood/configs/gemm/gemm_multiple_run_more.yaml" --gcs-bucket-csv-dir=${GCS_BUCKET_DIR}
         resources:
           requests:
             google.com/tpu: 4
