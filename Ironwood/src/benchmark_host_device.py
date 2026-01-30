@@ -107,6 +107,7 @@ def benchmark_host_device_calculate_metrics(
         "data_size_mib", 
     }
     metadata = {k: v for k, v in params if k in metadata_keys}
+    metadata["dtype"] = "float32"
     
     metrics = {}
     
