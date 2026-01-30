@@ -553,3 +553,100 @@ def gemm_accum_calculate_metrics(
         total_flops_all_devices,
         PEAK_FLOPS_PER_DEVICE,
     )
+
+def gemm_multiple_devices(
+    m: int,
+    k: int,
+    n: int,
+    dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
+    num_runs: int = 1,
+    trace_dir: str = None,
+) -> Dict[str, Any]:
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype. Accumulation is FP32. Current supported dtype: float8_e4m3fn, bfloat16."""
+
+    def f(x, y):
+        with jax.named_scope(MARKER):
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", x, y, preferred_element_type=jnp.float32
+            )
+            return acc.astype(jnp.bfloat16)
+    SHARDING_STRATEGY_MULTI_DEVICES = ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M
+
+    mesh = create_mesh(SHARDING_STRATEGY_MULTI_DEVICES)
+    lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY_MULTI_DEVICES)
+    rhs_sharding = get_rhs_named_shading(mesh, SHARDING_STRATEGY_MULTI_DEVICES)
+    out_sharding = get_out_sharding(SHARDING_STRATEGY_MULTI_DEVICES)
+
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=(lhs_sharding.spec, rhs_sharding.spec),
+            out_specs=out_sharding,
+            check_rep=False,
+        )
+    )
+
+    lhs_shape = (m, k)
+    rhs_shape = (k, n)
+
+    lhs_dtype = dtype
+    rhs_dtype = dtype
+
+    key = jax.random.key(SEED)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key  # Use and update the outer 'key'
+        key, key_lhs, key_rhs = jax.random.split(key, 3)
+
+        # Create random data on host
+        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+
+        # Put on device (HBM)
+        lhs_device = jax.device_put(lhs_host, lhs_sharding)
+        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+
+        return (lhs_device, rhs_device)
+
+    # Run the benchmark
+
+    print("Running gemm_multiple_devices benchmark", num_runs)
+    dtype_str = "fp8" if dtype==jax.numpy.float8_e4m3fn else "bf16"
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{dtype_str}_{m}x{n}x{k}",
+        tries=num_runs,
+        task="gemm_multiple_run",
+        trace_dir=trace_dir,
+    )
+    return {
+        "time_ms_list": time_ms_list,
+    }
+
+
+def gemm_multiple_devices_calculate_metrics(
+    m: int,
+    k: int,
+    n: int,
+    dtype: jnp.dtype,
+    time_ms_list: list[float],
+) -> Dict[str, Any]:
+    # Calculate FLOPs
+    SHARDING_STRATEGY_MULTI_DEVICES = ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_M
+    total_flops = 2 * m * k * n  # Total floating-point operations
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY_MULTI_DEVICES
+    )
+    peak_flops = PEAK_FLOPS_PER_DEVICE if dtype==jax.numpy.float8_e4m3fn else PEAK_FLOPS_PER_DEVICE/2
+    return unified_flops_metrics(
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        peak_flops,
+    )
