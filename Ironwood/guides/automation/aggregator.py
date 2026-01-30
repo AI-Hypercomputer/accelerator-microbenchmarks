@@ -16,7 +16,7 @@ columns_mapping = {
         "bw_gbyte_sec_p50", "bw_gbyte_sec_p90", "bw_gbyte_sec_p95", "bw_gbyte_sec_p99", "bw_gbyte_sec_avg", "bw_gbyte_sec_max", "bw_gbyte_sec_num_runs", "bw_gbyte_sec_min",
     ],
     "host_device": [
-        "data_size_mib", "H2D_bw (GiB/s)_p50", "H2D_bw (GiB/s)_p90",
+        "data_size_mib", "dtype", "H2D_bw (GiB/s)_p50", "H2D_bw (GiB/s)_p90",
         "H2D_bw (GiB/s)_p95", "H2D_bw (GiB/s)_p99", "H2D_bw (GiB/s)_avg",
         "H2D_bw (GiB/s)_max", "H2D_bw (GiB/s)_num_runs", "H2D_bw (GiB/s)_min",
         "D2H_bw (GiB/s)_p50", "D2H_bw (GiB/s)_p90", "D2H_bw (GiB/s)_p95",
