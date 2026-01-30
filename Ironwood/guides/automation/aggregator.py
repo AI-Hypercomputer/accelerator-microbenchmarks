@@ -58,9 +58,10 @@ def aggregate_hbm(directories: list[str], picked_columns: list[str]) -> pd.DataF
         return None
     aggregated_df = pd.DataFrame()
     for directory in directories:
-        file = glob.glob(f"{directory}/*.tsv")[0]
-        df = pd.read_csv(file, sep='\t')
-        aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"time_ms_num_runs": "num_runs"})], ignore_index=True)
+        files = glob.glob(f"{directory}/*.tsv")
+        for file in files:
+            df = pd.read_csv(file, sep='\t')
+            aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"time_ms_num_runs": "num_runs"})], ignore_index=True)
     return aggregated_df
 
 def aggregate_host_device(directories: list[str], picked_columns: list[str]) -> pd.DataFrame:
@@ -68,9 +69,10 @@ def aggregate_host_device(directories: list[str], picked_columns: list[str]) -> 
         return None
     aggregated_df = pd.DataFrame()
     for directory in directories:
-        file = glob.glob(f"{directory}/*.tsv")[0]
-        df = pd.read_csv(file, sep='\t')
-        aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"H2D_bw (GiB/s)_num_runs": "num_runs"})], ignore_index=True)
+        files = glob.glob(f"{directory}/*.tsv")
+        for file in files:
+            df = pd.read_csv(file, sep='\t')
+            aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"H2D_bw (GiB/s)_num_runs": "num_runs"})], ignore_index=True)
     return aggregated_df
 
 def aggregate_gemm(directories: list[str], picked_columns: list[str]) -> pd.DataFrame:
