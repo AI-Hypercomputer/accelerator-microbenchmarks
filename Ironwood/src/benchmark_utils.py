@@ -1134,7 +1134,7 @@ def unified_flops_metrics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
     tflops_per_sec_statistics = MetricsStatistics(
-        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec_pre_device"
+        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec_per_device"
     )
     tflops_per_sec_all_devices_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_all_devices, metrics_name="tflops_per_sec"
