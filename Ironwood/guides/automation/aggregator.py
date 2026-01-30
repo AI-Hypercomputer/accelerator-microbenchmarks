@@ -22,7 +22,7 @@ columns_mapping = {
         "D2H_bw (GiB/s)_p50", "D2H_bw (GiB/s)_p90", "D2H_bw (GiB/s)_p95", "D2H_bw (GiB/s)_p99", 
         "D2H_bw (GiB/s)_avg", "D2H_bw (GiB/s)_min", "D2H_bw (GiB/s)_max",
     ],
-    "training": [
+    "gemm": [
         "m", "n", "k", "dtype", "step_time_ms_num_runs",
         "tflops_per_sec_per_device_p50", "tflops_per_sec_per_device_p90",
         "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
@@ -81,8 +81,6 @@ def aggregate_gemm(directories: list[str], picked_columns: list[str]) -> pd.Data
         files = glob.glob(f"{directory}/*.tsv")
         for file in files:
             df = pd.read_csv(file, sep='\t')
-            if "topology" in picked_columns:
-                df["topology"] = [file.split('/')[-4].split('-')[1] for _ in range(df.shape[0])]
             aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
     return aggregated_df
 
@@ -90,11 +88,11 @@ aggregate_function = {
     "collectives": aggregate_collectives,
     "hbm": aggregate_hbm,
     "host_device": aggregate_host_device,
-    "training": aggregate_gemm,
+    "gemm": aggregate_gemm,
 }
 
 def aggregate_results(bucket_path: str, local_dir: str):
-    categories = ["collectives", "hbm", "host_device", "training"]
+    categories = ["collectives", "hbm", "host_device", "gemm"]
     directories = {}
     results = {}
     for category in categories:
