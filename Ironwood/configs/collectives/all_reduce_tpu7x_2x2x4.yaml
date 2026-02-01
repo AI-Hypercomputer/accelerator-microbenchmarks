@@ -2,6 +2,10 @@ benchmarks:
 - benchmark_name: psum
   benchmark_sweep_params:
   - {matrix_dim_range: {start: 16, end: 16384, multiplier: 2}, dtype: "float32",  mesh_shape: "4x4x2", ici_size_range: 32, sharding_strategy: "4x4x1", op_dimension: 1, num_runs: 5}
+  - {matrix_dim_range: {start: 16, end: 16384, multiplier: 2}, dtype: "float16",  mesh_shape: "4x4x2", ici_size_range: 32, sharding_strategy: "4x4x1", op_dimension: 1, num_runs: 5}
+  - {matrix_dim_range: {start: 16, end: 16384, multiplier: 2}, dtype: "float8",  mesh_shape: "4x4x2", ici_size_range: 32, sharding_strategy: "4x4x1", op_dimension: 1, num_runs: 5}
+  - {matrix_dim_range: {start: 16, end: 16384, multiplier: 2}, dtype: "float4",  mesh_shape: "4x4x2", ici_size_range: 32, sharding_strategy: "4x4x1", op_dimension: 1, num_runs: 5}
+  - {matrix_dim_range: {start: 16, end: 16384, multiplier: 2}, dtype: "bfloat16",  mesh_shape: "4x4x2", ici_size_range: 32, sharding_strategy: "4x4x1", op_dimension: 1, num_runs: 5}
   trace_dir: "../microbenchmarks/psum_tpu7x_2x2x4"
   csv_path: "../microbenchmarks/psum_tpu7x_2x2x4"
   xlml_metrics_dir: "../microbenchmarks/psum_tpu7x_2x2x4"
