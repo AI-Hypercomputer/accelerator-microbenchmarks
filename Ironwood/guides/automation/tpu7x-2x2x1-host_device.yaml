@@ -22,6 +22,7 @@ spec:
   template:
     spec:
       subdomain: headless-svc-${JOB_NAME}
+      serviceAccountName: ${GCS_SA_NAME}
       restartPolicy: Never
       nodeSelector:
         cloud.google.com/gke-tpu-accelerator: tpu7x
