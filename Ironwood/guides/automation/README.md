@@ -52,7 +52,7 @@ You can configure the behavior using the following environment variable:
 
 | Variable | Description | Required | Default |
 | :--- | :--- | :--- | :--- |
-| `GCS_BUCKET_ROOT_DIR` | The root GCS path where results will be stored. Must start with `gs://`. | **Yes** | `gs://amylin-microbenchmark` (Change this!) |
+| `GCS_BUCKET_ROOT_DIR` | The root GCS path where results will be stored. Must start with `gs://`. | **Yes** | `gs://example-microbenchmark` (Change this!) |
 
 ## Usage Guide
 

@@ -6,6 +6,7 @@
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 export GCS_BUCKET_ROOT_DIR=""
 export GCS_SA_NAME="gcs-writer"  # Service account with write access to GCS_BUCKET_ROOT_DIR
+export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 
 MAX_RETRIES=3
 TIMEOUT_SECOND=3600
@@ -44,6 +45,19 @@ for topology in "${required_topologies[@]}"; do
     export TPUS=$(echo "${TOPOLOGY}" | sed 's/x/*/g' | bc)
     envsubst '${TOPOLOGY} ${TPUS}' < ${SCRIPT_DIR}/job-queue.yaml | kubectl apply -f -
 done
+
+######################################################################
+#                  GCS PERMISSION CHECK
+######################################################################
+
+# Run the GCS permission check
+export SA_NAME="${GCS_SA_NAME}"
+export PROJECT_ID="${PROJECT_ID}"
+if ! bash "${SCRIPT_DIR}/check_gcs_permissions.sh"; then
+    echo "GCS Permission Check Failed. Exiting."
+    exit 1
+fi
+
 
 ######################################################################
 #                 LAUNCH JOBS & WAIT FOR COMPLETION
