@@ -5,6 +5,7 @@
 ######################################################################
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 export GCS_BUCKET_ROOT_DIR=""
+export GCS_SA_NAME="gcs-writer"  # Service account with write access to GCS_BUCKET_ROOT_DIR
 
 MAX_RETRIES=3
 TIMEOUT_SECOND=3600
@@ -93,11 +94,12 @@ apply_and_wait() {
         local filepath="${SCRIPT_DIR}/${yaml_file}"
         # Derive job name: remove .yaml, lowercase, replace _ with -
         local job_name=$(basename "${yaml_file}" .yaml | tr '[:upper:]' '[:lower:]' | tr '_' '-')
-        export JOB_NAME="${job_name}"
+        random_suffix=$(head /dev/urandom | tr -dc a-z0-9 | head -c 5)
+        export JOB_NAME="${job_name}-${random_suffix}"
         export GCS_PATH="${GCS_BUCKET_ROOT_DIR}/${job_name}"
         
         echo "Launching job: ${filepath} (name: ${JOB_NAME})"
-        envsubst '${JOB_NAME} ${GCS_PATH}' < "${filepath}" | kubectl apply -f -
+        envsubst '${JOB_NAME} ${GCS_PATH} ${GCS_SA_NAME}' < "${filepath}" | kubectl apply -f -
         job_names_in_batch+=("${JOB_NAME}")
     done
 
