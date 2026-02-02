@@ -62,6 +62,8 @@ COMPUTE_BENCHMARK_MAP = {
     "gemm_throttling": "benchmark_gemm_throttling.gemm_throttling",
     "gemm": "benchmark_gemm.gemm",
     "gemm_all_reduce": "benchmark_gemm_all_reduce.gemm_all_reduce",
+    "gemm_only": "benchmark_gemm_all_reduce.gemm_only",
+    "all_reduce_only": "benchmark_gemm_all_reduce.all_reduce_only",
     "gemm_accum": "benchmark_gemm.gemm_accum",
     "quantization": "benchmark_compute.quantization",
     "transpose_quantization": "benchmark_compute.transpose_quantization",
