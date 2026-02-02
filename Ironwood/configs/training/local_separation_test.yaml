@@ -1,34 +1,73 @@
 benchmarks:
-  - benchmark_name: gemm_only
-    trace_dir: "../microbenchmarks/gemm_all_reduce"
-    csv_path: "../microbenchmarks/gemm_all_reduce"
-    xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce"
-    xla_dump_dir: "../microbenchmarks/gemm_all_reduce/hlo_graphs"
-    num_runs: 10
-    benchmark_params:
-      - m: 4096
-        k: 4096
-        n: 4096
-        dtype: "bfloat16"
-  - benchmark_name: all_reduce_only
-    trace_dir: "../microbenchmarks/gemm_all_reduce"
-    csv_path: "../microbenchmarks/gemm_all_reduce"
-    xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce"
-    xla_dump_dir: "../microbenchmarks/gemm_all_reduce/hlo_graphs"
-    num_runs: 10
-    benchmark_params:
-      - m: 4096
-        k: 4096  # Passed to maintain signature, though not used for shape of C
-        n: 4096
-        dtype: "bfloat16"
+  # - benchmark_name: gemm_only
+  #   trace_dir: "../microbenchmarks/gemm_all_reduce"
+  #   csv_path: "../microbenchmarks/gemm_all_reduce"
+  #   xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce"
+  #   xla_dump_dir: "../microbenchmarks/gemm_all_reduce/hlo_graphs"
+  #   num_runs: 10
+  #   benchmark_sweep_params:
+  #     - {m: 4096, k: 4096, n: 4096, dtype: "bfloat16"}
+  #     - {m: 8192, k: 8192, n: 8192, dtype: "bfloat16"}
+  #     - {m: 16384, k: 16384, n: 16384, dtype: "bfloat16"}
+  #     - {m: 32768, k: 32768, n: 32768, dtype: "bfloat16"}
+  # - benchmark_name: all_reduce_only
+  #   trace_dir: "../microbenchmarks/gemm_all_reduce"
+  #   csv_path: "../microbenchmarks/gemm_all_reduce"
+  #   xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce"
+  #   xla_dump_dir: "../microbenchmarks/gemm_all_reduce/hlo_graphs"
+  #   num_runs: 10
+  #   benchmark_sweep_params:
+  #     - {m: 4096, k: 4096, n: 4096, dtype: "bfloat16"}
+  #     - {m: 8192, k: 8192, n: 8192, dtype: "bfloat16"}
+  #     - {m: 16384, k: 16384, n: 16384, dtype: "bfloat16"}
+  #     - {m: 32768, k: 32768, n: 32768, dtype: "bfloat16"}
   - benchmark_name: gemm_all_reduce
     trace_dir: "../microbenchmarks/gemm_all_reduce"
     csv_path: "../microbenchmarks/gemm_all_reduce"
     xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce"
     xla_dump_dir: "../microbenchmarks/gemm_all_reduce/hlo_graphs"
     num_runs: 10
-    benchmark_params:
-      - m: 4096
-        k: 4096
-        n: 4096
-        dtype: "bfloat16"
+    benchmark_sweep_params:
+      - {m: 4096, k: 4096, n: 4096, dtype: "bfloat16"}
+      - {m: 8192, k: 8192, n: 8192, dtype: "bfloat16"}
+      - {m: 16384, k: 16384, n: 16384, dtype: "bfloat16"}
+      - {m: 32768, k: 32768, n: 32768, dtype: "bfloat16"}
+  - benchmark_name: gemm_reducescatter_allgather
+    trace_dir: "../microbenchmarks/gemm_all_reduce"
+    csv_path: "../microbenchmarks/gemm_all_reduce"
+    xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce"
+    xla_dump_dir: "../microbenchmarks/gemm_all_reduce/hlo_graphs"
+    num_runs: 10
+    benchmark_sweep_params:
+      - {m: 4096, k: 4096, n: 4096, dtype: "bfloat16"}
+      - {m: 8192, k: 8192, n: 8192, dtype: "bfloat16"}
+      - {m: 16384, k: 16384, n: 16384, dtype: "bfloat16"}
+      - {m: 32768, k: 32768, n: 32768, dtype: "bfloat16"}
+  - benchmark_name: gemm_sharded_all_gather
+    trace_dir: "../microbenchmarks/gemm_all_reduce"
+    csv_path: "../microbenchmarks/gemm_all_reduce"
+    xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce"
+    xla_dump_dir: "../microbenchmarks/gemm_all_reduce/hlo_graphs"
+    num_runs: 10
+    benchmark_sweep_params:
+      - {m: 4096, k: 4096, n: 4096, dtype: "bfloat16"}
+      - {m: 8192, k: 8192, n: 8192, dtype: "bfloat16"}
+      - {m: 16384, k: 16384, n: 16384, dtype: "bfloat16"}
+      - {m: 32768, k: 32768, n: 32768, dtype: "bfloat16"}
+      - {m: 65536, k: 65536, n: 65536, dtype: "bfloat16"}
+      - {m: 131072, k: 131072, n: 131072, dtype: "bfloat16"}
+      - {m: 262144, k: 262144, n: 262144, dtype: "bfloat16"}
+      - {m: 524288, k: 524288, n: 524288, dtype: "bfloat16"}
+  - benchmark_name: gemm_k_sharded_all_reduce
+    trace_dir: "../microbenchmarks/gemm_all_reduce"
+    csv_path: "../microbenchmarks/gemm_all_reduce"
+    xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce"
+    xla_dump_dir: "../microbenchmarks/gemm_all_reduce/hlo_graphs"
+    num_runs: 10
+    benchmark_sweep_params:
+      - {m: 4096, k: 4096, n: 4096, dtype: "bfloat16"}
+      - {m: 8192, k: 8192, n: 8192, dtype: "bfloat16"}
+      - {m: 16384, k: 16384, n: 16384, dtype: "bfloat16"}
+      - {m: 32768, k: 32768, n: 32768, dtype: "bfloat16"}
+      - {m: 65536, k: 65536, n: 65536, dtype: "bfloat16"}
+      - {m: 131072, k: 131072, n: 131072, dtype: "bfloat16"}

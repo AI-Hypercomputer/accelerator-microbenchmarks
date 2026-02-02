@@ -138,6 +138,7 @@ def multiple_iteration_timeit_from_trace(
     tries: int = 17,
     task: str = None,
     trace_dir: str = None,
+    multiple_ops: bool = False,
 ) -> list[float]:
     """
     Time a function with jax.profiler and get the run time from the trace.
@@ -177,7 +178,103 @@ def multiple_iteration_timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
+        
+    if multiple_ops:
+        return multiple_iteration_multiple_ops_get_metrics_from_trace(trace, task, expected_iterations=tries)
     return multiple_iteration_get_metrics_from_trace(trace, task)
+
+
+def multiple_iteration_multiple_ops_get_metrics_from_trace(trace: dict[str, Any], task: str = None, expected_iterations: int = None) -> list[float]:
+    marker_done_events = []
+    for event in trace["traceEvents"]:
+        args = event.get("args", {})
+        tf_op = args.get("tf_op", "")
+        if MARKER in tf_op:
+            marker_done_events.append(event)
+    unique_pids = set([e["pid"] for e in marker_done_events])
+    print(f"Unique PIDs: {unique_pids}")
+    if not marker_done_events:
+        print("Warning: No MARKER events found for multiple_ops trace.")
+        return []
+
+    min_pid = min([e["pid"] for e in marker_done_events])
+    
+    events_from_min_pid = sorted(
+        [e for e in marker_done_events if e["pid"] == min_pid],
+        key=lambda x: x["ts"]
+    )
+
+    iteration_durations_ms = []
+
+    # Robust grouping using expected_iterations if available
+    if expected_iterations and expected_iterations > 1 and len(events_from_min_pid) >= expected_iterations:
+        # Calculate gaps between consecutive events
+        gaps = []
+        for i in range(len(events_from_min_pid) - 1):
+             curr_e = events_from_min_pid[i]
+             next_e = events_from_min_pid[i+1]
+             # Calculate end of current event
+             # Duration is in ps, ts is in us
+             curr_end_us = curr_e["ts"] + (float(curr_e["args"]["device_duration_ps"]) / 1e6)
+             next_start_us = next_e["ts"]
+             
+             gap = next_start_us - curr_end_us
+             gaps.append((gap, i))
+        
+        # Sort gaps descending to find the largest pauses (natural iteration boundaries)
+        sorted_gaps = sorted(gaps, key=lambda x: x[0], reverse=True)
+        
+        # We need `expected_iterations` groups, so we find `expected_iterations - 1` split points
+        num_splits = expected_iterations - 1
+        split_indices = {idx for _, idx in sorted_gaps[:num_splits]}
+        
+        current_iter_duration_ps = 0.0
+        
+        for i, e in enumerate(events_from_min_pid):
+            duration_ps = float(e["args"]["device_duration_ps"])
+            current_iter_duration_ps += duration_ps
+            
+            # If this event is a split point (or last event), finish the iteration
+            if i in split_indices or i == len(events_from_min_pid) - 1:
+                iteration_durations_ms.append(current_iter_duration_ps / 1e9)
+                current_iter_duration_ps = 0.0
+
+        print(f"Collected {len(events_from_min_pid)} events, grouped into {len(iteration_durations_ms)} iterations using expected_iterations={expected_iterations}.")
+        
+    else:
+        gap_threshold_us = 500  # 0.5 ms
+        
+        current_iter_duration_ps = 0.0
+        last_end_ts = -1.0
+        
+        for e in events_from_min_pid:
+            start_ts = e["ts"]
+            duration_ps = float(e["args"]["device_duration_ps"])
+            duration_us = duration_ps / 1e6
+            
+            # If this is the first event or gap is large, start new iteration
+            if last_end_ts < 0 or (start_ts - last_end_ts) > gap_threshold_us:
+                 if last_end_ts >= 0:
+                     iteration_durations_ms.append(current_iter_duration_ps / 1e9)
+                 current_iter_duration_ps = duration_ps
+            else:
+                 # Accumulate duration for current iteration
+                 current_iter_duration_ps += duration_ps
+                 
+            # Update last_end_ts. unique trace events shouldn't overlap on same device usually,
+            # but if they do, we track the end of the chain.
+            # We assume sequential execution on the single device timeline.
+            last_end_ts = start_ts + duration_us
+
+        # Append the last iteration
+        if last_end_ts >= 0:
+            iteration_durations_ms.append(current_iter_duration_ps / 1e9)
+
+        print(f"Collected {len(events_from_min_pid)} events, grouped into {len(iteration_durations_ms)} iterations (threshold={gap_threshold_us}us).")
+
+    print(iteration_durations_ms)
+
+    return iteration_durations_ms
 
 
 def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str = None) -> list[float]:
