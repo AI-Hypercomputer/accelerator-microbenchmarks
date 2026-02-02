@@ -1111,6 +1111,8 @@ def unified_flops_metrics(
     total_flops_all_devices: int,
     peak_TFLOPS_per_device: float,
     dtype: str = None,
+    total_bytes: int = None,
+    bandwidth_metric_name: str = "GBytes/s/device",
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
@@ -1140,6 +1142,17 @@ def unified_flops_metrics(
         metrics_list=tflops_per_sec_all_devices, metrics_name="tflops_per_sec"
     )
     mfu_statistics = MetricsStatistics(metrics_list=mfu, metrics_name="MFU")
+    
+    bw_print_str = ""
+    if total_bytes is not None:
+        bw_list = [(total_bytes / 1e9) / t_s for t_s in average_time_s_list]
+        bw_statistics = MetricsStatistics(
+            metrics_list=bw_list, metrics_name=bandwidth_metric_name
+        )
+        metrics.update(bw_statistics.serialize_statistics())
+        metadata["total_bytes"] = total_bytes
+        bw_print_str = f", Bandwidth (median): {bw_statistics.statistics['p50']:.2f} {bandwidth_metric_name}"
+
     dtype_prefix = f"[{dtype}] " if dtype is not None else ""
     print(
         f"{dtype_prefix}"
@@ -1147,6 +1160,7 @@ def unified_flops_metrics(
         f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOP / second / device, "
         f"TotalThroughput (median): {tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} TFLOP / second, "
         f"MFU: {mfu_statistics.statistics['p50']:.2%}"
+        f"{bw_print_str}"
     )
     # print()
     # time_ms_list =
@@ -1260,15 +1274,15 @@ def get_peak_flops_multiplier(in_dtype_str: str) -> float:
     (PEAK_FLOPS_PER_DEVICE) based on the input data type.
     """
     in_dtype_lower = in_dtype_str.lower()
-    if in_dtype_lower == "fp8":
+    if in_dtype_lower in ("fp8", "float8_e4m3fn"):
         # FP8 is 2x faster than BF16
         # The baseline PEAK_FLOPS_PER_DEVICE is 1153.5 * 2 = 2307, which is FP8 peak.
         # So the multiplier should be 1.0
         return 1.0
-    elif in_dtype_lower == "bf16" or in_dtype_lower == "fp16":
+    elif in_dtype_lower in ("bf16", "bfloat16", "fp16", "float16"):
         # BF16/FP16 is 2x slower than FP8 peak
         return 0.5
-    elif in_dtype_lower == "fp32":
+    elif in_dtype_lower in ("fp32", "float32"):
         # FP32 is 4x slower than FP8 peak
         return 0.25
     else:
