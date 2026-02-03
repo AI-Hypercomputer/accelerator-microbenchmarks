@@ -32,6 +32,10 @@ COLLECTIVE_BENCHMARK_MAP = {
     "send_recv": "benchmark_send_recv.send_recv_benchmark",
 }
 
+BMM_BENCHMARK_MAP = {
+    "single_device_bmm": "benchmark_bmm.single_device_bmm",
+}
+
 MATMUL_BENCHMARK_MAP = {
     "naive_matmul": "benchmark_matmul.naive_matmul",
     "single_host_naive_matmul": "benchmark_matmul.single_host_naive_matmul",
