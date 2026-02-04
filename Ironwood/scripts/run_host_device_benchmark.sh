@@ -11,7 +11,6 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo "Options:"
     echo "  --config <path>       Path to specific config file (optional)"
-    echo "  --numactl_bind        Run with numactl --cpunodebind=0 --membind=0"
     echo "  --interleaved         Run with numactl --interleave=all"
     echo "  --numactl_bind        Run with numactl --cpunodebind=0 --membind=0"
     echo "  --help                Show this help message"
