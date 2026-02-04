@@ -95,6 +95,8 @@ def single_device_bmm(
     
     # Run the benchmark
 
+    num_runs = 1
+
     dtype_str = dtype.dtype.name
     time_ms_list = iteration_timeit(
         jit_sharded_f,
