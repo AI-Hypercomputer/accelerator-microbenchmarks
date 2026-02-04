@@ -15,6 +15,7 @@ yaml_names=(
     "tpu7x-2x2x1-hbm.yaml"
     "tpu7x-2x2x1-host_device.yaml"
     "tpu7x-2x2x1-gemm.yaml"
+    "tpu7x-2x2x1-bmm.yaml"
     "tpu7x-2x2x1-collectives.yaml"
     "tpu7x-2x2x2-collectives.yaml"
     "tpu7x-2x2x4-collectives.yaml"

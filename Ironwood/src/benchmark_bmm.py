@@ -131,4 +131,6 @@ def single_device_bmm_calculate_metrics(
         total_flops,
         total_flops_all_devices,
         PEAK_FLOPS_PER_DEVICE,
+        dtype=dtype.dtype.name,
+        b=b,
     )
