@@ -95,10 +95,10 @@ def single_device_bmm(
     
     # Run the benchmark
 
-    num_runs = 1
+    # num_runs = 1
 
     dtype_str = dtype.dtype.name
-    time_ms_list = iteration_timeit(
+    time_ms_list = multiple_iteration_timeit_from_trace(
         jit_sharded_f,
         data_generator,
         matrix_dim=f"{dtype_str}_{b}x{m}x{n}x{k}",
