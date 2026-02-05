@@ -1111,6 +1111,7 @@ def unified_flops_metrics(
     total_flops_all_devices: int,
     peak_TFLOPS_per_device: float,
     dtype: str = None,
+    b: int = None,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
