@@ -5,7 +5,6 @@ import os
 from typing import Any, Dict, Tuple, List
 
 import jax
-from jax import numpy as jnp
 import numpy as np
 from benchmark_utils import MetricsStatistics
 
@@ -34,9 +33,14 @@ def benchmark_host_device(
     host_data = np.random.normal(size=(num_elements // column, column)).astype(np.float32)
     
     # Used in pipelined flow
-    # TODO: turn into a param
     num_devices_to_perform_h2d = 1
-    target_devices = jax.devices()[:num_devices_to_perform_h2d]
+    tensor_size = 4 * 1024 * 1024
+    target_device = jax.devices()[:num_devices_to_perform_h2d]
+    mesh = jax.sharding.Mesh(np.array(target_device), axis_names=["x"])
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    pipelined_array = None
+    if h2d_type == "pipelined":
+        pipelined_array = np.random.normal(size=(tensor_size,)).astype(np.float32)
 
     print(
         f"Benchmarking Transfer with Data Size: {data_size_mib} MB for {num_runs} iterations with {h2d_type=}",
@@ -95,74 +99,28 @@ def benchmark_host_device(
                     
                     device_array.delete()
                 elif h2d_type == "pipelined":
-                    target_chunk_size_mib = 16  # Sweet spot from profiling
-                    num_devices = len(target_devices)
-
                     tensors_on_device = []
-                    
-                    # Calculate chunks per device
-                    data_per_dev = data_size_mib / num_devices
-                    chunks_per_dev = int(data_per_dev / target_chunk_size_mib)
-                    chunks_per_dev = max(1, chunks_per_dev)
-
-                    chunks = np.array_split(host_data, chunks_per_dev * num_devices, axis=0)
-
+                    if data_size_mib * 1024 * 1024 < pipelined_array.nbytes:
+                        print(f"Warning: {data_size_mib=} is smaller than pipeline unit, no data will be transferred.")
                     t0 = time.perf_counter()
-                    if chunks_per_dev > 1:    
-                        # We need to map chunks to the correct device
-                        # This simple example assumes chunks are perfectly divisible and ordered
-                        # In production, use `jax.sharding` mesh logic for complex layouts
-
-                        # approach 1: simple for loop
-                        for idx, chunk in enumerate(chunks):
-                            if num_devices > 1:
-                                dev = target_devices[idx % num_devices]
-                            else:
-                                dev = target_devices[0]
-                            tensors_on_device.append(jax.device_put(chunk, dev))
-                        # Re-assemble array
-                        result = jnp.vstack(tensors_on_device)
-                        # Wait for all chunks to be transferred
-                        result.block_until_ready()
-
-                        # approach 2: generator (slightly less overhead)
-                        # def chunk_generator(num_devices, chunks_per_dev):
-                        #     for n in range(chunks_per_dev):
-                        #         for d in range(num_devices):
-                        #             # 1. Get the specific small chunk
-                        #             chunk = chunks[d*chunks_per_dev+n]
-
-                        #             # 2. Trigger an individual DMA transfer for this specific chunk
-                        #             # This is where NUMA-local memory access matters
-                        #             yield jax.device_put(chunk, target_devices[d])
-
-                        # # Re-assemble array
-                        # result = jnp.vstack(list(chunk_generator(num_devices, chunks_per_dev)))
-                        # # Wait for all chunks to be transferred
-                        # result.block_until_ready()
-                    else:
-                        print(f"Warning: {data_size_mib=} is not larger than {target_chunk_size_mib=}, falling back to standard JAX put.")
-                        # Fallback to standard JAX put for small data
-                        result = jax.device_put(host_data, target_devices[0])
-                        result.block_until_ready()
-
+                    # Assume data_size_mib is total across devices for now
+                    bytes_left = 1024 * 1024 * data_size_mib
+                    while bytes_left >= pipelined_array.nbytes:
+                        with jax.profiler.StepTraceAnnotation("device_put", step_num=1):
+                            x_device = jax.device_put(pipelined_array, sharding)
+                            tensors_on_device.append(x_device)
+                            bytes_left -= pipelined_array.nbytes
+                    
+                    total_bytes_transferred = 0
+                    for tensor in tensors_on_device:
+                        tensor.block_until_ready()
+                        total_bytes_transferred += tensor.nbytes
+                        tensor.delete()
                     t1 = time.perf_counter()
+
                     h2d_perf.append((t1 - t0) * 1000)
-
-                    # D2H
-                    t2 = time.perf_counter()
-                    # Simple device_get
-                    # Note: device_get returns a numpy array (copy)
-                    _ = jax.device_get(result)
-
-                    t3 = time.perf_counter()
-                    if not np.allclose(result, host_data):
-                        print("pipelined result not equal to host_data")
-                    d2h_perf.append((t3 - t2) * 1000)
-
-                    for r in tensors_on_device:
-                        r.delete()
-                    del tensors_on_device
+                    # Implement D2H at a later time after we establish H2D
+                    d2h_perf.append(0)
 
     return {
         "H2D_Bandwidth_ms": h2d_perf,
