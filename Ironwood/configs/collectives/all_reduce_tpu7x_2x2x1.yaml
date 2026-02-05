@@ -1,8 +1,8 @@
 benchmarks:
 - benchmark_name: psum
   benchmark_sweep_params:
-  - {matrix_dim_range: {start: 8, end: 16384, multiplier: 2}, dtype: "float32",  mesh_shape: "2x2x2", ici_size_range: 8, sharding_strategy: "2x2x1", op_dimension: 1, num_runs: 5} # Parallel Replica
-  - {matrix_dim_range: {start: 8, end: 16384, multiplier: 2}, dtype: "float32",  mesh_shape: "2x2x2", ici_size_range: 8, sharding_strategy: "2x2x2", op_dimension: 1,  num_runs: 5} # Non-Parallel Replica
+  - {matrix_dim_range: {start: 8, end: 16384, multiplier: 2}, dtype: "float32",  mesh_shape: "2x2x2", ici_size_range: 8, sharding_strategy: "2x2x1", op_dimension: 1, num_runs: 20} # Parallel Replica
+  - {matrix_dim_range: {start: 8, end: 16384, multiplier: 2}, dtype: "float32",  mesh_shape: "2x2x2", ici_size_range: 8, sharding_strategy: "2x2x2", op_dimension: 1,  num_runs: 20} # Non-Parallel Replica
   trace_dir: "../microbenchmarks/psum_tpu7x_2x2x1"
   csv_path: "../microbenchmarks/psum_tpu7x_2x2x1"
   xlml_metrics_dir: "../microbenchmarks/psum_tpu7x_2x2x1"
