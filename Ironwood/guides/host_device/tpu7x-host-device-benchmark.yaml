@@ -24,7 +24,7 @@ spec:
       cd accelerator-microbenchmarks
       pip install -r requirements.txt
 
-      bash ./Ironwood/scripts/run_host_device_benchmark.sh --config Ironwood/configs/host_device/host_device.yaml
+      bash ./Ironwood/scripts/run_host_device_benchmark.sh --config Ironwood/configs/host_device/host_device.yaml --numactl_binding
 
     resources:
       requests:
