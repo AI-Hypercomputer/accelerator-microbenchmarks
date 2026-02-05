@@ -5,6 +5,8 @@
 ######################################################################
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 export GCS_BUCKET_ROOT_DIR=""
+export GCS_SA_NAME="gcs-writer"  # Service account with write access to GCS_BUCKET_ROOT_DIR
+export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 
 MAX_RETRIES=3
 TIMEOUT_SECOND=3600
@@ -13,6 +15,7 @@ yaml_names=(
     "tpu7x-2x2x1-hbm.yaml"
     "tpu7x-2x2x1-host_device.yaml"
     "tpu7x-2x2x1-gemm.yaml"
+    "tpu7x-2x2x1-bmm.yaml"
     "tpu7x-2x2x1-collectives.yaml"
     "tpu7x-2x2x2-collectives.yaml"
     "tpu7x-2x2x4-collectives.yaml"
@@ -43,6 +46,19 @@ for topology in "${required_topologies[@]}"; do
     export TPUS=$(echo "${TOPOLOGY}" | sed 's/x/*/g' | bc)
     envsubst '${TOPOLOGY} ${TPUS}' < ${SCRIPT_DIR}/job-queue.yaml | kubectl apply -f -
 done
+
+######################################################################
+#                  GCS PERMISSION CHECK
+######################################################################
+
+# Run the GCS permission check
+export SA_NAME="${GCS_SA_NAME}"
+export PROJECT_ID="${PROJECT_ID}"
+if ! bash "${SCRIPT_DIR}/check_gcs_permissions.sh"; then
+    echo "GCS Permission Check Failed. Exiting."
+    exit 1
+fi
+
 
 ######################################################################
 #                 LAUNCH JOBS & WAIT FOR COMPLETION
@@ -93,11 +109,12 @@ apply_and_wait() {
         local filepath="${SCRIPT_DIR}/${yaml_file}"
         # Derive job name: remove .yaml, lowercase, replace _ with -
         local job_name=$(basename "${yaml_file}" .yaml | tr '[:upper:]' '[:lower:]' | tr '_' '-')
-        export JOB_NAME="${job_name}"
+        random_suffix=$(head /dev/urandom | tr -dc a-z0-9 | head -c 5)
+        export JOB_NAME="${job_name}-${random_suffix}"
         export GCS_PATH="${GCS_BUCKET_ROOT_DIR}/${job_name}"
         
         echo "Launching job: ${filepath} (name: ${JOB_NAME})"
-        envsubst '${JOB_NAME} ${GCS_PATH}' < "${filepath}" | kubectl apply -f -
+        envsubst '${JOB_NAME} ${GCS_PATH} ${GCS_SA_NAME}' < "${filepath}" | kubectl apply -f -
         job_names_in_batch+=("${JOB_NAME}")
     done
 
@@ -193,9 +210,12 @@ echo ""
 echo "Jobs completed. Aggregating results..."
 echo ""
 
-envsubst '${GCS_BUCKET_ROOT_DIR}' < ${SCRIPT_DIR}/aggregator.yaml | kubectl apply -f -
+# Ensure cleanup of any previous aggregator job to avoid immutable field errors
+kubectl delete job aggregator --ignore-not-found=true
+
+envsubst '${GCS_BUCKET_ROOT_DIR} ${GCS_SA_NAME}' < ${SCRIPT_DIR}/aggregator.yaml | kubectl apply -f -
 wait_for_job_completion "aggregator" ${TIMEOUT_SECOND}
-envsubst '${GCS_BUCKET_ROOT_DIR}' < ${SCRIPT_DIR}/aggregator.yaml | kubectl delete -f -
+envsubst '${GCS_BUCKET_ROOT_DIR} ${GCS_SA_NAME}' < ${SCRIPT_DIR}/aggregator.yaml | kubectl delete -f -
 
 # Print the failed jobs at the end for better visibility.
 

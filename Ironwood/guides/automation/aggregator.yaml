@@ -3,8 +3,10 @@ kind: Job
 metadata:
   name: aggregator
 spec:
+  backoffLimit: 0
   template:
     spec:
+      serviceAccountName: ${GCS_SA_NAME}
       containers:
       - name: main-app
         image: python:3.12

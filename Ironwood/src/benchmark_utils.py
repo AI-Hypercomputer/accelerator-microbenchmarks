@@ -28,6 +28,18 @@ import gc
 import jax.extend
 from tensorflow.tsl.profiler.protobuf import xplane_pb2
 
+
+def get_real_dtype_bytes(dtype) -> float:
+  """Returns the real byte size of a dtype, handling sub-byte types."""
+  try:
+    return jnp.finfo(dtype).bits / 8
+  except Exception:
+    try:
+      return jnp.iinfo(dtype).bits / 8
+    except Exception:
+      return dtype.itemsize
+
+
 # The dictionary to map a JAX (collective) function to its main HLO.
 TARGET_TASK_NAME_COLLECTIVES_MAP = {
     "all_to_all_ici_op": r"all-to-all.[0-9]+",
@@ -1111,6 +1123,7 @@ def unified_flops_metrics(
     total_flops_all_devices: int,
     peak_TFLOPS_per_device: float,
     dtype: str = None,
+    b: int = None,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function

@@ -12,12 +12,12 @@ kind: Job
 metadata:
   name: ${JOB_NAME}
   labels:
-    kueue.x-k8s.io/queue-name: user-queue-4x4x8
+    kueue.x-k8s.io/queue-name: user-queue-2x2x1
 spec:
   completionMode: Indexed
   suspend: true
-  parallelism: 32
-  completions: 32
+  parallelism: 1
+  completions: 1
   backoffLimit: 0
   template:
     spec:
@@ -26,7 +26,7 @@ spec:
       restartPolicy: Never
       nodeSelector:
         cloud.google.com/gke-tpu-accelerator: tpu7x
-        cloud.google.com/gke-tpu-topology: 4x4x8
+        cloud.google.com/gke-tpu-topology: 2x2x1
       containers:
       - name: jax-tpu
         image: python:3.12
@@ -53,9 +53,7 @@ spec:
           pip install -r requirements.txt
 
           GCS_BUCKET_DIR=${GCS_PATH}
-          python Ironwood/src/run_benchmark.py --config="Ironwood/configs/collectives/all_gather_tpu7x_4x4x8.yaml" --gcs-bucket-csv-dir=${GCS_BUCKET_DIR}
-          python Ironwood/src/run_benchmark.py --config="Ironwood/configs/collectives/all_reduce_tpu7x_4x4x8.yaml" --gcs-bucket-csv-dir=${GCS_BUCKET_DIR}
-          python Ironwood/src/run_benchmark.py --config="Ironwood/configs/collectives/all_to_all_tpu7x_4x4x8.yaml" --gcs-bucket-csv-dir=${GCS_BUCKET_DIR}
+          python Ironwood/src/run_benchmark.py --config="Ironwood/configs/bmm/single_device_bmm.yaml" --gcs-bucket-csv-dir=${GCS_BUCKET_DIR}
         resources:
           requests:
             google.com/tpu: 4

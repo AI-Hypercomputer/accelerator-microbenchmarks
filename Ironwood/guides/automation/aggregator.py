@@ -29,6 +29,13 @@ columns_mapping = {
         "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
         "tflops_per_sec_per_device_max",
     ],
+    "bmm": [
+        "b", "m", "n", "k", "dtype", "step_time_ms_num_runs",
+        "tflops_per_sec_per_device_p50", "tflops_per_sec_per_device_p90",
+        "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
+        "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
+        "tflops_per_sec_per_device_max",
+    ],
 }
 
 def download_from_gcs(bucket_path: str, local_dir: str):
@@ -86,15 +93,27 @@ def aggregate_gemm(directories: list[str], picked_columns: list[str]) -> pd.Data
             aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
     return aggregated_df
 
+def aggregate_bmm(directories: list[str], picked_columns: list[str]) -> pd.DataFrame:
+    if len(directories) == 0:
+        return None
+    aggregated_df = pd.DataFrame()
+    for directory in directories:
+        files = glob.glob(f"{directory}/*.tsv")
+        for file in files:
+            df = pd.read_csv(file, sep='\t')
+            aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
+    return aggregated_df
+
 aggregate_function = {
     "collectives": aggregate_collectives,
     "hbm": aggregate_hbm,
     "host_device": aggregate_host_device,
     "gemm": aggregate_gemm,
+    "bmm": aggregate_bmm,
 }
 
 def aggregate_results(bucket_path: str, local_dir: str):
-    categories = ["collectives", "hbm", "host_device", "gemm"]
+    categories = ["collectives", "hbm", "host_device", "gemm", "bmm"]
     directories = {}
     results = {}
     for category in categories:

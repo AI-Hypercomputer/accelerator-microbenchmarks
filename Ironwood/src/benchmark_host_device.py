@@ -24,7 +24,7 @@ def benchmark_host_device(
     trace_dir: str = None,
     h2d_type: str = "simple",
 ) -> Dict[str, Any]:
-    """Benchmarks H2D/D2H transfer using simple device_put/device_get."""
+    """Benchmarks H2D/D2H transfer using device_put/device_get."""
     
     num_elements = 1024 * 1024 * data_size_mib // np.dtype(np.float32).itemsize
     
