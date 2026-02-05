@@ -6,6 +6,7 @@ from typing import Any, Dict, Tuple
 from benchmark_utils import (
     MetricsStatistics,
     multiple_iteration_timeit_from_trace,
+    get_real_dtype_bytes,
 )
 from common import MARKER
 import jax
@@ -76,7 +77,7 @@ def single_device_hbm_copy_calculate_metrics(
     metrics = {}
 
     # Calculate throughput.
-    tensor_size_bytes = num_elements * dtype.dtype.itemsize
+    tensor_size_bytes = num_elements * get_real_dtype_bytes(dtype.dtype)
 
     tensor_size_gbytes = (tensor_size_bytes * 2) / 10**9
     time_statistics = MetricsStatistics(

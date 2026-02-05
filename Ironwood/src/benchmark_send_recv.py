@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax.sharding
 from benchmark_utils import (
     get_trace,
+    get_real_dtype_bytes,
 )
 from common import MARKER
 import tempfile
@@ -68,7 +69,7 @@ def get_metrics_helper(
         for key, value in params
         if value is not None and key not in exclude_keys
     }
-    metadata['dtype'] = metadata['dtype'].dtype.itemsize
+    metadata['dtype'] = get_real_dtype_bytes(metadata['dtype'].dtype)
     return metadata
 
 
@@ -84,7 +85,7 @@ def send_recv_benchmark(
     device_count = jax.local_device_count()
     devices = mesh_utils.create_device_mesh((device_count,))
     mesh = jax.sharding.Mesh(devices, 'x')
-    item_size = jnp.dtype(dtype).itemsize
+    item_size = get_real_dtype_bytes(jnp.dtype(dtype))
     tensor_size_bytes = num_elements * item_size
     last_dim = tensor_size_bytes // (1 * 8 * item_size)
 
@@ -161,7 +162,7 @@ def send_recv_benchmark_calculate_metrics(
     metadata = get_metrics_helper(params)
     metrics = {}
 
-    tensor_size_bytes = num_elements * jnp.dtype(dtype).itemsize
+    tensor_size_bytes = num_elements * get_real_dtype_bytes(jnp.dtype(dtype))
     tensor_size_gbytes = tensor_size_bytes / 10**9
 
     metrics['runtime_ms (ms)'] = runtime_ms

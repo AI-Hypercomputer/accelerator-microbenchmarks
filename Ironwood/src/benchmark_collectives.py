@@ -11,6 +11,7 @@ from benchmark_utils import get_out_sharding
 from benchmark_utils import MetricsStatistics
 from benchmark_utils import multiple_iteration_timeit_from_trace
 from benchmark_utils import ShardingStrategy
+from benchmark_utils import get_real_dtype_bytes
 from common import MARKER
 import jax
 from jax import core
@@ -72,7 +73,7 @@ def get_metrics_helper(
       for key, value in params
       if value is not None and key not in exclude_keys
   }
-  metadata["dtype"] = metadata["dtype"].dtype.itemsize
+  metadata["dtype"] = get_real_dtype_bytes(metadata["dtype"].dtype)
   return metadata
 
 
@@ -99,7 +100,7 @@ def unified_ici_collectives_metrics(
 
   input_num_elements = matrix_shape[0] * matrix_shape[1] * matrix_shape[2]
   dtype_name = dtype.dtype.name
-  dtype_bytes = dtype.dtype.itemsize
+  dtype_bytes = get_real_dtype_bytes(dtype.dtype)
   if xla_output:
     xla_output_json = json.loads(xla_output)
     hlo_input_shape = xla_output_json.get("hlo_input_shape")
