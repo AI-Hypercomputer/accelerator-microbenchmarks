@@ -108,7 +108,6 @@ def benchmark_host_device_calculate_metrics(
     }
     metadata = {k: v for k, v in params if k in metadata_keys}
     metadata["dtype"] = "float32"
-    metadata["h2d_type"] = h2d_type
     
     metrics = {}
     
