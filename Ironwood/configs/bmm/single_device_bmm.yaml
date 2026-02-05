@@ -5,14 +5,14 @@ benchmarks:
   xlml_metrics_dir: "../microbenchmarks/single_device_bmm_bf16"
   xla_dump_dir: "../microbenchmarks/single_device_bmm_bf16/hlo_graphs"
   benchmark_sweep_params:
-  - {b: 1, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'bfloat16'}
-  - {b: 1, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'bfloat16'}
-  - {b: 1, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'bfloat16'}
-  - {b: 1, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'bfloat16'}
-  - {b: 1, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'bfloat16'}
-  - {b: 1, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'bfloat16'}
-  - {b: 1, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'bfloat16'}
-  - {b: 1, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'bfloat16'}
+  - {b: 8, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'bfloat16'}
+  - {b: 8, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'bfloat16'}
+  - {b: 8, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'bfloat16'}
+  - {b: 8, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'bfloat16'}
+  - {b: 8, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'bfloat16'}
+  - {b: 8, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'bfloat16'}
+  - {b: 8, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'bfloat16'}
+  - {b: 8, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'bfloat16'}
 
 - benchmark_name: "single_device_bmm"
   trace_dir: "../microbenchmarks/single_device_bmm_f32"
@@ -20,14 +20,14 @@ benchmarks:
   xlml_metrics_dir: "../microbenchmarks/single_device_bmm_f32"
   xla_dump_dir: "../microbenchmarks/single_device_bmm_f32/hlo_graphs"
   benchmark_sweep_params:
-  - {b: 1, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'float32'}
-  - {b: 1, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'float32'}
-  - {b: 1, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'float32'}
-  - {b: 1, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'float32'}
-  - {b: 1, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'float32'}
-  - {b: 1, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'float32'}
-  - {b: 1, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'float32'}
-  - {b: 1, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'float32'}
+  - {b: 8, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'float32'}
+  - {b: 8, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'float32'}
+  - {b: 8, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'float32'}
+  - {b: 8, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'float32'}
+  - {b: 8, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'float32'}
+  - {b: 8, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'float32'}
+  - {b: 8, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'float32'}
+  - {b: 8, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'float32'}
 
 - benchmark_name: "single_device_bmm"
   trace_dir: "../microbenchmarks/single_device_bmm_fp16"
@@ -35,14 +35,14 @@ benchmarks:
   xlml_metrics_dir: "../microbenchmarks/single_device_bmm_fp16"
   xla_dump_dir: "../microbenchmarks/single_device_bmm_fp16/hlo_graphs"
   benchmark_sweep_params:
-  - {b: 1, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'float16'}
-  - {b: 1, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'float16'}
-  - {b: 1, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'float16'}
-  - {b: 1, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'float16'}
-  - {b: 1, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'float16'}
-  - {b: 1, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'float16'}
-  - {b: 1, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'float16'}
-  - {b: 1, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'float16'}
+  - {b: 8, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'float16'}
+  - {b: 8, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'float16'}
+  - {b: 8, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'float16'}
+  - {b: 8, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'float16'}
+  - {b: 8, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'float16'}
+  - {b: 8, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'float16'}
+  - {b: 8, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'float16'}
+  - {b: 8, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'float16'}
 
 - benchmark_name: "single_device_bmm"
   trace_dir: "../microbenchmarks/single_device_bmm_fp8"
@@ -50,14 +50,14 @@ benchmarks:
   xlml_metrics_dir: "../microbenchmarks/single_device_bmm_fp8"
   xla_dump_dir: "../microbenchmarks/single_device_bmm_fp8/hlo_graphs"
   benchmark_sweep_params:
-  - {b: 1, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'float8'}
-  - {b: 1, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'float8'}
-  - {b: 1, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'float8'}
-  - {b: 1, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'float8'}
-  - {b: 1, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'float8'}
-  - {b: 1, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'float8'}
-  - {b: 1, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'float8'}
-  - {b: 1, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'float8'}
+  - {b: 8, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'float8'}
+  - {b: 8, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'float8'}
+  - {b: 8, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'float8'}
+  - {b: 8, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'float8'}
+  - {b: 8, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'float8'}
+  - {b: 8, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'float8'}
+  - {b: 8, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'float8'}
+  - {b: 8, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'float8'}
 
 - benchmark_name: "single_device_bmm"
   trace_dir: "../microbenchmarks/single_device_bmm_fp4"
@@ -65,11 +65,11 @@ benchmarks:
   xlml_metrics_dir: "../microbenchmarks/single_device_bmm_fp4"
   xla_dump_dir: "../microbenchmarks/single_device_bmm_fp4/hlo_graphs"
   benchmark_sweep_params:
-  - {b: 1, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'float4'}
-  - {b: 1, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'float4'}
-  - {b: 1, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'float4'}
-  - {b: 1, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'float4'}
-  - {b: 1, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'float4'}
-  - {b: 1, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'float4'}
-  - {b: 1, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'float4'}
-  - {b: 1, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'float4'}
+  - {b: 8, m: 128, k: 128, n: 128, num_runs: 100, dtype: 'float4'}
+  - {b: 8, m: 256, k: 256, n: 256, num_runs: 100, dtype: 'float4'}
+  - {b: 8, m: 512, k: 512, n: 512, num_runs: 100, dtype: 'float4'}
+  - {b: 8, m: 1024, k: 1024, n: 1024, num_runs: 100, dtype: 'float4'}
+  - {b: 8, m: 2048, k: 2048, n: 2048, num_runs: 100, dtype: 'float4'}
+  - {b: 8, m: 4096, k: 4096, n: 4096, num_runs: 100, dtype: 'float4'}
+  - {b: 8, m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'float4'}
+  - {b: 8, m: 32768, k: 32768, n: 32768, num_runs: 100, dtype: 'float4'}
