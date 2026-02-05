@@ -120,6 +120,7 @@ def aggregate_results(bucket_path: str, local_dir: str):
         directories[category] = sorted(glob.glob(f"{local_dir}/*/{category}/*", recursive=True))
         results[category] = aggregate_function[category](directories[category], columns_mapping[category])
         if results[category] is not None:
+            print(f"Writing {category} results to {bucket_path}/aggregated_results/{category}.tsv")
             results[category].to_csv(f"{bucket_path}/aggregated_results/{category}.tsv", index=False, sep='\t')
 
 if __name__ == "__main__":
