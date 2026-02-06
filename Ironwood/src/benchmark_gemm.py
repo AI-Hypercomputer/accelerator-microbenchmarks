@@ -146,7 +146,7 @@ def gemm_multiple_run_calculate_metrics(
     total_flops, total_flops_all_devices = handle_based_on_sharding(
         total_flops, SHARDING_STRATEGY
     )
-    peak_flops = PEAK_FLOPS_PER_DEVICE if dtype==jax.numpy.float8_e4m3fn else PEAK_FLOPS_PER_DEVICE/2
+    peak_flops_multiplier = get_peak_flops_multiplier(dtype.dtype.name)
     return unified_flops_metrics(
         m,
         n,

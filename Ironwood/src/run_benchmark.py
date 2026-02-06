@@ -63,6 +63,8 @@ COMPUTE_BENCHMARK_MAP = {
     "gemm_simple": "benchmark_gemm.gemm_simple",
     "gemm_simple_with_dtype": "benchmark_gemm.gemm_simple_with_dtype",
     "gemm_multiple_run": "benchmark_gemm.gemm_multiple_run",
+    "gemm_all_reduce": "benchmark_gemm_all_reduce.gemm_all_reduce",
+
     "gemm_throttling": "benchmark_gemm_throttling.gemm_throttling",
     "gemm": "benchmark_gemm.gemm",
     "gemm_accum": "benchmark_gemm.gemm_accum",

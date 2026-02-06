@@ -1,0 +1,60 @@
+benchmarks:
+- benchmark_name: "gemm_all_reduce"
+  trace_dir: "../microbenchmarks/gemm_all_reduce_bf16"
+  csv_path: "../microbenchmarks/gemm_all_reduce_bf16"
+  xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce_bf16"
+  xla_dump_dir: "../microbenchmarks/gemm_all_reduce_bf16/hlo_graphs"
+  benchmark_sweep_params:
+  - {m: 2048, k: 2048, n: 2048, num_runs: 20, dtype: 'bfloat16'}
+  - {m: 4096, k: 4096, n: 4096, num_runs: 20, dtype: 'bfloat16'}
+  - {m: 8192, k: 8192, n: 8192, num_runs: 20, dtype: 'bfloat16'}
+  - {m: 16384, k: 16384, n: 16384, num_runs: 20, dtype: 'bfloat16'}
+  - {m: 32768, k: 32768, n: 32768, num_runs: 20, dtype: 'bfloat16'}
+
+- benchmark_name: "gemm_all_reduce"
+  trace_dir: "../microbenchmarks/gemm_all_reduce_f32"
+  csv_path: "../microbenchmarks/gemm_all_reduce_f32"
+  xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce_f32"
+  xla_dump_dir: "../microbenchmarks/gemm_all_reduce_f32/hlo_graphs"
+  benchmark_sweep_params:
+  - {m: 2048, k: 2048, n: 2048, num_runs: 20, dtype: 'float32'}
+  - {m: 4096, k: 4096, n: 4096, num_runs: 20, dtype: 'float32'}
+  - {m: 8192, k: 8192, n: 8192, num_runs: 20, dtype: 'float32'}
+  - {m: 16384, k: 16384, n: 16384, num_runs: 20, dtype: 'float32'}
+  - {m: 32768, k: 32768, n: 32768, num_runs: 20, dtype: 'float32'}
+
+- benchmark_name: "gemm_all_reduce"
+  trace_dir: "../microbenchmarks/gemm_all_reduce_fp16"
+  csv_path: "../microbenchmarks/gemm_all_reduce_fp16"
+  xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce_fp16"
+  xla_dump_dir: "../microbenchmarks/gemm_all_reduce_fp16/hlo_graphs"
+  benchmark_sweep_params:
+  - {m: 2048, k: 2048, n: 2048, num_runs: 20, dtype: 'float16'}
+  - {m: 4096, k: 4096, n: 4096, num_runs: 20, dtype: 'float16'}
+  - {m: 8192, k: 8192, n: 8192, num_runs: 20, dtype: 'float16'}
+  - {m: 16384, k: 16384, n: 16384, num_runs: 20, dtype: 'float16'}
+  - {m: 32768, k: 32768, n: 32768, num_runs: 20, dtype: 'float16'}
+
+- benchmark_name: "gemm_all_reduce"
+  trace_dir: "../microbenchmarks/gemm_all_reduce_fp8"
+  csv_path: "../microbenchmarks/gemm_all_reduce_fp8"
+  xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce_fp8"
+  xla_dump_dir: "../microbenchmarks/gemm_all_reduce_fp8/hlo_graphs"
+  benchmark_sweep_params:
+  - {m: 2048, k: 2048, n: 2048, num_runs: 20, dtype: 'float8'}
+  - {m: 4096, k: 4096, n: 4096, num_runs: 20, dtype: 'float8'}
+  - {m: 8192, k: 8192, n: 8192, num_runs: 20, dtype: 'float8'}
+  - {m: 16384, k: 16384, n: 16384, num_runs: 20, dtype: 'float8'}
+  - {m: 32768, k: 32768, n: 32768, num_runs: 20, dtype: 'float8'}
+
+- benchmark_name: "gemm_all_reduce"
+  trace_dir: "../microbenchmarks/gemm_all_reduce_fp4"
+  csv_path: "../microbenchmarks/gemm_all_reduce_fp4"
+  xlml_metrics_dir: "../microbenchmarks/gemm_all_reduce_fp4"
+  xla_dump_dir: "../microbenchmarks/gemm_all_reduce_fp4/hlo_graphs"
+  benchmark_sweep_params:
+  - {m: 2048, k: 2048, n: 2048, num_runs: 20, dtype: 'float4'}
+  - {m: 4096, k: 4096, n: 4096, num_runs: 20, dtype: 'float4'}
+  - {m: 8192, k: 8192, n: 8192, num_runs: 20, dtype: 'float4'}
+  - {m: 16384, k: 16384, n: 16384, num_runs: 20, dtype: 'float4'}
+  - {m: 32768, k: 32768, n: 32768, num_runs: 20, dtype: 'float4'}

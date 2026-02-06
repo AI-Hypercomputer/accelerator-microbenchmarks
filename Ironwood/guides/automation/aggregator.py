@@ -36,6 +36,13 @@ columns_mapping = {
         "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
         "tflops_per_sec_per_device_max",
     ],
+    "gemm_all_reduce": [
+        "m", "n", "k", "dtype", "step_time_ms_num_runs",
+        "tflops_per_sec_per_device_p50", "tflops_per_sec_per_device_p90",
+        "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
+        "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
+        "tflops_per_sec_per_device_max",
+    ],
 }
 
 def download_from_gcs(bucket_path: str, local_dir: str):
@@ -110,10 +117,11 @@ aggregate_function = {
     "host_device": aggregate_host_device,
     "gemm": aggregate_gemm,
     "bmm": aggregate_bmm,
+    "gemm_all_reduce": aggregate_gemm,
 }
 
 def aggregate_results(bucket_path: str, local_dir: str):
-    categories = ["collectives", "hbm", "host_device", "gemm", "bmm"]
+    categories = ["collectives", "hbm", "host_device", "gemm", "bmm", "gemm_all_reduce"]
     directories = {}
     results = {}
     for category in categories:

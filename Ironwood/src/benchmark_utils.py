@@ -62,6 +62,7 @@ class ShardingStrategy(Enum):
   SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
 
 
+
 def multiple_iteration_timeit_from_trace_throttling(
     compute_func: Callable,
     data_generator: Callable,
@@ -150,6 +151,7 @@ def multiple_iteration_timeit_from_trace(
     tries: int = 17,
     task: str = None,
     trace_dir: str = None,
+    multi_op: bool = False,
 ) -> list[float]:
     """
     Time a function with jax.profiler and get the run time from the trace.
@@ -189,10 +191,11 @@ def multiple_iteration_timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return multiple_iteration_get_metrics_from_trace(trace, task)
+    return multiple_iteration_get_metrics_from_trace(trace, task, tries, multi_op)
 
 
-def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str = None) -> list[float]:
+def multiple_iteration_get_metrics_from_trace(
+    trace: dict[str, Any], task: str = None, tries = 17, multi_op: bool = False) -> list[float]:
     marker_done_events = []
     for event in trace["traceEvents"]:
         args = event.get("args", {})
@@ -203,7 +206,7 @@ def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str =
     marker_call_done_events = [
         e for e in marker_done_events if e.get("name", "").endswith("call-done")
     ]
-    if marker_call_done_events:
+    if not multi_op and marker_call_done_events:
         marker_done_events = marker_call_done_events
     unique_pids = set([e["pid"] for e in marker_done_events])
     print(f"Unique PIDs: {unique_pids}")
@@ -232,9 +235,19 @@ def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str =
 
     min_pid = min([e["pid"] for e in marker_done_events])
     events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
-    durations_ms = [
-        float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid
-    ]
+
+    if multi_op and len(events_from_min_pid) > tries:
+        if len(events_from_min_pid) % tries != 0:
+            raise ValueError(f"Number of events {len(events_from_min_pid)} is not a multiple of tries {tries}.")
+        events_from_min_pid.sort(key=lambda t: t["ts"])
+        durations_ms = []
+        num_ops = len(events_from_min_pid) // tries
+        for i in range(0, len(events_from_min_pid), num_ops):
+            durations_ms.append(sum([float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid[i:i+num_ops]]))
+    else:
+        durations_ms = [
+            float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid
+        ]
     print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
     print(durations_ms)
 
@@ -984,6 +997,8 @@ def get_lhs_named_shading(mesh, strategy: ShardingStrategy):
             return NamedSharding(mesh, P(None, None))
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return NamedSharding(mesh, P(None, None))
+        case ShardingStrategy.SHARDING_ON_ALL_DEVICES_WITH_K:
+            return NamedSharding(mesh, P(None, "device"))
 
 
 def get_rhs_named_shading(mesh, strategy: ShardingStrategy):
@@ -1000,6 +1015,7 @@ def get_rhs_named_shading(mesh, strategy: ShardingStrategy):
             return NamedSharding(mesh, P(None, "device"))
 
 
+
 def get_out_sharding(strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
@@ -1012,6 +1028,7 @@ def get_out_sharding(strategy: ShardingStrategy):
             return P(None, "device")
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return P(None, "device")
+
 
 
 def get_rowwise_named_shading(mesh, strategy: ShardingStrategy):
@@ -1056,6 +1073,7 @@ def handle_per_device_based_on_sharding(value, strategy: ShardingStrategy):
             return value // 2
 
 
+
 def handle_all_devices_based_on_sharding(value: int, strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
@@ -1068,6 +1086,7 @@ def handle_all_devices_based_on_sharding(value: int, strategy: ShardingStrategy)
             return value
         case ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N:
             return value * jax.device_count() // 2
+
 
 
 def handle_based_on_sharding(value: int, strategy: ShardingStrategy):
@@ -1273,16 +1292,19 @@ def get_peak_flops_multiplier(in_dtype_str: str) -> float:
     (PEAK_FLOPS_PER_DEVICE) based on the input data type.
     """
     in_dtype_lower = in_dtype_str.lower()
-    if in_dtype_lower == "fp8":
+    if in_dtype_lower in ("fp8", "float8_e4m3fn"):
         # FP8 is 2x faster than BF16
         # The baseline PEAK_FLOPS_PER_DEVICE is 1153.5 * 2 = 2307, which is FP8 peak.
         # So the multiplier should be 1.0
         return 1.0
-    elif in_dtype_lower == "bf16" or in_dtype_lower == "fp16":
+    elif in_dtype_lower in ("bf16", "bfloat16", "fp16", "float16"):
         # BF16/FP16 is 2x slower than FP8 peak
         return 0.5
-    elif in_dtype_lower == "fp32":
+    elif in_dtype_lower in ("fp32", "float32"):
         # FP32 is 4x slower than FP8 peak
         return 0.25
+    elif in_dtype_lower in ("fp4", "float4_e2m1fn"):
+        # FP4/INT4 is treated the same as FP8
+        return 1.0
     else:
         raise RuntimeError(f"{in_dtype_lower} is not supported for setting peak_flops_multiplier.")
