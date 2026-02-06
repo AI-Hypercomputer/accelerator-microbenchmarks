@@ -331,6 +331,17 @@ def write_metrics_to_gcs(
     calculate_metrics_results: List[Dict[str, Any]],
 ):
     """Writes metrics to GCS bucket defined by gcs_bucket_csv_dir."""
+    # Only write metrics from one host.
+    try:
+        if jax.process_index() != 0:
+            return
+    except Exception:
+        # If jax is not initialized or we are in a single process setup where process_index might fail
+        # (though likely it returns 0), we can default to writing.
+        # But safest is to assume if this function is called, we want to write, 
+        # unless explicitly on a non-zero rank.
+        pass
+
     if not gcs_bucket_csv_dir:
         return
 
@@ -342,9 +353,24 @@ def write_metrics_to_gcs(
         config_category = os.path.basename(config_dir)
 
     config_stem = os.path.splitext(os.path.basename(config_path))[0]
-
     gcs_path = os.path.join(gcs_bucket_csv_dir, config_category, config_stem)
-    write_to_csv(f"{gcs_path}/{test_name}.tsv", calculate_metrics_results)
+
+    # Group results by dtype
+    results_by_dtype = {}
+    for result in calculate_metrics_results:
+        dtype = result.get("metadata", {}).get("dtype", "unknown_dtype")
+        if dtype not in results_by_dtype:
+            results_by_dtype[dtype] = []
+        results_by_dtype[dtype].append(result)
+
+    # Write separate files for each dtype
+    for dtype, results in results_by_dtype.items():
+        # Append dtype to test_name if it's not already part of it (it usually isn't in a clean way)
+        # But to be safe and clear, we can just append it.
+        # test_name is like "t_gemm_all_reduce_XYZ..."
+        # We want "t_gemm_all_reduce_XYZ..._float16.tsv"
+        dtype_test_name = f"{test_name}_{dtype}"
+        write_to_csv(f"{gcs_path}/{dtype_test_name}.tsv", results)
 
 
 def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str, gcs_bucket_csv_dir: str = None, config_path: str = None):

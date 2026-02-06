@@ -37,7 +37,7 @@ columns_mapping = {
         "tflops_per_sec_per_device_max",
     ],
     "gemm_all_reduce": [
-        "m", "n", "k", "dtype", "step_time_ms_num_runs",
+        "topology", "m", "n", "k", "dtype", "step_time_ms_num_runs",
         "tflops_per_sec_per_device_p50", "tflops_per_sec_per_device_p90",
         "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
         "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
@@ -107,6 +107,18 @@ def aggregate_gemm(directories: list[str], picked_columns: list[str]) -> pd.Data
             aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
     return aggregated_df
 
+def aggregate_gemm_all_reduce(directories: list[str], picked_columns: list[str]) -> pd.DataFrame:
+    if len(directories) == 0:
+        return None
+    aggregated_df = pd.DataFrame()
+    for directory in directories:
+        files = glob.glob(f"{directory}/*.tsv")
+        for file in files:
+            df = pd.read_csv(file, sep='\t')
+            df["topology"] = [file.split('/')[-4].split('-')[1] for _ in range(df.shape[0])]
+            aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
+    return aggregated_df
+
 def aggregate_bmm(directories: list[str], picked_columns: list[str]) -> pd.DataFrame:
     if len(directories) == 0:
         return None
@@ -135,8 +147,8 @@ aggregate_function = {
     "host_device": aggregate_host_device,
     "gemm": aggregate_gemm,
     "bmm": aggregate_bmm,
-    "gemm_all_reduce": aggregate_gemm,
     "attention": aggregate_attention,
+    "gemm_all_reduce": aggregate_gemm_all_reduce,
 }
 
 def aggregate_results(bucket_path: str, local_dir: str):

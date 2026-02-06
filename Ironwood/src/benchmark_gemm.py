@@ -147,6 +147,7 @@ def gemm_multiple_run_calculate_metrics(
         total_flops, SHARDING_STRATEGY
     )
     peak_flops_multiplier = get_peak_flops_multiplier(dtype.dtype.name)
+    peak_flops = PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier
     return unified_flops_metrics(
         m,
         n,

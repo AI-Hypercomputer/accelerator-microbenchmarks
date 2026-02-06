@@ -21,7 +21,7 @@ os.environ["TPU_PREMAPPED_BUFFER_TRANSFER_THRESHOLD_BYTES"] = "68719476736"
 
 def benchmark_host_device(
     data_size_mib: int,
-    h2d_type: str = "simple",
+    h2d_type: str,
     num_runs: int = 100,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -129,6 +129,7 @@ def benchmark_host_device(
 
                         d2h_perf.append((t3 - t2) * 1000)
                         tensor_stack.delete()
+                        
                         for device_tensor in tensors_on_device:
                             device_tensor.delete()
                         del tensors_on_device
@@ -165,6 +166,7 @@ def benchmark_host_device_calculate_metrics(
     h2d_type: str,
     H2D_Bandwidth_ms: List[float],
     D2H_Bandwidth_ms: List[float],
+    d2h_pipelined_method: str = "device_put",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Calculates metrics for Host-Device transfer."""
     params = locals().items()
@@ -176,6 +178,7 @@ def benchmark_host_device_calculate_metrics(
     metadata = {k: v for k, v in params if k in metadata_keys}
     metadata["dtype"] = "float32"
     metadata["h2d_type"] = h2d_type
+    metadata["d2h_pipelined_method"] = d2h_pipelined_method
     
     metrics = {}
     
