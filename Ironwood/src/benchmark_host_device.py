@@ -157,6 +157,7 @@ def benchmark_host_device(
 
 def benchmark_host_device_calculate_metrics(
     data_size_mib: int,
+    h2d_type: str,
     H2D_Bandwidth_ms: List[float],
     D2H_Bandwidth_ms: List[float],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
