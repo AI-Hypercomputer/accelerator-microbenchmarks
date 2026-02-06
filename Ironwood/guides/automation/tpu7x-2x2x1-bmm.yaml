@@ -54,6 +54,7 @@ spec:
 
           GCS_BUCKET_DIR=${GCS_PATH}
           python Ironwood/src/run_benchmark.py --config="Ironwood/configs/bmm/single_device_bmm.yaml" --gcs-bucket-csv-dir=${GCS_BUCKET_DIR}
+          python Ironwood/src/run_benchmark.py --config="Ironwood/configs/bmm/multi_host_bmm.yaml" --gcs-bucket-csv-dir=${GCS_BUCKET_DIR}
         resources:
           requests:
             google.com/tpu: 4

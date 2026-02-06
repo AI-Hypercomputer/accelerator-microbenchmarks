@@ -34,6 +34,7 @@ COLLECTIVE_BENCHMARK_MAP = {
 
 BMM_BENCHMARK_MAP = {
     "single_device_bmm": "benchmark_bmm.single_device_bmm",
+    "multi_host_bmm": "benchmark_bmm.multi_host_bmm"
 }
 
 MATMUL_BENCHMARK_MAP = {
