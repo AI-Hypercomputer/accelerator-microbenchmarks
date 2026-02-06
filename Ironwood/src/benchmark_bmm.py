@@ -134,3 +134,96 @@ def single_device_bmm_calculate_metrics(
         dtype=dtype.dtype.name,
         b=b,
     )
+
+
+def multi_host_bmm(
+    b: int,
+    m: int,
+    k: int,
+    n: int,
+    dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
+    num_runs: int = 1,
+    trace_dir: str = None,
+    sharding_strategy: ShardingStrategy = ShardingStrategy.NO_SHARDING,
+) -> Dict[str, Any]:
+    """Benchmarks multi-host bmm."""
+    mesh = create_mesh(sharding_strategy)
+
+    lhs_sharding = get_lhs_named_shading(mesh, sharding_strategy)
+    rhs_sharding = get_rhs_named_shading(mesh, sharding_strategy)
+    output_sharding = get_output_named_shading(mesh, sharding_strategy)
+
+    def f(x, y):
+        with jax.named_scope(MARKER):
+            acc = jax.numpy.einsum(
+                "bij,bjk->bik", x, y, preferred_element_type=jnp.float32
+            )
+            return acc.astype(jnp.bfloat16)
+
+    jit_sharded_f = jax.jit(
+        f,
+        in_shardings=(lhs_sharding, rhs_sharding),
+        out_shardings=output_sharding,
+    )
+
+    lhs_shape = (b, m, k)
+    rhs_shape = (b, k, n)
+
+    lhs_dtype = dtype
+    rhs_dtype = dtype
+
+    key = jax.random.key(SEED)
+
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key  # Use and update the outer 'key'
+        key, key_lhs, key_rhs = jax.random.split(key, 3)
+
+        # Create random data on host
+        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+
+        # Put on device (HBM) with sharding
+        lhs = jax.device_put(lhs_host, lhs_sharding)
+        rhs = jax.device_put(rhs_host, rhs_sharding)
+
+        return (lhs, rhs)
+
+    dtype_str = dtype.dtype.name
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{dtype_str}_{b}x{m}x{n}x{k}",
+        tries=num_runs,
+        task="multi_host_bmm",
+        trace_dir=trace_dir,
+    )
+
+    return {"time_ms_list": time_ms_list}
+
+
+def multi_host_bmm_calculate_metrics(
+    b: int,
+    m: int,
+    k: int,
+    n: int,
+    dtype: jnp.dtype,
+    time_ms_list: list[float],
+    sharding_strategy: ShardingStrategy = ShardingStrategy.NO_SHARDING
+) -> Dict[str, Any]:
+    # Calculate FLOPs
+    total_flops = 2 * b * m * k * n  # Total floating-point operations
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, sharding_strategy
+    )
+    return unified_flops_metrics(
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE,
+        dtype=dtype.dtype.name,
+        b=b,
+    )
