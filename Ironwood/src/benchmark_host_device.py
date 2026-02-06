@@ -21,6 +21,7 @@ os.environ["TPU_PREMAPPED_BUFFER_TRANSFER_THRESHOLD_BYTES"] = "68719476736"
 
 def benchmark_host_device(
     data_size_mib: int,
+    h2d_type: str = "simple",
     num_runs: int = 100,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -65,29 +66,89 @@ def benchmark_host_device(
             
             with step_context:
                  # H2D
-                t0 = time.perf_counter()
+                if h2d_type == "simple":
+                    t0 = time.perf_counter()
+                    # Simple device_put
+                    device_array = jax.device_put(host_data)
+                    device_array.block_until_ready()
+                    t1 = time.perf_counter()
+                    
+                    # Verify H2D shape
+                    assert device_array.shape == host_data.shape
+                    h2d_perf.append((t1 - t0) * 1000)
                 
-                # Simple device_put
-                device_array = jax.device_put(host_data)
-                device_array.block_until_ready()
-                
-                t1 = time.perf_counter()
-                h2d_perf.append((t1 - t0) * 1000)
-                
-                # Verify H2D shape
-                assert device_array.shape == host_data.shape
-                
-                # D2H
-                t2 = time.perf_counter()
-                
-                # Simple device_get
-                # Note: device_get returns a numpy array (copy)
-                _ = jax.device_get(device_array)
-                
-                t3 = time.perf_counter()
-                d2h_perf.append((t3 - t2) * 1000)
-                
-                device_array.delete()
+                    # D2H
+                    t2 = time.perf_counter()
+                    # Simple device_get
+                    # Note: device_get returns a numpy array (copy)
+                    _ = jax.device_get(device_array)
+                    t3 = time.perf_counter()
+                    d2h_perf.append((t3 - t2) * 1000)
+                    
+                    device_array.delete()
+                elif h2d_type == "pipelined":
+                    target_chunk_size_mib = 16  # Sweet spot from profiling
+                    num_devices = len(target_devices)
+
+                    tensors_on_device = []
+                    
+                    # Calculate chunks per device
+                    data_per_dev = data_size_mib / num_devices
+                    chunks_per_dev = int(data_per_dev / target_chunk_size_mib)
+                    chunks_per_dev = max(1, chunks_per_dev)
+
+                    chunks = np.array_split(host_data, chunks_per_dev * num_devices, axis=0)
+                    if chunks_per_dev > 1:    
+                        t0 = time.perf_counter()
+                        # We need to map chunks to the correct device
+                        # This simple example assumes chunks are perfectly divisible and ordered
+                        # In production, use `jax.sharding` mesh logic for complex layouts
+                        for idx, chunk in enumerate(chunks):
+                            if num_devices > 1:
+                                dev = target_devices[idx % num_devices]
+                            else:
+                                dev = target_devices[0]
+                            tensors_on_device.append(jax.device_put(chunk, dev))
+                        for device_tensor in tensors_on_device:
+                            device_tensor.block_until_ready()
+                        t1 = time.perf_counter()
+                        h2d_perf.append((t1 - t0) * 1000)
+                        del chunks
+
+                        # D2H
+                        tensor_stack = jnp.vstack(tensors_on_device)
+                        
+                        t2 = time.perf_counter()
+                        _ = jax.device_get(tensor_stack)
+                        t3 = time.perf_counter()
+
+                        d2h_perf.append((t3 - t2) * 1000)
+                        tensor_stack.delete()
+                        for device_tensor in tensors_on_device:
+                            device_tensor.delete()
+                        del tensors_on_device
+                    else:
+                        t0 = time.perf_counter()
+
+                        print(f"Warning: {data_size_mib=} is not larger than {target_chunk_size_mib=}, falling back to standard JAX put.")
+                        # Fallback to standard JAX put for small data
+                        result = jax.device_put(host_data, target_devices[0])
+                        result.block_until_ready()
+
+                        t1 = time.perf_counter()
+                        h2d_perf.append((t1 - t0) * 1000)
+
+                        # D2H
+                        t2 = time.perf_counter()
+                        # Simple device_get
+                        # Note: device_get returns a numpy array (copy)
+                        _ = jax.device_get(result)
+
+                        t3 = time.perf_counter()
+                        d2h_perf.append((t3 - t2) * 1000)
+                        result.delete()
+                    
+                jax.clear_caches()
 
     return {
         "H2D_Bandwidth_ms": h2d_perf,
@@ -108,6 +169,7 @@ def benchmark_host_device_calculate_metrics(
     }
     metadata = {k: v for k, v in params if k in metadata_keys}
     metadata["dtype"] = "float32"
+    metadata["h2d_type"] = h2d_type
     
     metrics = {}
     
