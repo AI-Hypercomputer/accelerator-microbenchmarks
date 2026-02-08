@@ -156,7 +156,7 @@ def unified_ici_collectives_metrics(
   if LOG_SPARSECORE_USAGE:
     print("trace_dir: ", trace_dir)
     if trace_dir:
-      sparsecore_used = find_sparsecore_usage_from_xplane(trace_dir)
+      sparsecore_used, xplane_file = find_sparsecore_usage_from_xplane(trace_dir)
     print("sparsecore_used: ", sparsecore_used)
   print("hlo first replica group: ", hlo_first_replica_group)
   
@@ -177,6 +177,7 @@ def unified_ici_collectives_metrics(
       "hlo_replica_groups": json.dumps(hlo_replica_groups),
       "sparsecore_used": sparsecore_used,
       "benchmark_type": "collective",
+      "xplane_file": xplane_file if xplane_file else "NA"
       "dtype": str(dtype),
       "num_runs": len(ici_average_time_ms_list),
   }

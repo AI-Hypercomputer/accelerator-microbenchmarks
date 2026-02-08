@@ -608,7 +608,7 @@ def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
             if "SparseCore" in plane.name:
                 sparsecore_found = True
                 break
-        return sparsecore_found
+        return sparsecore_found, xplane_file
     finally:
         if tmpdir_obj:
             tmpdir_obj.cleanup()
