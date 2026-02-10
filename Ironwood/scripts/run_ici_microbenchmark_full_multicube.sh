@@ -27,9 +27,9 @@ do
   
   # Run the python script and wait for it to complete
   if [ "$demo" = "true" ]; then
-    python Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}" --demo
+    python3 Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}" --demo
   else
-    python Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}"
+    python3 Ironwood/src/run_benchmark.py --config="${CONFIG_FILE}"
   fi
   
   echo "--- Finished benchmark for ${CONFIG_NAME} ---"
