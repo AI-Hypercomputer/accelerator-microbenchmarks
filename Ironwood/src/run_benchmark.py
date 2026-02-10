@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import copy
 import datetime
 import importlib
+import importlib.metadata
 import inspect
 import itertools
 import json
@@ -20,7 +21,6 @@ from typing import Any, Callable, Dict, List, Tuple
 from benchmark_utils import MetricsStatistics, maybe_write_metrics_file, rename_xla_dump
 import jax
 import pandas as pd
-import pkg_resources
 import ray
 import yaml
 
@@ -345,9 +345,9 @@ def run_single_benchmark(
     # Inject num_runs from config if not present in params
     global_num_runs = benchmark_config.get("num_runs")
     if global_num_runs is not None:
-        for param in benchmark_params:
-            if "num_runs" not in param:
-                param["num_runs"] = global_num_runs
+      for param in benchmark_params:
+        if "num_runs" not in param:
+          param["num_runs"] = global_num_runs
 
   if not benchmark_name:
     raise ValueError("Each benchmark must have a 'benchmark_name'.")
@@ -413,10 +413,9 @@ def run_single_benchmark(
 
     package_str = ""
     for package in RELEVANT_PACKAGE_LIST:
-      package_version = None
       try:
-        package_version = pkg_resources.get_distribution(package).version
-      except pkg_resources.DistributionNotFound:
+        package_version = importlib.metadata.version(package)
+      except importlib.metadata.PackageNotFoundError:
         package_version = "Not Found"
       package_str += f"{package}: {package_version}\n"
     metadata["Package Versions"] = package_str
