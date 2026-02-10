@@ -22,6 +22,7 @@ yaml_names=(
     "tpu7x-2x2x4-collectives.yaml"
     "tpu7x-2x4x4-collectives.yaml"
     "tpu7x-4x4x4-collectives.yaml"
+    "tpu7x-4x4x4-gemm_all_reduce.yaml"
 )
 
 ######################################################################
