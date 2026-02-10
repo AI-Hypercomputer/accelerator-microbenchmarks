@@ -91,7 +91,6 @@ def unified_ici_collectives_metrics(
 ) -> Dict[str, Any]:
   """Calculates the metrics for the ICI collectives benchmark."""
 
-
   average_time_ms_statistics = MetricsStatistics(
         metrics_list=ici_average_time_ms_list, metrics_name="step_time_ms"
     )
@@ -151,7 +150,6 @@ def unified_ici_collectives_metrics(
         / rank
     )
 
-
   sparsecore_used = "NA"
   if LOG_SPARSECORE_USAGE:
     print("trace_dir: ", trace_dir)
@@ -159,7 +157,7 @@ def unified_ici_collectives_metrics(
       sparsecore_used, xplane_file = find_sparsecore_usage_from_xplane(trace_dir)
     print("sparsecore_used: ", sparsecore_used)
   print("hlo first replica group: ", hlo_first_replica_group)
-  
+
   metadata = {
       "iteration": iteration,
       "op_type": op_type,
@@ -177,7 +175,7 @@ def unified_ici_collectives_metrics(
       "hlo_replica_groups": json.dumps(hlo_replica_groups),
       "sparsecore_used": sparsecore_used,
       "benchmark_type": "collective",
-      "xplane_file": xplane_file if xplane_file else "NA"
+      "xplane_file": xplane_file if xplane_file else "NA",
       "dtype": str(dtype),
       "num_runs": len(ici_average_time_ms_list),
   }
