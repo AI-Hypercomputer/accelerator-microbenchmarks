@@ -252,6 +252,16 @@ def tokamax_splash_attention_benchmark(
     output = tuned_splash(q, k, v)
     jax.block_until_ready(output)
 
+    
+    print("-" * 50)
+    print(
+        f"batch_size={batch_size}, q_seq_len={q_seq_len}, kv_seq_len={kv_seq_len}, "
+        f"q_heads={q_heads}, kv_heads={kv_heads}, qk_head_dim={qk_head_dim}, "
+        f"v_head_dim={v_head_dim}, mode={mode}, causal={causal}"
+    )
+    print(f"tuned_splash.optimal_hyperparams={tuned_splash.optimal_hyperparams}")
+    print("-" * 50)
+
     # Run benchmark
     time_ms_list = timeit_from_trace(
         tuned_splash,
