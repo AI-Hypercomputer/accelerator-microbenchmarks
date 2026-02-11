@@ -28,6 +28,7 @@ columns_mapping = {
         "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
         "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
         "tflops_per_sec_per_device_max",
+        "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_min", "step_time_ms_max",
     ],
     "bmm": [
         "b", "m", "n", "k", "dtype", "step_time_ms_num_runs",
@@ -35,6 +36,7 @@ columns_mapping = {
         "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
         "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
         "tflops_per_sec_per_device_max",
+        "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_min", "step_time_ms_max",
     ],
     "gemm_all_reduce": [
         "topology", "m", "n", "k", "dtype", "step_time_ms_num_runs",
@@ -42,6 +44,7 @@ columns_mapping = {
         "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
         "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
         "tflops_per_sec_per_device_max",
+        "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_min", "step_time_ms_max",
     ],
     "attention": [
         "batch_size", "q_seq_len", "kv_seq_len", "q_heads", "kv_heads", "qk_head_dim", "v_head_dim", "mode", "causal", "step_time_ms_num_runs", "num_samples", 
