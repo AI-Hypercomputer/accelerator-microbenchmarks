@@ -8,29 +8,8 @@ benchmarks:
   xla_dump_dir: "../microbenchmarks/hbm_bfloat16/hlo_graphs"
 - benchmark_name: "single_device_hbm_copy"
   benchmark_sweep_params:
-  - {num_elements_range: {start: 1048576, end: 4294967296, multiplier: 2}, dtype: "float32", num_runs: 20}
-  trace_dir: "../microbenchmarks/hbm_float32"
-  csv_path: "../microbenchmarks/hbm_float32"
-  xlml_metrics_dir: "../microbenchmarks/hbm_float32"
-  xla_dump_dir: "../microbenchmarks/hbm_float32/hlo_graphs"
-- benchmark_name: "single_device_hbm_copy"
-  benchmark_sweep_params:
   - {num_elements_range: {start: 1048576, end: 4294967296, multiplier: 2}, dtype: "float8", num_runs: 20}
   trace_dir: "../microbenchmarks/hbm_float8"
   csv_path: "../microbenchmarks/hbm_float8"
   xlml_metrics_dir: "../microbenchmarks/hbm_float8"
   xla_dump_dir: "../microbenchmarks/hbm_float8/hlo_graphs"
-- benchmark_name: "single_device_hbm_copy"
-  benchmark_sweep_params:
-  - {num_elements_range: {start: 1048576, end: 4294967296, multiplier: 2}, dtype: "float16", num_runs: 20}
-  trace_dir: "../microbenchmarks/hbm_float16"
-  csv_path: "../microbenchmarks/hbm_float16"
-  xlml_metrics_dir: "../microbenchmarks/hbm_float16"
-  xla_dump_dir: "../microbenchmarks/hbm_float16/hlo_graphs"
-- benchmark_name: "single_device_hbm_copy"
-  benchmark_sweep_params:
-  - {num_elements_range: {start: 1048576, end: 4294967296, multiplier: 2}, dtype: "float4", num_runs: 20}
-  trace_dir: "../microbenchmarks/hbm_float4"
-  csv_path: "../microbenchmarks/hbm_float4"
-  xlml_metrics_dir: "../microbenchmarks/hbm_float4"
-  xla_dump_dir: "../microbenchmarks/hbm_float4/hlo_graphs"
