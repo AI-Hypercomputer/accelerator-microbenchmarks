@@ -588,7 +588,7 @@ def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
 
 
 def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
-    # Check if the given task name is a collective with corresponding TPU opertion.
+    # Check if the given task name is a collective with corresponding TPU operation.
     # This is a workaround and should be reverted or refactored in future.
     if task in TARGET_TASK_NAME_COLLECTIVES_MAP:
         try:

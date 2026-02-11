@@ -71,7 +71,7 @@ kubectl get nodes
 
 ### Deploying a single host job
 
-Create a job manifest to run `2x2x1` microbenchmarks (`tpu7x-2x2x1-micobenchmarks.yaml`):
+Create a job manifest to run `2x2x1` microbenchmarks (`tpu7x-2x2x1-microbenchmarks.yaml`):
 
 ```yaml
 apiVersion: v1
@@ -112,7 +112,7 @@ spec:
 Deploy the 2x2x1 microbenchmarks:
 
 ```bash
-kubectl apply -f tpu7x-2x2x1-micobenchmarks.yaml
+kubectl apply -f tpu7x-2x2x1-microbenchmarks.yaml
 ```
 
 Monitor the results:
@@ -129,7 +129,7 @@ kubectl delete pod tpu7x-single-host-microbenchmark
 
 ### Deploying a multi host job
 
-Create a job manifest to run `4x4x4` microbenchmarks (`tpu7x-4x4x4-micobenchmarks.yaml`):
+Create a job manifest to run `4x4x4` microbenchmarks (`tpu7x-4x4x4-microbenchmarks.yaml`):
 
 ```yaml
 apiVersion: v1
@@ -193,7 +193,7 @@ spec:
 Deploy the 4x4x4 microbenchmarks:
 
 ```bash
-kubectl apply -f tpu7x-4x4x4-micobenchmarks.yaml
+kubectl apply -f tpu7x-4x4x4-microbenchmarks.yaml
 ```
 
 List all the jobs in the pod to get the name of a job:
@@ -210,7 +210,7 @@ kubectl logs tpu7x-multi-host-microbenchmark-0-XXXXX
 Cleanup the job:
 
 ```bash
-kubectl delete -f tpu7x-4x4x4-micobenchmarks.yaml
+kubectl delete -f tpu7x-4x4x4-microbenchmarks.yaml
 ```
 
 ## Microbenchmark scripts

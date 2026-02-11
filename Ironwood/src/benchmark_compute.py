@@ -127,7 +127,7 @@ def quantization(
     OUT<M, N>:FP8, SF<M>:FP32 = Quantize(N<M, N>:BF16)
     SF[i] = FP8_MAX / amax(IN[i])
     OUT[i] = cast_fp8(IN[i] / SF[i])
-    Dymaic scaling with absmax calibration method
+    Dynamic scaling with absmax calibration method
     """
 
     def f(x):
