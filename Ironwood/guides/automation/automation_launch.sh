@@ -8,8 +8,8 @@ export GCS_BUCKET_ROOT_DIR="gs://elm-automation/gemm-output-bf16/$(date +%Y%m%d_
 export GCS_SA_NAME="gcs-writer"  # Service account with write access to GCS_BUCKET_ROOT_DIR
 export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 
-MAX_RETRIES=3
-TIMEOUT_SECOND=3600
+MAX_RETRIES=1
+TIMEOUT_SECOND=36000
 
 yaml_names=(
     "tpu7x-2x2x1-gemm.yaml"
