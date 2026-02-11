@@ -4,7 +4,7 @@
 #                            USER INPUT
 ######################################################################
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-export GCS_BUCKET_ROOT_DIR=""
+export GCS_BUCKET_ROOT_DIR="gs://elm-automation/gemm-output-bf16/$(date +%Y%m%d_%H%M%S)"
 export GCS_SA_NAME="gcs-writer"  # Service account with write access to GCS_BUCKET_ROOT_DIR
 export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 
@@ -12,17 +12,7 @@ MAX_RETRIES=3
 TIMEOUT_SECOND=3600
 
 yaml_names=(
-    "tpu7x-2x2x1-hbm.yaml"
-    "tpu7x-2x2x1-host_device.yaml"
-    "tpu7x-2x2x1-gemm_all_reduce.yaml"
     "tpu7x-2x2x1-gemm.yaml"
-    "tpu7x-2x2x1-bmm.yaml"
-    "tpu7x-2x2x1-collectives.yaml"
-    "tpu7x-2x2x2-collectives.yaml"
-    "tpu7x-2x2x4-collectives.yaml"
-    "tpu7x-2x4x4-collectives.yaml"
-    "tpu7x-4x4x4-collectives.yaml"
-    "tpu7x-4x4x4-gemm_all_reduce.yaml"
 )
 
 ######################################################################
@@ -209,28 +199,5 @@ for (( retry=1; retry<=MAX_RETRIES; retry++ )); do
 done
 
 echo ""
-echo "Jobs completed. Aggregating results..."
+echo "Jobs completed."
 echo ""
-
-# Ensure cleanup of any previous aggregator job to avoid immutable field errors
-kubectl delete job aggregator --ignore-not-found=true
-
-envsubst '${GCS_BUCKET_ROOT_DIR} ${GCS_SA_NAME}' < ${SCRIPT_DIR}/aggregator.yaml | kubectl apply -f -
-wait_for_job_completion "aggregator" ${TIMEOUT_SECOND}
-envsubst '${GCS_BUCKET_ROOT_DIR} ${GCS_SA_NAME}' < ${SCRIPT_DIR}/aggregator.yaml | kubectl delete -f -
-
-# Print the failed jobs at the end for better visibility.
-
-if [[ ${#FAILED_JOBS[@]} -gt 0 ]]; then
-    echo "The following jobs finally failed after ${MAX_RETRIES} rounds:"
-    printf '%s\n' "${FAILED_JOBS[@]}"
-
-    echo -e "\nTo retry manually, run:"
-    for yaml_file in "${FAILED_JOBS[@]}"; do
-        job_name=$(basename "${yaml_file}" .yaml | tr '[:upper:]' '[:lower:]' | tr '_' '-')
-        GCS_PATH="${GCS_BUCKET_ROOT_DIR}/${job_name}"
-        echo "JOB_NAME=\"${job_name}\" GCS_PATH=\"${GCS_PATH}\" envsubst '\${JOB_NAME} \${GCS_PATH}' < \"${SCRIPT_DIR}/${yaml_file}\" | kubectl apply -f -"
-    done
-else
-    echo "Success! All jobs finished."
-fi
