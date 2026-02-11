@@ -2,9 +2,11 @@ benchmarks:
 - benchmark_name: host_device
   num_runs: 20
   benchmark_sweep_params:
-  - h2d_type: "simple"
+  - transfer_type: "simple"
     data_size_mib_list: [1, 16, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
-  - h2d_type: "pipelined"
+  - transfer_type: "pipelined"
+    data_size_mib_list: [1, 16, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+  - transfer_type: "pinned_memory"
     data_size_mib_list: [1, 16, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
   csv_path: "../microbenchmarks/host_device"
   trace_dir: "../microbenchmarks/host_device/trace"
