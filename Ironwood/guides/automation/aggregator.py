@@ -47,7 +47,7 @@ columns_mapping = {
         "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_min", "step_time_ms_max",
     ],
     "attention": [
-        "batch_size", "q_seq_len", "kv_seq_len", "q_heads", "kv_heads", "qk_head_dim", "v_head_dim", "mode", "causal", "step_time_ms_num_runs", "num_samples", 
+        "batch_size", "q_seq_len", "kv_seq_len", "q_heads", "kv_heads", "qk_head_dim", "v_head_dim", "mode", "causal", "has_optimized", "step_time_ms_num_runs", 
         "time_ms_p50", "time_ms_p90",
         "time_ms_p95", "time_ms_p99",
         "time_ms_avg", "time_ms_min",
@@ -155,7 +155,7 @@ aggregate_function = {
 }
 
 def aggregate_results(bucket_path: str, local_dir: str):
-    categories = ["collectives", "hbm", "host_device", "gemm", "bmm", "gemm_all_reduce"]
+    categories = ["collectives", "hbm", "host_device", "gemm", "bmm", "gemm_all_reduce", "attention"]
     directories = {}
     results = {}
     for category in categories:
