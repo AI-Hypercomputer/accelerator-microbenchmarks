@@ -151,19 +151,19 @@ def _get_tokamax_benchmark_fn(
         kernel = splash.make_splash_mqa_single_device(mask, config=config)
 
         @jax.jit
-        def f(q, k, v):
+        def f(q, k, v, segment_ids):
             q = q.reshape(q.shape[:-3] + (k.shape[-3], -1) + q.shape[-2:])
-            kernel_ = jax.vmap(kernel, in_axes=(0, 0, 0))  # batch vmap
-            kernel_ = jax.vmap(kernel_, in_axes=(0, 0, 0))  # mqa vmap
-            return kernel_(q, k, v)
+            kernel_ = jax.vmap(kernel, in_axes=(0, 0, 0, None))  # batch vmap
+            kernel_ = jax.vmap(kernel_, in_axes=(0, 0, 0, None))  # mqa vmap
+            return kernel_(q, k, v, segment_ids)
     else:
         kernel = splash.make_splash_mha_single_device(mask, config=config)
-        f = jax.jit(jax.vmap(kernel, in_axes=(0, 0, 0)))
+        f = jax.jit(jax.vmap(kernel, in_axes=(0, 0, 0, None)))
 
     if mode == "fwd":
         return f
     if mode == "bwd":
-        return jax.grad(lambda q, k, v: f(q, k, v).mean(), argnums=(0, 1, 2))
+        return jax.grad(lambda q, k, v, segment_ids: f(q, k, v, segment_ids).mean(), argnums=(0, 1, 2))
     raise ValueError(f"Invalid mode: {mode}")
 
 
@@ -211,7 +211,7 @@ def tokamax_splash_attention_benchmark(
         print(f"{key=} is not tuned")
         has_optimized = False
         hyperparams = DEFAULT_SPLASH_ATTENTION_HYPERPARAMS
-    
+
     (
         block_q,
         block_kv,
@@ -225,30 +225,62 @@ def tokamax_splash_attention_benchmark(
         use_experimental_scheduler,
     ) = hyperparams
 
+    segment_ids = None
+
     # Pad q, kv to prevent the block size are not valid
     if not has_optimized:
         def _ceiling_div(a: int, b: int) -> int:
             return (a + b - 1) // b
 
-
         def _align_to(x: int, a: int) -> int:
             return _ceiling_div(x, a) * a
+
+        q_len = q.shape[-2]
+        k_len = k.shape[-2]
+
+        # handle the block size, seq_len need to be multiple of block size
+        # bkv need to be multiple of bkv_compute
+        block_q = min(q_len, block_q)
+        # Align to 128 per kernel request
+        block_q = _align_to(block_q, 128)
+        block_kv = min(k_len, block_kv)
+        block_kv = _align_to(block_kv, 128)
+        block_kv_compute = min(block_kv, 256)
+        # Align block_kv to block_kv_compute
+        block_kv = _align_to(block_kv, block_kv_compute)
+        block_q_dkv = min(q_len, block_q_dkv)
+        # Align to 128 per kernel request
+        block_q_dkv = _align_to(block_q_dkv, 128)
+        block_kv_dkv = min(k_len, block_kv_dkv)
+        block_kv_dkv = _align_to(block_kv_dkv, 128)
+        block_kv_dkv_compute = min(block_kv_dkv, 256)
+        # Align block_kv to block_kv_compute
+        block_kv_dkv = _align_to(block_kv_dkv, block_kv_dkv_compute)
 
         def _pad_token(t: jax.Array, size) -> jax.Array:
             # tensor is [batch_size, num_head, token, head_dim]
             result = jnp.pad(t, ((0, 0), (0, 0), (0, size), (0, 0)), constant_values=0)
             return result
 
-        q_len = q.shape[-2]
-        k_len = k.shape[-2]
-
         # Pad q, k, v sequence, align to block sizes
         q = _pad_token(q, _align_to(q_len, block_q) - q_len)
         k = _pad_token(k, _align_to(k_len, block_kv) - k_len)
         v = _pad_token(v, _align_to(k_len, block_kv) - k_len)
+        # Handle the k padding to avoid numeric error
+        if k.shape[-2] > k_len:
+            # padded q doesn't matter since it can directly strip out from result
+            segment_ids = splash.SegmentIds(
+                q=jnp.ones((q.shape[-2],), dtype=jnp.int32),
+                kv=jnp.pad(
+                    jnp.ones((k_len,), dtype=jnp.int32),
+                    ((0, k.shape[-2] - k_len),),
+                    constant_values=0,
+                ),
+            )
 
     padded_q_len = q.shape[-2]
     padded_kv_len = k.shape[-2]
+    print(f"{padded_q_len=}, {padded_kv_len=}")
     # Attention mask
     mask = mask_lib.FullMask(_shape=(padded_q_len, padded_kv_len))
     if causal:
@@ -260,6 +292,7 @@ def tokamax_splash_attention_benchmark(
         q: jax.Array,
         k: jax.Array,
         v: jax.Array,
+        segment_ids: Optional[splash.SegmentIds],
         block_q: int,
         block_kv: int,
         block_kv_compute: int,
@@ -291,7 +324,7 @@ def tokamax_splash_attention_benchmark(
         )
 
         f = _get_tokamax_benchmark_fn(mask, config, mode, mqa=mqa)
-        return f(q, k, v)
+        return f(q, k, v, segment_ids)
 
     attention_fn = partial(
         attention_fn,
@@ -331,7 +364,7 @@ def tokamax_splash_attention_benchmark(
     )
 
     # Run once
-    output = tuned_splash(q, k, v)
+    output = tuned_splash(q, k, v, segment_ids)
     jax.block_until_ready(output)
 
     print("-" * 50)
@@ -343,17 +376,19 @@ def tokamax_splash_attention_benchmark(
     print(f"{hyperparams=}")
     print("-" * 50)
 
+    is_event_filter_segmented = "" if segment_ids is None else "segmented_"
     # Run benchmark
     time_ms_list = timeit_from_trace(
         tuned_splash,
         q,
         k,
         v,
+        segment_ids,
         tries=num_runs,
         task="tokamax_splash_attentionatt",
         trace_dir=trace_dir,
         event_name_str_list=[
-            f"{event_filter_regex}_no_residuals.1",
+            f"{event_filter_regex}_{is_event_filter_segmented}no_residuals.1",
         ]
     )
     return {
