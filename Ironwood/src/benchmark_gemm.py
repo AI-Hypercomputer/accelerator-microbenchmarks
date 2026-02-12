@@ -128,6 +128,7 @@ def gemm_multiple_run(
         tries=num_runs,
         task="gemm_multiple_run",
         trace_dir=trace_dir,
+        multi_op=True,
     )
     return {
         "time_ms_list": time_ms_list,
