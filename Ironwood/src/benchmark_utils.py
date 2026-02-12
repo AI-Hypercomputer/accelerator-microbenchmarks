@@ -788,7 +788,6 @@ class MetricsStatistics:
             "p99": np.percentile(self.metrics_list, 99),
             "avg": np.mean(self.metrics_list),
             "max": np.max(self.metrics_list),
-            "num_runs": len(self.metrics_list),
             "min": np.min(self.metrics_list),
             # "all_values": json.dumps(self.metrics_list),
         }

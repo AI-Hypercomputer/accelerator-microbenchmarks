@@ -398,6 +398,8 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         metadata, metrics = calculate_metrics_func(
             **filtered_benchmark_param, **filtered_benchmark_results
         )
+        if "num_runs" in benchmark_param:
+            metadata["num_runs"] = benchmark_param["num_runs"]
         if xlml_metrics_dir:
             maybe_write_metrics_file(
                 xlml_metrics_dir,
