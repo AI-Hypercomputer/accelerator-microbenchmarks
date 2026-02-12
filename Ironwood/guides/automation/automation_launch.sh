@@ -9,7 +9,7 @@ export GCS_SA_NAME="gcs-writer"  # Service account with write access to GCS_BUCK
 export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 
 MAX_RETRIES=3
-TIMEOUT_SECOND=3600
+TIMEOUT_SECOND=7200
 
 yaml_names=(
     "tpu7x-2x2x1-hbm.yaml"
