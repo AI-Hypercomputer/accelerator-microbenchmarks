@@ -47,7 +47,7 @@ columns_mapping = {
         "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_min", "step_time_ms_max",
     ],
     "attention": [
-        "batch_size", "q_seq_len", "kv_seq_len", "q_heads", "kv_heads", "qk_head_dim", "v_head_dim", "mode", "causal", "has_optimized", "step_time_ms_num_runs", 
+        "batch_size", "q_seq_len", "kv_seq_len", "q_heads", "kv_heads", "qk_head_dim", "v_head_dim", "mode", "causal", "has_optimized", "time_ms_num_runs", 
         "time_ms_p50", "time_ms_p90",
         "time_ms_p95", "time_ms_p99",
         "time_ms_avg", "time_ms_min",
