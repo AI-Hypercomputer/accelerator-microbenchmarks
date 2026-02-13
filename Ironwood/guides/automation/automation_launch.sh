@@ -230,7 +230,7 @@ if [[ ${#FAILED_JOBS[@]} -gt 0 ]]; then
     for yaml_file in "${FAILED_JOBS[@]}"; do
         job_name=$(basename "${yaml_file}" .yaml | tr '[:upper:]' '[:lower:]' | tr '_' '-')
         GCS_PATH="${GCS_BUCKET_ROOT_DIR}/${job_name}"
-        echo "JOB_NAME=\"${job_name}\" GCS_PATH=\"${GCS_PATH}\" envsubst '\${JOB_NAME} \${GCS_PATH}' < \"${SCRIPT_DIR}/${yaml_file}\" | kubectl apply -f -"
+        echo "JOB_NAME=\"${job_name}\" GCS_PATH=\"${GCS_PATH}\" GCS_SA_NAME=\"${GCS_SA_NAME}\" envsubst '\${JOB_NAME} \${GCS_PATH} \${GCS_SA_NAME}' < \"${SCRIPT_DIR}/${yaml_file}\" | kubectl apply -f -"
     done
 else
     echo "Success! All jobs finished."
