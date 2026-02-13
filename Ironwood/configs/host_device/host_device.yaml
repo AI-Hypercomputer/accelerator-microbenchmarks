@@ -1,6 +1,6 @@
 benchmarks:
 - benchmark_name: host_device
-  num_runs: 20
+  num_runs: 200
   benchmark_sweep_params:
   - transfer_type: "simple"
     data_size_mib_list: [1, 16, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
