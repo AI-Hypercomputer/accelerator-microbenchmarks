@@ -3,8 +3,7 @@
 ######################################################################
 #                            USER INPUT
 ######################################################################
-# export GCS_BUCKET_ROOT_DIR="gs://your-unique-bucket-name/$(date +%Y%m%d_%H%M%S)"
-export GCS_BUCKET_ROOT_DIR=""
+export GCS_BUCKET_ROOT_DIR="gs://your-bucket/$(date +%Y%m%d_%H%M%S)"
 export GCS_SA_NAME="gcs-writer"  # Service account with write access to GCS_BUCKET_ROOT_DIR
 export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 
