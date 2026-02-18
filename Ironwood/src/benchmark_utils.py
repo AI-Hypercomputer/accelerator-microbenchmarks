@@ -741,7 +741,7 @@ def upload_to_storage(trace_dir: str, local_file: str):
     if trace_dir.startswith("gs://"):  # Google Cloud Storage (GCS)
         try:
             subprocess.run(
-                ["gcloud", "storage", "cp", "-r", local_file, trace_dir],
+                ["gcloud", "storage", "cp", "--recursive", local_file, trace_dir],
                 check=True,
                 capture_output=True,
             )
