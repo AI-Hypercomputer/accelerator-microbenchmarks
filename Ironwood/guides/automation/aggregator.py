@@ -16,7 +16,7 @@ columns_mapping = {
         "time_ms_p50", "time_ms_p90", "time_ms_p95", "time_ms_p99", "time_ms_avg", "time_ms_min", "time_ms_max",
     ],
     "host_device": [
-        "data_size_mib", "h2d_type", "H2D_bw (GiB/s)_num_runs",
+        "data_size_mib", "transfer_type", "H2D_bw (GiB/s)_num_runs",
         "H2D_bw (GiB/s)_p50", "H2D_bw (GiB/s)_p90", "H2D_bw (GiB/s)_p95", "H2D_bw (GiB/s)_p99", 
         "H2D_bw (GiB/s)_avg", "H2D_bw (GiB/s)_min", "H2D_bw (GiB/s)_max",
         "D2H_bw (GiB/s)_p50", "D2H_bw (GiB/s)_p90", "D2H_bw (GiB/s)_p95", "D2H_bw (GiB/s)_p99", 
@@ -28,6 +28,7 @@ columns_mapping = {
         "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
         "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
         "tflops_per_sec_per_device_max",
+        "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_min", "step_time_ms_max",
     ],
     "bmm": [
         "b", "m", "n", "k", "dtype", "step_time_ms_num_runs",
@@ -35,13 +36,22 @@ columns_mapping = {
         "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
         "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
         "tflops_per_sec_per_device_max",
+        "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_min", "step_time_ms_max",
     ],
     "gemm_all_reduce": [
-        "m", "n", "k", "dtype", "step_time_ms_num_runs",
+        "topology", "m", "n", "k", "dtype", "step_time_ms_num_runs",
         "tflops_per_sec_per_device_p50", "tflops_per_sec_per_device_p90",
         "tflops_per_sec_per_device_p95", "tflops_per_sec_per_device_p99",
         "tflops_per_sec_per_device_avg", "tflops_per_sec_per_device_min",
         "tflops_per_sec_per_device_max",
+        "step_time_ms_p50", "step_time_ms_p90", "step_time_ms_p95", "step_time_ms_p99", "step_time_ms_avg", "step_time_ms_min", "step_time_ms_max",
+    ],
+    "attention": [
+        "batch_size", "q_seq_len", "kv_seq_len", "q_heads", "kv_heads", "qk_head_dim", "v_head_dim", "mode", "causal", "has_optimized", "time_ms_num_runs", 
+        "time_ms_p50", "time_ms_p90",
+        "time_ms_p95", "time_ms_p99",
+        "time_ms_avg", "time_ms_min",
+        "time_ms_max",
     ],
 }
 
@@ -100,7 +110,30 @@ def aggregate_gemm(directories: list[str], picked_columns: list[str]) -> pd.Data
             aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
     return aggregated_df
 
+def aggregate_gemm_all_reduce(directories: list[str], picked_columns: list[str]) -> pd.DataFrame:
+    if len(directories) == 0:
+        return None
+    aggregated_df = pd.DataFrame()
+    for directory in directories:
+        files = glob.glob(f"{directory}/*.tsv")
+        for file in files:
+            df = pd.read_csv(file, sep='\t')
+            df["topology"] = [file.split('/')[-4].split('-')[1] for _ in range(df.shape[0])]
+            aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
+    return aggregated_df
+
 def aggregate_bmm(directories: list[str], picked_columns: list[str]) -> pd.DataFrame:
+    if len(directories) == 0:
+        return None
+    aggregated_df = pd.DataFrame()
+    for directory in directories:
+        files = glob.glob(f"{directory}/*.tsv")
+        for file in files:
+            df = pd.read_csv(file, sep='\t')
+            aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
+    return aggregated_df
+
+def aggregate_attention(directories: list[str], picked_columns: list[str]) -> pd.DataFrame:
     if len(directories) == 0:
         return None
     aggregated_df = pd.DataFrame()
@@ -117,11 +150,12 @@ aggregate_function = {
     "host_device": aggregate_host_device,
     "gemm": aggregate_gemm,
     "bmm": aggregate_bmm,
-    "gemm_all_reduce": aggregate_gemm,
+    "attention": aggregate_attention,
+    "gemm_all_reduce": aggregate_gemm_all_reduce,
 }
 
 def aggregate_results(bucket_path: str, local_dir: str):
-    categories = ["collectives", "hbm", "host_device", "gemm", "bmm", "gemm_all_reduce"]
+    categories = ["collectives", "hbm", "host_device", "gemm", "bmm", "gemm_all_reduce", "attention"]
     directories = {}
     results = {}
     for category in categories:

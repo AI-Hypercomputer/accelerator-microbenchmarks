@@ -1,0 +1,7 @@
+benchmarks:
+- benchmark_name: "tokamax_splash_attention"
+  benchmark_sweep_params:
+  - {batch_size: 1, q_seq_len: 4096, kv_seq_len: 4096, q_heads: 128, kv_heads: 128, qk_head_dim: 256, v_head_dim: 256, mode: ["fwd", "bwd"], causal: [true, false], num_runs: 20}
+  trace_dir: "../microbenchmarks/attention"
+  csv_path: "../microbenchmarks/attention"
+  xlml_metrics_dir: "../microbenchmarks/attention"

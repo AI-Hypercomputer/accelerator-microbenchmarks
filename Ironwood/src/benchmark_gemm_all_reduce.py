@@ -1,6 +1,7 @@
 """Benchmarks gemm + all_reduce for DP gradient sync simulation."""
 
 import os
+import time
 from typing import Any, Dict, Optional, Callable
 
 # pylint: disable=g-importing-member
@@ -57,11 +58,6 @@ def setup_tpu_env():
         "--xla_tpu_vmem_scavenging_mode=NONE "
         "--xla_tpu_dvfs_p_state=7 "
 
-        "--xla_tpu_impure_enable_packed_bf16_math_ops=true "
-        "--xla_tpu_enable_pincer_short_fusion_emitter=true "
-        "--xla_tpu_enable_sparse_core_hierarchical_all_reduce=true "
-        "--xla_tpu_use_single_sparse_core_for_all_reduce_offload=true " # Test effect on SC
-
         "--xla_jf_debug_level=1 "
         "--xla_sc_disable_megacore_partitioning=true "
         "--xla_tpu_disable_sparse_core_collective_offload_remover=true "
@@ -72,9 +68,7 @@ def setup_tpu_env():
         "--xla_tpu_use_tc_device_shape_on_sc=true "
     )
 
-    print("Step 1: Calling jax.distributed.initialize(initialization_timeout=300)...", flush=True)
     jax.distributed.initialize(initialization_timeout=300)
-    print("Step 1: jax.distributed.initialize() completed.", flush=True)
     _INITIALIZED = True
 
 
@@ -106,7 +100,6 @@ def _run_gemm_base(
             out = jax.lax.psum(c, axis_name="device")
             return out
 
-    print("Step 2: Creating Mesh and Shardings...", flush=True)
     mesh = create_mesh(sharding_strategy)
     lhs_sharding = get_lhs_named_shading(mesh, sharding_strategy)
     rhs_sharding = get_rhs_named_shading(mesh, sharding_strategy)
@@ -131,22 +124,35 @@ def _run_gemm_base(
     rhs_dtype = dtype
     key = jax.random.key(SEED)
 
+    # Create random data on host and put on device ONCE (Double Buffered)
+    key, key_lhs_1, key_lhs_2, key_rhs_1, key_rhs_2 = jax.random.split(key, 5)
+    
+    lhs_host_1 = jax.random.normal(key_lhs_1, lhs_shape).astype(lhs_dtype)
+    lhs_host_2 = jax.random.normal(key_lhs_2, lhs_shape).astype(lhs_dtype)
+    rhs_host_1 = jax.random.normal(key_rhs_1, rhs_shape).astype(rhs_dtype)
+    rhs_host_2 = jax.random.normal(key_rhs_2, rhs_shape).astype(rhs_dtype)
+    
+    lhs_device_1 = jax.device_put(lhs_host_1, lhs_sharding)
+    lhs_device_2 = jax.device_put(lhs_host_2, lhs_sharding)
+    rhs_device_1 = jax.device_put(rhs_host_1, rhs_sharding)
+    rhs_device_2 = jax.device_put(rhs_host_2, rhs_sharding)
+    
+    jax.block_until_ready(lhs_device_1)
+    jax.block_until_ready(lhs_device_2)
+    jax.block_until_ready(rhs_device_1)
+    jax.block_until_ready(rhs_device_2)
+
+    step = 0
     def data_generator():
-        """Creates new random data on host and puts it on device."""
-        nonlocal key
-        key, key_lhs, key_rhs = jax.random.split(key, 3)
+        """Returns pre-allocated device data, toggling between two sets of buffers to avoid caching."""
+        nonlocal step
+        use_set_1 = (step % 2) == 0
+        step += 1
+        return (
+            lhs_device_1 if use_set_1 else lhs_device_2,
+            rhs_device_1 if use_set_1 else rhs_device_2
+        )
 
-        # Create random data on host
-        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
-        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
-
-        # Put on device (HBM)
-        lhs_device = jax.device_put(lhs_host, lhs_sharding)
-        rhs_device = jax.device_put(rhs_host, rhs_sharding)
-
-        return (lhs_device, rhs_device)
-
-    print("Step 3: Starting Execution Loop (includes JIT)...", flush=True)
     time_ms_list = multiple_iteration_timeit_from_trace(
         jit_sharded_f,
         data_generator,
@@ -156,7 +162,6 @@ def _run_gemm_base(
         trace_dir=trace_dir,
         multi_op=True,
     )
-    print("Step 4: Execution Loop Completed.", flush=True)
     
     return {
         "time_ms_list": time_ms_list,
@@ -177,9 +182,6 @@ def gemm_all_reduce(
         sharding_strategy=ShardingStrategy.NO_SHARDING,
         task_name_suffix="gemm_all_reduce"
     )
-
-
-
 
 
 def _calculate_metrics_base(
