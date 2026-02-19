@@ -19,7 +19,7 @@
 #                            USER INPUT
 ######################################################################
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-export GCS_BUCKET_ROOT_DIR="gs://<BUCKET_NAME>/<FOLDER_NAME>"
+export GCS_BUCKET_ROOT_DIR="gs://pulasthi-ccc-testb1/test5"
 export GCS_SA_NAME="gcs-writer"  # Service account with write access to GCS_BUCKET_ROOT_DIR
 export PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
 MAX_RETRIES=3
@@ -27,9 +27,6 @@ TIMEOUT_SECOND=3600
 
 yaml_names=(
     "tpu7x-2x2x1-hbm.yaml"
-    "tpu7x-2x2x1-collectives.yaml"
-    "tpu7x-2x2x2-collectives.yaml"
-    "tpu7x-2x2x4-collectives.yaml"
     "tpu7x-2x4x4-collectives.yaml"
     "tpu7x-2x2x1-gemm_all_reduce.yaml"
 )
@@ -238,7 +235,7 @@ for (( retry=1; retry<=MAX_RETRIES; retry++ )); do
         print_info "$((retry + 1)) / ${MAX_RETRIES} max retries"
         print_info "========================================"
     else
-        print_error "Max retries reached. ¯\_(ツ)_/¯"
+        print_error "Max retries reached."
     fi
 done
 
