@@ -194,52 +194,53 @@ def multiple_iteration_timeit_from_trace(
 
 
 def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str = None) -> list[float]:
-    marker_done_events = []
-    for event in trace["traceEvents"]:
-        args = event.get("args", {})
-        tf_op = args.get("tf_op", "")
-        if MARKER in tf_op:
-            marker_done_events.append(event)
-    # when offloaded to sparse core look for call-done events
-    marker_call_done_events = [
-        e for e in marker_done_events if e.get("name", "").endswith("call-done")
-    ]
-    if marker_call_done_events:
-        marker_done_events = marker_call_done_events
-    unique_pids = set([e["pid"] for e in marker_done_events])
-    print(f"Unique PIDs: {unique_pids}")
-    if not marker_done_events:
-        event_matcher = re.compile(task)
+  marker_done_events = []
+  for event in trace["traceEvents"]:
+    args = event.get("args", {})
+    tf_op = args.get("tf_op", "")
+    if MARKER in tf_op:
+      print(tf_op)
+      marker_done_events.append(event)
+  # when offloaded to sparse core look for call-done events
+  marker_call_done_events = [
+      e for e in marker_done_events if e.get("name", "").endswith("call-done")
+  ]
+  if marker_call_done_events:
+    marker_done_events = marker_call_done_events
+  unique_pids = set([e["pid"] for e in marker_done_events])
+  print(f"Unique PIDs: {unique_pids}")
+  if not marker_done_events:
+    event_matcher = re.compile(task)
 
-        if "traceEvents" not in trace:
-          raise KeyError("Key 'traceEvents' not found in trace.")
-        events = []
-        for e in trace["traceEvents"]:
-            if "name" in e and event_matcher.match(e["name"]):
-                events.append(e)
-        # For each trace, find the TPU with smallest `pid` value and consider it to be TPU-0
-        min_pid = min([e["pid"] for e in events])
-        events_from_min_pid = [e for e in events if e["pid"] == min_pid]
-        print(events_from_min_pid)
-        durations_ms = []
-        for e in events_from_min_pid:
-            if e.get("args", {}).get("device_duration_ps"):
-                durations_ms.append(float(e["args"]["device_duration_ps"]) / 1e9)
-            elif "dur" in e:
-                durations_ms.append(float(e["dur"]) / 1e3)
-        if not durations_ms and events_from_min_pid:
-            print("Warning: No event duration found in legacy_get_metrics_from_trace_tpu.")
-        return durations_ms
+    if "traceEvents" not in trace:
+      raise KeyError("Key 'traceEvents' not found in trace.")
+    events = []
+    for e in trace["traceEvents"]:
+      if "name" in e and event_matcher.match(e["name"]):
+        events.append(e)
+    # For each trace, find the TPU with smallest `pid` value and consider it to be TPU-0
+    min_pid = min([e["pid"] for e in events])
+    events_from_min_pid = [e for e in events if e["pid"] == min_pid]
+    print(events_from_min_pid)
+    durations_ms = []
+    for e in events_from_min_pid:
+      if e.get("args", {}).get("device_duration_ps"):
+        durations_ms.append(float(e["args"]["device_duration_ps"]) / 1e9)
+      elif "dur" in e:
+        durations_ms.append(float(e["dur"]) / 1e3)
+    if not durations_ms and events_from_min_pid:
+      print("Warning: No event duration found in legacy_get_metrics_from_trace_tpu.")
+    return durations_ms
 
-    min_pid = min([e["pid"] for e in marker_done_events])
-    events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
-    durations_ms = [
+  min_pid = min([e["pid"] for e in marker_done_events])
+  events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
+  durations_ms = [
         float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid
     ]
-    print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
-    print(durations_ms)
+  print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
+  print(durations_ms)
 
-    return durations_ms
+  return durations_ms
 
 def iteration_timeit_from_trace(
     compute_func: Callable,

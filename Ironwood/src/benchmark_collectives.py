@@ -512,8 +512,8 @@ def all_gather_benchmark(
   sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   def f(x):
-    with jax.named_scope(MARKER):
-      return jax.lax.all_gather(x, sharding_axis, tiled=True)
+    # with jax.named_scope(MARKER):
+    return jax.lax.all_gather(x, sharding_axis, tiled=True)
 
   jit_sharded_f = jax.jit(
       shard_map(
@@ -618,10 +618,10 @@ def all_to_all_benchmark(
   sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   def f(x):
-    with jax.named_scope(MARKER):
-      return jax.lax.all_to_all(
-          x, sharding_axis, split_axis=0, concat_axis=0, tiled=True
-      )
+    # with jax.named_scope(MARKER):
+    return jax.lax.all_to_all(
+        x, sharding_axis, split_axis=0, concat_axis=0, tiled=True
+    )
 
   jit_sharded_f = jax.jit(
       shard_map(
