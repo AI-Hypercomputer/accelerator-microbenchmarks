@@ -270,10 +270,10 @@ def psum_benchmark(
     )(x)
 
   def f(x):
-    with jax.named_scope(MARKER):
-      y = jax.lax.psum(x, sharding_axis)
-      # Insert the custom call to prevent y from being a live out buffer
-      return zero_crop(y)
+    # with jax.named_scope(MARKER):
+    y = jax.lax.psum(x, sharding_axis)
+    # Insert the custom call to prevent y from being a live out buffer
+    return zero_crop(y)
 
   jit_sharded_f = jax.jit(
       shard_map(

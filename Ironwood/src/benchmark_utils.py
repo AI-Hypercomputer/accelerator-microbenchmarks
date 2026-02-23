@@ -98,35 +98,39 @@ def multiple_iteration_timeit_from_trace_throttling(
           )
         jax.devices()
         with jax.profiler.StepTraceAnnotation(task, step_num=i):
-          with jax.named_scope(f"{MARKER}_{i}"):
+          with jax.profiler.TraceAnnotation(f"{MARKER}_{i}"):
             result = compute_func(*data_args)
             jax.block_until_ready(result)
   elif gap_strategy=='data_gen_once_noblock':
     data_args = data_generator()
     with jax.profiler.trace(tmp_trace_dir):
-        results = []
-        for i in range(tries):
-            if i % 10 == 0:
-                print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
-            jax.devices()
-            with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                with jax.named_scope(f"{MARKER}_{i}"):
-                    compute_func(*data_args)
-                    results.append(True)
+      results = []
+      for i in range(tries):
+        if i % 10 == 0:
+          print(
+              f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+          )
+        jax.devices()
+        with jax.profiler.StepTraceAnnotation(task, step_num=i):
+          with jax.profiler.TraceAnnotation(f"{MARKER}_{i}"):
+            compute_func(*data_args)
+            results.append(True)
 
-        if results:
-          jax.block_until_ready(results)
+      if results:
+        jax.block_until_ready(results)
   elif gap_strategy == "data_gen_every_iter_block_every_iter":
     with jax.profiler.trace(tmp_trace_dir):
-        for i in range(tries):
-            if i % 10 == 0:
-                print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
-            data_args = data_generator()
-            jax.devices()
-            with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                with jax.named_scope(f"{MARKER}_{i}"):
-                    result = compute_func(*data_args)
-                    jax.block_until_ready(result)
+      for i in range(tries):
+        if i % 10 == 0:
+          print(
+              f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+          )
+        data_args = data_generator()
+        jax.devices()
+        with jax.profiler.StepTraceAnnotation(task, step_num=i):
+          with jax.profiler.TraceAnnotation(f"{MARKER}_{i}"):
+            result = compute_func(*data_args)
+            jax.block_until_ready(result)
   else:
     raise ValueError(f"Unknown gap strategy: {gap_strategy}")
   trace = get_trace(tmp_trace_dir)
@@ -152,45 +156,43 @@ def multiple_iteration_timeit_from_trace(
     task: str = None,
     trace_dir: str = None,
 ) -> list[float]:
-    """
-    Time a function with jax.profiler and get the run time from the trace.
-    """
-    LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+  """Time a function with jax.profiler and get the run time from the trace."""
+  LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
 
-    if matrix_dim is not None:
-        trace_name = f"{task}_dim_{matrix_dim}"
-    else:
-        trace_name = f"t_{task}_" + "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=10)
-        )
+  if matrix_dim is not None:
+    trace_name = f"{task}_dim_{matrix_dim}"
+  else:
+    trace_name = f"t_{task}_" + "".join(
+        random.choices(string.ascii_uppercase + string.digits, k=10)
+    )
 
-    trace_full_dir = f"{trace_dir}/{trace_name}"
-    tmp_trace_dir = trace_full_dir
-    # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
-    if trace_dir and not is_local_directory_path(trace_dir):
-        tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
-    # data_args = data_generator()
-    with jax.profiler.trace(tmp_trace_dir):
-        for i in range(tries):
-            if i % 10 == 0:
-                print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
-            data_args = data_generator()
-            jax.devices()
+  trace_full_dir = f"{trace_dir}/{trace_name}"
+  tmp_trace_dir = trace_full_dir
+  # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
+  if trace_dir and not is_local_directory_path(trace_dir):
+    tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+  # data_args = data_generator()
+  with jax.profiler.trace(tmp_trace_dir):
+    for i in range(tries):
+      if i % 10 == 0:
+        print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
+      data_args = data_generator()
+      jax.devices()
 
-            with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                with jax.named_scope(f"{MARKER}_{i}"):
+      with jax.profiler.StepTraceAnnotation(task, step_num=i):
+        with jax.profiler.TraceAnnotation(f"{MARKER}_{i}"):
 
-                    result = compute_func(*data_args)
-                    jax.block_until_ready(result)
+          result = compute_func(*data_args)
+          jax.block_until_ready(result)
 
-            # Commenting it out as it's causing issues with GEMM
-            # clear_jax_memory()
-    trace = get_trace(tmp_trace_dir)
+      # Commenting it out as it's causing issues with GEMM
+      # clear_jax_memory()
+  trace = get_trace(tmp_trace_dir)
 
-    if trace_full_dir != tmp_trace_dir:
-        # Upload the traces to desired location
-        upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return multiple_iteration_get_metrics_from_trace(trace, task)
+  if trace_full_dir != tmp_trace_dir:
+    # Upload the traces to desired location
+    upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
+  return multiple_iteration_get_metrics_from_trace(trace, task)
 
 
 def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str = None) -> list[float]:
