@@ -369,7 +369,7 @@ def psum_scatter_benchmark(
   Returns:
     The measured time for the ICI benchmark.
   """
-  
+
   libtpu_init_args = [
       "--xla_tpu_enable_sparse_core_reduce_scatter_padding=true",
       "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
@@ -394,8 +394,8 @@ def psum_scatter_benchmark(
   sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   def f(x):
-    with jax.named_scope(MARKER):
-      return jax.lax.psum_scatter(x, sharding_axis, tiled=True)
+    # with jax.named_scope(MARKER):
+    return jax.lax.psum_scatter(x, sharding_axis, tiled=True)
 
   jit_sharded_f = jax.jit(
       shard_map(
