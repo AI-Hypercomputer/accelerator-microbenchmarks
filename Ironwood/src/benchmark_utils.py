@@ -172,13 +172,13 @@ def multiple_iteration_timeit_from_trace(
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
     # data_args = data_generator()
 
-	options = jax.profiler.ProfileOptions()
-	options.advanced_configuration = {
-		"gpu_max_callback_api_events": 1024 * 1024 * 1024,
-		"gpu_max_activity_api_events": 1024 * 1024 * 1024,
-		"gpu_max_annotation_strings": 1024 * 1024 * 1024,
-		"gpu_pm_sample_buffer_size_per_gpu_mb": 1024,
-	}
+    options = jax.profiler.ProfileOptions()
+    options.advanced_configuration = {
+        "gpu_max_callback_api_events": 1024 * 1024 * 1024,
+        "gpu_max_activity_api_events": 1024 * 1024 * 1024,
+        "gpu_max_annotation_strings": 1024 * 1024 * 1024,
+        "gpu_pm_sample_buffer_size_per_gpu_mb": 1024,
+    }
     with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
         for i in range(tries):
             if i % 10 == 0:
