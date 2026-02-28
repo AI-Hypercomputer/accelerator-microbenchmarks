@@ -176,6 +176,7 @@ def multiple_iteration_timeit_from_trace(
     options.advanced_configuration = {
         "tpu_trace_mode" : "TRACE_ONLY_XLA",
         "tpu_num_sparse_cores_to_trace": 0,
+        "tpu_num_sparse_core_tiles_to_trace": 0,
     }
     with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
         for i in range(tries):
