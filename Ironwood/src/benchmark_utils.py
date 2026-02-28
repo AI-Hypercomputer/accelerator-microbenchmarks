@@ -173,13 +173,9 @@ def multiple_iteration_timeit_from_trace(
     # data_args = data_generator()
 
     options = jax.profiler.ProfileOptions()
-    options.device_tracer_level = 1
     options.advanced_configuration = {
-        "tpu_trace_mode" : "TRACE_COMPUTE_AND_SYNC",
-        "gpu_max_callback_api_events": 1024 * 1024 * 1024,
-        "gpu_max_activity_api_events": 1024 * 1024 * 1024,
-        "gpu_max_annotation_strings": 1024 * 1024 * 1024,
-        "gpu_pm_sample_buffer_size_per_gpu_mb": 1024,
+        "tpu_trace_mode" : "TRACE_ONLY_XLA",
+        "tpu_num_sparse_cores_to_trace": 0,
     }
     with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
         for i in range(tries):
