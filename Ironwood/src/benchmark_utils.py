@@ -604,7 +604,7 @@ def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
 
         space = xplane_pb2.XSpace()
         space.ParseFromString(serialized_space)
-        # print("space: ", space)
+        print("space: ", space)
         sparsecore_found = False
         for _, plane in enumerate(space.planes):
             print("plane: ", plane.name)
