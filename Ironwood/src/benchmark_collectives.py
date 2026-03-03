@@ -270,10 +270,10 @@ def psum_benchmark(
     )(x)
 
   def f(x):
-    # with jax.named_scope(MARKER):
-    y = jax.lax.psum(x, sharding_axis)
+    with jax.named_scope(MARKER):
+      y = jax.lax.psum(x, sharding_axis)
     # Insert the custom call to prevent y from being a live out buffer
-    return zero_crop(y)
+      return zero_crop(y)
 
   jit_sharded_f = jax.jit(
       shard_map(
@@ -394,8 +394,8 @@ def psum_scatter_benchmark(
   sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   def f(x):
-    # with jax.named_scope(MARKER):
-    return jax.lax.psum_scatter(x, sharding_axis, tiled=True)
+    with jax.named_scope(MARKER):
+      return jax.lax.psum_scatter(x, sharding_axis, tiled=True)
 
   jit_sharded_f = jax.jit(
       shard_map(
@@ -512,8 +512,8 @@ def all_gather_benchmark(
   sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   def f(x):
-    # with jax.named_scope(MARKER):
-    return jax.lax.all_gather(x, sharding_axis, tiled=True)
+    with jax.named_scope(MARKER):
+      return jax.lax.all_gather(x, sharding_axis, tiled=True)
 
   jit_sharded_f = jax.jit(
       shard_map(
@@ -618,10 +618,10 @@ def all_to_all_benchmark(
   sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
   def f(x):
-    # with jax.named_scope(MARKER):
-    return jax.lax.all_to_all(
-        x, sharding_axis, split_axis=0, concat_axis=0, tiled=True
-    )
+    with jax.named_scope(MARKER):
+      return jax.lax.all_to_all(
+          x, sharding_axis, split_axis=0, concat_axis=0, tiled=True
+      )
 
   jit_sharded_f = jax.jit(
       shard_map(
