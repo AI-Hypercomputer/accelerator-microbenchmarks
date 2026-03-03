@@ -200,7 +200,7 @@ def _calculate_metrics_base(
 
     dtype_str = dtype.dtype.name
     peak_flops_multiplier = get_peak_flops_multiplier(dtype_str)
-    peak_flops = PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier
+    peak_flops = PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier if peak_flops_multiplier is not None else None
 
     return unified_flops_metrics(
         m, n, k, time_ms_list, total_flops_per_device, total_flops_all_devices, peak_flops, dtype=dtype_str,

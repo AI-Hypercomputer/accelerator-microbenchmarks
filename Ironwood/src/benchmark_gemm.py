@@ -147,7 +147,7 @@ def gemm_multiple_run_calculate_metrics(
         total_flops, SHARDING_STRATEGY
     )
     peak_flops_multiplier = get_peak_flops_multiplier(dtype.dtype.name)
-    peak_flops = PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier
+    peak_flops = PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier if peak_flops_multiplier is not None else None
     return unified_flops_metrics(
         m,
         n,
@@ -332,7 +332,7 @@ def gemm_simple_with_dtype_calculate_metrics(
     metadata, metrics = unified_flops_metrics(
             m, n, k, time_ms_list,
             total_flops, total_flops_all_devices,
-            PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier)
+            PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier if peak_flops_multiplier is not None else None)
 
     # Add dtype info to metadata for logging
     metadata["in_dtype"] = in_dtype_str

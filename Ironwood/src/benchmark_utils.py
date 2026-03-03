@@ -1140,7 +1140,7 @@ def unified_flops_metrics(
     time_ms_list: list[float],
     total_flops: int,
     total_flops_all_devices: int,
-    peak_TFLOPS_per_device: float,
+    peak_TFLOPS_per_device: float | None = None,
     dtype: str = None,
     b: int = None,
 ) -> Dict[str, Any]:
@@ -1158,10 +1158,19 @@ def unified_flops_metrics(
         total_flops_all_devices / average_time_s / 10**12
         for average_time_s in average_time_s_list
     ]
-    mfu = [
-        tflops_per_sec / peak_TFLOPS_per_device
-        for tflops_per_sec in tflops_per_sec_list
-    ]
+    if peak_TFLOPS_per_device is not None:
+        mfu = [
+            tflops_per_sec / peak_TFLOPS_per_device
+            for tflops_per_sec in tflops_per_sec_list
+        ]
+        mfu_statistics = MetricsStatistics(metrics_list=mfu, metrics_name="MFU")
+        mfu_val = f"{mfu_statistics.statistics['p50']:.2%}"
+        mfu_raw = mfu_statistics.statistics["p50"]
+    else:
+        mfu_statistics = None
+        mfu_val = "N/A"
+        mfu_raw = "N/A"
+        
     average_time_ms_statistics = MetricsStatistics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
@@ -1171,14 +1180,13 @@ def unified_flops_metrics(
     tflops_per_sec_all_devices_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_all_devices, metrics_name="tflops_per_sec"
     )
-    mfu_statistics = MetricsStatistics(metrics_list=mfu, metrics_name="MFU")
     dtype_prefix = f"[{dtype}] " if dtype is not None else ""
     print(
         f"{dtype_prefix}"
         f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, "
         f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOP / second / device, "
         f"TotalThroughput (median): {tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} TFLOP / second, "
-        f"MFU: {mfu_statistics.statistics['p50']:.2%}"
+        f"MFU: {mfu_val}"
     )
     # print()
     # time_ms_list =
@@ -1193,7 +1201,7 @@ def unified_flops_metrics(
             "TotalThroughput(median,TFLOP/s)": tflops_per_sec_all_devices_statistics.statistics[
                 "p50"
             ],
-            "MFU": mfu_statistics.statistics["p50"],
+            "MFU": mfu_raw,
             "total_flops": total_flops,
             # "all_time_ms_list":  f"{json.dumps(time_ms_list)}",
         }
@@ -1201,7 +1209,8 @@ def unified_flops_metrics(
     metrics.update(average_time_ms_statistics.serialize_statistics())
     metrics.update(tflops_per_sec_statistics.serialize_statistics())
     metrics.update(tflops_per_sec_all_devices_statistics.serialize_statistics())
-    metrics.update(mfu_statistics.serialize_statistics())
+    if mfu_statistics is not None:
+        metrics.update(mfu_statistics.serialize_statistics())
     metrics = {key: value for key, value in metrics.items() if value is not None}
     return metadata, metrics
 
@@ -1286,7 +1295,7 @@ def str_to_dtype(dtype_str: str) -> jnp.dtype:
     else:
         raise ValueError(f"Unsupported dtype string: {dtype_str}")
 
-def get_peak_flops_multiplier(in_dtype_str: str) -> float:
+def get_peak_flops_multiplier(in_dtype_str: str) -> float | None:
     """
     Returns the peak FLOPS multiplier relative to the baseline
     (PEAK_FLOPS_PER_DEVICE) based on the input data type.
@@ -1301,8 +1310,7 @@ def get_peak_flops_multiplier(in_dtype_str: str) -> float:
         # BF16/FP16 is 2x slower than FP8 peak
         return 0.5
     elif in_dtype_lower in ("fp32", "float32"):
-        # FP32 is 4x slower than FP8 peak
-        return 0.25
+        return None
     elif in_dtype_lower in ("fp4", "float4_e2m1fn"):
         # FP4/INT4 is treated the same as FP8
         return 1.0

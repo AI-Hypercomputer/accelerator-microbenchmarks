@@ -216,6 +216,8 @@ def multi_host_bmm_calculate_metrics(
     total_flops, total_flops_all_devices = handle_based_on_sharding(
         total_flops, sharding_strategy
     )
+    peak_flops_multiplier = get_peak_flops_multiplier(dtype.dtype.name)
+    peak_flops = PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier if peak_flops_multiplier is not None else None
     return unified_flops_metrics(
         m,
         n,
@@ -223,7 +225,7 @@ def multi_host_bmm_calculate_metrics(
         time_ms_list,
         total_flops,
         total_flops_all_devices,
-        PEAK_FLOPS_PER_DEVICE,
+        peak_flops,
         dtype=dtype.dtype.name,
         b=b,
     )
