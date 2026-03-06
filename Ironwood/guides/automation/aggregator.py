@@ -71,10 +71,11 @@ def aggregate_collectives(directories: list[str], picked_columns: list[str]) -> 
         return None
     aggregated_df = pd.DataFrame()
     for directory in directories:
-        file = glob.glob(f"{directory}/*.tsv")[0]
-        df = pd.read_csv(file, sep='\t')
-        df["topology"] = [file.split('/')[-4].split('-')[1] for _ in range(df.shape[0])]
-        aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
+        files = glob.glob(f"{directory}/*.tsv")
+        for file in files:
+            df = pd.read_csv(file, sep='\t')
+            df["topology"] = [file.split('/')[-4].split('-')[1] for _ in range(df.shape[0])]
+            aggregated_df = pd.concat([aggregated_df, df[picked_columns].rename(columns={"step_time_ms_num_runs": "num_runs"})], ignore_index=True)
     return aggregated_df
 
 def aggregate_hbm(directories: list[str], picked_columns: list[str]) -> pd.DataFrame:
