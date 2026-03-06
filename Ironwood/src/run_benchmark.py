@@ -335,7 +335,7 @@ benchmark_func, calculate_metrics_func, xla_dump_dir, xlml_metrics_dir, calculat
       benchmark_results = benchmark_func(**benchmark_param)
     except Exception as e:  # pylint: disable=broad-except
       print(f"Benchmark func failed: {e}")
-      continue
+      return
     test_end_time = (
         datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
     )
