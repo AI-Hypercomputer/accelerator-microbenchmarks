@@ -435,7 +435,7 @@ def run_single_benchmark(
   calculate_metrics_results = []
   for id, benchmark_param in enumerate(benchmark_params):
     try:
-    helper(id, benchmark_param, benchmark_name, trace_dir,
+        helper(id, benchmark_param, benchmark_name, trace_dir,
              benchmark_func, calculate_metrics_func, xla_dump_dir, xlml_metrics_dir, calculate_metrics_results)
     if demo:
       break
