@@ -320,49 +320,8 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
 
   print(f"Metrics written to CSV at {csv_path}.")
 
-
-def run_single_benchmark(
-    benchmark_config: Dict[str, Any], output_path: str, demo: bool = False
-):
-  """Run a single benchmark with one or more configurations."""
-  # Extract benchmark details
-  benchmark_name = benchmark_config.get("benchmark_name")
-  benchmark_params = benchmark_config.get("benchmark_params", [])
-  benchmark_sweep_params = benchmark_config.get("benchmark_sweep_params", {})
-  if benchmark_sweep_params:
-    benchmark_params += generate_benchmark_params_sweeping(
-        benchmark_sweep_params
-    )
-  csv_path = benchmark_config.get("csv_path")
-  trace_dir = benchmark_config.get("trace_dir")
-  xlml_metrics_dir = benchmark_config.get("xlml_metrics_dir")
-  xla_dump_dir = benchmark_config.get("xla_dump_dir")
-  if output_path != "":
-    # csv_path = os.path.join(output_path, benchmark_name)
-    trace_dir = os.path.join(output_path, benchmark_name, "trace")
-    xla_dump_dir = os.path.join(output_path, benchmark_name, "hlo_graphs")
-    xlml_metrics_dir = os.path.join(output_path, benchmark_name, "metrics")
-    # Inject num_runs from config if not present in params
-    global_num_runs = benchmark_config.get("num_runs")
-    if global_num_runs is not None:
-      for param in benchmark_params:
-        if "num_runs" not in param:
-          param["num_runs"] = global_num_runs
-
-  if not benchmark_name:
-    raise ValueError("Each benchmark must have a 'benchmark_name'.")
-
-  # Get the benchmark function
-
-  benchmark_func, calculate_metrics_func = get_benchmark_functions(
-      benchmark_name
-  )
-
-  print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
-
-  # Run the benchmark
-  calculate_metrics_results = []
-  for id, benchmark_param in enumerate(benchmark_params):
+def helper(id, benchmark_param, benchmark_name, trace_dir,
+benchmark_func, calculate_metrics_func, xla_dump_dir, xlml_metrics_dir, calculate_metrics_results):
     original_benchmark_param = copy.deepcopy(benchmark_param)
     benchmark_param = preprocess_benchmark_param(
         benchmark_param, trace_dir=os.path.join(trace_dir, f"benchmark_{id}")
@@ -431,8 +390,57 @@ def run_single_benchmark(
       )
     # Post process the xla dump
     calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
+
+
+def run_single_benchmark(
+    benchmark_config: Dict[str, Any], output_path: str, demo: bool = False
+):
+  """Run a single benchmark with one or more configurations."""
+  # Extract benchmark details
+  benchmark_name = benchmark_config.get("benchmark_name")
+  benchmark_params = benchmark_config.get("benchmark_params", [])
+  benchmark_sweep_params = benchmark_config.get("benchmark_sweep_params", {})
+  if benchmark_sweep_params:
+    benchmark_params += generate_benchmark_params_sweeping(
+        benchmark_sweep_params
+    )
+  csv_path = benchmark_config.get("csv_path")
+  trace_dir = benchmark_config.get("trace_dir")
+  xlml_metrics_dir = benchmark_config.get("xlml_metrics_dir")
+  xla_dump_dir = benchmark_config.get("xla_dump_dir")
+  if output_path != "":
+    # csv_path = os.path.join(output_path, benchmark_name)
+    trace_dir = os.path.join(output_path, benchmark_name, "trace")
+    xla_dump_dir = os.path.join(output_path, benchmark_name, "hlo_graphs")
+    xlml_metrics_dir = os.path.join(output_path, benchmark_name, "metrics")
+    # Inject num_runs from config if not present in params
+    global_num_runs = benchmark_config.get("num_runs")
+    if global_num_runs is not None:
+      for param in benchmark_params:
+        if "num_runs" not in param:
+          param["num_runs"] = global_num_runs
+
+  if not benchmark_name:
+    raise ValueError("Each benchmark must have a 'benchmark_name'.")
+
+  # Get the benchmark function
+
+  benchmark_func, calculate_metrics_func = get_benchmark_functions(
+      benchmark_name
+  )
+
+  print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
+
+  # Run the benchmark
+  calculate_metrics_results = []
+  for id, benchmark_param in enumerate(benchmark_params):
+    try:
+    helper(id, benchmark_param, benchmark_name, trace_dir,
+             benchmark_func, calculate_metrics_func, xla_dump_dir, xlml_metrics_dir, calculate_metrics_results)
     if demo:
       break
+    except Exception as e:
+      print(f"Error occurred while processing benchmark parameter: {benchmark_param}. Error: {e}")
   # Dump metrics to file.
   if csv_path:
     os.makedirs(csv_path, exist_ok=True)
@@ -483,8 +491,10 @@ def main(args):
 
   else:
     for benchmark_config in benchmarks:
-      run_single_benchmark(benchmark_config, output_path, args.demo)
-
+        try:
+            run_single_benchmark(benchmark_config, output_path, args.demo)
+        except Exception as e:
+            print(f"Error occurred while running benchmark: {e}")
 
 def run_benchmark_multithreaded(benchmark_config, output_path):
     # Extract benchmark details
