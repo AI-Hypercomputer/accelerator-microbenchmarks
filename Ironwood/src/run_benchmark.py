@@ -437,10 +437,10 @@ def run_single_benchmark(
     try:
         helper(id, benchmark_param, benchmark_name, trace_dir,
              benchmark_func, calculate_metrics_func, xla_dump_dir, xlml_metrics_dir, calculate_metrics_results)
-        if demo:
-            break
     except Exception as e:
       print(f"Error occurred while processing benchmark parameter: {benchmark_param}. Error: {e}")
+    if demo:
+            break
   # Dump metrics to file.
   if csv_path:
     os.makedirs(csv_path, exist_ok=True)
