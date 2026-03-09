@@ -18,7 +18,7 @@ import os
 import random
 import string
 from typing import Any, Callable, Dict, List, Tuple
-from benchmark_utils import MetricsStatistics, maybe_write_metrics_file, rename_xla_dump
+from benchmark_utils import MetricsStatistics, maybe_write_metrics_file, rename_xla_dump, find_sparsecore_usage_from_xplane
 import jax
 import pandas as pd
 import ray
@@ -419,6 +419,14 @@ def run_single_benchmark(
         package_version = "Not Found"
       package_str += f"{package}: {package_version}\n"
     metadata["Package Versions"] = package_str
+
+    xplane_file = "NA"
+    if benchmark_param.get("trace_dir"):
+      try:
+        _, xplane_file = find_sparsecore_usage_from_xplane(benchmark_param["trace_dir"])
+      except Exception as e:
+        print(f"Failed to extract sparsecore usage: {e}")
+    metadata["xplane_file"] = xplane_file
 
     if xlml_metrics_dir:
       maybe_write_metrics_file(
