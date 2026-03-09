@@ -770,6 +770,7 @@ def maybe_write_metrics_file(
         metadata[key] = str(value)
 
     print(f"Writing metrics to JSONL file: {local_jsonl_path}")
+    print(f"metrics_data: {metrics_data}")
     with jsonlines.open(local_jsonl_path, mode="a") as writer:
         writer.write(metrics_data)
         
