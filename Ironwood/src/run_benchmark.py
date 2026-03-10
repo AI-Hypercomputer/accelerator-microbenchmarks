@@ -14,6 +14,7 @@ import importlib.metadata
 import inspect
 import itertools
 import json
+import logging
 import os
 import random
 import string
@@ -334,7 +335,7 @@ benchmark_func, calculate_metrics_func, xla_dump_dir, xlml_metrics_dir, calculat
     try:
       benchmark_results = benchmark_func(**benchmark_param)
     except Exception as e:  # pylint: disable=broad-except
-      print(f"Benchmark func failed: {e}")
+      logging.exception(f"Benchmark func failed: {e}")
       return
     test_end_time = (
         datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
@@ -438,7 +439,7 @@ def run_single_benchmark(
         helper(id, benchmark_param, benchmark_name, trace_dir,
              benchmark_func, calculate_metrics_func, xla_dump_dir, xlml_metrics_dir, calculate_metrics_results)
     except Exception as e:
-      print(f"Error occurred while processing benchmark parameter: {benchmark_param}. Error: {e}")
+      logging.exception(f"Error occurred while processing benchmark parameter: {benchmark_param}. Error: {e}")
     if demo:
             break
   # Dump metrics to file.
@@ -494,7 +495,7 @@ def main(args):
         try:
             run_single_benchmark(benchmark_config, output_path, args.demo)
         except Exception as e:
-            print(f"Error occurred while running benchmark: {e}")
+            logging.exception(f"Error occurred while running benchmark: {e}")
 
 def run_benchmark_multithreaded(benchmark_config, output_path):
     # Extract benchmark details

@@ -314,7 +314,7 @@ def iteration_get_metrics_from_trace(
             selected_events.append(event)
 
     if not selected_events:
-        print("Collected 0 events with specified filters in the trace.")
+        print("Collected 0 events with specified filters in the trace")
         return []
 
     # 3. Group events by PID (device/core) and sum durations per PID
