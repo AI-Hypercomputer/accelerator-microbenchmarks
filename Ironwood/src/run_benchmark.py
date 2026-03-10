@@ -18,6 +18,7 @@ import logging
 import os
 import random
 import string
+import sys
 from typing import Any, Callable, Dict, List, Tuple
 from benchmark_utils import MetricsStatistics, maybe_write_metrics_file, rename_xla_dump
 import jax
@@ -144,6 +145,8 @@ def get_benchmark_functions(
         raise ValueError(f"Benchmark {benchmark_name} is not defined in the map.")
 
     module_path, func_name = BENCHMARK_MAP[benchmark_name].rsplit(".", 1)
+    logging.info("Attempting to import %s from %s", func_name, module_path)
+    logging.info("sys.path: %s", sys.path)
 
     # Get the benchmark function
     try:
@@ -454,6 +457,11 @@ def run_single_benchmark(
 def main(args):
   """Main function."""
   # Load configuration
+  logging.basicConfig(
+      level=logging.INFO,
+      format="%(asctime)s %(levelname)-8s %(message)s",
+      datefmt="%Y-%m-%d %H:%M:%S",
+  )
   config_path = args.config
   multithreaded = args.multithreaded
   output_path = args.output_path
