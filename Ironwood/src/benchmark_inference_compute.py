@@ -6,7 +6,6 @@ Considered ops:
 import os
 from typing import Any, Dict
 
-
 # pylint: disable=g-importing-member
 from benchmark_utils import (
     iteration_timeit,
@@ -53,7 +52,8 @@ WITH_SHARDING = True
 
 SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 SEED = 0
-PEAK_FLOPS_PER_DEVICE = 2307  # TFLOP/s for single core(device) of FP8 under p_state=7
+# TFLOP/s for single core(device) of FP8 under p_state=7
+PEAK_FLOPS_PER_DEVICE = 2307
 
 
 def add(
@@ -124,7 +124,12 @@ def add_calculate_metrics(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices, dtype=dtype.dtype.name
+        m,
+        n,
+        time_ms_list,
+        total_bytes,
+        total_bytes_all_devices,
+        dtype=dtype.dtype.name,
     )
 
 
@@ -139,7 +144,9 @@ def rmsnorm(
     For each row i of N:
     Y_i = X_i / rms(x_i)
     """
-    rms_norm_module = nnx.RMSNorm(num_features=n, dtype=dtype, rngs=nnx.Rngs(SEED))
+    rms_norm_module = nnx.RMSNorm(
+        num_features=n, dtype=dtype, rngs=nnx.Rngs(SEED)
+    )
 
     def f(x):
         with jax.named_scope(MARKER):
@@ -191,7 +198,12 @@ def rmsnorm_calculate_metrics(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices, dtype=dtype.dtype.name
+        m,
+        n,
+        time_ms_list,
+        total_bytes,
+        total_bytes_all_devices,
+        dtype=dtype.dtype.name,
     )
 
 
@@ -264,7 +276,12 @@ def silu_mul_calculate_metrics(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices, dtype=dtype.dtype.name
+        m,
+        n,
+        time_ms_list,
+        total_bytes,
+        total_bytes_all_devices,
+        dtype=dtype.dtype.name,
     )
 
 
@@ -325,7 +342,12 @@ def sigmoid_calculate_metrics(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices, dtype=dtype.dtype.name
+        m,
+        n,
+        time_ms_list,
+        total_bytes,
+        total_bytes_all_devices,
+        dtype=dtype.dtype.name,
     )
 
 

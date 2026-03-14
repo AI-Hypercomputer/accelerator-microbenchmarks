@@ -86,5 +86,7 @@ def single_chip_hbm_copy_calculate_metrics(
     )
     metrics.update(time_statistics.serialize_statistics())
     metrics.update(statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics

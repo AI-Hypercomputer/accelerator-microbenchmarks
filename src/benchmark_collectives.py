@@ -15,7 +15,9 @@ from jax.sharding import PartitionSpec as P
 # pylint: disable=g-importing-member
 
 
-def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int]]:
+def create_mesh(
+    dcn_size: int, ici_size: int
+) -> tuple[Mesh, list[int], list[int]]:
     """Creates a hybrid mesh with the given DCN and ICI sizes."""
     dcn_parallelism = [dcn_size, 1]
     ici_parallelism = [1, ici_size]
@@ -31,7 +33,9 @@ def create_mesh(dcn_size: int, ici_size: int) -> tuple[Mesh, list[int], list[int
         )
         mesh = Mesh(mesh_devices, ("dcn", "ici"))
     else:
-        mesh_devices = mesh_utils.create_device_mesh([ici_size], devices=jax.devices())
+        mesh_devices = mesh_utils.create_device_mesh(
+            [ici_size], devices=jax.devices()
+        )
         mesh = Mesh(mesh_devices, "ici")
     return mesh
 
@@ -48,6 +52,7 @@ def extract_metadata(
     }
     metadata["dtype"] = metadata["dtype"].dtype.itemsize
     return metadata
+
 
 def generate_metrics_statistics(
     metrics_list: list[float],
@@ -70,6 +75,7 @@ def generate_metrics_statistics(
         f"{matrix_size_gbyte=}, {metrics_name} (median) = {statistics.statistics['p50']}"
     )
     metrics.update(statistics.serialize_statistics())
+
 
 def benchmark_collective(
     benchmark_name: str,
@@ -135,6 +141,7 @@ def benchmark_collective(
 
     return time_ms_list
 
+
 def psum_benchmark(
     matrix_dim: int,
     dtype: jnp.dtype,
@@ -167,21 +174,36 @@ def psum_benchmark(
 
     if dcn_size > 1:
         results["dcn_time_ms_list"] = benchmark_collective(
-            benchmark_name="psum", jax_op=jax.lax.psum, mesh=mesh, matrix=matrix,
-            matrix_dim=matrix_dim, axis_name="dcn", in_specs=P("dcn", None),
-            out_specs=P(None, None), num_runs=num_runs, warmup_tries=warmup_tries,
+            benchmark_name="psum",
+            jax_op=jax.lax.psum,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="dcn",
+            in_specs=P("dcn", None),
+            out_specs=P(None, None),
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
             trace_dir=trace_dir,
         )
 
     if ici_size > 1:
         results["ici_time_ms_list"] = benchmark_collective(
-            benchmark_name="psum", jax_op=jax.lax.psum, mesh=mesh, matrix=matrix,
-            matrix_dim=matrix_dim, axis_name="ici", in_specs=P(None, None),
-            out_specs=P(None, None), num_runs=num_runs, warmup_tries=warmup_tries,
+            benchmark_name="psum",
+            jax_op=jax.lax.psum,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="ici",
+            in_specs=P(None, None),
+            out_specs=P(None, None),
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
             trace_dir=trace_dir,
         )
 
     return results
+
 
 def psum_benchmark_calculate_metrics(
     matrix_dim: int,
@@ -202,21 +224,31 @@ def psum_benchmark_calculate_metrics(
         # bandwidth is claculated as psum can be done via reduce_scatter +
         # all_gather so bandwidth is the sum of the two (formulas below)
         dcn_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte
-                * (dcn_size - 1)
-                * 2
-                / dcn_size
-                / dcn_size
-                / (dcn_time_ms / 1e3)
-                for dcn_time_ms in dcn_time_ms_list
+            matrix_size_gbyte
+            * (dcn_size - 1)
+            * 2
+            / dcn_size
+            / dcn_size
+            / (dcn_time_ms / 1e3)
+            for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
-            dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "psum_dcn",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_bandwidth_gbyte_s_list,
+            "dcn_bandwidth_gbyte_s",
+            "psum_dcn",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            dcn_time_ms_list, "dcn_time_ms", "psum_dcn",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_time_ms_list,
+            "dcn_time_ms",
+            "psum_dcn",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["dcn_time_ms_list"] = dcn_time_ms_list
 
@@ -225,24 +257,35 @@ def psum_benchmark_calculate_metrics(
         # bandwidth is claculated as psum can be done via reduce_scatter +
         # all_gather so bandwidth is the sum of the two (formulas below)
         ici_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte
-                * (ici_size - 1)
-                * 2
-                / ici_size
-                / (ici_time_ms / 1e3)
-                for ici_time_ms in ici_time_ms_list
+            matrix_size_gbyte
+            * (ici_size - 1)
+            * 2
+            / ici_size
+            / (ici_time_ms / 1e3)
+            for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
-            ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "psum_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_bandwidth_gbyte_s_list,
+            "ici_bandwidth_gbyte_s",
+            "psum_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            ici_time_ms_list, "ici_time_ms", "psum_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_time_ms_list,
+            "ici_time_ms",
+            "psum_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["ici_time_ms_list"] = ici_time_ms_list
 
     return metadata, metrics
+
 
 def psum_scatter_benchmark(
     matrix_dim: int,
@@ -276,26 +319,40 @@ def psum_scatter_benchmark(
 
     psum_scatter_kwargs = {"tiled": True}
 
-
     if dcn_size > 1:
         results["dcn_time_ms_list"] = benchmark_collective(
-            benchmark_name="psum_scatter", jax_op=jax.lax.psum_scatter, mesh=mesh,
-            matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
-            in_specs=P("dcn", None), out_specs=P("dcn", None),
-            jax_op_kwargs=psum_scatter_kwargs, num_runs=num_runs,
-            warmup_tries=warmup_tries, trace_dir=trace_dir,
+            benchmark_name="psum_scatter",
+            jax_op=jax.lax.psum_scatter,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="dcn",
+            in_specs=P("dcn", None),
+            out_specs=P("dcn", None),
+            jax_op_kwargs=psum_scatter_kwargs,
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
         )
 
     if ici_size > 1:
         results["ici_time_ms_list"] = benchmark_collective(
-            benchmark_name="psum_scatter", jax_op=jax.lax.psum_scatter, mesh=mesh,
-            matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
-            in_specs=P(None, None), out_specs=P(None, "ici"),
-            jax_op_kwargs=psum_scatter_kwargs, num_runs=num_runs,
-            warmup_tries=warmup_tries, trace_dir=trace_dir,
+            benchmark_name="psum_scatter",
+            jax_op=jax.lax.psum_scatter,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="ici",
+            in_specs=P(None, None),
+            out_specs=P(None, "ici"),
+            jax_op_kwargs=psum_scatter_kwargs,
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
         )
 
     return results
+
 
 def psum_scatter_benchmark_calculate_metrics(
     matrix_dim: int,
@@ -317,20 +374,30 @@ def psum_scatter_benchmark_calculate_metrics(
         # each sharded matrix size is matrix_size_gbyte / dcn_size and then it needs
         # to use (dcn_size - 1) steps in a ring algorithm
         dcn_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte
-                * (dcn_size - 1)
-                / dcn_size
-                / dcn_size
-                / (dcn_time_ms / 1e3)
-                for dcn_time_ms in dcn_time_ms_list
+            matrix_size_gbyte
+            * (dcn_size - 1)
+            / dcn_size
+            / dcn_size
+            / (dcn_time_ms / 1e3)
+            for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
-            dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "psum_scatter_dcn",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_bandwidth_gbyte_s_list,
+            "dcn_bandwidth_gbyte_s",
+            "psum_scatter_dcn",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            dcn_time_ms_list, "dcn_time_ms", "psum_scatter_dcn",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_time_ms_list,
+            "dcn_time_ms",
+            "psum_scatter_dcn",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["dcn_time_ms_list"] = dcn_time_ms_list
 
@@ -339,23 +406,32 @@ def psum_scatter_benchmark_calculate_metrics(
         # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
         # to use (ici_size - 1) steps in a ring algorithm
         ici_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte
-                * (ici_size - 1)
-                / ici_size
-                / (ici_time_ms / 1e3)
-                for ici_time_ms in ici_time_ms_list
+            matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_time_ms / 1e3)
+            for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
-            ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "psum_scatter_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_bandwidth_gbyte_s_list,
+            "ici_bandwidth_gbyte_s",
+            "psum_scatter_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            ici_time_ms_list, "ici_time_ms", "psum_scatter_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_time_ms_list,
+            "ici_time_ms",
+            "psum_scatter_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["ici_time_ms_list"] = ici_time_ms_list
 
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics
 
 
@@ -393,23 +469,40 @@ def all_gather_benchmark(
 
     if dcn_size > 1:
         results["dcn_time_ms_list"] = benchmark_collective(
-            benchmark_name="all_gather", jax_op=jax.lax.all_gather, mesh=mesh,
-            matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
-            in_specs=P("dcn", None), out_specs=P(None, None), check_rep=False,
-            jax_op_kwargs=all_gather_kwargs, num_runs=num_runs,
-            warmup_tries=warmup_tries, trace_dir=trace_dir,
+            benchmark_name="all_gather",
+            jax_op=jax.lax.all_gather,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="dcn",
+            in_specs=P("dcn", None),
+            out_specs=P(None, None),
+            check_rep=False,
+            jax_op_kwargs=all_gather_kwargs,
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
         )
 
     if ici_size > 1:
         results["ici_time_ms_list"] = benchmark_collective(
-            benchmark_name="all_gather", jax_op=jax.lax.all_gather, mesh=mesh,
-            matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
-            in_specs=P("ici", None), out_specs=P(None, None), check_rep=False,
-            jax_op_kwargs=all_gather_kwargs, num_runs=num_runs,
-            warmup_tries=warmup_tries, trace_dir=trace_dir,
+            benchmark_name="all_gather",
+            jax_op=jax.lax.all_gather,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="ici",
+            in_specs=P("ici", None),
+            out_specs=P(None, None),
+            check_rep=False,
+            jax_op_kwargs=all_gather_kwargs,
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
         )
 
     return results
+
 
 def all_gather_benchmark_calculate_metrics(
     matrix_dim: int,
@@ -431,19 +524,26 @@ def all_gather_benchmark_calculate_metrics(
         # each sharded matrix size is matrix_size_gbyte / dcn_size and then it needs
         # to use (dcn_size - 1) steps in a ring algorithm
         dcn_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte
-                * (dcn_size - 1)
-                / dcn_size
-                / (dcn_time_ms / 1e3)
-                for dcn_time_ms in dcn_time_ms_list
+            matrix_size_gbyte * (dcn_size - 1) / dcn_size / (dcn_time_ms / 1e3)
+            for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
-            dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "all_gather_dcn",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_bandwidth_gbyte_s_list,
+            "dcn_bandwidth_gbyte_s",
+            "all_gather_dcn",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            dcn_time_ms_list, "dcn_time_ms", "all_gather_dcn",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_time_ms_list,
+            "dcn_time_ms",
+            "all_gather_dcn",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["dcn_time_ms_list"] = dcn_time_ms_list
 
@@ -452,24 +552,34 @@ def all_gather_benchmark_calculate_metrics(
         # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
         # to use (ici_size - 1) steps in a ring algorithm
         ici_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte
-                * (ici_size - 1)
-                / ici_size
-                / (ici_time_ms / 1e3)
-                for ici_time_ms in ici_time_ms_list
+            matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_time_ms / 1e3)
+            for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
-            ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "all_gather_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_bandwidth_gbyte_s_list,
+            "ici_bandwidth_gbyte_s",
+            "all_gather_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            ici_time_ms_list, "ici_time_ms", "all_gather_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_time_ms_list,
+            "ici_time_ms",
+            "all_gather_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["ici_time_ms_list"] = ici_time_ms_list
 
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics
+
 
 def ppermute_benchmark(
     matrix_dim: int,
@@ -501,28 +611,42 @@ def ppermute_benchmark(
         "ici_time_ms_list": None,
     }
 
-
     if dcn_size > 1:
         dcn_perm = [(i, (i + 1) % dcn_size) for i in range(dcn_size)]
         results["dcn_time_ms_list"] = benchmark_collective(
-            benchmark_name="ppermute", jax_op=jax.lax.ppermute, mesh=mesh,
-            matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
-            in_specs=P("dcn", None), out_specs=P("dcn", None),
-            jax_op_kwargs={"perm": dcn_perm}, num_runs=num_runs,
-            warmup_tries=warmup_tries, trace_dir=trace_dir,
+            benchmark_name="ppermute",
+            jax_op=jax.lax.ppermute,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="dcn",
+            in_specs=P("dcn", None),
+            out_specs=P("dcn", None),
+            jax_op_kwargs={"perm": dcn_perm},
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
         )
 
     if ici_size > 1:
         ici_perm = [(i, (i + 1) % ici_size) for i in range(ici_size)]
         results["ici_time_ms_list"] = benchmark_collective(
-            benchmark_name="ppermute", jax_op=jax.lax.ppermute, mesh=mesh,
-            matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
-            in_specs=P(None, None), out_specs=P(None, "ici"),
-            jax_op_kwargs={"perm": ici_perm}, num_runs=num_runs,
-            warmup_tries=warmup_tries, trace_dir=trace_dir,
+            benchmark_name="ppermute",
+            jax_op=jax.lax.ppermute,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="ici",
+            in_specs=P(None, None),
+            out_specs=P(None, "ici"),
+            jax_op_kwargs={"perm": ici_perm},
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
         )
 
     return results
+
 
 def ppermute_benchmark_calculate_metrics(
     matrix_dim: int,
@@ -544,16 +668,26 @@ def ppermute_benchmark_calculate_metrics(
         # each sharded matrix size is matrix_size_gbyte / dcn_size and then it needs
         # to use 1 step
         dcn_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte / dcn_size / (dcn_time_ms / 1e3)
-                for dcn_time_ms in dcn_time_ms_list
+            matrix_size_gbyte / dcn_size / (dcn_time_ms / 1e3)
+            for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
-            dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "ppermute_dcn",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_bandwidth_gbyte_s_list,
+            "dcn_bandwidth_gbyte_s",
+            "ppermute_dcn",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            dcn_time_ms_list, "dcn_time_ms", "ppermute_dcn",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_time_ms_list,
+            "dcn_time_ms",
+            "ppermute_dcn",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["dcn_time_ms_list"] = dcn_time_ms_list
 
@@ -566,15 +700,26 @@ def ppermute_benchmark_calculate_metrics(
             for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
-            ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "ppermute_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_bandwidth_gbyte_s_list,
+            "ici_bandwidth_gbyte_s",
+            "ppermute_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            ici_time_ms_list, "ici_time_ms", "ppermute_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_time_ms_list,
+            "ici_time_ms",
+            "ppermute_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["ici_time_ms_list"] = ici_time_ms_list
     return metadata, metrics
+
 
 def all_to_all_benchmark(
     matrix_dim: int,
@@ -610,23 +755,39 @@ def all_to_all_benchmark(
 
     if dcn_size > 1:
         results["dcn_time_ms_list"] = benchmark_collective(
-            benchmark_name="all_to_all", jax_op=jax.lax.all_to_all, mesh=mesh,
-            matrix=matrix, matrix_dim=matrix_dim, axis_name="dcn",
-            in_specs=P("dcn", None), out_specs=P("dcn", None),
-            jax_op_kwargs=all_to_all_kwargs, num_runs=num_runs,
-            warmup_tries=warmup_tries, trace_dir=trace_dir,
+            benchmark_name="all_to_all",
+            jax_op=jax.lax.all_to_all,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="dcn",
+            in_specs=P("dcn", None),
+            out_specs=P("dcn", None),
+            jax_op_kwargs=all_to_all_kwargs,
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
         )
 
     if ici_size > 1:
         results["ici_time_ms_list"] = benchmark_collective(
-            benchmark_name="all_to_all", jax_op=jax.lax.all_to_all, mesh=mesh,
-            matrix=matrix, matrix_dim=matrix_dim, axis_name="ici",
-            in_specs=P(None, None), out_specs=P(None, None), check_rep=False,
-            jax_op_kwargs=all_to_all_kwargs, num_runs=num_runs,
-            warmup_tries=warmup_tries, trace_dir=trace_dir,
+            benchmark_name="all_to_all",
+            jax_op=jax.lax.all_to_all,
+            mesh=mesh,
+            matrix=matrix,
+            matrix_dim=matrix_dim,
+            axis_name="ici",
+            in_specs=P(None, None),
+            out_specs=P(None, None),
+            check_rep=False,
+            jax_op_kwargs=all_to_all_kwargs,
+            num_runs=num_runs,
+            warmup_tries=warmup_tries,
+            trace_dir=trace_dir,
         )
 
     return results
+
 
 def all_to_all_benchmark_calculate_metrics(
     matrix_dim: int,
@@ -646,41 +807,60 @@ def all_to_all_benchmark_calculate_metrics(
     if dcn_size > 1 and dcn_time_ms_list is not None:
 
         dcn_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte
-                * (dcn_size - 1)
-                / dcn_size
-                / dcn_size
-                / (dcn_time_ms / 1e3)
-                for dcn_time_ms in dcn_time_ms_list
+            matrix_size_gbyte
+            * (dcn_size - 1)
+            / dcn_size
+            / dcn_size
+            / (dcn_time_ms / 1e3)
+            for dcn_time_ms in dcn_time_ms_list
         ]
         generate_metrics_statistics(
-            dcn_bandwidth_gbyte_s_list, "dcn_bandwidth_gbyte_s", "all_to_all_dcn",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_bandwidth_gbyte_s_list,
+            "dcn_bandwidth_gbyte_s",
+            "all_to_all_dcn",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            dcn_time_ms_list, "dcn_time_ms", "all_to_all_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            dcn_time_ms_list,
+            "dcn_time_ms",
+            "all_to_all_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["dcn_time_ms_list"] = dcn_time_ms_list
 
     # Calculate metrics for ICI benchmark
     if ici_size > 1 and ici_time_ms_list is not None:
         ici_bandwidth_gbyte_s_list = [
-                matrix_size_gbyte
-                * (ici_size - 1)
-                / ici_size
-                / (ici_time_ms / 1e3)
-                for ici_time_ms in ici_time_ms_list
+            matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_time_ms / 1e3)
+            for ici_time_ms in ici_time_ms_list
         ]
         generate_metrics_statistics(
-            ici_bandwidth_gbyte_s_list, "ici_bandwidth_gbyte_s", "all_to_all_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_bandwidth_gbyte_s_list,
+            "ici_bandwidth_gbyte_s",
+            "all_to_all_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         generate_metrics_statistics(
-            ici_time_ms_list, "ici_time_ms", "all_to_all_ici",
-            matrix_dim, dtype, matrix_size_gbyte, metrics
+            ici_time_ms_list,
+            "ici_time_ms",
+            "all_to_all_ici",
+            matrix_dim,
+            dtype,
+            matrix_size_gbyte,
+            metrics,
         )
         metrics["ici_time_ms_list"] = ici_time_ms_list
 
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics

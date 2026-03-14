@@ -12,7 +12,6 @@ Considered ops:
 import os
 from typing import Any, Dict, Callable
 
-
 # pylint: disable=g-importing-member
 from benchmark_utils import (
     iteration_timeit,
@@ -145,7 +144,10 @@ def gemm_fp8_rowwise(
                 channelwise_axes=[1],
             )
             acc = jax.numpy.einsum(
-                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+                "ij,jk->ik",
+                qx.qvalue,
+                qy.qvalue,
+                preferred_element_type=jnp.float32,
             )
             return acc.astype(jnp.bfloat16)
 
@@ -191,10 +193,13 @@ def gemm_fp8_rowwise_w_dequantize(
                 qtype=jnp.float8_e4m3fn,
                 scale_dtype=jnp.float32,
                 calibration_method="absmax",
-                channelwise_axes=[1]
+                channelwise_axes=[1],
             )
             acc = jax.numpy.einsum(
-                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+                "ij,jk->ik",
+                qx.qvalue,
+                qy.qvalue,
+                preferred_element_type=jnp.float32,
             ).astype(jnp.float32)
             final_result = acc * (
                 qx.scale.astype(jnp.float32) * qy.scale.astype(jnp.float32)
@@ -292,7 +297,10 @@ def gemm_fp8_b128_fp32(
                 tiled_axes={1: 128},
             )
             acc = jax.numpy.einsum(
-                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+                "ij,jk->ik",
+                qx.qvalue,
+                qy.qvalue,
+                preferred_element_type=jnp.float32,
             )
             return acc.astype(jnp.bfloat16)
 
@@ -341,12 +349,21 @@ def gemm_fp8_rowwise_static_scaling(
                 channelwise_axes=[1],
             )
             acc = jax.numpy.einsum(
-                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+                "ij,jk->ik",
+                qx.qvalue,
+                qy.qvalue,
+                preferred_element_type=jnp.float32,
             )
             return acc.astype(jnp.bfloat16)
 
     return gemm_fp8_quantization(
-        m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_rowwise_static_scaling"
+        m,
+        k,
+        n,
+        f,
+        num_runs,
+        trace_dir,
+        task_name="gemm_fp8_rowwise_static_scaling",
     )
 
 
@@ -392,12 +409,21 @@ def gemm_fp8_b128_fp32_static_scaling(
                 tiled_axes={1: 128},
             )
             acc = jax.numpy.einsum(
-                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+                "ij,jk->ik",
+                qx.qvalue,
+                qy.qvalue,
+                preferred_element_type=jnp.float32,
             )
             return acc.astype(jnp.bfloat16)
 
     return gemm_fp8_quantization(
-        m, k, n, f, num_runs, trace_dir, task_name="gemm_fp8_b128_fp32_static_scaling"
+        m,
+        k,
+        n,
+        f,
+        num_runs,
+        trace_dir,
+        task_name="gemm_fp8_b128_fp32_static_scaling",
     )
 
 
@@ -426,11 +452,16 @@ def gemm_mxfp8_b32(
 
     def f(x, y):
         with jax.named_scope(MARKER):
-            how = qarray.HowToQuantize(qtype="mxfp8", calibration_method="absmax")
+            how = qarray.HowToQuantize(
+                qtype="mxfp8", calibration_method="absmax"
+            )
             qx = qarray.quantize(x, how=how)
             qy = qarray.quantize(y, how=how)
             acc = jax.numpy.einsum(
-                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+                "ij,jk->ik",
+                qx.qvalue,
+                qy.qvalue,
+                preferred_element_type=jnp.float32,
             )
             return acc.astype(jnp.bfloat16)
 
@@ -470,7 +501,10 @@ def gemm_mxfp8_b32_static_scaling(
             qx = qarray.quantize(x, how=how)
             qy = qarray.quantize(y, how=how)
             acc = jax.numpy.einsum(
-                "ij,jk->ik", qx.qvalue, qy.qvalue, preferred_element_type=jnp.float32
+                "ij,jk->ik",
+                qx.qvalue,
+                qy.qvalue,
+                preferred_element_type=jnp.float32,
             )
             return acc.astype(jnp.bfloat16)
 

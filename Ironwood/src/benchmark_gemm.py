@@ -23,13 +23,12 @@ from benchmark_utils import (
     handle_based_on_sharding,
     unified_flops_metrics,
     str_to_dtype,
-    get_peak_flops_multiplier
+    get_peak_flops_multiplier,
 )
 from common import MARKER
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
-
 
 # pylint: disable=g-importing-member
 
@@ -61,6 +60,7 @@ WITH_SHARDING = True
 SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 SEED = 0
 PEAK_FLOPS_PER_DEVICE = 2307  # TFLOP/s for single core(device) of FP8
+
 
 def gemm_multiple_run(
     m: int,
@@ -146,7 +146,11 @@ def gemm_multiple_run_calculate_metrics(
     total_flops, total_flops_all_devices = handle_based_on_sharding(
         total_flops, SHARDING_STRATEGY
     )
-    peak_flops = PEAK_FLOPS_PER_DEVICE if dtype==jax.numpy.float8_e4m3fn else PEAK_FLOPS_PER_DEVICE/2
+    peak_flops = (
+        PEAK_FLOPS_PER_DEVICE
+        if dtype == jax.numpy.float8_e4m3fn
+        else PEAK_FLOPS_PER_DEVICE / 2
+    )
     return unified_flops_metrics(
         m,
         n,
@@ -157,6 +161,7 @@ def gemm_multiple_run_calculate_metrics(
         peak_flops,
         dtype=dtype.dtype.name,
     )
+
 
 def gemm_simple(
     m: int,
@@ -213,8 +218,8 @@ def gemm_simple(
         return (lhs_device, rhs_device)
 
     # Run the benchmark
-    num_runs = 1 
-    ## Need to fix gemm timing logic to handle num_runs > 1
+    num_runs = 1
+    # Need to fix gemm timing logic to handle num_runs > 1
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
@@ -251,9 +256,13 @@ def gemm_simple_calculate_metrics(
 
 
 def gemm_simple_with_dtype(
-    m: int, k: int, n: int,
-    in_dtype_str: str, out_dtype_str: str,
-    num_runs: int = 1, trace_dir: str = None
+    m: int,
+    k: int,
+    n: int,
+    in_dtype_str: str,
+    out_dtype_str: str,
+    num_runs: int = 1,
+    trace_dir: str = None,
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
 
@@ -264,7 +273,9 @@ def gemm_simple_with_dtype(
 
     def f(x, y):
         with jax.named_scope(MARKER):
-            acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", x, y, preferred_element_type=jnp.float32
+            )
             return acc.astype(out_dtype)
 
     mesh = create_mesh(SHARDING_STRATEGY)
@@ -289,7 +300,7 @@ def gemm_simple_with_dtype(
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
-        nonlocal key # Use and update the outer 'key'
+        nonlocal key  # Use and update the outer 'key'
         key, key_lhs, key_rhs = jax.random.split(key, 3)
 
         # Create random data on host
@@ -302,8 +313,8 @@ def gemm_simple_with_dtype(
 
         return (lhs_device, rhs_device)
 
-    num_runs = 1 
-    ## Need to fix gemm timing logic to handle num_runs > 1
+    num_runs = 1
+    # Need to fix gemm timing logic to handle num_runs > 1
 
     # Run the benchmark
     time_ms_list = iteration_timeit(
@@ -316,22 +327,33 @@ def gemm_simple_with_dtype(
     )
     return {"time_ms_list": time_ms_list}
 
+
 def gemm_simple_with_dtype_calculate_metrics(
-    m: int, k: int, n: int,
-    in_dtype_str: str, out_dtype_str: str,
-    time_ms_list: list[float]
+    m: int,
+    k: int,
+    n: int,
+    in_dtype_str: str,
+    out_dtype_str: str,
+    time_ms_list: list[float],
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = (2 * k - 1) * m * n  # Total floating-point operations
-    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY
+    )
 
     # Get the multiplier by calling the utility function
     peak_flops_multiplier = get_peak_flops_multiplier(in_dtype_str)
 
     metadata, metrics = unified_flops_metrics(
-            m, n, k, time_ms_list,
-            total_flops, total_flops_all_devices,
-            PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier)
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier,
+    )
 
     # Add dtype info to metadata for logging
     metadata["in_dtype"] = in_dtype_str
@@ -407,8 +429,8 @@ def gemm(
 
         return (lhs_device, rhs_device, sf0_device, sf1_device)
 
-    num_runs = 1 
-    ## Need to fix gemm timing logic to handle num_runs > 1
+    num_runs = 1
+    # Need to fix gemm timing logic to handle num_runs > 1
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
@@ -519,11 +541,16 @@ def gemm_accum(
         sf0_device = jax.device_put(sf0_host, sf0_sharding)
         sf1_device = jax.device_put(sf1_host, sf1_sharding)
 
-        return (out_buffer_device, lhs_device, rhs_device, sf0_device, sf1_device)
+        return (
+            out_buffer_device,
+            lhs_device,
+            rhs_device,
+            sf0_device,
+            sf1_device,
+        )
 
-
-    num_runs = 1 
-    ## Need to fix gemm timing logic to handle num_runs > 1
+    num_runs = 1
+    # Need to fix gemm timing logic to handle num_runs > 1
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,

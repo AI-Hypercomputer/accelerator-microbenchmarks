@@ -15,11 +15,11 @@ import tempfile
 
 P = jax.sharding.PartitionSpec
 
-os.environ['LIBTPU_INIT_ARGS'] = (
-    '--xla_tpu_collect_sflag_wait_stats_trace=true '
-    '--xla_tpu_force_global_barriers=true '
-    '--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1 '
-    '--xla_tpu_dvfs_p_state=7 '
+os.environ["LIBTPU_INIT_ARGS"] = (
+    "--xla_tpu_collect_sflag_wait_stats_trace=true "
+    "--xla_tpu_force_global_barriers=true "
+    "--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1 "
+    "--xla_tpu_dvfs_p_state=7 "
 )
 
 
@@ -29,47 +29,50 @@ def _run_under_xprof(
     n_repeats: int,
     task: str,
 ):
-  """Runs a function under xprof."""
-  # warmup
-  jax.block_until_ready(function(*inputs))
-  with tempfile.TemporaryDirectory() as tmp_trace_dir:
-    with jax.profiler.trace(tmp_trace_dir, create_perfetto_link=False):
-      for i in range(n_repeats):
-        with jax.profiler.StepTraceAnnotation(task, step_num=i):
-          with jax.named_scope(f"{MARKER}_{i}"):
-            result = function(*inputs)
-            jax.block_until_ready(result)
-    jtrace = get_trace(tmp_trace_dir)
+    """Runs a function under xprof."""
+    # warmup
+    jax.block_until_ready(function(*inputs))
+    with tempfile.TemporaryDirectory() as tmp_trace_dir:
+        with jax.profiler.trace(tmp_trace_dir, create_perfetto_link=False):
+            for i in range(n_repeats):
+                with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                    with jax.named_scope(f"{MARKER}_{i}"):
+                        result = function(*inputs)
+                        jax.block_until_ready(result)
+        jtrace = get_trace(tmp_trace_dir)
 
-    marker_done_events = []
-    for event in jtrace["traceEvents"]:
-        args = event.get("args", {})
-        tf_op = args.get("tf_op", "")
-        if MARKER in tf_op:
-            marker_done_events.append(event)
-    # when offloaded to sparse core look for call-done events
-    marker_call_done_events = [
-        e for e in marker_done_events if e.get("name", "").endswith("call-done")
-    ]
-    if marker_call_done_events:
-        marker_done_events = marker_call_done_events
-    durations_ms = [
-        float(e["args"]["device_duration_ps"]) / 1e9 for e in marker_done_events
-    ]
-    return max(durations_ms)
+        marker_done_events = []
+        for event in jtrace["traceEvents"]:
+            args = event.get("args", {})
+            tf_op = args.get("tf_op", "")
+            if MARKER in tf_op:
+                marker_done_events.append(event)
+        # when offloaded to sparse core look for call-done events
+        marker_call_done_events = [
+            e
+            for e in marker_done_events
+            if e.get("name", "").endswith("call-done")
+        ]
+        if marker_call_done_events:
+            marker_done_events = marker_call_done_events
+        durations_ms = [
+            float(e["args"]["device_duration_ps"]) / 1e9
+            for e in marker_done_events
+        ]
+        return max(durations_ms)
 
 
 def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Helper function to build the metrics and metadata for the benchmark."""
-    exclude_keys = {'time_ms_list'}
+    exclude_keys = {"time_ms_list"}
     metadata = {
         key: value
         for key, value in params
         if value is not None and key not in exclude_keys
     }
-    metadata['dtype'] = get_real_dtype_bytes(metadata['dtype'].dtype)
+    metadata["dtype"] = get_real_dtype_bytes(metadata["dtype"].dtype)
     return metadata
 
 
@@ -84,24 +87,28 @@ def send_recv_benchmark(
     """Runs p2p communication, sending tensor_size_bytes from source to target device."""
     device_count = jax.local_device_count()
     devices = mesh_utils.create_device_mesh((device_count,))
-    mesh = jax.sharding.Mesh(devices, 'x')
+    mesh = jax.sharding.Mesh(devices, "x")
     item_size = get_real_dtype_bytes(jnp.dtype(dtype))
     tensor_size_bytes = num_elements * item_size
     last_dim = tensor_size_bytes // (1 * 8 * item_size)
 
     def p2p_send(source_id, target_id):
         # Get the ID of the current device this code is running on
-        device_id = jax.lax.axis_index('x')
-        axis_size = jax.lax.axis_size('x')
+        device_id = jax.lax.axis_index("x")
+        axis_size = jax.lax.axis_size("x")
         input_offsets = jnp.zeros((axis_size,), dtype=jnp.int32)
         output_offsets = jnp.zeros((axis_size,), dtype=jnp.int32)
         no_sends = jnp.zeros((axis_size,), dtype=jnp.int32)
         no_recvs = jnp.zeros((axis_size,), dtype=jnp.int32)
 
         # Only device `source_id` sends, and it sends to `target_id`.
-        sender_send_sizes = jax.nn.one_hot(target_id, axis_size, dtype=jnp.int32)
+        sender_send_sizes = jax.nn.one_hot(
+            target_id, axis_size, dtype=jnp.int32
+        )
         # Only device `target_id` receives, and it receives from `source_id`.
-        target_recv_sizes = jax.nn.one_hot(source_id, axis_size, dtype=jnp.int32)
+        target_recv_sizes = jax.nn.one_hot(
+            source_id, axis_size, dtype=jnp.int32
+        )
 
         final_send_sizes = jax.lax.select(
             device_id == source_id,
@@ -113,7 +120,9 @@ def send_recv_benchmark(
             target_recv_sizes,
             no_recvs,
         )
-        input = jax.random.normal(jax.random.key(0), (1, 8, last_dim), dtype=dtype)
+        input = jax.random.normal(
+            jax.random.key(0), (1, 8, last_dim), dtype=dtype
+        )
         output = jnp.zeros((1, 8, last_dim), dtype=dtype)
 
         with jax.named_scope(MARKER):
@@ -124,7 +133,7 @@ def send_recv_benchmark(
                 send_sizes=final_send_sizes,
                 output_offsets=output_offsets,
                 recv_sizes=final_recv_sizes,
-                axis_name='x',
+                axis_name="x",
             )
         max_val = jax.lax.reduce_max(ra2a, axes=(0, 1, 2))
         return max_val
@@ -140,12 +149,12 @@ def send_recv_benchmark(
         .compile()
     )
 
-  # Measures the longest wait time in milliseconds, across all the runs.
+    # Measures the longest wait time in milliseconds, across all the runs.
     runtime_ms = _run_under_xprof(
-        compiled_function, [], n_repeats, f'p2p_{source_id}_to_{target_id}'
+        compiled_function, [], n_repeats, f"p2p_{source_id}_to_{target_id}"
     )
 
-    return {'runtime_ms': runtime_ms}
+    return {"runtime_ms": runtime_ms}
 
 
 def send_recv_benchmark_calculate_metrics(
@@ -165,16 +174,20 @@ def send_recv_benchmark_calculate_metrics(
     tensor_size_bytes = num_elements * get_real_dtype_bytes(jnp.dtype(dtype))
     tensor_size_gbytes = tensor_size_bytes / 10**9
 
-    metrics['runtime_ms (ms)'] = runtime_ms
+    metrics["runtime_ms (ms)"] = runtime_ms
     runtime_s = runtime_ms / 10**3
-    metrics['achieved_bw (GB/s)'] = tensor_size_gbytes / runtime_s
+    metrics["achieved_bw (GB/s)"] = tensor_size_gbytes / runtime_s
 
     # Gather the metrics to report.
-    metadata.update({
-        'tensor_size_gbytes': tensor_size_gbytes,
-    })
+    metadata.update(
+        {
+            "tensor_size_gbytes": tensor_size_gbytes,
+        }
+    )
 
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     print(metadata)
     print(metrics)
     return metadata, metrics

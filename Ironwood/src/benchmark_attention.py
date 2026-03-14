@@ -1,6 +1,4 @@
-"""A script to benchmark tokamax splash attention implementation.
-
-"""
+"""A script to benchmark tokamax splash attention implementation."""
 
 import os
 
@@ -19,13 +17,13 @@ from tokamax._src.ops.experimental.tpu.splash_attention import (
     splash_attention_mask as mask_lib,
 )
 import tune_jax
+
 tune_jax.tune_logger.setLevel(logging.ERROR)
 
 # pylint: disable=g-importing-member,g-bad-import-order
 
-os.environ["LIBTPU_INIT_ARGS"] = (
-    "--xla_tpu_dvfs_p_state=7"
-)
+os.environ["LIBTPU_INIT_ARGS"] = "--xla_tpu_dvfs_p_state=7"
+
 
 def generate_qkv_separate_dims(
     batch_size: int,
@@ -41,7 +39,9 @@ def generate_qkv_separate_dims(
     key = jax.random.PRNGKey(seed)
     key_q, key_k, key_v = jax.random.split(key, 3)
     q = jax.random.normal(key_q, (batch_size, q_heads, q_seq_len, qk_head_dim))
-    k = jax.random.normal(key_k, (batch_size, kv_heads, kv_seq_len, qk_head_dim))
+    k = jax.random.normal(
+        key_k, (batch_size, kv_heads, kv_seq_len, qk_head_dim)
+    )
     v = jax.random.normal(key_v, (batch_size, kv_heads, kv_seq_len, v_head_dim))
     return q, k, v
 
@@ -87,6 +87,7 @@ def _get_tokamax_benchmark_fn(
             kernel_ = jax.vmap(kernel, in_axes=(0, 0, 0))  # batch vmap
             kernel_ = jax.vmap(kernel_, in_axes=(0, 0, 0))  # mqa vmap
             return kernel_(q, k, v)
+
     else:
         kernel = splash.make_splash_mha_single_device(mask, config=config)
         f = jax.jit(jax.vmap(kernel, in_axes=(0, 0, 0)))
@@ -263,7 +264,7 @@ def tokamax_splash_attention_benchmark(
         trace_dir=trace_dir,
         event_name_str_list=[
             f"{event_filter_regex}_no_residuals.1",
-        ]
+        ],
     )
     return {"time_ms_list": time_ms_list, "output": output}
 

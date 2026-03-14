@@ -14,3 +14,7 @@ qwix@git+https://github.com/google/qwix.git
 tokamax
 tune-jax
 immutabledict
+pylint
+black
+isort
+pre-commit

@@ -15,7 +15,6 @@ Considered ops:
 import os
 from typing import Any, Dict, Callable
 
-
 # pylint: disable=g-importing-member
 from benchmark_utils import (
     iteration_timeit,
@@ -141,24 +140,38 @@ def quantization(
             )
             return qx.qvalue, qx.scale
 
-    return fp8_quantization(m, n, f, num_runs, trace_dir, task_name="quantization")
+    return fp8_quantization(
+        m, n, f, num_runs, trace_dir, task_name="quantization"
+    )
 
 
 def quantization_calculate_metrics(
-    m: int, n: int, time_ms_list: list[float], quant_dtype: str = "float8_e4m3fn"
+    m: int,
+    n: int,
+    time_ms_list: list[float],
+    quant_dtype: str = "float8_e4m3fn",
 ) -> Dict[str, Any]:
     quant_jnp_dtype = jnp.dtype(quant_dtype)
-    info_fn = jnp.iinfo if jnp.issubdtype(quant_jnp_dtype, jnp.integer) else jnp.finfo
+    info_fn = (
+        jnp.iinfo if jnp.issubdtype(quant_jnp_dtype, jnp.integer) else jnp.finfo
+    )
     width_in_bytes = info_fn(quant_jnp_dtype).bits / 8
     output_flops_based_on_dtype = m * n * width_in_bytes
     #       calculate scale     apply quant    write quant output       write scale factor
     # NOTE: (2 * m * n)     +  (2 * m * n)   + (1 * m * n)          +      (4 * m)
-    total_bytes = (2 * m * n) + (2 * m * n) + (4 * m) + output_flops_based_on_dtype
+    total_bytes = (
+        (2 * m * n) + (2 * m * n) + (4 * m) + output_flops_based_on_dtype
+    )
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices, quant_dtype=quant_dtype
+        m,
+        n,
+        time_ms_list,
+        total_bytes,
+        total_bytes_all_devices,
+        quant_dtype=quant_dtype,
     )
 
 
@@ -271,7 +284,12 @@ def transpose_quantization_static_scaling(
             return qx.qvalue, qx.scale
 
     return fp8_quantization(
-        m, n, f, num_runs, trace_dir, task_name="transpose_quantization_static_scaling"
+        m,
+        n,
+        f,
+        num_runs,
+        trace_dir,
+        task_name="transpose_quantization_static_scaling",
     )
 
 
@@ -452,7 +470,10 @@ def rmsnorm_fwd(
     Y_i = X_i / rms(x_i)
     """
     rms_norm_module = nnx.RMSNorm(
-        num_features=n, dtype=jnp.bfloat16, param_dtype=jnp.float32, rngs=nnx.Rngs(SEED)
+        num_features=n,
+        dtype=jnp.bfloat16,
+        param_dtype=jnp.float32,
+        rngs=nnx.Rngs(SEED),
     )
 
     def f(x):
@@ -518,7 +539,10 @@ def rmsnorm_bwd(
     Inverse of rmsnorm_fwd
     """
     rms_norm_module = nnx.RMSNorm(
-        num_features=n, dtype=jnp.bfloat16, param_dtype=jnp.float32, rngs=nnx.Rngs(SEED)
+        num_features=n,
+        dtype=jnp.bfloat16,
+        param_dtype=jnp.float32,
+        rngs=nnx.Rngs(SEED),
     )
 
     def f_fwd(x):
@@ -651,7 +675,9 @@ def add(
     return {"time_ms_list": time_ms_list}
 
 
-def add_calculate_metrics(m: int, n: int, time_ms_list: list[float]) -> Dict[str, Any]:
+def add_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
     total_bytes = 6 * m * n
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(
         total_bytes, SHARDING_STRATEGY

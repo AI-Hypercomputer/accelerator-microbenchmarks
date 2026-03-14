@@ -12,13 +12,13 @@ from common import MARKER
 import jax
 import jax.numpy as jnp
 
-
 SEED = 0
 os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_jf_bounds_check=false "
     "--xla_tpu_dvfs_p_state=7 "
 )
+
 
 def get_metrics_helper(
     params: Dict[str, Any],
@@ -101,5 +101,7 @@ def single_device_hbm_copy_calculate_metrics(
     )
     metrics.update(time_statistics.serialize_statistics())
     metrics.update(statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics

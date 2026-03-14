@@ -17,6 +17,7 @@ library.
 """
 
 # pylint: disable=g-importing-member,g-bad-import-order
+import keras  # pylint: disable=g-bad-import-order,g-import-not-at-top
 from functools import partial
 import os
 from typing import Any, Dict, Tuple
@@ -25,16 +26,21 @@ from benchmark_utils import simple_timeit, MetricsStatistics
 from flax import linen
 from flax import nnx
 import jax
-from jax.experimental.pallas.ops.tpu import flash_attention as pallas_flash_attention
-from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel
-from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask
+from jax.experimental.pallas.ops.tpu import (
+    flash_attention as pallas_flash_attention,
+)
+from jax.experimental.pallas.ops.tpu.splash_attention import (
+    splash_attention_kernel,
+)
+from jax.experimental.pallas.ops.tpu.splash_attention import (
+    splash_attention_mask,
+)
 import jax.numpy as jnp
 import numpy as np
 
 # pylint: disable=g-importing-member,g-bad-import-order
 
 os.environ["KERAS_BACKEND"] = "jax"
-import keras  # pylint: disable=g-bad-import-order,g-import-not-at-top
 
 # Tunable parameters for splash attention.
 # Kernel block sizes.
@@ -95,7 +101,9 @@ def naive_attention_benchmark(
         scale_factor = 1.0
         if scale:
             scale_factor = 1.0 / jnp.sqrt(k_kv_size)
-        weights_unnormalized = jax.numpy.einsum("BHSD,BHTD->BHST", q, k) * scale_factor
+        weights_unnormalized = (
+            jax.numpy.einsum("BHSD,BHTD->BHST", q, k) * scale_factor
+        )
         if causal:
             weights_unnormalized_to_zero_out = jax.numpy.triu(
                 jax.numpy.ones((seq_lengh, seq_lengh), jax.numpy.bfloat16), 1

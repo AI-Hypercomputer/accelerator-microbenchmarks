@@ -30,14 +30,14 @@ from tensorflow.tsl.profiler.protobuf import xplane_pb2
 
 
 def get_real_dtype_bytes(dtype) -> float:
-  """Returns the real byte size of a dtype, handling sub-byte types."""
-  try:
-    return jnp.finfo(dtype).bits / 8
-  except Exception:
+    """Returns the real byte size of a dtype, handling sub-byte types."""
     try:
-      return jnp.iinfo(dtype).bits / 8
+        return jnp.finfo(dtype).bits / 8
     except Exception:
-      return dtype.itemsize
+        try:
+            return jnp.iinfo(dtype).bits / 8
+        except Exception:
+            return dtype.itemsize
 
 
 # The dictionary to map a JAX (collective) function to its main HLO.
@@ -51,15 +51,15 @@ TARGET_TASK_NAME_COLLECTIVES_MAP = {
 
 
 class ShardingStrategy(Enum):
-  """Defines different sharding strategies for tensors."""
+    """Defines different sharding strategies for tensors."""
 
-  NO_SHARDING = auto()
-  SHARDING_ON_ALL_DEVICES_WITH_M = auto()
-  SHARDING_ON_SINGLE_CHIP_WITH_M = (
-      auto()
-  )  # Only sharding on the two core of one single chip
-  SHARDING_ON_ALL_DEVICES_WITH_N = auto()
-  SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
+    NO_SHARDING = auto()
+    SHARDING_ON_ALL_DEVICES_WITH_M = auto()
+    SHARDING_ON_SINGLE_CHIP_WITH_M = (
+        auto()
+    )  # Only sharding on the two core of one single chip
+    SHARDING_ON_ALL_DEVICES_WITH_N = auto()
+    SHARDING_ON_SINGLE_CHIP_WITH_N = auto()
 
 
 def multiple_iteration_timeit_from_trace_throttling(
@@ -71,69 +71,73 @@ def multiple_iteration_timeit_from_trace_throttling(
     trace_dir: str = None,
     gap_strategy: str = None,
 ) -> list[float]:
-  """Time a function with jax.profiler and get the run time from the trace."""
-  LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+    """Time a function with jax.profiler and get the run time from the trace."""
+    LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
 
-  if matrix_dim is not None:
-    trace_name = f"{task}_dim_{matrix_dim}"
-  else:
-    trace_name = f"t_{task}_" + "".join(
-        random.choices(string.ascii_uppercase + string.digits, k=10)
-    )
+    if matrix_dim is not None:
+        trace_name = f"{task}_dim_{matrix_dim}"
+    else:
+        trace_name = f"t_{task}_" + "".join(
+            random.choices(string.ascii_uppercase + string.digits, k=10)
+        )
 
-  trace_full_dir = f"{trace_dir}/{trace_name}"
-  tmp_trace_dir = trace_full_dir
-  # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
-  if trace_dir and not is_local_directory_path(trace_dir):
-    tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+    trace_full_dir = f"{trace_dir}/{trace_name}"
+    tmp_trace_dir = trace_full_dir
+    # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
+    if trace_dir and not is_local_directory_path(trace_dir):
+        tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
 
-  if gap_strategy == "data_gen_once_block_every_iter":
-    data_args = data_generator()
-    with jax.profiler.trace(tmp_trace_dir):
-      for i in range(tries):
-        if i % 10 == 0:
-          print(
-              f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
-          )
-        jax.devices()
-        with jax.profiler.StepTraceAnnotation(task, step_num=i):
-          with jax.named_scope(f"{MARKER}_{i}"):
-            result = compute_func(*data_args)
-            jax.block_until_ready(result)
-  elif gap_strategy=='data_gen_once_noblock':
-    data_args = data_generator()
-    with jax.profiler.trace(tmp_trace_dir):
-        results = []
-        for i in range(tries):
-            if i % 10 == 0:
-                print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
-            jax.devices()
-            with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                with jax.named_scope(f"{MARKER}_{i}"):
-                    compute_func(*data_args)
-                    results.append(True)
+    if gap_strategy == "data_gen_once_block_every_iter":
+        data_args = data_generator()
+        with jax.profiler.trace(tmp_trace_dir):
+            for i in range(tries):
+                if i % 10 == 0:
+                    print(
+                        f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+                    )
+                jax.devices()
+                with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                    with jax.named_scope(f"{MARKER}_{i}"):
+                        result = compute_func(*data_args)
+                        jax.block_until_ready(result)
+    elif gap_strategy == "data_gen_once_noblock":
+        data_args = data_generator()
+        with jax.profiler.trace(tmp_trace_dir):
+            results = []
+            for i in range(tries):
+                if i % 10 == 0:
+                    print(
+                        f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+                    )
+                jax.devices()
+                with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                    with jax.named_scope(f"{MARKER}_{i}"):
+                        compute_func(*data_args)
+                        results.append(True)
 
-        if results:
-          jax.block_until_ready(results)
-  elif gap_strategy == "data_gen_every_iter_block_every_iter":
-    with jax.profiler.trace(tmp_trace_dir):
-        for i in range(tries):
-            if i % 10 == 0:
-                print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
-            data_args = data_generator()
-            jax.devices()
-            with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                with jax.named_scope(f"{MARKER}_{i}"):
-                    result = compute_func(*data_args)
-                    jax.block_until_ready(result)
-  else:
-    raise ValueError(f"Unknown gap strategy: {gap_strategy}")
-  trace = get_trace(tmp_trace_dir)
+            if results:
+                jax.block_until_ready(results)
+    elif gap_strategy == "data_gen_every_iter_block_every_iter":
+        with jax.profiler.trace(tmp_trace_dir):
+            for i in range(tries):
+                if i % 10 == 0:
+                    print(
+                        f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+                    )
+                data_args = data_generator()
+                jax.devices()
+                with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                    with jax.named_scope(f"{MARKER}_{i}"):
+                        result = compute_func(*data_args)
+                        jax.block_until_ready(result)
+    else:
+        raise ValueError(f"Unknown gap strategy: {gap_strategy}")
+    trace = get_trace(tmp_trace_dir)
 
-  if trace_full_dir != tmp_trace_dir:
-    # Upload the traces to desired location
-    upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-  return multiple_iteration_get_metrics_from_trace(trace)
+    if trace_full_dir != tmp_trace_dir:
+        # Upload the traces to desired location
+        upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
+    return multiple_iteration_get_metrics_from_trace(trace)
 
 
 def clear_jax_memory():
@@ -172,7 +176,9 @@ def multiple_iteration_timeit_from_trace(
     with jax.profiler.trace(tmp_trace_dir):
         for i in range(tries):
             if i % 10 == 0:
-                print(f"[{task}] Running iteration {i} of {tries} with {matrix_dim}...")
+                print(
+                    f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+                )
             data_args = data_generator()
             jax.devices()
 
@@ -192,7 +198,9 @@ def multiple_iteration_timeit_from_trace(
     return multiple_iteration_get_metrics_from_trace(trace, task)
 
 
-def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str = None) -> list[float]:
+def multiple_iteration_get_metrics_from_trace(
+    trace: dict[str, Any], task: str = None
+) -> list[float]:
     marker_done_events = []
     for event in trace["traceEvents"]:
         args = event.get("args", {})
@@ -211,7 +219,7 @@ def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str =
         event_matcher = re.compile(task)
 
         if "traceEvents" not in trace:
-          raise KeyError("Key 'traceEvents' not found in trace.")
+            raise KeyError("Key 'traceEvents' not found in trace.")
         events = []
         for e in trace["traceEvents"]:
             if "name" in e and event_matcher.match(e["name"]):
@@ -223,31 +231,38 @@ def multiple_iteration_get_metrics_from_trace(trace: dict[str, Any], task: str =
         durations_ms = []
         for e in events_from_min_pid:
             if e.get("args", {}).get("device_duration_ps"):
-                durations_ms.append(float(e["args"]["device_duration_ps"]) / 1e9)
+                durations_ms.append(
+                    float(e["args"]["device_duration_ps"]) / 1e9
+                )
             elif "dur" in e:
                 durations_ms.append(float(e["dur"]) / 1e3)
         if not durations_ms and events_from_min_pid:
-            print("Warning: No event duration found in legacy_get_metrics_from_trace_tpu.")
+            print(
+                "Warning: No event duration found in legacy_get_metrics_from_trace_tpu."
+            )
         return durations_ms
 
     min_pid = min([e["pid"] for e in marker_done_events])
     events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
     durations_ms = [
-        float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid
+        float(e["args"]["device_duration_ps"]) / 1e9
+        for e in events_from_min_pid
     ]
     print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
     print(durations_ms)
 
     return durations_ms
 
+
 def iteration_timeit_from_trace(
     compute_func: Callable,
     data_generator: Callable,
-    matrix_dim: str=None,
-    tries: int=10,
+    matrix_dim: str = None,
+    tries: int = 10,
     task: str = None,
     trace_dir: str = None,
-    event_name_str_list: list[str] = None) -> list[float]:
+    event_name_str_list: list[str] = None,
+) -> list[float]:
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
@@ -279,8 +294,8 @@ def iteration_timeit_from_trace(
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
     return iteration_get_metrics_from_trace(
-            trace=trace,
-            event_name_str_list=event_name_str_list)
+        trace=trace, event_name_str_list=event_name_str_list
+    )
 
 
 def iteration_get_metrics_from_trace(
@@ -388,9 +403,12 @@ def iteration_get_event_metrics_from_trace(
         events = events_by_pid[pid]
 
         # Collect the durarion_ms for each run
-        durations_ms_lists.append([
-            float(e["args"].get("device_duration_ps", 0)) / 1e9 for e in events
-        ])
+        durations_ms_lists.append(
+            [
+                float(e["args"].get("device_duration_ps", 0)) / 1e9
+                for e in events
+            ]
+        )
 
     # 3. Print summary from the first device and return
     print(f"Average Execution time: {np.mean(durations_ms_lists[0]):.6f} ms")
@@ -406,7 +424,7 @@ def iteration_timeit(
     warmup_tries: int = 10,
     tries: int = 10,
     task: str = None,
-    trace_dir: str = None
+    trace_dir: str = None,
 ) -> list[float]:
     """
     Simple utility to time a function, ensuring no cache hits
@@ -422,7 +440,7 @@ def iteration_timeit(
     """
     assert task is not None
     print(f"[{task}] Running warmup loop with {warmup_tries} tries...")
-    result = None # To hold the last result for block_until_ready
+    result = None  # To hold the last result for block_until_ready
     for _ in range(warmup_tries):
         # 1. Generate new data for each iteration
         data_args = data_generator()
@@ -445,22 +463,23 @@ def iteration_timeit(
 
     if trace_dir is not None:
         if task == "rmsnorm":
-		    # If the task is RMSNorm, we specifically target "copy-done" events.
-		    # This is often done to capture the time of the asynchronous memory transfer
-		    # needed for the normalization layer's input data.
+            # If the task is RMSNorm, we specifically target "copy-done" events.
+            # This is often done to capture the time of the asynchronous memory transfer
+            # needed for the normalization layer's input data.
             event_name_str_list = ["copy-done"]
         else:
-		    # For all other tasks, use an empty list.
+            # For all other tasks, use an empty list.
             event_name_str_list = []
 
         return iteration_timeit_from_trace(
-                compute_func,
-                data_generator,
-                matrix_dim=matrix_dim,
-                tries=tries,
-                task=task,
-                trace_dir=trace_dir,
-                event_name_str_list=event_name_str_list)
+            compute_func,
+            data_generator,
+            matrix_dim=matrix_dim,
+            tries=tries,
+            task=task,
+            trace_dir=trace_dir,
+            event_name_str_list=event_name_str_list,
+        )
 
     outcomes_ms = []
     print(f"[{task}] Running measurement loop with {tries} tries...")
@@ -483,6 +502,7 @@ def iteration_timeit(
         outcomes_ms.append(1000 * (e_time - s_time).total_seconds())
     return outcomes_ms
 
+
 def simple_timeit(
     f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None
 ) -> float:
@@ -491,7 +511,12 @@ def simple_timeit(
 
     if trace_dir:
         return timeit_from_trace(
-            f, *args, matrix_dim=matrix_dim, tries=tries, task=task, trace_dir=trace_dir
+            f,
+            *args,
+            matrix_dim=matrix_dim,
+            tries=tries,
+            task=task,
+            trace_dir=trace_dir,
         )
 
     outcomes_ms = []
@@ -512,7 +537,9 @@ def get_trace(log_dir: str) -> dict[str, Any]:
       A trace object in JSON format.
     """
     # Navigate to the folder with the latest trace dump to find `trace.json.jz`
-    trace_folders = (pathlib.Path(log_dir).absolute() / "plugins" / "profile").iterdir()
+    trace_folders = (
+        pathlib.Path(log_dir).absolute() / "plugins" / "profile"
+    ).iterdir()
     latest_trace_folder = max(trace_folders, key=os.path.getmtime)
     trace_jsons = latest_trace_folder.glob("*.trace.json.gz")
     try:
@@ -608,13 +635,18 @@ def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
 
     events_by_run_id = defaultdict(list)
     for e in events:
-        run_id = e["args"]["run_id"] if "args" in e and "run_id" in e["args"] else "0"
+        run_id = (
+            e["args"]["run_id"]
+            if "args" in e and "run_id" in e["args"]
+            else "0"
+        )
         events_by_run_id[run_id].append(e)
     durations_ms = []
     try:
         # Duration is in us.
         durations_ms = [
-            max([e["dur"] for e in es]) / 1e3 for run_id, es in events_by_run_id.items()
+            max([e["dur"] for e in es]) / 1e3
+            for run_id, es in events_by_run_id.items()
         ]
     except KeyError:
         print("KeyError: Key 'dur' not found in the event object")
@@ -638,10 +670,13 @@ def get_metrics_from_trace_tpu(trace: dict[str, Any], task: str) -> list[float]:
     events_from_min_pid = [e for e in events if e["pid"] == min_pid]
     try:
         durations_ms = [
-            float(e["args"]["device_duration_ps"]) / 1e9 for e in events_from_min_pid
+            float(e["args"]["device_duration_ps"]) / 1e9
+            for e in events_from_min_pid
         ]
     except KeyError:
-        print("KeyError: Key 'device_duration_ps' not found in the event object")
+        print(
+            "KeyError: Key 'device_duration_ps' not found in the event object"
+        )
         raise
     return durations_ms
 
@@ -658,7 +693,13 @@ def is_local_directory_path(dir: str) -> bool:
 
 
 def timeit_from_trace(
-    f, *args, matrix_dim=None, tries=10, task=None, trace_dir=None, event_name_str_list: list[str] = None
+    f,
+    *args,
+    matrix_dim=None,
+    tries=10,
+    task=None,
+    trace_dir=None,
+    event_name_str_list: list[str] = None,
 ) -> float:
     """
     Time a function with jax.profiler and get the run time from the trace.
@@ -693,7 +734,9 @@ def timeit_from_trace(
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
 
     if event_name_str_list is not None:
-        return iteration_get_event_metrics_from_trace(trace, event_name_str_list=event_name_str_list)
+        return iteration_get_event_metrics_from_trace(
+            trace, event_name_str_list=event_name_str_list
+        )
 
     return iteration_get_metrics_from_trace(trace)
 
@@ -821,7 +864,9 @@ def rename_xla_dump(
     serialized_benchmark_param = "_".join(
         f"{key}_{value}" for key, value in benchmark_param.items()
     )
-    anchor_pattern = os.path.join(tmp_xla_dump_dir, "*jit_f*before_optimizations*.txt")
+    anchor_pattern = os.path.join(
+        tmp_xla_dump_dir, "*jit_f*before_optimizations*.txt"
+    )
     matching_anchor_files = glob.glob(anchor_pattern)
 
     if not matching_anchor_files:
@@ -860,7 +905,9 @@ def rename_xla_dump(
         return
 
     new_base_name = f"{benchmark_name}_{serialized_benchmark_param}"
-    after_optimizations_path = input_shape = output_shape = replica_groups = first_replica_group = None
+    after_optimizations_path = input_shape = output_shape = replica_groups = (
+        first_replica_group
+    ) = None
 
     for original_filepath in all_related_files:
         original_filename = os.path.basename(original_filepath)
@@ -902,7 +949,9 @@ def rename_xla_dump(
                     f"An unexpected error occurred while copy '{original_filepath}': {e}"
                 )
         else:
-            upload_to_storage(trace_dir=new_filepath, local_file=original_filepath)
+            upload_to_storage(
+                trace_dir=new_filepath, local_file=original_filepath
+            )
     print(f"The XLA dump is stored in {dest_xla_dump_dir}")
     if after_optimizations_path:
         input_shape, output_shape, replica_groups, first_replica_group = (
@@ -913,15 +962,20 @@ def rename_xla_dump(
             "No files found with 'after_optimizations.txt' suffix. "
             "Please check the XLA dump directory."
         )
-    return json.dumps({
-        "after_optimizations_path": after_optimizations_path,
-        "hlo_input_shape": input_shape,
-        "hlo_output_shape": output_shape,
-        "hlo_replica_groups": replica_groups,
-        "hlo_first_replica_group": first_replica_group,
-    })
+    return json.dumps(
+        {
+            "after_optimizations_path": after_optimizations_path,
+            "hlo_input_shape": input_shape,
+            "hlo_output_shape": output_shape,
+            "hlo_replica_groups": replica_groups,
+            "hlo_first_replica_group": first_replica_group,
+        }
+    )
 
-def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str | None, str | None, str | None, list[int] | None]:
+
+def extract_hlo_features_from_file(
+    hlo_file_path: str,
+) -> Tuple[str | None, str | None, str | None, list[int] | None]:
     """
     Extracts input shape, output shape, and replica groups from an HLO file.
 
@@ -946,7 +1000,9 @@ def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str | None, str 
 
     # Extract input/output shapes from HloModule line
     # Example: HloModule jit_f, ..., entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
-    layout_match = re.search(r"entry_computation_layout={\((.*?)\)->(.*?)}", content)
+    layout_match = re.search(
+        r"entry_computation_layout={\((.*?)\)->(.*?)}", content
+    )
     if layout_match:
         input_shape = layout_match.group(1)
         output_shape = layout_match.group(2)
@@ -954,24 +1010,30 @@ def extract_hlo_features_from_file(hlo_file_path: str) -> Tuple[str | None, str 
         input_shape = re.sub(r"{.*}", "", input_shape)
         output_shape = re.sub(r"{.*}", "", output_shape)
     else:
-        print(f"Could not find entry_computation_layout in {hlo_file_path} to extract shapes.")
+        print(
+            f"Could not find entry_computation_layout in {hlo_file_path} to extract shapes."
+        )
 
     # Extract replica groups
     # Example: replica_groups={{0,1},{2,3}}, dimensions...
-    rg_match = re.search(r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL)
+    rg_match = re.search(
+        r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL
+    )
     if rg_match:
         replica_groups_str = rg_match.group(1)
         try:
             content_rg = replica_groups_str[2:-2]
-            first_group_str = content_rg.split('},{')[0]
-            first_replica_group = [int(x) for x in first_group_str.split(',')]
+            first_group_str = content_rg.split("},{")[0]
+            first_replica_group = [int(x) for x in first_group_str.split(",")]
         except Exception as e:
-            print(f'Could not parse replica_groups in hlo_text: {e}')
+            print(f"Could not parse replica_groups in hlo_text: {e}")
             first_replica_group = None
     else:
         print(f"Could not find replica_groups in {hlo_file_path}.")
 
     return input_shape, output_shape, replica_groups_str, first_replica_group
+
+
 def get_lhs_named_shading(mesh, strategy: ShardingStrategy):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
@@ -1056,7 +1118,9 @@ def handle_per_device_based_on_sharding(value, strategy: ShardingStrategy):
             return value // 2
 
 
-def handle_all_devices_based_on_sharding(value: int, strategy: ShardingStrategy):
+def handle_all_devices_based_on_sharding(
+    value: int, strategy: ShardingStrategy
+):
     match strategy:
         case ShardingStrategy.NO_SHARDING:
             return value * jax.device_count()
@@ -1084,11 +1148,15 @@ def create_mesh(strategy: ShardingStrategy) -> Mesh:
         or strategy == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_N
     ):
         num_devices = jax.device_count()
-        assert num_devices % 2 == 0, "Total devices must be divisible by 2 (chip size)"
+        assert (
+            num_devices % 2 == 0
+        ), "Total devices must be divisible by 2 (chip size)"
         num_chips = num_devices // 2
         mesh_shape = (num_chips, 2)
         mesh_axes = ("chip", "device")
-        mesh = jax.sharding.Mesh(np.array(jax.devices()).reshape(mesh_shape), mesh_axes)
+        mesh = jax.sharding.Mesh(
+            np.array(jax.devices()).reshape(mesh_shape), mesh_axes
+        )
     else:
         mesh = Mesh(np.array(jax.devices()), axis_names="device")
     return mesh
@@ -1130,9 +1198,12 @@ def unified_flops_metrics(
     metadata = get_metrics_helper(params)
     metrics = {}
 
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    average_time_s_list = [
+        average_time_ms / 10**3 for average_time_ms in time_ms_list
+    ]
     tflops_per_sec_list = [
-        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
+        total_flops / average_time_s / 10**12
+        for average_time_s in average_time_s_list
     ]
     tflops_per_sec_all_devices = [
         total_flops_all_devices / average_time_s / 10**12
@@ -1146,7 +1217,8 @@ def unified_flops_metrics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
     tflops_per_sec_statistics = MetricsStatistics(
-        metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec_pre_device"
+        metrics_list=tflops_per_sec_list,
+        metrics_name="tflops_per_sec_pre_device",
     )
     tflops_per_sec_all_devices_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_all_devices, metrics_name="tflops_per_sec"
@@ -1182,7 +1254,9 @@ def unified_flops_metrics(
     metrics.update(tflops_per_sec_statistics.serialize_statistics())
     metrics.update(tflops_per_sec_all_devices_statistics.serialize_statistics())
     metrics.update(mfu_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics
 
 
@@ -1201,9 +1275,12 @@ def unified_bytes_metrics(
     metadata = get_metrics_helper(params)
     metrics = {}
 
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    average_time_s_list = [
+        average_time_ms / 10**3 for average_time_ms in time_ms_list
+    ]
     gigabytes_per_sec_list = [
-        total_bytes / average_time_s / 10**9 for average_time_s in average_time_s_list
+        total_bytes / average_time_s / 10**9
+        for average_time_s in average_time_s_list
     ]
     digabytes_per_sec_all_devices = [
         total_bytes_all_devices / average_time_s / 10**9
@@ -1213,10 +1290,12 @@ def unified_bytes_metrics(
         metrics_list=time_ms_list, metrics_name="step_time_ms"
     )
     gigabytes_per_sec_statistics = MetricsStatistics(
-        metrics_list=gigabytes_per_sec_list, metrics_name="Gbytes_per_sec_per_device"
+        metrics_list=gigabytes_per_sec_list,
+        metrics_name="Gbytes_per_sec_per_device",
     )
     gigabytes_per_sec_all_devices_statistics = MetricsStatistics(
-        metrics_list=digabytes_per_sec_all_devices, metrics_name="Gbytes_per_sec"
+        metrics_list=digabytes_per_sec_all_devices,
+        metrics_name="Gbytes_per_sec",
     )
     type_prefix = ""
     # Gather the metrics to report.
@@ -1249,9 +1328,14 @@ def unified_bytes_metrics(
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
     metrics.update(gigabytes_per_sec_statistics.serialize_statistics())
-    metrics.update(gigabytes_per_sec_all_devices_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics.update(
+        gigabytes_per_sec_all_devices_statistics.serialize_statistics()
+    )
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics
+
 
 def str_to_dtype(dtype_str: str) -> jnp.dtype:
     """Converts a string identifier to a JAX numpy dtype."""
@@ -1265,6 +1349,7 @@ def str_to_dtype(dtype_str: str) -> jnp.dtype:
         return jnp.float32
     else:
         raise ValueError(f"Unsupported dtype string: {dtype_str}")
+
 
 def get_peak_flops_multiplier(in_dtype_str: str) -> float:
     """
@@ -1284,4 +1369,6 @@ def get_peak_flops_multiplier(in_dtype_str: str) -> float:
         # FP32 is 4x slower than FP8 peak
         return 0.25
     else:
-        raise RuntimeError(f"{in_dtype_lower} is not supported for setting peak_flops_multiplier.")
+        raise RuntimeError(
+            f"{in_dtype_lower} is not supported for setting peak_flops_multiplier."
+        )

@@ -45,9 +45,15 @@ def convolve_common(
     def f(x, kernel, mode):
         return convolve_fn(x, kernel, mode=mode)
 
-    x = jnp.arange(np.prod(input_shape)).reshape(input_shape).astype(jnp.bfloat16)
+    x = (
+        jnp.arange(np.prod(input_shape))
+        .reshape(input_shape)
+        .astype(jnp.bfloat16)
+    )
     kernel = (
-        jnp.arange(np.prod(kernel_shape)).reshape(kernel_shape).astype(jnp.bfloat16)
+        jnp.arange(np.prod(kernel_shape))
+        .reshape(kernel_shape)
+        .astype(jnp.bfloat16)
     )
 
     # Warm up
@@ -104,7 +110,8 @@ def convolve_common_calculate_metrics(
 
     # Calculate FLOPS utilization
     gflops_per_sec_list = [
-        flops / (average_time_ms / 1000) / 1e9 for average_time_ms in time_ms_list
+        flops / (average_time_ms / 1000) / 1e9
+        for average_time_ms in time_ms_list
     ]  # Convert ms to seconds
     gflops_per_sec_statistics = MetricsStatistics(
         metrics_list=gflops_per_sec_list, metrics_name="gflops_per_sec"
@@ -114,14 +121,18 @@ def convolve_common_calculate_metrics(
     )
     # Print results
     print(f"Total flops: {flops}")
-    print(f"Average Execution Time: {time_ms_statistics.statistics['p50']:.4f} ms")
+    print(
+        f"Average Execution Time: {time_ms_statistics.statistics['p50']:.4f} ms"
+    )
     print(
         f"FLOPS Utilization(median): {gflops_per_sec_statistics.statistics['p50']:.2f} GFLOPS/sec\n"
     )
     # Gather the metrics to report.
     metadata.update({"total_flops": flops})
     metrics.update(gflops_per_sec_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics
 
 
@@ -290,7 +301,9 @@ def lax_conv_general_dilated(
     dilation = (dilation, dilation)
 
     x = jnp.arange(np.prod(input_shape)).reshape(input_shape).astype(dtype)
-    kernel = jnp.arange(np.prod(kernel_shape)).reshape(kernel_shape).astype(dtype)
+    kernel = (
+        jnp.arange(np.prod(kernel_shape)).reshape(kernel_shape).astype(dtype)
+    )
 
     @partial(jax.jit, static_argnames=["mode", "stride", "dilation"])
     def f(x, kernel, stride, dilation, mode):
@@ -374,7 +387,8 @@ def lax_conv_general_dilated_calculate_metrics(
 
     # Calculate FLOPS utilization
     gflops_per_sec_list = [
-        flops / (average_time_ms / 1000) / 1e9 for average_time_ms in time_ms_list
+        flops / (average_time_ms / 1000) / 1e9
+        for average_time_ms in time_ms_list
     ]  # Convert ms to seconds
     gflops_per_sec_statistics = MetricsStatistics(
         metrics_list=gflops_per_sec_list, metrics_name="gflops_per_sec"
@@ -384,7 +398,9 @@ def lax_conv_general_dilated_calculate_metrics(
     )
     # Print results
     print(f"Total flops: {flops}")
-    print(f"Average Execution Time: {time_ms_statistics.statistics['p50']:.4f} ms")
+    print(
+        f"Average Execution Time: {time_ms_statistics.statistics['p50']:.4f} ms"
+    )
     print(
         f"FLOPS Utilization(median): {gflops_per_sec_statistics.statistics['p50']:.2f} GFLOPS/sec\n"
     )

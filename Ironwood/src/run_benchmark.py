@@ -12,7 +12,11 @@ import itertools
 import random
 import string
 from typing import Any, Callable, Dict, List, Tuple
-from benchmark_utils import maybe_write_metrics_file, rename_xla_dump, MetricsStatistics
+from benchmark_utils import (
+    maybe_write_metrics_file,
+    rename_xla_dump,
+    MetricsStatistics,
+)
 import jax
 import yaml
 import ray
@@ -35,7 +39,9 @@ COLLECTIVE_BENCHMARK_MAP = {
 MATMUL_BENCHMARK_MAP = {
     "naive_matmul": "benchmark_matmul.naive_matmul",
     "single_host_naive_matmul": "benchmark_matmul.single_host_naive_matmul",
-    "multilayer_collective_matmul": ("benchmark_matmul.multilayer_collective_matmul"),
+    "multilayer_collective_matmul": (
+        "benchmark_matmul.multilayer_collective_matmul"
+    ),
     "collective_matmul_one_direction": (
         "benchmark_matmul.collective_matmul_one_direction"
     ),
@@ -47,7 +53,9 @@ CONVOLUTION_BENCHMARK_MAP = {
     "numpy_convolve": "benchmark_convolution.numpy_convolve",
     "scipy_signal_convolve": "benchmark_convolution.scipy_signal_convolve",
     "scipy_signal_convolve2d": "benchmark_convolution.scipy_signal_convolve2d",
-    "lax_conv_general_dilated": ("benchmark_convolution.lax_conv_general_dilated"),
+    "lax_conv_general_dilated": (
+        "benchmark_convolution.lax_conv_general_dilated"
+    ),
 }
 ATTENTION_BENCHMARK_MAP = {
     "tokamax_splash_attention": "benchmark_attention.tokamax_splash_attention_benchmark",
@@ -136,7 +144,9 @@ def get_benchmark_functions(
 ) -> Tuple[Callable[..., Any], Callable[..., Any]]:
     """Dynamically load the benchmark function and its calculate_metrics function from the predefined map."""
     if benchmark_name not in BENCHMARK_MAP:
-        raise ValueError(f"Benchmark {benchmark_name} is not defined in the map.")
+        raise ValueError(
+            f"Benchmark {benchmark_name} is not defined in the map."
+        )
 
     module_path, func_name = BENCHMARK_MAP[benchmark_name].rsplit(".", 1)
 
@@ -155,7 +165,9 @@ def get_benchmark_functions(
 
     # Get the calculate_metrics function
     try:
-        calculate_metrics_func = getattr(module, f"{func_name}_calculate_metrics")
+        calculate_metrics_func = getattr(
+            module, f"{func_name}_calculate_metrics"
+        )
     except AttributeError:
         raise ValueError(
             f"Calculate metrics function for {benchmark_name} not found."
@@ -240,14 +252,18 @@ def generate_benchmark_params_sweeping(
         # Generate all combinations using itertools.product
         combinations = [
             dict(zip(param_names, values))
-            for values in itertools.product(*(param_sets[name] for name in param_names))
+            for values in itertools.product(
+                *(param_sets[name] for name in param_names)
+            )
         ]
         generated_params += combinations
 
     return generated_params
 
 
-def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]]):
+def write_to_csv(
+    csv_path: str, calculate_metrics_results: List[Dict[str, Any]]
+):
     """Writes benchmark metrics to a CSV file.
 
     This function takes a list of dictionaries, where each dictionary contains
@@ -323,7 +339,9 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
     benchmark_params = benchmark_config.get("benchmark_params", [])
     benchmark_sweep_params = benchmark_config.get("benchmark_sweep_params", {})
     if benchmark_sweep_params:
-        benchmark_params += generate_benchmark_params_sweeping(benchmark_sweep_params)
+        benchmark_params += generate_benchmark_params_sweeping(
+            benchmark_sweep_params
+        )
     csv_path = benchmark_config.get("csv_path")
     trace_dir = benchmark_config.get("trace_dir")
     xlml_metrics_dir = benchmark_config.get("xlml_metrics_dir")
@@ -343,8 +361,10 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
 
     # Get the benchmark function
-    
-    benchmark_func, calculate_metrics_func = get_benchmark_functions(benchmark_name)
+
+    benchmark_func, calculate_metrics_func = get_benchmark_functions(
+        benchmark_name
+    )
 
     print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
 
@@ -353,9 +373,12 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
     for id, benchmark_param in enumerate(benchmark_params):
         original_benchmark_param = copy.deepcopy(benchmark_param)
         benchmark_param = preprocess_benchmark_param(
-            benchmark_param, trace_dir=os.path.join(trace_dir, f"benchmark_{id}")
+            benchmark_param,
+            trace_dir=os.path.join(trace_dir, f"benchmark_{id}"),
         )
-        print(f"Running benchmark: {benchmark_name} with params: {benchmark_param}")
+        print(
+            f"Running benchmark: {benchmark_name} with params: {benchmark_param}"
+        )
         test_start_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )  # "Z" indicates UTC
@@ -408,10 +431,9 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
                 test_end_time,
             )
         # Post process the xla dump
-        calculate_metrics_results.append({
-            "metadata": metadata,
-            "metrics": metrics
-        })
+        calculate_metrics_results.append(
+            {"metadata": metadata, "metrics": metrics}
+        )
 
     # Dump metrics to file.
     if csv_path:
@@ -472,7 +494,9 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
     benchmark_params = benchmark_config.get("benchmark_params", [])
     benchmark_sweep_params = benchmark_config.get("benchmark_sweep_params", {})
     if benchmark_sweep_params:
-        benchmark_params += generate_benchmark_params_sweeping(benchmark_sweep_params)
+        benchmark_params += generate_benchmark_params_sweeping(
+            benchmark_sweep_params
+        )
     csv_path = benchmark_config.get("csv_path")
     if not benchmark_name:
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
@@ -487,7 +511,9 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
                 param["num_runs"] = global_num_runs
 
     # Get the benchmark function
-    benchmark_func, calculate_metrics_func = get_benchmark_functions(benchmark_name)
+    benchmark_func, calculate_metrics_func = get_benchmark_functions(
+        benchmark_name
+    )
 
     print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
 
@@ -521,7 +547,9 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
             benchmark_param = future_to_param[
                 future
             ]  # Retrieve the corresponding benchmark_param
-            benchmark_results = future.result()  # Get the result from the future
+            benchmark_results = (
+                future.result()
+            )  # Get the result from the future
 
             # Filter benchmark_results to include only keys present in calculate_metrics_func
             calculate_metrics_params = inspect.signature(
@@ -537,7 +565,9 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
             metadata, metrics = calculate_metrics_func(
                 **benchmark_param, **filtered_benchmark_results
             )
-            calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
+            calculate_metrics_results.append(
+                {"metadata": metadata, "metrics": metrics}
+            )
 
     if csv_path:
         os.makedirs(csv_path, exist_ok=True)
