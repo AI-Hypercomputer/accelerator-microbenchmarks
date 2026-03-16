@@ -1021,14 +1021,16 @@ def extract_hlo_features_from_file(
         return None, None, None, None
 
     # Extract input/output shapes from HloModule line
-    # Example: HloModule jit_f, ..., entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
+    # Example: HloModule jit_f, ...,
+    # entry_computation_layout={(f32[32,128]{...})->f32[128,128]{...}}
     layout_match = re.search(
         r"entry_computation_layout={\((.*?)\)->(.*?)}", content
     )
     if layout_match:
         input_shape = layout_match.group(1)
         output_shape = layout_match.group(2)
-        # Further clean shape if layout info is present, e.g., f32[1,2]{1,0} -> f32[1,2]
+        # Further clean shape if layout info is present, e.g.,
+        # f32[1,2]{1,0} -> f32[1,2]
         input_shape = re.sub(r"{.*}", "", input_shape)
         output_shape = re.sub(r"{.*}", "", output_shape)
     else:
@@ -1252,8 +1254,9 @@ def unified_flops_metrics(
         f"{dtype_prefix}"
         f"Total floating-point ops: {total_flops}, Step Time (median): "
         f"{average_time_ms_statistics.statistics['p50']:.2f}, "
-        f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} "
-        f"TFLOP / second / device, "
+        f"Throughput (median): "
+        f"{tflops_per_sec_statistics.statistics['p50']:.2f}"
+        f" TFLOP / second / device, "
         f"TotalThroughput (median): "
         f"{tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} "
         f"TFLOP / second, "
@@ -1266,12 +1269,12 @@ def unified_flops_metrics(
     metadata.update(
         {
             "StepTime(median,ms)": average_time_ms_statistics.statistics["p50"],
-            "Throughput(median,TFLOP/s/device)": tflops_per_sec_statistics.statistics[
-                "p50"
-            ],
-            "TotalThroughput(median,TFLOP/s)": tflops_per_sec_all_devices_statistics.statistics[
-                "p50"
-            ],
+            "Throughput(median,TFLOP/s/device)": (
+                tflops_per_sec_statistics.statistics["p50"]
+            ),
+            "TotalThroughput(median,TFLOP/s)": (
+                tflops_per_sec_all_devices_statistics.statistics["p50"]
+            ),
             "MFU": mfu_statistics.statistics["p50"],
             "total_flops": total_flops,
             # "all_time_ms_list":  f"{json.dumps(time_ms_list)}",
@@ -1338,7 +1341,8 @@ def unified_bytes_metrics(
         f"{type_prefix}"
         f"Total bytes: {total_bytes}, Step Time (median): "
         f"{average_time_ms_statistics.statistics['p50']:.2f}, "
-        f"Throughput (median): {gigabytes_per_sec_statistics.statistics['p50']:.2f} "
+        f"Throughput (median):"
+        f"{gigabytes_per_sec_statistics.statistics['p50']:.2f} "
         f"GBytes / second / device, "
         f"TotalThroughput (median): "
         f"{gigabytes_per_sec_all_devices_statistics.statistics['p50']:.2f} "
@@ -1348,12 +1352,12 @@ def unified_bytes_metrics(
     metadata.update(
         {
             "StepTime(median,ms)": average_time_ms_statistics.statistics["p50"],
-            "Throughput(median,GBytes/s/device)": gigabytes_per_sec_statistics.statistics[
-                "p50"
-            ],
-            "TotalThroughput(median,GBytes/s)": gigabytes_per_sec_all_devices_statistics.statistics[
-                "p50"
-            ],
+            "Throughput(median,GBytes/s/device)": (
+                gigabytes_per_sec_statistics.statistics["p50"]
+            ),
+            "TotalThroughput(median,GBytes/s)": (
+                gigabytes_per_sec_all_devices_statistics.statistics["p50"]
+            ),
             "total_bytes": total_bytes,
         }
     )
@@ -1401,5 +1405,5 @@ def get_peak_flops_multiplier(in_dtype_str: str) -> float:
         return 0.25
     else:
         raise RuntimeError(
-            f"{in_dtype_lower} is not supported for setting peak_flops_multiplier."
+            f"{in_dtype_lower} is not supported for setting " "peak_flops_multiplier."
         )
