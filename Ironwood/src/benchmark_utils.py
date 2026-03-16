@@ -1253,14 +1253,14 @@ def unified_flops_metrics(
     print(
         f"{dtype_prefix}"
         f"Total floating-point ops: {total_flops}, Step Time (median): "
-        f"{average_time_ms_statistics.statistics['p50']:.2f}, "
+        f"{average_time_ms_statistics.statistics["p50"]:.2f}, "
         f"Throughput (median): "
-        f"{tflops_per_sec_statistics.statistics['p50']:.2f}"
+        f"{tflops_per_sec_statistics.statistics["p50"]:.2f}"
         f" TFLOP / second / device, "
         f"TotalThroughput (median): "
-        f"{tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} "
+        f"{tflops_per_sec_all_devices_statistics.statistics["p50"]:.2f} "
         f"TFLOP / second, "
-        f"MFU: {mfu_statistics.statistics['p50']:.2%}"
+        f"MFU: {mfu_statistics.statistics["p50"]:.2%}"
     )
     # print()
     # time_ms_list =
@@ -1340,12 +1340,12 @@ def unified_bytes_metrics(
     print(
         f"{type_prefix}"
         f"Total bytes: {total_bytes}, Step Time (median): "
-        f"{average_time_ms_statistics.statistics['p50']:.2f}, "
+        f"{average_time_ms_statistics.statistics["p50"]:.2f}, "
         f"Throughput (median):"
-        f"{gigabytes_per_sec_statistics.statistics['p50']:.2f} "
+        f"{gigabytes_per_sec_statistics.statistics["p50"]:.2f} "
         f"GBytes / second / device, "
         f"TotalThroughput (median): "
-        f"{gigabytes_per_sec_all_devices_statistics.statistics['p50']:.2f} "
+        f"{gigabytes_per_sec_all_devices_statistics.statistics["p50"]:.2f} "
         f"GBytes / second"
     )
     print()
@@ -1405,5 +1405,5 @@ def get_peak_flops_multiplier(in_dtype_str: str) -> float:
         return 0.25
     else:
         raise RuntimeError(
-            f"{in_dtype_lower} is not supported for setting " "peak_flops_multiplier."
+            f"{in_dtype_lower} is not supported for setting peak_flops_multiplier."
         )
