@@ -34,7 +34,8 @@ def benchmark_host_device(
     )
 
     print(
-        f"Benchmarking Transfer with Data Size: {data_size_mib} MB for {num_runs} iterations",
+        f"Benchmarking Transfer with Data Size: {data_size_mib} MB "
+        f"for {num_runs} iterations",
         flush=True,
     )
 
@@ -122,7 +123,8 @@ def benchmark_host_device_calculate_metrics(
         ]
         stats_bw = MetricsStatistics(bw_list, f"{name}_bw (GiB/s)")
         print(
-            f"  {name}_bw (GiB/s) median: {stats_bw.statistics['p50']}, P95: {stats_bw.statistics['p95']}",
+            f"  {name}_bw (GiB/s) median: {stats_bw.statistics['p50']}, "
+            f"P95: {stats_bw.statistics['p95']}",
             flush=True,
         )
         metrics.update(stats_bw.serialize_statistics())

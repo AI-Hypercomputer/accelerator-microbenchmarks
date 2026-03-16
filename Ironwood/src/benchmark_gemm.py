@@ -10,27 +10,24 @@ Considered ops:
 import os
 from typing import Any, Dict
 
-# pylint: disable=g-importing-member
-from benchmark_utils import (
-    iteration_timeit,
-    multiple_iteration_timeit_from_trace,
-    ShardingStrategy,
-    get_lhs_named_shading,
-    get_rhs_named_shading,
-    get_output_named_shading,
-    get_out_sharding,
-    create_mesh,
-    handle_based_on_sharding,
-    unified_flops_metrics,
-    str_to_dtype,
-    get_peak_flops_multiplier,
-)
+from benchmark_utils import create_mesh
+from benchmark_utils import get_lhs_named_shading
+from benchmark_utils import get_out_sharding
+from benchmark_utils import get_output_named_shading
+from benchmark_utils import get_peak_flops_multiplier
+from benchmark_utils import get_rhs_named_shading
+from benchmark_utils import handle_based_on_sharding
+from benchmark_utils import iteration_timeit
+from benchmark_utils import multiple_iteration_timeit_from_trace
+from benchmark_utils import ShardingStrategy
+from benchmark_utils import str_to_dtype
+from benchmark_utils import unified_flops_metrics
 from common import MARKER
+
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 
-# pylint: disable=g-importing-member
 
 os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_enable_async_collective_fusion=true "
@@ -70,7 +67,9 @@ def gemm_multiple_run(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype. Accumulation is FP32. Current supported dtype: float8_e4m3fn, bfloat16."""
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype."""
+
+    """Accumulation is FP32. Current supported dtype: float8_e4m3fn, bfloat16."""
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -170,7 +169,9 @@ def gemm_simple(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8."""
+
+    """Accumulation is FP32."""
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -264,7 +265,9 @@ def gemm_simple_with_dtype(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8."""
+
+    """Accumulation is FP32."""
 
     # Convert string dtypes to jnp dtypes
     lhs_dtype = str_to_dtype(in_dtype_str)
@@ -365,7 +368,7 @@ def gemm_simple_with_dtype_calculate_metrics(
 def gemm(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
-    """OUT<M, N>:BF16 = matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)"""
+    """OUT<M, N>:BF16 = matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)."""
 
     def f(x, y, scale_m, scale_n):
         with jax.named_scope(MARKER):
@@ -470,7 +473,7 @@ def gemm_accum(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """OUT<M, N>:FP32 += matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)"""
+    """OUT<M, N>:FP32 += matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)."""
 
     def f(out_buffer, x, y, scale_m, scale_n):
         with jax.named_scope(MARKER):

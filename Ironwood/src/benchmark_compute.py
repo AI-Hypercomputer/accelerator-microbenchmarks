@@ -13,27 +13,24 @@ Considered ops:
 """
 
 import os
-from typing import Any, Dict, Callable
+from typing import Any, Callable, Dict
 
-# pylint: disable=g-importing-member
-from benchmark_utils import (
-    iteration_timeit,
-    ShardingStrategy,
-    get_out_sharding,
-    get_rowwise_named_shading,
-    get_output_named_shading,
-    create_mesh,
-    handle_based_on_sharding,
-    unified_bytes_metrics,
-)
+from benchmark_utils import create_mesh
+from benchmark_utils import get_out_sharding
+from benchmark_utils import get_output_named_shading
+from benchmark_utils import get_rowwise_named_shading
+from benchmark_utils import handle_based_on_sharding
+from benchmark_utils import iteration_timeit
+from benchmark_utils import ShardingStrategy
+from benchmark_utils import unified_bytes_metrics
+from common import MARKER
+
+from flax import nnx
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 from qwix import pallas as qpl
-from flax import nnx
-from common import MARKER
 
-# pylint: disable=g-importing-member
 # Set the environment variable for TPU initialization arguments to optimize
 # collective matmul. Setting the flags to false will disable the optimization.
 os.environ["LIBTPU_INIT_ARGS"] = (
@@ -157,8 +154,11 @@ def quantization_calculate_metrics(
     )
     width_in_bytes = info_fn(quant_jnp_dtype).bits / 8
     output_flops_based_on_dtype = m * n * width_in_bytes
-    #       calculate scale     apply quant    write quant output       write scale factor
-    # NOTE: (2 * m * n)     +  (2 * m * n)   + (1 * m * n)          +      (4 * m)
+    # NOTE:
+    # - calculate scale: (2 * m * n)
+    # - apply quant: (2 * m * n)
+    # - write quant output: (1 * m * n)
+    # - write scale factor: (4 * m)
     total_bytes = (
         (2 * m * n) + (2 * m * n) + (4 * m) + output_flops_based_on_dtype
     )

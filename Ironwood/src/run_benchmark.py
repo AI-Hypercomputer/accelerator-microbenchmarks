@@ -237,8 +237,8 @@ def generate_benchmark_params_sweeping(
                         current_value += increase_by
                     else:
                         raise ValueError(
-                            "In sweep mode, user must provide either multiplier or"
-                            " increase_by value."
+                            "In sweep mode, user must provide either multiplier"
+                            " or increase_by value."
                         )
                 # Add the generated values to the param set
                 param_sets[key] = param_values
@@ -321,9 +321,11 @@ def write_to_csv(
         return df
 
     # TODO(hylin2002@)
-    # This is a temporary workaround to generate a properly formatted CSV file for the output metrics.
-    # We should revert this PR and refactor the code such that metrics object is a flatten dict that can be easily exported as a CSV.
-    # For other information that requires nested structures, we should serialize it into a json file."
+    # This is a temporary workaround to generate a properly formatted CSV file
+    # for the output metrics. We should revert this PR and refactor the code
+    # such that metrics object is a flatten dict that can be easily exported
+    # as a CSV. For other information that requires nested structures, we
+    # should serialize it into a json file."
     df_list = [convert_dict_to_df(each) for each in calculate_metrics_results]
     df = pd.concat(df_list, ignore_index=True)
 

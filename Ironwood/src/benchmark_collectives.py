@@ -210,8 +210,8 @@ def psum_benchmark(
         matrix_dim).
       mesh_shape: The shape of the mesh.
       op_dimension: The dimension of the operation.
-      ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-        is run.
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run.
       dtype: The data type of the matrix.
       num_runs: The number of runs to perform.
       trace_dir: The directory to save the trace to.
@@ -360,8 +360,8 @@ def psum_scatter_benchmark(
       matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
         matrix_dim).
       dtype: The data type of the matrix.
-      ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-        is run.
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run.
       mesh_shape: The shape of the mesh.
       op_dimension: The dimension of the operation.
       sharding_strategy: The sharding strategy of the operation.
@@ -476,8 +476,8 @@ def all_gather_benchmark(
       matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
         matrix_dim).
       dtype: The data type of the matrix.
-      ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-        is run.
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run.
       mesh_shape: The shape of the mesh.
       sharding_strategy: The sharding strategy of the operation.
       op_dimension: The dimension of the operation.
@@ -592,8 +592,8 @@ def all_to_all_benchmark(
       matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
         matrix_dim).
       dtype: The data type of the matrix.
-      ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-        is run.
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run.
       mesh_shape: The shape of the mesh.
       op_dimension: The dimension of the operation.
       num_runs: The number of runs to perform.

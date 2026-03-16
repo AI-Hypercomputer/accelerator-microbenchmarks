@@ -83,7 +83,8 @@ def multiple_iteration_timeit_from_trace_throttling(
 
     trace_full_dir = f"{trace_dir}/{trace_name}"
     tmp_trace_dir = trace_full_dir
-    # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
+    # If the trace_dir isn't a local path, create one for dumping the trace for
+    # parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
 
@@ -93,7 +94,8 @@ def multiple_iteration_timeit_from_trace_throttling(
             for i in range(tries):
                 if i % 10 == 0:
                     print(
-                        f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+                        f"[{task}] Running iteration {i} of {tries} with "
+                        f"{matrix_dim}..."
                     )
                 jax.devices()
                 with jax.profiler.StepTraceAnnotation(task, step_num=i):
@@ -107,7 +109,8 @@ def multiple_iteration_timeit_from_trace_throttling(
             for i in range(tries):
                 if i % 10 == 0:
                     print(
-                        f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+                        f"[{task}] Running iteration {i} of {tries} with "
+                        f"{matrix_dim}..."
                     )
                 jax.devices()
                 with jax.profiler.StepTraceAnnotation(task, step_num=i):
@@ -122,7 +125,8 @@ def multiple_iteration_timeit_from_trace_throttling(
             for i in range(tries):
                 if i % 10 == 0:
                     print(
-                        f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+                        f"[{task}] Running iteration {i} of {tries} with"
+                        f"{matrix_dim}..."
                     )
                 data_args = data_generator()
                 jax.devices()
@@ -169,7 +173,8 @@ def multiple_iteration_timeit_from_trace(
 
     trace_full_dir = f"{trace_dir}/{trace_name}"
     tmp_trace_dir = trace_full_dir
-    # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
+    # If the trace_dir isn't a local path, create one for dumping the trace for
+    # parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
     # data_args = data_generator()
@@ -177,7 +182,8 @@ def multiple_iteration_timeit_from_trace(
         for i in range(tries):
             if i % 10 == 0:
                 print(
-                    f"[{task}] Running iteration {i} of {tries} with {matrix_dim}..."
+                    f"[{task}] Running iteration {i} of {tries} with "
+                    f"{matrix_dim}..."
                 )
             data_args = data_generator()
             jax.devices()
@@ -224,7 +230,8 @@ def multiple_iteration_get_metrics_from_trace(
         for e in trace["traceEvents"]:
             if "name" in e and event_matcher.match(e["name"]):
                 events.append(e)
-        # For each trace, find the TPU with smallest `pid` value and consider it to be TPU-0
+        # For each trace, find the TPU with smallest `pid` value and consider it
+        # to be TPU-0
         min_pid = min([e["pid"] for e in events])
         events_from_min_pid = [e for e in events if e["pid"] == min_pid]
         print(events_from_min_pid)
@@ -238,7 +245,8 @@ def multiple_iteration_get_metrics_from_trace(
                 durations_ms.append(float(e["dur"]) / 1e3)
         if not durations_ms and events_from_min_pid:
             print(
-                "Warning: No event duration found in legacy_get_metrics_from_trace_tpu."
+                "Warning: No event duration found in "
+                "legacy_get_metrics_from_trace_tpu."
             )
         return durations_ms
 
@@ -277,7 +285,8 @@ def iteration_timeit_from_trace(
 
     trace_full_dir = f"{trace_dir}/{trace_name}"
     tmp_trace_dir = trace_full_dir
-    # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
+    # If the trace_dir isn't a local path, create one for dumping the trace for
+    # parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
     with jax.profiler.trace(tmp_trace_dir):
@@ -344,11 +353,12 @@ def iteration_get_metrics_from_trace(
     for pid in sorted(events_by_pid.keys()):
         events = events_by_pid[pid]
 
-        # Sum the device_duration_ps (picoseconds) for all events belonging to this PID
-        # CAVEAT: If multiple iterations of the op runs for benchmarking, then the next
-        # instruction will sum it for all the iterations which will not be the expected
-        # behavior. Find the metadata key which is different for different iteration on
-        # same PID. Eg: `group_id`.
+        # Sum the device_duration_ps (picoseconds) for all events belonging to
+        # this PID.
+        # CAVEAT: If multiple iterations of the op runs for benchmarking, then
+        # the next instruction will sum it for all the iterations which will
+        # not be the expected behavior. Find the metadata key which is
+        # different for different iteration on same PID. Eg: `group_id`.
         total_duration_ps = sum(
             float(e["args"].get("device_duration_ps", 0)) for e in events
         )
@@ -464,8 +474,8 @@ def iteration_timeit(
     if trace_dir is not None:
         if task == "rmsnorm":
             # If the task is RMSNorm, we specifically target "copy-done" events.
-            # This is often done to capture the time of the asynchronous memory transfer
-            # needed for the normalization layer's input data.
+            # This is often done to capture the time of the asynchronous memory
+            # transferneeded for the normalization layer's input data.
             event_name_str_list = ["copy-done"]
         else:
             # For all other tasks, use an empty list.
@@ -615,7 +625,8 @@ def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
 
 
 def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
-    # Check if the given task name is a collective with corresponding TPU opertion.
+    # Check if the given task name is a collective with corresponding TPU
+    # opertion.
     # This is a workaround and should be reverted or refactored in future.
     if task in TARGET_TASK_NAME_COLLECTIVES_MAP:
         try:
@@ -665,7 +676,8 @@ def get_metrics_from_trace_tpu(trace: dict[str, Any], task: str) -> list[float]:
         if "name" in e and event_matcher.match(e["name"]):
             events.append(e)
 
-    # For each trace, find the TPU with smallest `pid` value and consider it to be TPU-0
+    # For each trace, find the TPU with smallest `pid` value and consider it to
+    # be TPU-0
     min_pid = min([e["pid"] for e in events])
     events_from_min_pid = [e for e in events if e["pid"] == min_pid]
     try:
@@ -717,7 +729,8 @@ def timeit_from_trace(
 
     trace_full_dir = f"{trace_dir}/{trace_name}"
     tmp_trace_dir = trace_full_dir
-    # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
+    # If the trace_dir isn't a local path, create one for dumping the trace for
+    # parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
     print(trace_dir)
@@ -791,7 +804,8 @@ def upload_to_storage(trace_dir: str, local_file: str):
 
         except subprocess.CalledProcessError as e:
             print(
-                f"Failed to upload '{local_file}' to GCS: '{trace_dir}'. Error: {e.stderr.decode()}"
+                f"Failed to upload '{local_file}' to GCS: '{trace_dir}'. "
+                f"Error: {e.stderr.decode()}"
             )
     else:
         raise KeyError(f"{trace_dir} is not a valid GCS path.")
@@ -857,8 +871,9 @@ def rename_xla_dump(
 ):
     """
     Finds the latest XLA dump file matching '*jit_f*before_optimizations*.txt',
-    then identifies all other files that share the same 'jit_f.[unique_id]' identifier
-    and renames them to 'benchmark_name_serialized_params.original_suffix_with_extension'.
+    then identifies all other files that share the same 'jit_f.[unique_id]'
+    identifier and renames them to
+    'benchmark_name_serialized_params.original_suffix_with_extension'.
     """
 
     serialized_benchmark_param = "_".join(
@@ -871,7 +886,8 @@ def rename_xla_dump(
 
     if not matching_anchor_files:
         print(
-            f"No files found for anchor pattern: '{anchor_pattern}'. No files will be renamed."
+            f"No files found for anchor pattern: '{anchor_pattern}'. No files "
+            "will be renamed."
         )
         return
 
@@ -886,13 +902,15 @@ def rename_xla_dump(
 
     if not jit_id_match:
         print(
-            f"Could not extract 'jit_f.[unique_id]' from '{filename_base}'. Cannot proceed with renaming."
+            f"Could not extract 'jit_f.[unique_id]' from '{filename_base}'."
+            " Cannot proceed with renaming."
         )
         return
 
     common_jit_id_prefix = jit_id_match.group(1)
 
-    # Find all files in the directory that contain this specific common_jit_id_prefix
+    # Find all files in the directory that contain this specific
+    # common_jit_id_prefix
     all_related_files_pattern = os.path.join(
         tmp_xla_dump_dir, f"*{common_jit_id_prefix}*"
     )
@@ -900,7 +918,8 @@ def rename_xla_dump(
 
     if not all_related_files:
         print(
-            f"No files found containing '{common_jit_id_prefix}'. This is unexpected if an anchor was found."
+            f"No files found containing '{common_jit_id_prefix}'. This is "
+            "unexpected if an anchor was found."
         )
         return
 
@@ -914,9 +933,10 @@ def rename_xla_dump(
         original_suffix_with_extension = ""
 
         # Find the specific suffix part *after* the common_jit_id_prefix.
-        # This regex looks for the common_jit_id_prefix, then captures everything after it,
-        # ensuring it starts with a dot if there's more.
-        # Example: if original_filename is 'module_0080.jit_f.cl_747713181.after_codegen.txt'
+        # This regex looks for the common_jit_id_prefix, then captures
+        # everything after it, ensuring it starts with a dot if there's more.
+        # Example: if original_filename is
+        # 'module_0080.jit_f.cl_747713181.after_codegen.txt'
         # and common_jit_id_prefix is 'jit_f.cl_747713181'
         # we want to capture '.after_codegen.txt'
         suffix_match = re.search(
@@ -935,7 +955,8 @@ def rename_xla_dump(
 
         if original_filepath == new_filepath:
             print(
-                f"Skipping: '{original_filename}' already has the desired name or path."
+                f"Skipping: '{original_filename}' already has the desired name "
+                "or path."
             )
             continue
 
@@ -946,7 +967,8 @@ def rename_xla_dump(
                 shutil.copy(original_filepath, new_filepath)
             except Exception as e:
                 print(
-                    f"An unexpected error occurred while copy '{original_filepath}': {e}"
+                    f"An unexpected error occurred while copy "
+                    f"'{original_filepath}': {e}"
                 )
         else:
             upload_to_storage(
@@ -983,8 +1005,8 @@ def extract_hlo_features_from_file(
       hlo_file_path: Path to the HLO dump file (e.g., after_optimizations.txt).
 
     Returns:
-      A tuple containing (input_shape, output_shape, replica_groups_str, first_replica_group),
-      or (None, None, None, None) if extraction fails.
+      A tuple containing (input_shape, output_shape, replica_groups_str,
+      first_replica_group), or (None, None, None, None) if extraction fails.
     """
     input_shape = None
     output_shape = None
@@ -1011,7 +1033,8 @@ def extract_hlo_features_from_file(
         output_shape = re.sub(r"{.*}", "", output_shape)
     else:
         print(
-            f"Could not find entry_computation_layout in {hlo_file_path} to extract shapes."
+            f"Could not find entry_computation_layout in {hlo_file_path} to "
+            "extract shapes."
         )
 
     # Extract replica groups
@@ -1227,9 +1250,13 @@ def unified_flops_metrics(
     dtype_prefix = f"[{dtype}] " if dtype is not None else ""
     print(
         f"{dtype_prefix}"
-        f"Total floating-point ops: {total_flops}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, "
-        f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOP / second / device, "
-        f"TotalThroughput (median): {tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} TFLOP / second, "
+        f"Total floating-point ops: {total_flops}, Step Time (median): "
+        f"{average_time_ms_statistics.statistics['p50']:.2f}, "
+        f"Throughput (median): {tflops_per_sec_statistics.statistics['p50']:.2f} "
+        f"TFLOP / second / device, "
+        f"TotalThroughput (median): "
+        f"{tflops_per_sec_all_devices_statistics.statistics['p50']:.2f} "
+        f"TFLOP / second, "
         f"MFU: {mfu_statistics.statistics['p50']:.2%}"
     )
     # print()
@@ -1309,9 +1336,13 @@ def unified_bytes_metrics(
         type_prefix = f"[d={dtype}] "
     print(
         f"{type_prefix}"
-        f"Total bytes: {total_bytes}, Step Time (median): {average_time_ms_statistics.statistics['p50']:.2f}, Throughput (median):"
-        f" {gigabytes_per_sec_statistics.statistics['p50']:.2f} GBytes / second / device,"
-        f" TotalThroughput (median): {gigabytes_per_sec_all_devices_statistics.statistics['p50']:.2f} GBytes / second"
+        f"Total bytes: {total_bytes}, Step Time (median): "
+        f"{average_time_ms_statistics.statistics['p50']:.2f}, "
+        f"Throughput (median): {gigabytes_per_sec_statistics.statistics['p50']:.2f} "
+        f"GBytes / second / device, "
+        f"TotalThroughput (median): "
+        f"{gigabytes_per_sec_all_devices_statistics.statistics['p50']:.2f} "
+        f"GBytes / second"
     )
     print()
     metadata.update(
@@ -1359,8 +1390,8 @@ def get_peak_flops_multiplier(in_dtype_str: str) -> float:
     in_dtype_lower = in_dtype_str.lower()
     if in_dtype_lower == "fp8":
         # FP8 is 2x faster than BF16
-        # The baseline PEAK_FLOPS_PER_DEVICE is 1153.5 * 2 = 2307, which is FP8 peak.
-        # So the multiplier should be 1.0
+        # The baseline PEAK_FLOPS_PER_DEVICE is 1153.5 * 2 = 2307, which is FP8
+        # peak. So the multiplier should be 1.0
         return 1.0
     elif in_dtype_lower == "bf16" or in_dtype_lower == "fp16":
         # BF16/FP16 is 2x slower than FP8 peak

@@ -6,24 +6,21 @@ Considered ops:
 import os
 from typing import Any, Dict
 
-# pylint: disable=g-importing-member
-from benchmark_utils import (
-    iteration_timeit,
-    ShardingStrategy,
-    create_mesh,
-    handle_based_on_sharding,
-    get_rowwise_named_shading,
-    unified_bytes_metrics,
-    get_output_named_shading,
-    get_out_sharding,
-)
+from benchmark_utils import create_mesh
+from benchmark_utils import get_out_sharding
+from benchmark_utils import get_output_named_shading
+from benchmark_utils import get_rowwise_named_shading
+from benchmark_utils import handle_based_on_sharding
+from benchmark_utils import iteration_timeit
+from benchmark_utils import ShardingStrategy
+from benchmark_utils import unified_bytes_metrics
+from common import MARKER
+
+from flax import nnx
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
-from flax import nnx
-from common import MARKER
 
-# pylint: disable=g-importing-member
 # Set the environment variable for TPU initialization arguments to optimize
 # collective matmul. Setting the flags to false will disable the optimization.
 os.environ["LIBTPU_INIT_ARGS"] = (

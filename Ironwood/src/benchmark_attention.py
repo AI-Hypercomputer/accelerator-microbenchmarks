@@ -1,26 +1,20 @@
 """A script to benchmark tokamax splash attention implementation."""
 
-import os
-
-# pylint: disable=g-importing-member,g-bad-import-order
-from functools import partial
-from typing import Any, Callable, Dict, Tuple
+# pylint: disable=g-importing-member
 import dataclasses
-
-from benchmark_utils import timeit_from_trace, MetricsStatistics
-import jax
+from functools import partial
 import logging
-from tokamax._src.ops.experimental.tpu.splash_attention import (
-    splash_attention_kernel as splash,
-)
-from tokamax._src.ops.experimental.tpu.splash_attention import (
-    splash_attention_mask as mask_lib,
-)
+import os
+from typing import Any, Callable, Dict, Tuple
+
+from benchmark_utils import MetricsStatistics
+from benchmark_utils import timeit_from_trace
+import jax
+from tokamax._src.ops.experimental.tpu.splash_attention import splash_attention_kernel as splash
+from tokamax._src.ops.experimental.tpu.splash_attention import splash_attention_mask as mask_lib
 import tune_jax
 
 tune_jax.tune_logger.setLevel(logging.ERROR)
-
-# pylint: disable=g-importing-member,g-bad-import-order
 
 os.environ["LIBTPU_INIT_ARGS"] = "--xla_tpu_dvfs_p_state=7"
 
@@ -141,7 +135,7 @@ def tokamax_splash_attention_benchmark(
     # Attention mask
     mask = mask_lib.FullMask(_shape=(q_seq_len, kv_seq_len))
     if causal:
-        # Pick offset for causal masks for a "representative" slice of the causal
+        # Pick offset for causal masks for a representative slice of the causal
         offset = v.shape[-2] - q.shape[-2]
         mask = mask_lib.CausalMask(shape=(q_seq_len, kv_seq_len), offset=offset)
 

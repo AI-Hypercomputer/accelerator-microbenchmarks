@@ -3,7 +3,6 @@
 import os
 from typing import Any, Dict
 
-# pylint: disable=g-importing-member
 from benchmark_utils import create_mesh
 from benchmark_utils import get_lhs_named_shading
 from benchmark_utils import get_out_sharding
@@ -13,11 +12,10 @@ from benchmark_utils import multiple_iteration_timeit_from_trace_throttling
 from benchmark_utils import ShardingStrategy
 from benchmark_utils import unified_flops_metrics
 from common import MARKER
+
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
-
-# pylint: disable=g-importing-member
 
 os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_enable_async_collective_fusion=true "
@@ -100,7 +98,6 @@ def gemm_throttling(
         return (lhs_device, rhs_device)
 
     # Run the benchmark
-
     print("Running gemm_throttling benchmark", num_runs)
     time_ms_list = multiple_iteration_timeit_from_trace_throttling(
         jit_sharded_f,
