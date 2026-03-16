@@ -32,7 +32,7 @@ class TransferStrategy(abc.ABC):
         self.d2h_perf = []
 
     @abc.abstractmethod
-    def setup(self, data_size_mib: int, host_data: np.ndarray, devices: List[jax.Device]):
+    def setup(self, data_size_mib: int, host_data: np.ndarray, num_devices: int):
         """Perform one-time setup before the benchmark loop."""
         pass
 
@@ -55,12 +55,15 @@ class TransferStrategy(abc.ABC):
 class SimpleTransfer(TransferStrategy):
     """Simple device_put/device_get strategy."""
 
-    def setup(self, data_size_mib: int, host_data: np.ndarray):
-        pass
+    def setup(self, data_size_mib: int, host_data: np.ndarray, num_devices: int):
+        target_devices = jax.devices()[:num_devices]
+        self.mesh = Mesh(target_devices, ('x',))
+        self.partition_spec = PartitionSpec('x')
+        self.sharding = NamedSharding(self.mesh, self.partition_spec)
 
     def run_h2d(self, host_data: np.ndarray, i: int) -> Any:
         t0 = time.perf_counter()
-        device_array = jax.device_put(host_data)
+        device_array = jax.device_put(host_data, self.sharding)
         device_array.block_until_ready()
         t1 = time.perf_counter()
         
@@ -71,7 +74,8 @@ class SimpleTransfer(TransferStrategy):
 
     def run_d2h(self, device_data: Any, i: int):
         t2 = time.perf_counter()
-        _ = jax.device_get(device_data)
+        # Retrieving addressable shards natively supports parallelism
+        _ = jax.device_get([s.data for s in device_data.addressable_shards])
         t3 = time.perf_counter()
         self.d2h_perf.append((t3 - t2) * 1000)
         device_data.delete()
@@ -83,9 +87,9 @@ class SimpleTransfer(TransferStrategy):
 class PipelinedTransfer(TransferStrategy):
     """Pipelined transfer using chunking."""
 
-    def setup(self, data_size_mib: int, host_data: np.ndarray):
+    def setup(self, data_size_mib: int, host_data: np.ndarray, num_devices: int):
         self.target_chunk_size_mib = 16
-        num_devices_to_perform_h2d = 2
+        num_devices_to_perform_h2d = num_devices
         self.target_devices = jax.devices()[:num_devices_to_perform_h2d]
         self.num_devices = len(self.target_devices)
         
@@ -139,8 +143,8 @@ class PipelinedTransfer(TransferStrategy):
 class PinnedMemoryTransfer(TransferStrategy):
     """Pinned memory host-to-device with parallelized device-to-host transfer."""
 
-    def setup(self, data_size_mib: int, host_data: np.ndarray):
-        num_devices_to_perform_h2d = 2
+    def setup(self, data_size_mib: int, host_data: np.ndarray, num_devices: int):
+        num_devices_to_perform_h2d = num_devices
         target_devices = jax.devices()[:num_devices_to_perform_h2d]
         
         mesh = Mesh(target_devices, ('x',))
@@ -177,6 +181,8 @@ class PinnedMemoryTransfer(TransferStrategy):
 def benchmark_host_device(
     data_size_mib: int,
     transfer_type: str,
+    num_devices: int,
+    input_type: str,
     num_runs: int = 100,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
@@ -186,7 +192,14 @@ def benchmark_host_device(
     
     # Allocate Host Source Buffer
     column = 128
-    host_data = np.random.normal(size=(num_elements // column, column)).astype(np.float32)
+    np_data = np.random.normal(size=(num_elements // column, column)).astype(np.float32)
+    
+    if input_type == "numpy":
+        host_data = np_data
+    elif input_type == "jax":
+        host_data = jax.device_put(np_data, jax.devices("cpu")[0])
+    else:
+        raise ValueError(f"Unknown input_type: {input_type}")
 
     print(
         f"Benchmarking Transfer with Data Size: {data_size_mib} MB for {num_runs} iterations with {transfer_type=}",
@@ -203,7 +216,7 @@ def benchmark_host_device(
         raise ValueError(f"Unknown transfer_type: {transfer_type}. Available: {list(strategies.keys())}")
 
     strategy = strategies[transfer_type](trace_dir)
-    strategy.setup(data_size_mib, host_data)
+    strategy.setup(data_size_mib, host_data, num_devices)
 
     # Profiling Context
     import contextlib
@@ -215,11 +228,10 @@ def benchmark_host_device(
     with profiler_context:
         # Warmup
         for _ in range(2):
-            device_array = jax.device_put(host_data)
-            device_array.block_until_ready()
-            host_out = np.array(device_array)
-            device_array.delete()
-            del host_out
+            device_array = strategy.run_h2d(host_data, -1)
+            strategy.run_d2h(device_array, -1)
+        strategy.h2d_perf.clear()
+        strategy.d2h_perf.clear()
 
         for i in range(num_runs):
             # Step Context
@@ -242,6 +254,8 @@ def benchmark_host_device(
 def benchmark_host_device_calculate_metrics(
     data_size_mib: int,
     transfer_type: str,
+    num_devices: int,
+    input_type: str,
     H2D_Bandwidth_ms: List[float],
     D2H_Bandwidth_ms: List[float],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -251,10 +265,12 @@ def benchmark_host_device_calculate_metrics(
     # Filter out list params from metadata to avoid explosion
     metadata_keys = {
         "data_size_mib", 
+        "transfer_type",
+        "num_devices",
+        "input_type",
     }
     metadata = {k: v for k, v in params if k in metadata_keys}
     metadata["dtype"] = "float32"
-    metadata["transfer_type"] = transfer_type
     
     metrics = {}
     
