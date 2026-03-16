@@ -87,7 +87,6 @@ def _get_tokamax_benchmark_fn(
             kernel_ = jax.vmap(kernel, in_axes=(0, 0, 0))  # batch vmap
             kernel_ = jax.vmap(kernel_, in_axes=(0, 0, 0))  # mqa vmap
             return kernel_(q, k, v)
-
     else:
         kernel = splash.make_splash_mha_single_device(mask, config=config)
         f = jax.jit(jax.vmap(kernel, in_axes=(0, 0, 0)))

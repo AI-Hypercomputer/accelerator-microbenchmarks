@@ -482,7 +482,6 @@ def main(args):
 
         for benchmark_config in benchmarks:
             run_benchmark_multithreaded(benchmark_config, output_path)
-
     else:
         for benchmark_config in benchmarks:
             run_single_benchmark(benchmark_config, output_path)
