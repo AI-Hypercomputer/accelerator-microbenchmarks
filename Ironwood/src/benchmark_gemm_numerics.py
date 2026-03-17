@@ -12,7 +12,6 @@ Considered ops:
 import os
 from typing import Any, Callable, Dict
 
-# pylint: disable=g-importing-member
 from benchmark_utils import create_mesh
 from benchmark_utils import get_lhs_named_shading
 from benchmark_utils import get_out_sharding
