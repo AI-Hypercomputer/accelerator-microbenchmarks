@@ -23,7 +23,7 @@ fi
 for CONFIG_FILE in "$CONFIG_DIR"/*.yaml
 do
   CONFIG_NAME=$(basename "$CONFIG_FILE" .yaml)
-  if [ -z "$filter" ] || [[ "$CONFIG_NAME" == *"$filter"* ]]; then
+  if [ -n "$filter" ] && [[ "$CONFIG_NAME" != *"$filter"* ]]; then
     continue
   fi
   
