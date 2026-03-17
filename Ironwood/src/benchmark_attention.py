@@ -1,6 +1,5 @@
 """A script to benchmark tokamax splash attention implementation."""
 
-# pylint: disable=g-importing-member
 import dataclasses
 from functools import partial
 import logging

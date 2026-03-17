@@ -552,7 +552,8 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
                 future.result()
             )  # Get the result from the future
 
-            # Filter benchmark_results to include only keys present in calculate_metrics_func
+            # Filter benchmark_results to include only keys present in
+            # calculate_metrics_func
             calculate_metrics_params = inspect.signature(
                 calculate_metrics_func
             ).parameters
@@ -562,7 +563,8 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
                 if key in calculate_metrics_params
             }
 
-            # Call calculate_metrics_func with the filtered results and benchmark_param
+            # Call calculate_metrics_func with the filtered results and
+            # benchmark_param
             metadata, metrics = calculate_metrics_func(
                 **benchmark_param, **filtered_benchmark_results
             )
