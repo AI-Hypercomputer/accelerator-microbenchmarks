@@ -18,7 +18,9 @@ matrix_size_gbyte_to_bandwidth = {}
 
 
 def all_gather(matrix_dim):
-    """Performs an all_gather operation and calculates the achieved bandwidth."""
+    """
+    Performs an all_gather operation and calculates the achieved bandwidth.
+    """
     dtype = jax.numpy.bfloat16
     matrix = jax.numpy.arange(matrix_dim * matrix_dim, dtype=dtype).reshape(
         matrix_dim, matrix_dim
@@ -120,6 +122,7 @@ def run_benchmark():
         "p90_achieved_bandwidth_gbyte_s": p90_achieved_bandwidth_gbyte_s,
     }
     if METRICS_JSONL_DIR:
+        # pylint: disable=no-value-for-parameter
         maybe_write_metrics_file(
             METRICS_JSONL_DIR,
             metrics,

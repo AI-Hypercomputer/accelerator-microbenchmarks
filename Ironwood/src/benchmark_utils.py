@@ -33,10 +33,10 @@ def get_real_dtype_bytes(dtype) -> float:
     """Returns the real byte size of a dtype, handling sub-byte types."""
     try:
         return jnp.finfo(dtype).bits / 8
-    except Exception:
+    except (ValueError, TypeError):
         try:
             return jnp.iinfo(dtype).bits / 8
-        except Exception:
+        except (ValueError, TypeError):
             return dtype.itemsize
 
 
@@ -72,7 +72,7 @@ def multiple_iteration_timeit_from_trace_throttling(
     gap_strategy: str = None,
 ) -> list[float]:
     """Time a function with jax.profiler and get the run time from the trace."""
-    LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+    local_trace_dir = "/tmp/microbenchmarks_tmptrace"
 
     if matrix_dim is not None:
         trace_name = f"{task}_dim_{matrix_dim}"
@@ -86,7 +86,7 @@ def multiple_iteration_timeit_from_trace_throttling(
     # If the trace_dir isn't a local path, create one for dumping the trace for
     # parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
-        tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+        tmp_trace_dir = f"{local_trace_dir}/{trace_name}"
 
     if gap_strategy == "data_gen_once_block_every_iter":
         data_args = data_generator()
@@ -162,7 +162,7 @@ def multiple_iteration_timeit_from_trace(
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
-    LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+    local_trace_dir = "/tmp/microbenchmarks_tmptrace"
 
     if matrix_dim is not None:
         trace_name = f"{task}_dim_{matrix_dim}"
@@ -176,7 +176,7 @@ def multiple_iteration_timeit_from_trace(
     # If the trace_dir isn't a local path, create one for dumping the trace for
     # parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
-        tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+        tmp_trace_dir = f"{local_trace_dir}/{trace_name}"
     # data_args = data_generator()
     with jax.profiler.trace(tmp_trace_dir):
         for i in range(tries):
@@ -274,7 +274,7 @@ def iteration_timeit_from_trace(
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
-    LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+    local_trace_dir = "/tmp/microbenchmarks_tmptrace"
 
     if matrix_dim is not None:
         trace_name = f"{task}_dim_{matrix_dim}"
@@ -288,7 +288,7 @@ def iteration_timeit_from_trace(
     # If the trace_dir isn't a local path, create one for dumping the trace for
     # parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
-        tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+        tmp_trace_dir = f"{local_trace_dir}/{trace_name}"
     with jax.profiler.trace(tmp_trace_dir):
         for _ in range(tries):
             data_args = data_generator()
@@ -380,6 +380,7 @@ def iteration_get_event_metrics_from_trace(
     trace: dict[str, Any],
     event_name_str_list: list[str],
 ) -> list[float]:
+    # pylint: disable=unused-variable
     # Rename the storage variable to reflect its contents
     selected_events = []
 
@@ -494,7 +495,7 @@ def iteration_timeit(
     outcomes_ms = []
     print(f"[{task}] Running measurement loop with {tries} tries...")
 
-    for i in range(tries):
+    for i in range(tries):  # pylint: disable=unused-variable
         # 1. Generate NEW random data (meets "no cache hit" rule)
         data_args = data_generator()
         jax.devices()  # Force synchronization across devices
@@ -632,7 +633,7 @@ def get_metrics_from_trace(trace: dict[str, Any], task: str) -> list[float]:
         try:
             task = TARGET_TASK_NAME_COLLECTIVES_MAP[task]
             return get_metrics_from_trace_tpu(trace, task)
-        except:
+        except (KeyError, ValueError, TypeError):
             return [-1.0]
     event_matcher = re.compile(task)
 
@@ -693,15 +694,19 @@ def get_metrics_from_trace_tpu(trace: dict[str, Any], task: str) -> list[float]:
     return durations_ms
 
 
-def is_local_directory_path(dir: str) -> bool:
+def is_local_directory_path(directory: str) -> bool:
     """
     Returns true if the path is a local path.
     """
-    if not dir:  # Handle None or empty string
+    if not directory:  # Handle None or empty string
         return False
 
     # Heuristics for local paths
-    return dir.startswith("/") or dir.startswith("./") or dir.startswith("../")
+    return (
+        directory.startswith("/")
+        or directory.startswith("./")
+        or directory.startswith("../")
+    )
 
 
 def timeit_from_trace(
@@ -716,7 +721,7 @@ def timeit_from_trace(
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
-    LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+    local_trace_dir = "/tmp/microbenchmarks_tmptrace"
 
     jax.block_until_ready(f(*args))  # warm it up!
 
@@ -732,7 +737,7 @@ def timeit_from_trace(
     # If the trace_dir isn't a local path, create one for dumping the trace for
     # parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
-        tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+        tmp_trace_dir = f"{local_trace_dir}/{trace_name}"
     print(trace_dir)
     with jax.profiler.trace(tmp_trace_dir):
         for _ in range(tries):
@@ -757,7 +762,9 @@ def timeit_from_trace(
 def maybe_write_metrics_file(
     metrics_dir, metrics, metadata, test_name, test_start_time, test_end_time
 ):
-    """Writes metrics to a JSONL file to be consumed by the XLML metrics pipeline."""
+    """
+    Writes metrics to a JSONL file to be consumed by the XLML metrics pipeline.
+    """
 
     # Only write metrics from one host.
     if jax.process_index() != 0:
@@ -814,7 +821,7 @@ def upload_to_storage(trace_dir: str, local_file: str):
 def load_yaml_config(config_path: str) -> Dict[str, Any] | None:
     """Loads a YAML config file."""
     try:
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
     except FileNotFoundError:
         print(f"Warning: Config file not found at {config_path}")
@@ -965,7 +972,7 @@ def rename_xla_dump(
             try:
                 os.makedirs(dest_xla_dump_dir, exist_ok=True)
                 shutil.copy(original_filepath, new_filepath)
-            except Exception as e:
+            except OSError as e:
                 print(
                     f"An unexpected error occurred while copy "
                     f"'{original_filepath}': {e}"
@@ -1014,7 +1021,7 @@ def extract_hlo_features_from_file(
     first_replica_group = None
 
     try:
-        with open(hlo_file_path, "r") as f:
+        with open(hlo_file_path, "r", encoding="utf-8") as f:
             content = f.read()
     except FileNotFoundError:
         print(f"Error: HLO file not found at {hlo_file_path}")
@@ -1050,7 +1057,7 @@ def extract_hlo_features_from_file(
             content_rg = replica_groups_str[2:-2]
             first_group_str = content_rg.split("},{")[0]
             first_replica_group = [int(x) for x in first_group_str.split(",")]
-        except Exception as e:
+        except ValueError as e:
             print(f"Could not parse replica_groups in hlo_text: {e}")
             first_replica_group = None
     else:
@@ -1190,6 +1197,7 @@ def create_mesh(strategy: ShardingStrategy) -> Mesh:
 def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    # pylint: disable=invalid-name
     """Helper function to build the metrics and metadata for the benchmark."""
     exclude_param_keys = {
         "time_ms_list",
@@ -1214,9 +1222,10 @@ def unified_flops_metrics(
     time_ms_list: list[float],
     total_flops: int,
     total_flops_all_devices: int,
-    peak_TFLOPS_per_device: float,
+    peak_TFLOPS_per_device: float,  # pylint: disable=invalid-name
     dtype: str = None,
 ) -> Dict[str, Any]:
+    # pylint: disable=unused-argument
     """Calculates the metrics for the naive matmul benchmark."""
     # Build dictionary of all the parameters in the function
     params = locals().items()
@@ -1262,8 +1271,6 @@ def unified_flops_metrics(
         f"TFLOP / second, "
         f"MFU: {mfu_statistics.statistics["p50"]:.2%}"
     )
-    # print()
-    # time_ms_list =
 
     # Gather the metrics to report.
     metadata.update(
@@ -1277,7 +1284,6 @@ def unified_flops_metrics(
             ),
             "MFU": mfu_statistics.statistics["p50"],
             "total_flops": total_flops,
-            # "all_time_ms_list":  f"{json.dumps(time_ms_list)}",
         }
     )
     metrics.update(average_time_ms_statistics.serialize_statistics())
@@ -1291,6 +1297,7 @@ def unified_flops_metrics(
 
 
 def unified_bytes_metrics(
+    # pylint: disable=unused-argument
     m: int,
     n: int,
     time_ms_list: list[float],
@@ -1405,5 +1412,5 @@ def get_peak_flops_multiplier(in_dtype_str: str) -> float:
         return 0.25
     else:
         raise RuntimeError(
-            f"{in_dtype_lower} is not supported for setting peak_flops_multiplier."
+            f"No support for {in_dtype_lower} in setting peak_flops_multiplier."
         )

@@ -7,9 +7,9 @@ vectors (v) but excludes the linear projections used to generate the query (q),
 key (k), and value (v) vectors.
 2. pallas_flash_attention_benchmark: attention with the pallas flash
 attention kernel.
-(https://github.com/jax-ml/jax/blob/main/jax/experimental/pallas/ops/tpu/flash_attention.py)
+(https://github.com/jax-ml/jax/blob/main/jax/experimental/pallas/ops/tpu/flash_attention.py) # pylint: disable=line-too-long
 3. splash_attention_benchmark: attention with the splash attention kernel.
-    (https://github.com/jax-ml/jax/tree/main/jax/experimental/pallas/ops/tpu/splash_attention)
+(https://github.com/jax-ml/jax/tree/main/jax/experimental/pallas/ops/tpu/splash_attention) # pylint: disable=line-too-long
 4. flax_nnx_attention_benchmark: attention with the flax nnx attention library.
 5. flax_linen_attention_benchmark: attention with the flax linen attention
 library.
@@ -122,6 +122,7 @@ def naive_attention_benchmark(
     jax.block_until_ready(output)
 
     # Run benchmark
+    # pylint: disable=unexpected-keyword-arg
     time_ms_list = simple_timeit(
         f,
         q,
@@ -179,6 +180,7 @@ def pallas_flash_attention_benchmark(
     jax.block_until_ready(output)
 
     # Run benchmark
+    # pylint: disable=unexpected-keyword-arg
     time_ms_list = simple_timeit(
         f,
         q,
@@ -264,6 +266,7 @@ def splash_attention_benchmark(
     jax.block_until_ready(output)
 
     # Run benchmark
+    # pylint: disable=unexpected-keyword-arg
     time_ms_list = simple_timeit(
         f,
         q,
@@ -323,6 +326,7 @@ def flax_nnx_attention_benchmark(
     jax.block_until_ready(output)
 
     # Run benchmark
+    # pylint: disable=unexpected-keyword-arg
     time_ms_list = simple_timeit(
         f,
         q,
@@ -379,6 +383,7 @@ def flax_linen_attention_benchmark(
     jax.block_until_ready(output)
 
     # Run benchmark
+    # pylint: disable=unexpected-keyword-arg
     time_ms_list = simple_timeit(
         f,
         q,
@@ -445,6 +450,7 @@ def keras_attention_benchmark(
     jax.block_until_ready(output)
 
     # Run benchmark
+    # pylint: disable=unexpected-keyword-arg
     time_ms_list = simple_timeit(
         f,
         q,

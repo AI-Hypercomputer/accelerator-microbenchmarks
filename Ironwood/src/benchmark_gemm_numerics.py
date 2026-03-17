@@ -273,8 +273,7 @@ def gemm_fp8_b128_fp32(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """FP8 GEMM as DeepSeek-stype quantization, block size: 1x128."""
-
-    """Use dynamic scaling factors."""
+    # Use dynamic scaling factors.
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -387,8 +386,7 @@ def gemm_fp8_b128_fp32_static_scaling(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
     """FP8 GEMM as DeepSeek-stype quantization, block size: 1x128."""
-
-    """Use static scaling factors."""
+    # Use static scaling factors.
 
     def f(x, y):
         with jax.named_scope(MARKER):

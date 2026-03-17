@@ -57,7 +57,8 @@ def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
 
 
 def get_sharding_axis(dim_str: str, mesh: Mesh) -> tuple[str, ...]:
-    """Computes sharding axis names from dimension string like '1x4' and mesh."""
+    """Computes sharding axis names from dimension string and mesh."""
+    # Example of a dimension string is '1x4'
     dim_tuple = dim_str.split("x")
     dim_tuple = tuple(int(dim) for dim in dim_tuple)
     sharding_axis = tuple(
@@ -203,6 +204,7 @@ def psum_benchmark(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
+    # pylint: disable=unused-argument
     """Benchmarks the psum collective operation.
 
     Args:
@@ -354,6 +356,7 @@ def psum_scatter_benchmark(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
+    # pylint: disable=unused-argument
     """Benchmarks the psum_scatter collective operation.
 
     Args:
@@ -376,7 +379,7 @@ def psum_scatter_benchmark(
         "--xla_sc_disable_megacore_partitioning=true",
         "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
         "--xla_tpu_enable_reduce_scatter_offload_tracing=true",
-        "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",  # pylint: disable=line-too-long
         "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
         "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
         "--xla_tpu_use_tc_device_shape_on_sc=true",
@@ -470,6 +473,7 @@ def all_gather_benchmark(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
+    # pylint: disable=unused-argument
     """Benchmarks the all_gather collective operation.
 
     Args:
@@ -586,6 +590,7 @@ def all_to_all_benchmark(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
+    # pylint: disable=unused-argument
     """Benchmarks the all_to_all collective operation.
 
     Args:

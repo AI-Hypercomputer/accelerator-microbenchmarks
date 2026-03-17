@@ -73,6 +73,7 @@ def naive_matmul(
     trace_dir: str = None,
     warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks the jax.numpy.einsum."""
 
     def f(x, y):
@@ -144,9 +145,9 @@ def naive_matmul_calculate_metrics(
     )
     print(
         f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second, Total GBs transferred (median):"
+        f" {tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second, Total GBs transferred (median):"  # pylint: disable=line-too-long
         f" {total_gigabytes_transferred:.2f} GB, GBs per second:"
-        f" {data_transfer_gbyte_sec_statistics.statistics['p50']:.2f} GB/s"
+        f" {data_transfer_gbyte_sec_statistics.statistics["p50"]:.2f} GB/s"
     )
     print()
     # Gather the metrics to report.
@@ -172,6 +173,7 @@ def single_host_naive_matmul(
     trace_dir: str = None,
     warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks matmul on a single device without any sharding."""
 
     def f(x, y):
@@ -229,10 +231,12 @@ def single_host_naive_matmul_calculate_metrics(
         metrics_name="data_transfer_gbyte_sec",
     )
     print(
-        f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second, Total GBs transferred (median):"
-        f" {total_gigabytes_transferred:.2f} GB, GBs per second:"
-        f" {data_transfer_gbyte_sec_statistics.statistics['p50']:.2f} GB/s"
+        f"Total floating-point ops: {total_flops}, "
+        f"Performance (median): "
+        f"{tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second, "
+        f"Total GBs transferred (median): "
+        f"{total_gigabytes_transferred:.2f} GB, GBs per second: "
+        f"{data_transfer_gbyte_sec_statistics.statistics["p50"]:.2f} GB/s"
     )
     print()
     # Gather the metrics to report.
@@ -258,6 +262,7 @@ def collective_matmul_one_direction(
     trace_dir: str = None,
     warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks the collective matmul that does permute in one direction."""
 
     def f(lhs, rhs):
@@ -328,7 +333,9 @@ def collective_matmul_one_direction(
 def collective_matmul_one_direction_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    """Calculates the metrics for the collective matmul one direction benchmark."""
+    """
+    Calculates the metrics for the collective matmul one direction benchmark.
+    """
     # Build dictionary of all the parameters in the function
     params = locals().items()
     metadata = get_metrics_helper(params)
@@ -348,7 +355,7 @@ def collective_matmul_one_direction_calculate_metrics(
     )
     print(
         f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second"
+        f" {tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second"
     )
     print()
     # Gather the metrics to report.
@@ -372,6 +379,7 @@ def collective_matmul_two_directions(
     trace_dir: str = None,
     warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks the collective matmul that does permute in two directions."""
 
     def f(activations, weights):
@@ -481,7 +489,9 @@ def collective_matmul_two_directions(
 def collective_matmul_two_directions_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    """Calculates the metrics for the collective matmul two direction benchmark."""
+    """
+    Calculates the metrics for the collective matmul two direction benchmark.
+    """
     # Build dictionary of all the parameters in the function
     params = locals().items()
     metadata = get_metrics_helper(params)
@@ -501,7 +511,7 @@ def collective_matmul_two_directions_calculate_metrics(
     )
     print(
         f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second"
+        f" {tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second"
     )
     print()
     # Gather the metrics to report.
@@ -525,6 +535,7 @@ def multilayer_collective_matmul(
     trace_dir: str = None,
     warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks the multilayer collective matmul."""
 
     def f(act, weights):
@@ -601,7 +612,7 @@ def multilayer_collective_matmul_calculate_metrics(
     )
     print(
         f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second"
+        f" {tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second"
     )
     print()
     # Gather the metrics to report.

@@ -318,11 +318,11 @@ def swiglu_fwd(
 
     def f(x):
         with jax.named_scope(MARKER):
-            A, B = jnp.split(x, 2, axis=-1)
-            A_fp32 = A.astype(jnp.float32)
-            B_fp32 = B.astype(jnp.float32)
-            Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
-            return Y_fp32.astype(jnp.bfloat16)
+            a, b = jnp.split(x, 2, axis=-1)
+            a_fp32 = a.astype(jnp.float32)
+            b_fp32 = b.astype(jnp.float32)
+            y_fp32 = jax.nn.silu(a_fp32) * b_fp32
+            return y_fp32.astype(jnp.bfloat16)
 
     mesh = create_mesh(SHARDING_STRATEGY)
     x_sharding = get_rowwise_named_shading(mesh, SHARDING_STRATEGY)
@@ -379,16 +379,17 @@ def swiglu_bwd(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
+    # pylint: disable=invalid-name
     """
     Inverse of swiglu_fwd
     """
 
     def f_fwd(x):
-        A, B = jnp.split(x, 2, axis=-1)
-        A_fp32 = A.astype(jnp.float32)
-        B_fp32 = B.astype(jnp.float32)
-        Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
-        return Y_fp32.astype(jnp.bfloat16)
+        a, b = jnp.split(x, 2, axis=-1)
+        a_fp32 = a.astype(jnp.float32)
+        b_fp32 = b.astype(jnp.float32)
+        y_fp32 = jax.nn.silu(a_fp32) * b_fp32
+        return y_fp32.astype(jnp.bfloat16)
 
     def f(x: jax.Array, dy: jax.Array) -> jax.Array:
         """
@@ -397,7 +398,10 @@ def swiglu_bwd(
         """
         # Get the VJP "pullback" function
         # We ignore the forward result (_y)
-        _y, pullback_fn = jax.vjp(f_fwd, x)
+        # pylint: disable=unused-variable,invalid-name
+        _y, pullback_fn = jax.vjp(
+            f_fwd, x
+        )
         with jax.named_scope(MARKER):
             # Call the pullback function with the upstream gradient
             # This IS the backward pass.
@@ -555,7 +559,10 @@ def rmsnorm_bwd(
         """
         # Get the VJP "pullback" function
         # We ignore the forward result (_y)
-        _y, pullback_fn = jax.vjp(f_fwd, x)
+        # pylint: disable=unused-variable,invalid-name
+        _y, pullback_fn = jax.vjp(
+            f_fwd, x
+        )
         with jax.named_scope(MARKER):
             # Call the pullback function with the upstream gradient
             # This IS the backward pass.

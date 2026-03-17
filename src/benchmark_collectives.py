@@ -63,7 +63,10 @@ def generate_metrics_statistics(
     matrix_size_gbyte: float,
     metrics: Dict[str, Any],
 ) -> None:
-    """Calculates statistics for a metrics list, prints p50, and updates the metrics dict."""
+    """
+    Calculates statistics for a metrics list, prints p50, and updates the
+    metrics dict.
+    """
     if not metrics_list:
         return
     statistics = MetricsStatistics(
@@ -72,7 +75,8 @@ def generate_metrics_statistics(
     )
     print(
         f"{benchmark_name}: Matrix size: {matrix_dim}x{matrix_dim}, {dtype=}, "
-        f"{matrix_size_gbyte=}, {metrics_name} (median) = {statistics.statistics['p50']}"
+        f"{matrix_size_gbyte=}, {metrics_name} (median) = "
+        f"{statistics.statistics["p50"]}"
     )
     metrics.update(statistics.serialize_statistics())
 
@@ -92,6 +96,7 @@ def benchmark_collective(
     warmup_tries: int = 10,
     trace_dir: str = None,
 ) -> list[float]:
+    # pylint: disable=unexpected-keyword-arg
     """
     Helper function to run a collective benchmark on DCN and ICI.
 
@@ -101,10 +106,12 @@ def benchmark_collective(
       mesh: The JAX device mesh to run the benchmark on.
       matrix: The input array for the collective operation.
       matrix_dim: The dimension of the input matrix.
-      axis_name: The name of the axis over which the op is performed (e.g., "dcn" or "ici").
+      axis_name: The name of the axis over which the op is performed (e.g.,
+      "dcn" or "ici").
       in_specs: The input sharding specs.
       out_specs: The output sharding specs.
-      check_rep: Indicate if replication check is needed. Can be skipped in some situations.
+      check_rep: Indicate if replication check is needed. Can be skipped in some
+      situations.
       jax_op_kwargs: Optional keyword arguments for the JAX operation.
       num_runs: The number of times to run the benchmark operation for timing.
       warmup_tries: The number of warmup runs before the actual timing.
@@ -159,8 +166,8 @@ def psum_benchmark(
       dtype: The data type of the matrix.
       dcn_size: The number of DCN nodes, or number of slices. If 1, then no DCN
         benchmark is run.
-      ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-        is run. The ICI and DCN
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+      benchmark is run. The ICI and DCN
 
     Returns:
       The measured time for the DCN and ICI benchmarks.
@@ -304,8 +311,8 @@ def psum_scatter_benchmark(
       dtype: The data type of the matrix.
       dcn_size: The number of DCN nodes, or number of slices. If 1, then no DCN
         benchmark is run.
-      ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-        is run. The ICI and DCN
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run. The ICI and DCN
 
     Returns:
       The measured time for the DCN and ICI benchmarks.
@@ -371,8 +378,8 @@ def psum_scatter_benchmark_calculate_metrics(
     # Calculate metrics for DCN benchmark
     if dcn_size > 1 and dcn_time_ms_list is not None:
 
-        # each sharded matrix size is matrix_size_gbyte / dcn_size and then it needs
-        # to use (dcn_size - 1) steps in a ring algorithm
+        # each sharded matrix size is matrix_size_gbyte / dcn_size and then it
+        # needs to use (dcn_size - 1) steps in a ring algorithm
         dcn_bandwidth_gbyte_s_list = [
             matrix_size_gbyte
             * (dcn_size - 1)
@@ -403,8 +410,8 @@ def psum_scatter_benchmark_calculate_metrics(
 
     # Calculate metrics for ICI benchmark
     if ici_size > 1 and ici_time_ms_list is not None:
-        # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
-        # to use (ici_size - 1) steps in a ring algorithm
+        # each sharded matrix size is matrix_size_gbyte / ici_size and then it
+        # needs to use (ici_size - 1) steps in a ring algorithm
         ici_bandwidth_gbyte_s_list = [
             matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_time_ms / 1e3)
             for ici_time_ms in ici_time_ms_list
@@ -452,8 +459,8 @@ def all_gather_benchmark(
       dtype: The data type of the matrix.
       dcn_size: The number of DCN nodes, or number of slices. If 1, then no DCN
         benchmark is run.
-      ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-        is run. The ICI and DCN
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run. The ICI and DCN
 
     Returns:
       The measured time for the DCN and ICI benchmarks.
@@ -521,8 +528,8 @@ def all_gather_benchmark_calculate_metrics(
     # Calculate metrics for DCN benchmark
     if dcn_size > 1 and dcn_time_ms_list is not None:
 
-        # each sharded matrix size is matrix_size_gbyte / dcn_size and then it needs
-        # to use (dcn_size - 1) steps in a ring algorithm
+        # each sharded matrix size is matrix_size_gbyte / dcn_size and then it
+        # needs to use (dcn_size - 1) steps in a ring algorithm
         dcn_bandwidth_gbyte_s_list = [
             matrix_size_gbyte * (dcn_size - 1) / dcn_size / (dcn_time_ms / 1e3)
             for dcn_time_ms in dcn_time_ms_list
@@ -549,8 +556,8 @@ def all_gather_benchmark_calculate_metrics(
 
     # Calculate metrics for ICI benchmark
     if ici_size > 1 and ici_time_ms_list is not None:
-        # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
-        # to use (ici_size - 1) steps in a ring algorithm
+        # each sharded matrix size is matrix_size_gbyte / ici_size and then it
+        # needs to use (ici_size - 1) steps in a ring algorithm
         ici_bandwidth_gbyte_s_list = [
             matrix_size_gbyte * (ici_size - 1) / ici_size / (ici_time_ms / 1e3)
             for ici_time_ms in ici_time_ms_list
@@ -598,8 +605,8 @@ def ppermute_benchmark(
       dtype: The data type of the matrix.
       dcn_size: The number of DCN nodes, or number of slices. If 1, then no DCN
         benchmark is run.
-      ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-        is run. The ICI and DCN
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run. The ICI and DCN
 
     Returns:
       The measured time for the DCN and ICI benchmarks.
@@ -665,8 +672,8 @@ def ppermute_benchmark_calculate_metrics(
     # Calculate metrics for DCN benchmark
     if dcn_size > 1 and dcn_time_ms_list is not None:
 
-        # each sharded matrix size is matrix_size_gbyte / dcn_size and then it needs
-        # to use 1 step
+        # each sharded matrix size is matrix_size_gbyte / dcn_size and then it
+        # needs to use 1 step
         dcn_bandwidth_gbyte_s_list = [
             matrix_size_gbyte / dcn_size / (dcn_time_ms / 1e3)
             for dcn_time_ms in dcn_time_ms_list
@@ -693,8 +700,8 @@ def ppermute_benchmark_calculate_metrics(
 
     # Calculate metrics for ICI benchmark
     if ici_size > 1 and ici_time_ms_list is not None:
-        # each sharded matrix size is matrix_size_gbyte / ici_size and then it needs
-        # to use 1 step
+        # each sharded matrix size is matrix_size_gbyte / ici_size and then it
+        # needs to use 1 step
         ici_bandwidth_gbyte_s_list = [
             matrix_size_gbyte / (ici_time_ms / 1e3)
             for ici_time_ms in ici_time_ms_list
@@ -738,8 +745,8 @@ def all_to_all_benchmark(
       dtype: The data type of the matrix.
       dcn_size: The number of DCN nodes, or number of slices. If 1, then no DCN
         benchmark is run.
-      ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-        is run. The ICI and DCN
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run. The ICI and DCN
 
     Returns:
       The measured time for the DCN and ICI benchmarks.

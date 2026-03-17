@@ -90,7 +90,7 @@ def run_benchmark():
             break
         except Exception as e:  # pylint: disable=broad-exception-caught
             print(
-                f"Exception: {e} occurred at size {matrix_size} x {matrix_size}.\n"
+                f"Exception: {e} occurred at size {matrix_size} x {matrix_size}.\n"  # pylint: disable=line-too-long
             )
             break
     if TRACE_BASE_DIR:
@@ -116,6 +116,7 @@ def run_benchmark():
         "p90_achieved_bandwidth_gbyte_s": p90_achieved_bandwidth_gbyte_s,
     }
     if METRICS_JSONL_DIR:
+        # pylint: disable=no-value-for-parameter
         maybe_write_metrics_file(
             METRICS_JSONL_DIR,
             metrics,
