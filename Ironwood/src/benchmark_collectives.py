@@ -372,7 +372,7 @@ def psum_scatter_benchmark(
   
   libtpu_init_args = [
       "--xla_tpu_enable_sparse_core_reduce_scatter_padding=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
+      "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=false",
       "--xla_tpu_enable_3d_reduce_scatter_decomposer=false",
   ]
   # libtpu_init_args = [
