@@ -69,7 +69,8 @@ def gemm_multiple_run(
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype."""
 
-    """Accumulation is FP32. Current supported dtype: float8_e4m3fn, bfloat16."""
+    # Accumulation is FP32. Current supported dtype: float8_e4m3fn,
+    # bfloat16.
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -170,8 +171,7 @@ def gemm_simple(
     trace_dir: str = None,
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8."""
-
-    """Accumulation is FP32."""
+    # Accumulation is FP32.
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -266,8 +266,7 @@ def gemm_simple_with_dtype(
     trace_dir: str = None,
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8."""
-
-    """Accumulation is FP32."""
+    # Accumulation is FP32.
 
     # Convert string dtypes to jnp dtypes
     lhs_dtype = str_to_dtype(in_dtype_str)
@@ -368,7 +367,8 @@ def gemm_simple_with_dtype_calculate_metrics(
 def gemm(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
-    """OUT<M, N>:BF16 = matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)."""
+    """OUT<M, N>:BF16 = matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) *
+    outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)."""
 
     def f(x, y, scale_m, scale_n):
         with jax.named_scope(MARKER):
@@ -473,7 +473,8 @@ def gemm_accum(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """OUT<M, N>:FP32 += matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)."""
+    """OUT<M, N>:FP32 += matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) *
+    outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)."""
 
     def f(out_buffer, x, y, scale_m, scale_n):
         with jax.named_scope(MARKER):

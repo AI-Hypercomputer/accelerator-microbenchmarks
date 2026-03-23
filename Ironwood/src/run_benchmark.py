@@ -58,7 +58,9 @@ CONVOLUTION_BENCHMARK_MAP = {
     ),
 }
 ATTENTION_BENCHMARK_MAP = {
-    "tokamax_splash_attention": "benchmark_attention.tokamax_splash_attention_benchmark",
+    "tokamax_splash_attention": (
+        "benchmark_attention.tokamax_splash_attention_benchmark"
+    ),
 }
 HBM_BENCHMARK_MAP = {
     "single_device_hbm_copy": "benchmark_hbm.single_device_hbm_copy",
@@ -134,7 +136,7 @@ os.environ["XLA_FLAGS"] = f"--xla_dump_to={TMP_XLA_DUMP_DIR}"
 
 def get_benchmark_config(config_path: str) -> Dict[str, Any]:
     """Load benchmark configuration from a YAML file."""
-    with open(config_path, "r") as file:
+    with open(config_path, "r", encoding="utf-8") as file:
         return yaml.safe_load(file)
 
 
@@ -142,7 +144,10 @@ def get_benchmark_config(config_path: str) -> Dict[str, Any]:
 def get_benchmark_functions(
     benchmark_name: str,
 ) -> Tuple[Callable[..., Any], Callable[..., Any]]:
-    """Dynamically load the benchmark function and its calculate_metrics function from the predefined map."""
+    """
+    Dynamically load the benchmark function and its calculate_metrics function
+    from the predefined map.
+    """
     if benchmark_name not in BENCHMARK_MAP:
         raise ValueError(
             f"Benchmark {benchmark_name} is not defined in the map."
@@ -156,7 +161,7 @@ def get_benchmark_functions(
         benchmark_func = getattr(module, func_name)
     except ModuleNotFoundError as e:
         raise ValueError(
-            f"Unable to import {module_path}.{func_name}. ModuleNotFoundError {e}."
+            f"Unable to import {module_path}.{func_name}. ModuleNotFoundError {e}."  # pylint: disable=line-too-long
         ) from e
     except AttributeError as e:
         raise ValueError(
@@ -206,7 +211,9 @@ def preprocess_benchmark_param(
 def generate_benchmark_params_sweeping(
     benchmark_sweep_params: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Generate benchmark parameters by sweeping through the specified ranges."""
+    """
+    Generate benchmark parameters by sweeping through the specified ranges.
+    """
     generated_params = []
     for sweep_params in benchmark_sweep_params:
         param_sets = {}
@@ -275,7 +282,8 @@ def write_to_csv(
 
     Args:
         csv_path: The path to the output CSV file.
-        calculate_metrics_results: A list of dictionaries with benchmark results.
+        calculate_metrics_results: A list of dictionaries with benchmark
+        results.
     """
     if not calculate_metrics_results:
         raise ValueError("0 metrics results are collected.")
@@ -298,7 +306,9 @@ def write_to_csv(
         return output_dict
 
     def convert_dict_to_df(target_dict: Dict) -> pd.DataFrame:
-        """Converts a single benchmark result dictionary to a pandas DataFrame."""
+        """
+        Converts a single benchmark result dictionary to a pandas DataFrame.
+        """
         flattened_dict = flatten_dict(target_dict)
 
         # This section is specific to collective benchmarks that produce
@@ -335,6 +345,7 @@ def write_to_csv(
 
 
 def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
+    # pylint: disable=inconsistent-quotes
     """Run a single benchmark with one or more configurations."""
     # Extract benchmark details
     benchmark_name = benchmark_config.get("benchmark_name")
@@ -360,7 +371,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
                 param["num_runs"] = global_num_runs
 
     if not benchmark_name:
-        raise ValueError("Each benchmark must have a 'benchmark_name'.")
+        raise ValueError("Each benchmark must have a benchmark_name.")
 
     # Get the benchmark function
 
@@ -372,19 +383,16 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
 
     # Run the benchmark
     calculate_metrics_results = []
-    for id, benchmark_param in enumerate(benchmark_params):
+    for idx, benchmark_param in enumerate(benchmark_params):
         original_benchmark_param = copy.deepcopy(benchmark_param)
         benchmark_param = preprocess_benchmark_param(
             benchmark_param,
-            trace_dir=os.path.join(trace_dir, f"benchmark_{id}"),
+            trace_dir=os.path.join(trace_dir, f"benchmark_{idx}"),
         )
-        print(
-            f"Running benchmark: {benchmark_name} with params: {benchmark_param}"
-        )
+        print(f"Running {benchmark_name} with params: {benchmark_param}")
         test_start_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )  # "Z" indicates UTC
-        benchmark_func_params = inspect.signature(benchmark_func).parameters
         try:
             benchmark_results = benchmark_func(**benchmark_param)
         except Exception as e:  # pylint: disable=broad-except
@@ -447,6 +455,7 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
 
 
 def main(args):
+    # pylint: disable=redefined-outer-name
     """Main function."""
     # Load configuration
     config_path = args.config
@@ -472,7 +481,6 @@ def main(args):
                     "XLA_IR_DEBUG": "1",
                     "XLA_HLO_DEBUG": "1",
                     "PJRT_DEVICE": "TPU",
-                    # "LIBTPU_INIT_ARGS": "--xla_tpu_scoped_vmem_limit_kib=25602",
                 },
             )
         )
@@ -516,6 +524,7 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
         benchmark_name
     )
 
+    # pylint: disable=inconsistent-quotes
     print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
 
     # Start a trace if requested

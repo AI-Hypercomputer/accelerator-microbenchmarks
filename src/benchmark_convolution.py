@@ -61,11 +61,14 @@ def convolve_common(
 
     print(f"{task_name} Benchmark:")
     print(
-        f"Input Shape: {input_shape}, Kernel Shape: {kernel_shape}, Output Shape:"
-        f" {output.shape}, Padding Mode: {padding_mode}"
+        f"Input Shape: {input_shape}, "
+        f"Kernel Shape: {kernel_shape}, "
+        f"Output Shape: {output.shape}, "
+        f"Padding Mode: {padding_mode}"
     )
 
     # Time the operation
+    # pylint: disable=unexpected-keyword-arg
     time_ms_list = simple_timeit(
         f,
         x,
@@ -88,7 +91,9 @@ def convolve_common_calculate_metrics(
     time_ms_list: list[float],
     # pylint: disable=unused-argument
 ) -> Dict[str, Any]:
-    """Helper function to calculate the metrics for the convolution benchmarks."""
+    """
+    Helper function to calculate the metrics for the convolution benchmarks.
+    """
     # Build dictionary of all the parameters in the function
     params = locals().items()
     exclude_param_keys = {"time_ms_list"}
@@ -122,10 +127,10 @@ def convolve_common_calculate_metrics(
     # Print results
     print(f"Total flops: {flops}")
     print(
-        f"Average Execution Time: {time_ms_statistics.statistics['p50']:.4f} ms"
+        f"Average Execution Time: {time_ms_statistics.statistics["p50"]:.4f} ms"
     )
     print(
-        f"FLOPS Utilization(median): {gflops_per_sec_statistics.statistics['p50']:.2f} GFLOPS/sec\n"
+        f"FLOPS Utilization(median): {gflops_per_sec_statistics.statistics["p50"]:.2f} GFLOPS/sec\n"  # pylint: disable=line-too-long
     )
     # Gather the metrics to report.
     metadata.update({"total_flops": flops})
@@ -321,12 +326,13 @@ def lax_conv_general_dilated(
 
     print("lax_conv_general_dilated Benchmark:")
     print(
-        f"Input Shape: {input_shape}, Kernel Shape: {kernel_shape}, Output shape:"
+        f"Input Shape: {input_shape}, Kernel Shape: {kernel_shape}, Output shape:"  # pylint: disable=line-too-long
         f" {output.shape} Stride: {stride}, Dilation: {dilation}, Padding Mode:"
         f" {padding_mode}"
     )
 
     # Time the operation
+    # pylint: disable=unexpected-keyword-arg
     time_ms_list = simple_timeit(
         f,
         x,
@@ -398,11 +404,9 @@ def lax_conv_general_dilated_calculate_metrics(
     )
     # Print results
     print(f"Total flops: {flops}")
+    print(f"Average Execution Time: {time_ms_statistics.statistics["p50"]:.4f} ms")  # pylint: disable=line-too-long
     print(
-        f"Average Execution Time: {time_ms_statistics.statistics['p50']:.4f} ms"
-    )
-    print(
-        f"FLOPS Utilization(median): {gflops_per_sec_statistics.statistics['p50']:.2f} GFLOPS/sec\n"
+        f"FLOPS Utilization(median): {gflops_per_sec_statistics.statistics["p50"]:.2f} GFLOPS/sec\n" # pylint: disable=line-too-long
     )
     # Gather the metrics to report.
     metadata.update({"total_flops": flops})

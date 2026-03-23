@@ -84,7 +84,11 @@ def send_recv_benchmark(
     dtype: jnp.dtype,
     trace_dir: str,
 ):
-    """Runs p2p communication, sending tensor_size_bytes from source to target device."""
+    # pylint: disable=unused-argument
+    """
+    Runs p2p communication, sending tensor_size_bytes from source to target
+    device.
+    """
     device_count = jax.local_device_count()
     devices = mesh_utils.create_device_mesh((device_count,))
     mesh = jax.sharding.Mesh(devices, "x")
@@ -120,14 +124,14 @@ def send_recv_benchmark(
             target_recv_sizes,
             no_recvs,
         )
-        input = jax.random.normal(
+        random_input = jax.random.normal(
             jax.random.key(0), (1, 8, last_dim), dtype=dtype
         )
         output = jnp.zeros((1, 8, last_dim), dtype=dtype)
 
         with jax.named_scope(MARKER):
             ra2a = jax.lax.ragged_all_to_all(
-                operand=input,
+                operand=random_input,
                 output=output,
                 input_offsets=input_offsets,
                 send_sizes=final_send_sizes,
@@ -158,10 +162,10 @@ def send_recv_benchmark(
 
 
 def send_recv_benchmark_calculate_metrics(
-    source_id: int,
-    target_id: int,
+    source_id: int,  # pylint: disable=unused-argument
+    target_id: int,  # pylint: disable=unused-argument
     num_elements: int,
-    n_repeats: int,
+    n_repeats: int,  # pylint: disable=unused-argument
     dtype: jnp.dtype,
     runtime_ms: float,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
