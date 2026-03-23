@@ -13,28 +13,24 @@ Considered ops:
 """
 
 import os
-from typing import Any, Dict, Callable
+from typing import Any, Callable, Dict
 
+from benchmark_utils import create_mesh
+from benchmark_utils import get_out_sharding
+from benchmark_utils import get_output_named_shading
+from benchmark_utils import get_rowwise_named_shading
+from benchmark_utils import handle_based_on_sharding
+from benchmark_utils import iteration_timeit
+from benchmark_utils import ShardingStrategy
+from benchmark_utils import unified_bytes_metrics
+from common import MARKER
 
-# pylint: disable=g-importing-member
-from benchmark_utils import (
-    iteration_timeit,
-    ShardingStrategy,
-    get_out_sharding,
-    get_rowwise_named_shading,
-    get_output_named_shading,
-    create_mesh,
-    handle_based_on_sharding,
-    unified_bytes_metrics,
-)
+from flax import nnx
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 from qwix import pallas as qpl
-from flax import nnx
-from common import MARKER
 
-# pylint: disable=g-importing-member
 # Set the environment variable for TPU initialization arguments to optimize
 # collective matmul. Setting the flags to false will disable the optimization.
 os.environ["LIBTPU_INIT_ARGS"] = (
@@ -141,24 +137,41 @@ def quantization(
             )
             return qx.qvalue, qx.scale
 
-    return fp8_quantization(m, n, f, num_runs, trace_dir, task_name="quantization")
+    return fp8_quantization(
+        m, n, f, num_runs, trace_dir, task_name="quantization"
+    )
 
 
 def quantization_calculate_metrics(
-    m: int, n: int, time_ms_list: list[float], quant_dtype: str = "float8_e4m3fn"
+    m: int,
+    n: int,
+    time_ms_list: list[float],
+    quant_dtype: str = "float8_e4m3fn",
 ) -> Dict[str, Any]:
     quant_jnp_dtype = jnp.dtype(quant_dtype)
-    info_fn = jnp.iinfo if jnp.issubdtype(quant_jnp_dtype, jnp.integer) else jnp.finfo
+    info_fn = (
+        jnp.iinfo if jnp.issubdtype(quant_jnp_dtype, jnp.integer) else jnp.finfo
+    )
     width_in_bytes = info_fn(quant_jnp_dtype).bits / 8
     output_flops_based_on_dtype = m * n * width_in_bytes
-    #       calculate scale     apply quant    write quant output       write scale factor
-    # NOTE: (2 * m * n)     +  (2 * m * n)   + (1 * m * n)          +      (4 * m)
-    total_bytes = (2 * m * n) + (2 * m * n) + (4 * m) + output_flops_based_on_dtype
+    # NOTE:
+    # - calculate scale: (2 * m * n)
+    # - apply quant: (2 * m * n)
+    # - write quant output: (1 * m * n)
+    # - write scale factor: (4 * m)
+    total_bytes = (
+        (2 * m * n) + (2 * m * n) + (4 * m) + output_flops_based_on_dtype
+    )
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(
         total_bytes, SHARDING_STRATEGY
     )
     return unified_bytes_metrics(
-        m, n, time_ms_list, total_bytes, total_bytes_all_devices, quant_dtype=quant_dtype
+        m,
+        n,
+        time_ms_list,
+        total_bytes,
+        total_bytes_all_devices,
+        quant_dtype=quant_dtype,
     )
 
 
@@ -271,7 +284,12 @@ def transpose_quantization_static_scaling(
             return qx.qvalue, qx.scale
 
     return fp8_quantization(
-        m, n, f, num_runs, trace_dir, task_name="transpose_quantization_static_scaling"
+        m,
+        n,
+        f,
+        num_runs,
+        trace_dir,
+        task_name="transpose_quantization_static_scaling",
     )
 
 
@@ -300,11 +318,11 @@ def swiglu_fwd(
 
     def f(x):
         with jax.named_scope(MARKER):
-            A, B = jnp.split(x, 2, axis=-1)
-            A_fp32 = A.astype(jnp.float32)
-            B_fp32 = B.astype(jnp.float32)
-            Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
-            return Y_fp32.astype(jnp.bfloat16)
+            a, b = jnp.split(x, 2, axis=-1)
+            a_fp32 = a.astype(jnp.float32)
+            b_fp32 = b.astype(jnp.float32)
+            y_fp32 = jax.nn.silu(a_fp32) * b_fp32
+            return y_fp32.astype(jnp.bfloat16)
 
     mesh = create_mesh(SHARDING_STRATEGY)
     x_sharding = get_rowwise_named_shading(mesh, SHARDING_STRATEGY)
@@ -361,16 +379,17 @@ def swiglu_bwd(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
+    # pylint: disable=invalid-name
     """
     Inverse of swiglu_fwd
     """
 
     def f_fwd(x):
-        A, B = jnp.split(x, 2, axis=-1)
-        A_fp32 = A.astype(jnp.float32)
-        B_fp32 = B.astype(jnp.float32)
-        Y_fp32 = jax.nn.silu(A_fp32) * B_fp32
-        return Y_fp32.astype(jnp.bfloat16)
+        a, b = jnp.split(x, 2, axis=-1)
+        a_fp32 = a.astype(jnp.float32)
+        b_fp32 = b.astype(jnp.float32)
+        y_fp32 = jax.nn.silu(a_fp32) * b_fp32
+        return y_fp32.astype(jnp.bfloat16)
 
     def f(x: jax.Array, dy: jax.Array) -> jax.Array:
         """
@@ -379,7 +398,10 @@ def swiglu_bwd(
         """
         # Get the VJP "pullback" function
         # We ignore the forward result (_y)
-        _y, pullback_fn = jax.vjp(f_fwd, x)
+        # pylint: disable=unused-variable,invalid-name
+        _y, pullback_fn = jax.vjp(
+            f_fwd, x
+        )
         with jax.named_scope(MARKER):
             # Call the pullback function with the upstream gradient
             # This IS the backward pass.
@@ -452,7 +474,10 @@ def rmsnorm_fwd(
     Y_i = X_i / rms(x_i)
     """
     rms_norm_module = nnx.RMSNorm(
-        num_features=n, dtype=jnp.bfloat16, param_dtype=jnp.float32, rngs=nnx.Rngs(SEED)
+        num_features=n,
+        dtype=jnp.bfloat16,
+        param_dtype=jnp.float32,
+        rngs=nnx.Rngs(SEED),
     )
 
     def f(x):
@@ -518,7 +543,10 @@ def rmsnorm_bwd(
     Inverse of rmsnorm_fwd
     """
     rms_norm_module = nnx.RMSNorm(
-        num_features=n, dtype=jnp.bfloat16, param_dtype=jnp.float32, rngs=nnx.Rngs(SEED)
+        num_features=n,
+        dtype=jnp.bfloat16,
+        param_dtype=jnp.float32,
+        rngs=nnx.Rngs(SEED),
     )
 
     def f_fwd(x):
@@ -531,7 +559,10 @@ def rmsnorm_bwd(
         """
         # Get the VJP "pullback" function
         # We ignore the forward result (_y)
-        _y, pullback_fn = jax.vjp(f_fwd, x)
+        # pylint: disable=unused-variable,invalid-name
+        _y, pullback_fn = jax.vjp(
+            f_fwd, x
+        )
         with jax.named_scope(MARKER):
             # Call the pullback function with the upstream gradient
             # This IS the backward pass.
@@ -651,7 +682,9 @@ def add(
     return {"time_ms_list": time_ms_list}
 
 
-def add_calculate_metrics(m: int, n: int, time_ms_list: list[float]) -> Dict[str, Any]:
+def add_calculate_metrics(
+    m: int, n: int, time_ms_list: list[float]
+) -> Dict[str, Any]:
     total_bytes = 6 * m * n
     total_bytes, total_bytes_all_devices = handle_based_on_sharding(
         total_bytes, SHARDING_STRATEGY

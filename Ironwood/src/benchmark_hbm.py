@@ -3,15 +3,13 @@
 import os
 from typing import Any, Dict, Tuple
 
-from benchmark_utils import (
-    MetricsStatistics,
-    multiple_iteration_timeit_from_trace,
-    get_real_dtype_bytes,
-)
+from benchmark_utils import get_real_dtype_bytes
+from benchmark_utils import MetricsStatistics
+from benchmark_utils import multiple_iteration_timeit_from_trace
 from common import MARKER
+
 import jax
 import jax.numpy as jnp
-
 
 SEED = 0
 os.environ["LIBTPU_INIT_ARGS"] = (
@@ -19,6 +17,7 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_jf_bounds_check=false "
     "--xla_tpu_dvfs_p_state=7 "
 )
+
 
 def get_metrics_helper(
     params: Dict[str, Any],
@@ -89,8 +88,9 @@ def single_device_hbm_copy_calculate_metrics(
         metrics_list=bw_gbyte_sec_list, metrics_name="bw_gbyte_sec"
     )
     print(
-        f"Tensor size: {tensor_size_bytes / 1024**2} MB, time taken (median):"
-        f" {time_statistics.statistics['p50']:.4f} ms, bandwidth (median): {statistics.statistics['p50']:.3f} GB/s"
+        f"Tensor size: {tensor_size_bytes / 1024**2} MB, "
+        f"time taken (median): {time_statistics.statistics["p50"]:.4f} ms, "
+        f"bandwidth (median): {statistics.statistics["p50"]:.3f} GB/s"
     )
     print()
     # Gather the metrics to report.
@@ -101,5 +101,7 @@ def single_device_hbm_copy_calculate_metrics(
     )
     metrics.update(time_statistics.serialize_statistics())
     metrics.update(statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics

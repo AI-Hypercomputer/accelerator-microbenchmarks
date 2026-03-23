@@ -13,7 +13,6 @@ with the compute. The permute is done in two directions.
 import os
 from typing import Any, Dict, Tuple
 
-
 # pylint: disable=g-importing-member
 from benchmark_utils import simple_timeit, MetricsStatistics
 import jax
@@ -67,8 +66,14 @@ def get_metrics_helper(
 
 
 def naive_matmul(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+    m: int,
+    k: int,
+    n: int,
+    num_runs: int = 1,
+    trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks the jax.numpy.einsum."""
 
     def f(x, y):
@@ -92,7 +97,8 @@ def naive_matmul(
     )
     # Run once.
     output = jit_sharded_f(lhs, rhs)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
+    # Ensure full completion before printing metrics
+    jax.block_until_ready(output)
     print(f"{lhs.shape=} x {rhs.shape=} = {output.shape=}, {output.dtype=}")
     # Run the benchmark
     time_ms_list = simple_timeit(
@@ -118,9 +124,12 @@ def naive_matmul_calculate_metrics(
 
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    average_time_s_list = [
+        average_time_ms / 10**3 for average_time_ms in time_ms_list
+    ]
     tflops_per_sec_list = [
-        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
+        total_flops / average_time_s / 10**12
+        for average_time_s in average_time_s_list
     ]
     tflops_per_sec_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec"
@@ -136,9 +145,9 @@ def naive_matmul_calculate_metrics(
     )
     print(
         f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second, Total GBs transferred (median):"
+        f" {tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second, Total GBs transferred (median):"  # pylint: disable=line-too-long
         f" {total_gigabytes_transferred:.2f} GB, GBs per second:"
-        f" {data_transfer_gbyte_sec_statistics.statistics['p50']:.2f} GB/s"
+        f" {data_transfer_gbyte_sec_statistics.statistics["p50"]:.2f} GB/s"
     )
     print()
     # Gather the metrics to report.
@@ -150,13 +159,21 @@ def naive_matmul_calculate_metrics(
     )
     metrics.update(tflops_per_sec_statistics.serialize_statistics())
     metrics.update(data_transfer_gbyte_sec_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics
 
 
 def single_host_naive_matmul(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+    m: int,
+    k: int,
+    n: int,
+    num_runs: int = 1,
+    trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks matmul on a single device without any sharding."""
 
     def f(x, y):
@@ -194,9 +211,12 @@ def single_host_naive_matmul_calculate_metrics(
 
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    average_time_s_list = [
+        average_time_ms / 10**3 for average_time_ms in time_ms_list
+    ]
     tflops_per_sec_list = [
-        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
+        total_flops / average_time_s / 10**12
+        for average_time_s in average_time_s_list
     ]
     tflops_per_sec_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec"
@@ -211,10 +231,12 @@ def single_host_naive_matmul_calculate_metrics(
         metrics_name="data_transfer_gbyte_sec",
     )
     print(
-        f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50']:.2f} TFLOPs / second, Total GBs transferred (median):"
-        f" {total_gigabytes_transferred:.2f} GB, GBs per second:"
-        f" {data_transfer_gbyte_sec_statistics.statistics['p50']:.2f} GB/s"
+        f"Total floating-point ops: {total_flops}, "
+        f"Performance (median): "
+        f"{tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second, "
+        f"Total GBs transferred (median): "
+        f"{total_gigabytes_transferred:.2f} GB, GBs per second: "
+        f"{data_transfer_gbyte_sec_statistics.statistics["p50"]:.2f} GB/s"
     )
     print()
     # Gather the metrics to report.
@@ -226,13 +248,21 @@ def single_host_naive_matmul_calculate_metrics(
     )
     metrics.update(tflops_per_sec_statistics.serialize_statistics())
     metrics.update(data_transfer_gbyte_sec_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics
 
 
 def collective_matmul_one_direction(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+    m: int,
+    k: int,
+    n: int,
+    num_runs: int = 1,
+    trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks the collective matmul that does permute in one direction."""
 
     def f(lhs, rhs):
@@ -257,7 +287,9 @@ def collective_matmul_one_direction(
             accum = jax.lax.dynamic_update_slice(accum, update, update_index)
             return accum, lhs
 
-        accum = jnp.zeros((lhs.shape[0] * axis_size, rhs.shape[1]), dtype=lhs.dtype)
+        accum = jnp.zeros(
+            (lhs.shape[0] * axis_size, rhs.shape[1]), dtype=lhs.dtype
+        )
         for i in range(0, axis_size - 1):
             accum, lhs = scanned_call(i, (accum, lhs))
         # compute the last chunk, without the ppermute
@@ -283,7 +315,8 @@ def collective_matmul_one_direction(
     )
     # Run once.
     output = jit_sharded_f(lhs, rhs)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
+    # Ensure full completion before printing metrics
+    jax.block_until_ready(output)
     print(f"{lhs.shape=} x {rhs.shape=} = {output.shape=}, {output.dtype=}")
     time_ms_list = simple_timeit(
         jit_sharded_f,
@@ -300,7 +333,9 @@ def collective_matmul_one_direction(
 def collective_matmul_one_direction_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    """Calculates the metrics for the collective matmul one direction benchmark."""
+    """
+    Calculates the metrics for the collective matmul one direction benchmark.
+    """
     # Build dictionary of all the parameters in the function
     params = locals().items()
     metadata = get_metrics_helper(params)
@@ -308,16 +343,19 @@ def collective_matmul_one_direction_calculate_metrics(
 
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    average_time_s_list = [
+        average_time_ms / 10**3 for average_time_ms in time_ms_list
+    ]
     tflops_per_sec_list = [
-        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
+        total_flops / average_time_s / 10**12
+        for average_time_s in average_time_s_list
     ]
     tflops_per_sec_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec"
     )
     print(
         f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50'] :.2f} TFLOPs / second"
+        f" {tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second"
     )
     print()
     # Gather the metrics to report.
@@ -327,13 +365,21 @@ def collective_matmul_one_direction_calculate_metrics(
         }
     )
     metrics.update(tflops_per_sec_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics
 
 
 def collective_matmul_two_directions(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+    m: int,
+    k: int,
+    n: int,
+    num_runs: int = 1,
+    trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks the collective matmul that does permute in two directions."""
 
     def f(activations, weights):
@@ -353,7 +399,9 @@ def collective_matmul_two_directions(
         update_index = (axis_index * chunk_size, 0)
         accum = jax.lax.dynamic_update_slice(accum, update, update_index)
         # Prepare forward and backward activations for next steps
-        activation_forward, activation_backward = jnp.split(activations, 2, axis=0)
+        activation_forward, activation_backward = jnp.split(
+            activations, 2, axis=0
+        )
         # Initial ppermute of activations to the next device
         activation_forward = jax.lax.ppermute(
             activation_forward,
@@ -384,7 +432,9 @@ def collective_matmul_two_directions(
                 perm=[(j, (j - 1) % axis_size) for j in range(axis_size)],
             )
             # Update indices for forward and backward propagation
-            forward_update_index = ((axis_index - i - 1) % axis_size) * chunk_size
+            forward_update_index = (
+                (axis_index - i - 1) % axis_size
+            ) * chunk_size
             backward_update_index = (
                 (axis_index + i + 1) % axis_size
             ) * chunk_size + mid_chunk
@@ -420,7 +470,8 @@ def collective_matmul_two_directions(
     )
     # Run once.
     output = jit_sharded_f(lhs, rhs)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
+    # Ensure full completion before printing metrics
+    jax.block_until_ready(output)
     print(f"{lhs.shape=} x {rhs.shape=} = {output.shape=}, {output.dtype=}")
     # Run the benchmark.
     time_ms_list = simple_timeit(
@@ -438,7 +489,9 @@ def collective_matmul_two_directions(
 def collective_matmul_two_directions_calculate_metrics(
     m: int, k: int, n: int, time_ms_list: list[float]
 ) -> Dict[str, Any]:
-    """Calculates the metrics for the collective matmul two direction benchmark."""
+    """
+    Calculates the metrics for the collective matmul two direction benchmark.
+    """
     # Build dictionary of all the parameters in the function
     params = locals().items()
     metadata = get_metrics_helper(params)
@@ -446,16 +499,19 @@ def collective_matmul_two_directions_calculate_metrics(
 
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    average_time_s_list = [
+        average_time_ms / 10**3 for average_time_ms in time_ms_list
+    ]
     tflops_per_sec_list = [
-        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
+        total_flops / average_time_s / 10**12
+        for average_time_s in average_time_s_list
     ]
     tflops_per_sec_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec"
     )
     print(
         f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50'] :.2f} TFLOPs / second"
+        f" {tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second"
     )
     print()
     # Gather the metrics to report.
@@ -465,13 +521,21 @@ def collective_matmul_two_directions_calculate_metrics(
         }
     )
     metrics.update(tflops_per_sec_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics
 
 
 def multilayer_collective_matmul(
-    m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None, warmup_tries: int = 10,
+    m: int,
+    k: int,
+    n: int,
+    num_runs: int = 1,
+    trace_dir: str = None,
+    warmup_tries: int = 10,
 ) -> Dict[str, Any]:
+    # pylint: disable=unexpected-keyword-arg
     """Benchmarks the multilayer collective matmul."""
 
     def f(act, weights):
@@ -480,12 +544,16 @@ def multilayer_collective_matmul(
         return act
 
     mesh = create_mesh()
-    activation = jnp.arange(np.prod((m, k))).reshape((m, k)).astype(jnp.bfloat16)
+    activation = (
+        jnp.arange(np.prod((m, k))).reshape((m, k)).astype(jnp.bfloat16)
+    )
     hidden_layers = [
         jnp.arange(np.prod((k, k))).reshape((k, k)).astype(jnp.bfloat16)
         for _ in range(LAYERS - 1)
     ]
-    last_layer = [jnp.arange(np.prod((k, n))).reshape((k, n)).astype(jnp.bfloat16)]
+    last_layer = [
+        jnp.arange(np.prod((k, n))).reshape((k, n)).astype(jnp.bfloat16)
+    ]
     weights = hidden_layers + last_layer
     activation_sharding = NamedSharding(mesh, P("i", None))
     weight_sharding = NamedSharding(mesh, P(None, "i"))
@@ -502,7 +570,8 @@ def multilayer_collective_matmul(
     )
     # Run once.
     output = jit_sharded_f(activation, weights)
-    jax.block_until_ready(output)  # Ensure full completion before printing metrics
+    # Ensure full completion before printing metrics
+    jax.block_until_ready(output)
     print(f"Activation shape: {activation.shape}")
     print("Weights shapes:", [w.shape for w in weights])
     print(f"Output shape: {output.shape}, Output dtype: {output.dtype}")
@@ -531,16 +600,19 @@ def multilayer_collective_matmul_calculate_metrics(
     per_layer_flops = 2 * m * k * k  # Total floating-point operations
     last_layer_flops = 2 * m * k * n
     total_flops = per_layer_flops * (LAYERS - 1) + last_layer_flops
-    average_time_s_list = [average_time_ms / 10**3 for average_time_ms in time_ms_list]
+    average_time_s_list = [
+        average_time_ms / 10**3 for average_time_ms in time_ms_list
+    ]
     tflops_per_sec_list = [
-        total_flops / average_time_s / 10**12 for average_time_s in average_time_s_list
+        total_flops / average_time_s / 10**12
+        for average_time_s in average_time_s_list
     ]
     tflops_per_sec_statistics = MetricsStatistics(
         metrics_list=tflops_per_sec_list, metrics_name="tflops_per_sec"
     )
     print(
         f"Total floating-point ops: {total_flops}, Performance (median):"
-        f" {tflops_per_sec_statistics.statistics['p50'] :.2f} TFLOPs / second"
+        f" {tflops_per_sec_statistics.statistics["p50"]:.2f} TFLOPs / second"
     )
     print()
     # Gather the metrics to report.
@@ -550,5 +622,7 @@ def multilayer_collective_matmul_calculate_metrics(
         }
     )
     metrics.update(tflops_per_sec_statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics

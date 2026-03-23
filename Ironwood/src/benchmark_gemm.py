@@ -10,28 +10,24 @@ Considered ops:
 import os
 from typing import Any, Dict
 
-# pylint: disable=g-importing-member
-from benchmark_utils import (
-    iteration_timeit,
-    multiple_iteration_timeit_from_trace,
-    ShardingStrategy,
-    get_lhs_named_shading,
-    get_rhs_named_shading,
-    get_output_named_shading,
-    get_out_sharding,
-    create_mesh,
-    handle_based_on_sharding,
-    unified_flops_metrics,
-    str_to_dtype,
-    get_peak_flops_multiplier
-)
+from benchmark_utils import create_mesh
+from benchmark_utils import get_lhs_named_shading
+from benchmark_utils import get_out_sharding
+from benchmark_utils import get_output_named_shading
+from benchmark_utils import get_peak_flops_multiplier
+from benchmark_utils import get_rhs_named_shading
+from benchmark_utils import handle_based_on_sharding
+from benchmark_utils import iteration_timeit
+from benchmark_utils import multiple_iteration_timeit_from_trace
+from benchmark_utils import ShardingStrategy
+from benchmark_utils import str_to_dtype
+from benchmark_utils import unified_flops_metrics
 from common import MARKER
+
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 
-
-# pylint: disable=g-importing-member
 
 os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_enable_async_collective_fusion=true "
@@ -62,6 +58,7 @@ SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 SEED = 0
 PEAK_FLOPS_PER_DEVICE = 2307  # TFLOP/s for single core(device) of FP8
 
+
 def gemm_multiple_run(
     m: int,
     k: int,
@@ -70,7 +67,10 @@ def gemm_multiple_run(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype. Accumulation is FP32. Current supported dtype: float8_e4m3fn, bfloat16."""
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype."""
+
+    # Accumulation is FP32. Current supported dtype: float8_e4m3fn,
+    # bfloat16.
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -146,7 +146,11 @@ def gemm_multiple_run_calculate_metrics(
     total_flops, total_flops_all_devices = handle_based_on_sharding(
         total_flops, SHARDING_STRATEGY
     )
-    peak_flops = PEAK_FLOPS_PER_DEVICE if dtype==jax.numpy.float8_e4m3fn else PEAK_FLOPS_PER_DEVICE/2
+    peak_flops = (
+        PEAK_FLOPS_PER_DEVICE
+        if dtype == jax.numpy.float8_e4m3fn
+        else PEAK_FLOPS_PER_DEVICE / 2
+    )
     return unified_flops_metrics(
         m,
         n,
@@ -158,6 +162,7 @@ def gemm_multiple_run_calculate_metrics(
         dtype=dtype.dtype.name,
     )
 
+
 def gemm_simple(
     m: int,
     k: int,
@@ -165,7 +170,8 @@ def gemm_simple(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8."""
+    # Accumulation is FP32.
 
     def f(x, y):
         with jax.named_scope(MARKER):
@@ -213,8 +219,8 @@ def gemm_simple(
         return (lhs_device, rhs_device)
 
     # Run the benchmark
-    num_runs = 1 
-    ## Need to fix gemm timing logic to handle num_runs > 1
+    num_runs = 1
+    # Need to fix gemm timing logic to handle num_runs > 1
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
@@ -251,11 +257,16 @@ def gemm_simple_calculate_metrics(
 
 
 def gemm_simple_with_dtype(
-    m: int, k: int, n: int,
-    in_dtype_str: str, out_dtype_str: str,
-    num_runs: int = 1, trace_dir: str = None
+    m: int,
+    k: int,
+    n: int,
+    in_dtype_str: str,
+    out_dtype_str: str,
+    num_runs: int = 1,
+    trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8. Accumulation is FP32."""
+    """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8."""
+    # Accumulation is FP32.
 
     # Convert string dtypes to jnp dtypes
     lhs_dtype = str_to_dtype(in_dtype_str)
@@ -264,7 +275,9 @@ def gemm_simple_with_dtype(
 
     def f(x, y):
         with jax.named_scope(MARKER):
-            acc = jax.numpy.einsum("ij,jk->ik", x, y, preferred_element_type=jnp.float32)
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", x, y, preferred_element_type=jnp.float32
+            )
             return acc.astype(out_dtype)
 
     mesh = create_mesh(SHARDING_STRATEGY)
@@ -289,7 +302,7 @@ def gemm_simple_with_dtype(
 
     def data_generator():
         """Creates new random data on host and puts it on device."""
-        nonlocal key # Use and update the outer 'key'
+        nonlocal key  # Use and update the outer 'key'
         key, key_lhs, key_rhs = jax.random.split(key, 3)
 
         # Create random data on host
@@ -302,8 +315,8 @@ def gemm_simple_with_dtype(
 
         return (lhs_device, rhs_device)
 
-    num_runs = 1 
-    ## Need to fix gemm timing logic to handle num_runs > 1
+    num_runs = 1
+    # Need to fix gemm timing logic to handle num_runs > 1
 
     # Run the benchmark
     time_ms_list = iteration_timeit(
@@ -316,22 +329,33 @@ def gemm_simple_with_dtype(
     )
     return {"time_ms_list": time_ms_list}
 
+
 def gemm_simple_with_dtype_calculate_metrics(
-    m: int, k: int, n: int,
-    in_dtype_str: str, out_dtype_str: str,
-    time_ms_list: list[float]
+    m: int,
+    k: int,
+    n: int,
+    in_dtype_str: str,
+    out_dtype_str: str,
+    time_ms_list: list[float],
 ) -> Dict[str, Any]:
     # Calculate FLOPs
     total_flops = (2 * k - 1) * m * n  # Total floating-point operations
-    total_flops, total_flops_all_devices = handle_based_on_sharding(total_flops, SHARDING_STRATEGY)
+    total_flops, total_flops_all_devices = handle_based_on_sharding(
+        total_flops, SHARDING_STRATEGY
+    )
 
     # Get the multiplier by calling the utility function
     peak_flops_multiplier = get_peak_flops_multiplier(in_dtype_str)
 
     metadata, metrics = unified_flops_metrics(
-            m, n, k, time_ms_list,
-            total_flops, total_flops_all_devices,
-            PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier)
+        m,
+        n,
+        k,
+        time_ms_list,
+        total_flops,
+        total_flops_all_devices,
+        PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier,
+    )
 
     # Add dtype info to metadata for logging
     metadata["in_dtype"] = in_dtype_str
@@ -343,7 +367,8 @@ def gemm_simple_with_dtype_calculate_metrics(
 def gemm(
     m: int, k: int, n: int, num_runs: int = 1, trace_dir: str = None
 ) -> Dict[str, Any]:
-    """OUT<M, N>:BF16 = matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)"""
+    """OUT<M, N>:BF16 = matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) *
+    outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)."""
 
     def f(x, y, scale_m, scale_n):
         with jax.named_scope(MARKER):
@@ -407,8 +432,8 @@ def gemm(
 
         return (lhs_device, rhs_device, sf0_device, sf1_device)
 
-    num_runs = 1 
-    ## Need to fix gemm timing logic to handle num_runs > 1
+    num_runs = 1
+    # Need to fix gemm timing logic to handle num_runs > 1
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,
@@ -448,7 +473,8 @@ def gemm_accum(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """OUT<M, N>:FP32 += matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) * outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)"""
+    """OUT<M, N>:FP32 += matmul(IN0<M, K>:FP8, IN1<N, K>:FP8) *
+    outer_product(SF0<M, 1>:FP32 * SF1<1, N>:FP32)."""
 
     def f(out_buffer, x, y, scale_m, scale_n):
         with jax.named_scope(MARKER):
@@ -519,11 +545,16 @@ def gemm_accum(
         sf0_device = jax.device_put(sf0_host, sf0_sharding)
         sf1_device = jax.device_put(sf1_host, sf1_sharding)
 
-        return (out_buffer_device, lhs_device, rhs_device, sf0_device, sf1_device)
+        return (
+            out_buffer_device,
+            lhs_device,
+            rhs_device,
+            sf0_device,
+            sf1_device,
+        )
 
-
-    num_runs = 1 
-    ## Need to fix gemm timing logic to handle num_runs > 1
+    num_runs = 1
+    # Need to fix gemm timing logic to handle num_runs > 1
 
     time_ms_list = iteration_timeit(
         jit_sharded_f,

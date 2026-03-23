@@ -30,51 +30,55 @@ GLOBAL_SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 GLOBAL_PSTATE = 7
 LOG_SPARSECORE_USAGE = False
 
+
 def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
-  """Creates a mesh with the given ICI size."""
-  devices_needed = ici_size
-  devices = jax.devices()
+    """Creates a mesh with the given ICI size."""
+    devices_needed = ici_size
+    devices = jax.devices()
 
-  if len(devices) < devices_needed:
-    raise ValueError(f"Need {devices_needed} devices, but found {len(devices)}")
-  devices = devices[:devices_needed]
-  mesh_shape = mesh_shape.split("x")
-  mesh_shape = [int(i) for i in mesh_shape]
+    if len(devices) < devices_needed:
+        raise ValueError(
+            f"Need {devices_needed} devices, but found {len(devices)}"
+        )
+    devices = devices[:devices_needed]
+    mesh_shape = mesh_shape.split("x")
+    mesh_shape = [int(i) for i in mesh_shape]
 
-  shape = mesh_shape if mesh_shape else (ici_size,)
+    shape = mesh_shape if mesh_shape else (ici_size,)
 
-  axis_names = [f"d_{i}" for i in range(len(shape))]
+    axis_names = [f"d_{i}" for i in range(len(shape))]
 
-  first_device = devices[0]
-  device_kind = first_device.device_kind
-  print("Device kind: ", device_kind)
-  mesh_devices = mesh_utils.create_device_mesh(shape, devices=jax.devices())
-  mesh = Mesh(mesh_devices, axis_names)
-  return mesh
+    first_device = devices[0]
+    device_kind = first_device.device_kind
+    print("Device kind: ", device_kind)
+    mesh_devices = mesh_utils.create_device_mesh(shape, devices=jax.devices())
+    mesh = Mesh(mesh_devices, axis_names)
+    return mesh
 
 
 def get_sharding_axis(dim_str: str, mesh: Mesh) -> tuple[str, ...]:
-  """Computes sharding axis names from dimension string like '1x4' and mesh."""
-  dim_tuple = dim_str.split("x")
-  dim_tuple = tuple(int(dim) for dim in dim_tuple)
-  sharding_axis = tuple(
-      name for i, name in enumerate(mesh.axis_names) if dim_tuple[i] > 1
-  )
-  return sharding_axis
+    """Computes sharding axis names from dimension string and mesh."""
+    # Example of a dimension string is '1x4'
+    dim_tuple = dim_str.split("x")
+    dim_tuple = tuple(int(dim) for dim in dim_tuple)
+    sharding_axis = tuple(
+        name for i, name in enumerate(mesh.axis_names) if dim_tuple[i] > 1
+    )
+    return sharding_axis
 
 
 def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
-  """Helper function to build the metrics and metadata for the benchmark."""
-  exclude_keys = ["ici_average_time_ms" ,"xla_output"]
-  metadata = {
-      key: value
-      for key, value in params
-      if value is not None and key not in exclude_keys
-  }
-  metadata["dtype"] = get_real_dtype_bytes(metadata["dtype"].dtype)
-  return metadata
+    """Helper function to build the metrics and metadata for the benchmark."""
+    exclude_keys = ["ici_average_time_ms", "xla_output"]
+    metadata = {
+        key: value
+        for key, value in params
+        if value is not None and key not in exclude_keys
+    }
+    metadata["dtype"] = get_real_dtype_bytes(metadata["dtype"].dtype)
+    return metadata
 
 
 def unified_ici_collectives_metrics(
@@ -89,105 +93,105 @@ def unified_ici_collectives_metrics(
     op_type: str,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-  """Calculates the metrics for the ICI collectives benchmark."""
+    """Calculates the metrics for the ICI collectives benchmark."""
 
-
-  average_time_ms_statistics = MetricsStatistics(
+    average_time_ms_statistics = MetricsStatistics(
         metrics_list=ici_average_time_ms_list, metrics_name="step_time_ms"
     )
-  hlo_input_shape = hlo_output_shape = hlo_replica_groups = None
-  hlo_first_replica_group = []
+    hlo_input_shape = hlo_output_shape = hlo_replica_groups = None
+    hlo_first_replica_group = []
 
-  input_num_elements = matrix_shape[0] * matrix_shape[1] * matrix_shape[2]
-  dtype_name = dtype.dtype.name
-  dtype_bytes = get_real_dtype_bytes(dtype.dtype)
-  if xla_output:
-    xla_output_json = json.loads(xla_output)
-    hlo_input_shape = xla_output_json.get("hlo_input_shape")
-    hlo_output_shape = xla_output_json.get("hlo_output_shape")
-    hlo_replica_groups = xla_output_json.get("hlo_replica_groups")
-    hlo_first_replica_group = xla_output_json.get("hlo_first_replica_group")
+    input_num_elements = matrix_shape[0] * matrix_shape[1] * matrix_shape[2]
+    dtype_bytes = get_real_dtype_bytes(dtype.dtype)
+    if xla_output:
+        xla_output_json = json.loads(xla_output)
+        hlo_input_shape = xla_output_json.get("hlo_input_shape")
+        hlo_output_shape = xla_output_json.get("hlo_output_shape")
+        hlo_replica_groups = xla_output_json.get("hlo_replica_groups")
+        hlo_first_replica_group = xla_output_json.get("hlo_first_replica_group")
 
-  rank = max(len(hlo_first_replica_group), 1)
+    rank = max(len(hlo_first_replica_group), 1)
 
-  if all(i % 2 == 0 for i in hlo_first_replica_group):
-    replica_group_type = "parallel"
-  else:
-    replica_group_type = "non-parallel"
+    if all(i % 2 == 0 for i in hlo_first_replica_group):
+        replica_group_type = "parallel"
+    else:
+        replica_group_type = "non-parallel"
 
-  if replica_group_type == "parallel":
-    participating_ranks = rank - 1
-    tf_multiplier = 2
-  else:
-    participating_ranks = rank - 2
-    tf_multiplier = 1
+    if replica_group_type == "parallel":
+        participating_ranks = rank - 1
+        tf_multiplier = 2
+    else:
+        participating_ranks = rank - 2
+        tf_multiplier = 1
 
-  transferred_data = 0
-  if op_type == "AG":
-    transferred_data = (
-        input_num_elements
-        * participating_ranks
-        * dtype_bytes
-        * 0.000000001
-        * tf_multiplier
-    )
-  elif op_type == "AR":
-    transferred_data = (
-        input_num_elements
-        * participating_ranks
-        * dtype_bytes
-        * 0.000000001
-        * tf_multiplier
-        * 2
-        /rank
-    )
-  elif op_type in ["RS", "A2A"]:
-    transferred_data = (
-        input_num_elements
-        * participating_ranks
-        * dtype_bytes
-        * 0.000000001
-        * tf_multiplier
-        / rank
-    )
+    transferred_data = 0
+    if op_type == "AG":
+        transferred_data = (
+            input_num_elements
+            * participating_ranks
+            * dtype_bytes
+            * 0.000000001
+            * tf_multiplier
+        )
+    elif op_type == "AR":
+        transferred_data = (
+            input_num_elements
+            * participating_ranks
+            * dtype_bytes
+            * 0.000000001
+            * tf_multiplier
+            * 2
+            / rank
+        )
+    elif op_type in ["RS", "A2A"]:
+        transferred_data = (
+            input_num_elements
+            * participating_ranks
+            * dtype_bytes
+            * 0.000000001
+            * tf_multiplier
+            / rank
+        )
 
+    sparsecore_used = "NA"
+    if LOG_SPARSECORE_USAGE:
+        print("trace_dir: ", trace_dir)
+        if trace_dir:
+            sparsecore_used = find_sparsecore_usage_from_xplane(trace_dir)
+        print("sparsecore_used: ", sparsecore_used)
+    print("hlo first replica group: ", hlo_first_replica_group)
 
-  sparsecore_used = "NA"
-  if LOG_SPARSECORE_USAGE:
-    print("trace_dir: ", trace_dir)
-    if trace_dir:
-      sparsecore_used = find_sparsecore_usage_from_xplane(trace_dir)
-    print("sparsecore_used: ", sparsecore_used)
-  print("hlo first replica group: ", hlo_first_replica_group)
-  
-  metadata = {
-      "iteration": iteration,
-      "op_type": op_type,
-      "replica_group_type": replica_group_type,
-      "rank": rank,
-      "mesh_shape": mesh_shape,
-      "op_dimension": op_dimension,
-      "sharding_strategy": sharding_strategy,
-      "input_num_elements": input_num_elements,
-      "matrix_shape": json.dumps(f"({matrix_shape})"),
-      "transferred_data (GB)": transferred_data,
-      "dtype_bytes": dtype_bytes,
-      "hlo_input_shape": json.dumps(hlo_input_shape),
-      "hlo_output_shape": json.dumps(hlo_output_shape),
-      "hlo_replica_groups": json.dumps(hlo_replica_groups),
-      "sparsecore_used": sparsecore_used,
-  }
-  achieved_bw = [transferred_data*1000/my_time for my_time in ici_average_time_ms_list]
-  achieved_bw_statistics = MetricsStatistics(
+    metadata = {
+        "iteration": iteration,
+        "op_type": op_type,
+        "replica_group_type": replica_group_type,
+        "rank": rank,
+        "mesh_shape": mesh_shape,
+        "op_dimension": op_dimension,
+        "sharding_strategy": sharding_strategy,
+        "input_num_elements": input_num_elements,
+        "matrix_shape": json.dumps(f"({matrix_shape})"),
+        "transferred_data (GB)": transferred_data,
+        "dtype_bytes": dtype_bytes,
+        "hlo_input_shape": json.dumps(hlo_input_shape),
+        "hlo_output_shape": json.dumps(hlo_output_shape),
+        "hlo_replica_groups": json.dumps(hlo_replica_groups),
+        "sparsecore_used": sparsecore_used,
+    }
+    achieved_bw = [
+        transferred_data * 1000 / my_time
+        for my_time in ici_average_time_ms_list
+    ]
+    achieved_bw_statistics = MetricsStatistics(
         metrics_list=achieved_bw, metrics_name="achieved_bw (GB/s)"
     )
-  metrics = {}
-  metrics.update(average_time_ms_statistics.serialize_statistics())
-  metrics.update(achieved_bw_statistics.serialize_statistics())
+    metrics = {}
+    metrics.update(average_time_ms_statistics.serialize_statistics())
+    metrics.update(achieved_bw_statistics.serialize_statistics())
 
-  print("metadata: ", metadata)
-  print("metrics: ", metrics)
-  return metadata, metrics
+    print("metadata: ", metadata)
+    print("metrics: ", metrics)
+    return metadata, metrics
 
 
 def psum_benchmark(
@@ -200,114 +204,115 @@ def psum_benchmark(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-  """Benchmarks the psum collective operation.
+    # pylint: disable=unused-argument
+    """Benchmarks the psum collective operation.
 
-  Args:
-    matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
-      matrix_dim).
-    mesh_shape: The shape of the mesh.
-    op_dimension: The dimension of the operation.
-    ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-      is run.
-    dtype: The data type of the matrix.
-    num_runs: The number of runs to perform.
-    trace_dir: The directory to save the trace to.
+    Args:
+      matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
+        matrix_dim).
+      mesh_shape: The shape of the mesh.
+      op_dimension: The dimension of the operation.
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run.
+      dtype: The data type of the matrix.
+      num_runs: The number of runs to perform.
+      trace_dir: The directory to save the trace to.
 
-  Returns:
-    The measured time for the ICI benchmark.
-  """
+    Returns:
+      The measured time for the ICI benchmark.
+    """
 
-  libtpu_init_args = [
-      "--xla_jf_debug_level=3",
-      "--xla_sc_disable_megacore_partitioning=true",
-      "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
-      "--xla_tpu_enable_all_reduce_offload_tracing=true",
-      "--xla_tpu_enable_all_reduce_scatter_fusion=false",
-      "--xla_tpu_enable_sparse_core_collective_offload_all_reduce=true",
-      "--xla_tpu_pad_operations_input_tiles=true",
-      "--xla_tpu_sparse_core_all_reduce_offload_min_size_in_bytes=0",
-      "--xla_tpu_use_tc_device_shape_on_sc=true",
-      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-  ]
-  os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-  mesh = create_mesh(ici_size, mesh_shape)
-  key = jax.random.key(SEED)
-  lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
-  out_sharding = get_out_sharding(GLOBAL_SHARDING_STRATEGY)
-  sharding_axis = get_sharding_axis(sharding_strategy, mesh)
+    libtpu_init_args = [
+        "--xla_jf_debug_level=3",
+        "--xla_sc_disable_megacore_partitioning=true",
+        "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
+        "--xla_tpu_enable_all_reduce_offload_tracing=true",
+        "--xla_tpu_enable_all_reduce_scatter_fusion=false",
+        "--xla_tpu_enable_sparse_core_collective_offload_all_reduce=true",
+        "--xla_tpu_pad_operations_input_tiles=true",
+        "--xla_tpu_sparse_core_all_reduce_offload_min_size_in_bytes=0",
+        "--xla_tpu_use_tc_device_shape_on_sc=true",
+        f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
+    ]
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    mesh = create_mesh(ici_size, mesh_shape)
+    key = jax.random.key(SEED)
+    lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
+    out_sharding = get_out_sharding(GLOBAL_SHARDING_STRATEGY)
+    sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
-  # 1. Define the Primitive
-  zero_crop_p = Primitive("zero_crop")
+    # 1. Define the Primitive
+    zero_crop_p = Primitive("zero_crop")
 
-  # 2. Implement Abstract Evaluation (output shape/dtype is same as input)
-  def zero_crop_abstract_eval(x):
-    return core.ShapedArray(x.shape, x.dtype)
+    # 2. Implement Abstract Evaluation (output shape/dtype is same as input)
+    def zero_crop_abstract_eval(x):
+        return core.ShapedArray(x.shape, x.dtype)
 
-  zero_crop_p.def_abstract_eval(zero_crop_abstract_eval)
+    zero_crop_p.def_abstract_eval(zero_crop_abstract_eval)
 
-  # 3. Implement the Lowering Rule using jax.ffi
-  def zero_crop_lowering(ctx, x):
-    (aval_in,) = ctx.avals_in
-    (aval_out,) = ctx.avals_out
+    # 3. Implement the Lowering Rule using jax.ffi
+    def zero_crop_lowering(ctx, x):
+        (aval_in,) = ctx.avals_in
+        (aval_out,) = ctx.avals_out
 
-    return ffi.ffi_lowering(
-        "ZeroCrop",
-        operands=[x],
-        operand_layouts=mlir.default_layouts(ctx, aval_in),
-        result_layouts=mlir.default_layouts(ctx, aval_out),
-    )(ctx, x)
+        return ffi.ffi_lowering(
+            "ZeroCrop",
+            operands=[x],
+            operand_layouts=mlir.default_layouts(ctx, aval_in),
+            result_layouts=mlir.default_layouts(ctx, aval_out),
+        )(ctx, x)
 
-  mlir.register_lowering(zero_crop_p, zero_crop_lowering)
+    mlir.register_lowering(zero_crop_p, zero_crop_lowering)
 
-  # 4. Create a Python Wrapper using jax.ffi.ffi_call
-  def zero_crop(x):
-    return ffi.ffi_call(
-        "ZeroCrop",
-        result_shape_dtypes=jax.ShapeDtypeStruct(x.shape, x.dtype),
-        has_side_effect=True,
-    )(x)
+    # 4. Create a Python Wrapper using jax.ffi.ffi_call
+    def zero_crop(x):
+        return ffi.ffi_call(
+            "ZeroCrop",
+            result_shape_dtypes=jax.ShapeDtypeStruct(x.shape, x.dtype),
+            has_side_effect=True,
+        )(x)
 
-  def f(x):
-    with jax.named_scope(MARKER):
-      y = jax.lax.psum(x, sharding_axis)
-      # Insert the custom call to prevent y from being a live out buffer
-      return zero_crop(y)
+    def f(x):
+        with jax.named_scope(MARKER):
+            y = jax.lax.psum(x, sharding_axis)
+            # Insert the custom call to prevent y from being a live out buffer
+            return zero_crop(y)
 
-  jit_sharded_f = jax.jit(
-      shard_map(
-          f,
-          mesh,
-          in_specs=lhs_sharding.spec,
-          out_specs=out_sharding,
-          check_rep=False,
-      )
-  )
-  m = matrix_dim
-  n = BASE_SHAPE[1]
-  k = BASE_SHAPE[2]
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=lhs_sharding.spec,
+            out_specs=out_sharding,
+            check_rep=False,
+        )
+    )
+    m = matrix_dim
+    n = BASE_SHAPE[1]
+    k = BASE_SHAPE[2]
 
-  def data_generator():
-    """Creates new random data on host and puts it on device."""
-    nonlocal key  # Use and update the outer 'key'
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key  # Use and update the outer 'key'
 
-    matrix = jnp.ones((m, n, k), dtype=dtype)
-    return (matrix,)
+        matrix = jnp.ones((m, n, k), dtype=dtype)
+        return (matrix,)
 
-  print("Running psum benchmark", num_runs, matrix_dim)
-  time_ms_list = multiple_iteration_timeit_from_trace(
-      jit_sharded_f,
-      data_generator,
-      matrix_dim=f"{m}x{n}x{k}",
-      tries=num_runs,
-      task="psum_ici_op",
-      trace_dir=trace_dir,
-  )
-  return {
-      "ici_average_time_ms_list": time_ms_list,
-      "matrix_shape": (m, n, k),
-      "op_type": "AR",
-      "trace_dir": trace_dir,
-  }
+    print("Running psum benchmark", num_runs, matrix_dim)
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
+        tries=num_runs,
+        task="psum_ici_op",
+        trace_dir=trace_dir,
+    )
+    return {
+        "ici_average_time_ms_list": time_ms_list,
+        "matrix_shape": (m, n, k),
+        "op_type": "AR",
+        "trace_dir": trace_dir,
+    }
 
 
 def psum_benchmark_calculate_metrics(
@@ -323,21 +328,22 @@ def psum_benchmark_calculate_metrics(
     op_type: str,
     trace_dir: str,
 ) -> Dict[str, Any]:
-  """Calculates the metrics for the psum benchmark."""
-  # Build dictionary of all the parameters in the function
+    # pylint: disable=unused-argument
+    """Calculates the metrics for the psum benchmark."""
+    # Build dictionary of all the parameters in the function
 
-  return unified_ici_collectives_metrics(
-      xla_output,
-      matrix_shape,
-      dtype,
-      mesh_shape,
-      op_dimension,
-      sharding_strategy,
-      ici_average_time_ms_list,
-      matrix_dim,
-      op_type,
-      trace_dir,
-  )
+    return unified_ici_collectives_metrics(
+        xla_output,
+        matrix_shape,
+        dtype,
+        mesh_shape,
+        op_dimension,
+        sharding_strategy,
+        ici_average_time_ms_list,
+        matrix_dim,
+        op_type,
+        trace_dir,
+    )
 
 
 def psum_scatter_benchmark(
@@ -350,79 +356,80 @@ def psum_scatter_benchmark(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-  """Benchmarks the psum_scatter collective operation.
+    # pylint: disable=unused-argument
+    """Benchmarks the psum_scatter collective operation.
 
-  Args:
-    matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
-      matrix_dim).
-    dtype: The data type of the matrix.
-    ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-      is run.
-    mesh_shape: The shape of the mesh.
-    op_dimension: The dimension of the operation.
-    sharding_strategy: The sharding strategy of the operation.
-    num_runs: The number of runs to perform.
-    trace_dir: The directory to save the trace to.
+    Args:
+      matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
+        matrix_dim).
+      dtype: The data type of the matrix.
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run.
+      mesh_shape: The shape of the mesh.
+      op_dimension: The dimension of the operation.
+      sharding_strategy: The sharding strategy of the operation.
+      num_runs: The number of runs to perform.
+      trace_dir: The directory to save the trace to.
 
-  Returns:
-    The measured time for the ICI benchmark.
-  """
-  libtpu_init_args = [
-      "--xla_jf_debug_level=3",
-      "--xla_sc_disable_megacore_partitioning=true",
-      "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
-      "--xla_tpu_enable_reduce_scatter_offload_tracing=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
-      "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
-      "--xla_tpu_use_tc_device_shape_on_sc=true",
-      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-  ]
-  os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-  mesh = create_mesh(ici_size, mesh_shape)
+    Returns:
+      The measured time for the ICI benchmark.
+    """
+    libtpu_init_args = [
+        "--xla_jf_debug_level=3",
+        "--xla_sc_disable_megacore_partitioning=true",
+        "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
+        "--xla_tpu_enable_reduce_scatter_offload_tracing=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",  # pylint: disable=line-too-long
+        "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
+        "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
+        "--xla_tpu_use_tc_device_shape_on_sc=true",
+        f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
+    ]
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    mesh = create_mesh(ici_size, mesh_shape)
 
-  sharding_axis = get_sharding_axis(sharding_strategy, mesh)
+    sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
-  def f(x):
-    with jax.named_scope(MARKER):
-      return jax.lax.psum_scatter(x, sharding_axis, tiled=True)
+    def f(x):
+        with jax.named_scope(MARKER):
+            return jax.lax.psum_scatter(x, sharding_axis, tiled=True)
 
-  jit_sharded_f = jax.jit(
-      shard_map(
-          f,
-          mesh=mesh,
-          in_specs=P(None, None, None),
-          out_specs=P(sharding_axis, None, None),
-          check_rep=False,
-      )
-  )
-  sharding_strategy_tuple = tuple(map(int, sharding_strategy.split("x")))
-  op_dimension_tuple_multiplier = math.prod(sharding_strategy_tuple)
-  m = op_dimension_tuple_multiplier
-  n = matrix_dim
-  k = 256
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh=mesh,
+            in_specs=P(None, None, None),
+            out_specs=P(sharding_axis, None, None),
+            check_rep=False,
+        )
+    )
+    sharding_strategy_tuple = tuple(map(int, sharding_strategy.split("x")))
+    op_dimension_tuple_multiplier = math.prod(sharding_strategy_tuple)
+    m = op_dimension_tuple_multiplier
+    n = matrix_dim
+    k = 256
 
-  def data_generator():
-    """Creates new random data on host and puts it on device."""
-    matrix = jnp.ones((m, n, k), dtype=dtype)
-    return (matrix,)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        matrix = jnp.ones((m, n, k), dtype=dtype)
+        return (matrix,)
 
-  time_ms_list = multiple_iteration_timeit_from_trace(
-      jit_sharded_f,
-      data_generator,
-      matrix_dim=f"{m}x{n}x{k}",
-      tries=num_runs,
-      task="psum_scatter_ici_op",
-      trace_dir=trace_dir,
-  )
-  print("Running psum_scatter benchmark", num_runs, matrix_dim)
-  print("Matrix shape: ", m, n, k)
-  return {
-      "ici_average_time_ms_list": time_ms_list,
-      "matrix_shape": (m, n, k),
-      "op_type": "RS",
-      "trace_dir": trace_dir,
-  }
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
+        tries=num_runs,
+        task="psum_scatter_ici_op",
+        trace_dir=trace_dir,
+    )
+    print("Running psum_scatter benchmark", num_runs, matrix_dim)
+    print("Matrix shape: ", m, n, k)
+    return {
+        "ici_average_time_ms_list": time_ms_list,
+        "matrix_shape": (m, n, k),
+        "op_type": "RS",
+        "trace_dir": trace_dir,
+    }
 
 
 def psum_scatter_benchmark_calculate_metrics(
@@ -438,21 +445,23 @@ def psum_scatter_benchmark_calculate_metrics(
     op_type: str,
     trace_dir: str,
 ) -> Dict[str, Any]:
-  """Calculates the metrics for the psum_scatter benchmark."""
-  # Build dictionary of all the parameters in the function
+    # pylint: disable=unused-argument
+    """Calculates the metrics for the psum_scatter benchmark."""
+    # Build dictionary of all the parameters in the function
 
-  return unified_ici_collectives_metrics(
-      xla_output,
-      matrix_shape,
-      dtype,
-      mesh_shape,
-      op_dimension,
-      sharding_strategy,
-      ici_average_time_ms_list,
-      matrix_dim,
-      op_type,
-      trace_dir,
-  )
+    return unified_ici_collectives_metrics(
+        xla_output,
+        matrix_shape,
+        dtype,
+        mesh_shape,
+        op_dimension,
+        sharding_strategy,
+        ici_average_time_ms_list,
+        matrix_dim,
+        op_type,
+        trace_dir,
+    )
+
 
 def all_gather_benchmark(
     matrix_dim: int,
@@ -464,79 +473,80 @@ def all_gather_benchmark(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-  """Benchmarks the all_gather collective operation.
+    # pylint: disable=unused-argument
+    """Benchmarks the all_gather collective operation.
 
-  Args:
-    matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
-      matrix_dim).
-    dtype: The data type of the matrix.
-    ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-      is run.
-    mesh_shape: The shape of the mesh.
-    sharding_strategy: The sharding strategy of the operation.
-    op_dimension: The dimension of the operation.
-    num_runs: The number of runs to perform.
-    trace_dir: The directory to save the trace to.
+    Args:
+      matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
+        matrix_dim).
+      dtype: The data type of the matrix.
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run.
+      mesh_shape: The shape of the mesh.
+      sharding_strategy: The sharding strategy of the operation.
+      op_dimension: The dimension of the operation.
+      num_runs: The number of runs to perform.
+      trace_dir: The directory to save the trace to.
 
-  Returns:
-    The measured time for the ICI benchmark.
-  """
-  libtpu_init_args = [
-      "--xla_jf_debug_level=3",
-      "--xla_sc_disable_megacore_partitioning=true",
-      "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
-      "--xla_tpu_enable_all_gather_offload_tracing=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_2d_all_gather=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_3d_all_gather=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_all_gather=true",
-      "--xla_tpu_use_single_sparse_core_for_all_gather_offload=true",
-      "--xla_tpu_use_tc_device_shape_on_sc=true",
-      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-      "--xla_tpu_scoped_vmem_limit_kib=65536",
-  ]
-  # libtpu_init_args=[ ]
-  os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-  mesh = create_mesh(ici_size, mesh_shape)
+    Returns:
+      The measured time for the ICI benchmark.
+    """
+    libtpu_init_args = [
+        "--xla_jf_debug_level=3",
+        "--xla_sc_disable_megacore_partitioning=true",
+        "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
+        "--xla_tpu_enable_all_gather_offload_tracing=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_2d_all_gather=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_3d_all_gather=true",
+        "--xla_tpu_enable_sparse_core_collective_offload_all_gather=true",
+        "--xla_tpu_use_single_sparse_core_for_all_gather_offload=true",
+        "--xla_tpu_use_tc_device_shape_on_sc=true",
+        f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
+        "--xla_tpu_scoped_vmem_limit_kib=65536",
+    ]
+    # libtpu_init_args=[ ]
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    mesh = create_mesh(ici_size, mesh_shape)
 
-  sharding_axis = get_sharding_axis(sharding_strategy, mesh)
+    sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
-  def f(x):
-    with jax.named_scope(MARKER):
-      return jax.lax.all_gather(x, sharding_axis, tiled=True)
+    def f(x):
+        with jax.named_scope(MARKER):
+            return jax.lax.all_gather(x, sharding_axis, tiled=True)
 
-  jit_sharded_f = jax.jit(
-      shard_map(
-          f,
-          mesh=mesh,
-          in_specs=P(None, None, None),
-          out_specs=P(None, None, None),
-          check_rep=False,
-      )
-  )
-  m = matrix_dim
-  n = BASE_SHAPE[1]
-  k = BASE_SHAPE[2]
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh=mesh,
+            in_specs=P(None, None, None),
+            out_specs=P(None, None, None),
+            check_rep=False,
+        )
+    )
+    m = matrix_dim
+    n = BASE_SHAPE[1]
+    k = BASE_SHAPE[2]
 
-  def data_generator():
-    """Creates new random data on host and puts it on device."""
-    matrix = jnp.ones((m, n, k), dtype=dtype)
-    return (matrix,)
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        matrix = jnp.ones((m, n, k), dtype=dtype)
+        return (matrix,)
 
-  time_ms_list = multiple_iteration_timeit_from_trace(
-      jit_sharded_f,
-      data_generator,
-      matrix_dim=f"{m}x{n}x{k}",
-      tries=num_runs,
-      task="all_gather_ici_op",
-      trace_dir=trace_dir,
-  )
-  print("Running all_gather benchmark", num_runs, matrix_dim)
-  return {
-      "ici_average_time_ms_list": time_ms_list,
-      "matrix_shape": (m, n, k),
-      "op_type": "AG",
-      "trace_dir": trace_dir,
-  }
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
+        tries=num_runs,
+        task="all_gather_ici_op",
+        trace_dir=trace_dir,
+    )
+    print("Running all_gather benchmark", num_runs, matrix_dim)
+    return {
+        "ici_average_time_ms_list": time_ms_list,
+        "matrix_shape": (m, n, k),
+        "op_type": "AG",
+        "trace_dir": trace_dir,
+    }
 
 
 def all_gather_benchmark_calculate_metrics(
@@ -552,21 +562,22 @@ def all_gather_benchmark_calculate_metrics(
     op_type: str,
     trace_dir: str,
 ) -> Dict[str, Any]:
-  """Calculates the metrics for the all_gather benchmark."""
-  # Build dictionary of all the parameters in the function
+    # pylint: disable=unused-argument
+    """Calculates the metrics for the all_gather benchmark."""
+    # Build dictionary of all the parameters in the function
 
-  return unified_ici_collectives_metrics(
-      xla_output,
-      matrix_shape,
-      dtype,
-      mesh_shape,
-      op_dimension,
-      sharding_strategy,
-      ici_average_time_ms_list,
-      matrix_dim,
-      op_type,
-      trace_dir,
-  )
+    return unified_ici_collectives_metrics(
+        xla_output,
+        matrix_shape,
+        dtype,
+        mesh_shape,
+        op_dimension,
+        sharding_strategy,
+        ici_average_time_ms_list,
+        matrix_dim,
+        op_type,
+        trace_dir,
+    )
 
 
 def all_to_all_benchmark(
@@ -579,74 +590,75 @@ def all_to_all_benchmark(
     num_runs: int = 1,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-  """Benchmarks the all_to_all collective operation.
+    # pylint: disable=unused-argument
+    """Benchmarks the all_to_all collective operation.
 
-  Args:
-    matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
-      matrix_dim).
-    dtype: The data type of the matrix.
-    ici_size: The number of chips in a single slice. If 1, then no ICI benchmark
-      is run.
-    mesh_shape: The shape of the mesh.
-    op_dimension: The dimension of the operation.
-    num_runs: The number of runs to perform.
-    trace_dir: The directory to save the trace to.
+    Args:
+      matrix_dim: The benchmark is run on a matrix with shape (matrix_dim,
+        matrix_dim).
+      dtype: The data type of the matrix.
+      ici_size: The number of chips in a single slice. If 1, then no ICI
+        benchmark is run.
+      mesh_shape: The shape of the mesh.
+      op_dimension: The dimension of the operation.
+      num_runs: The number of runs to perform.
+      trace_dir: The directory to save the trace to.
 
-  Returns:
-    The measured time for the ICI benchmark.
-  """
-  libtpu_init_args = [
-      "--xla_jf_debug_level=3",
-      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-  ]
-  os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-  mesh = create_mesh(ici_size, mesh_shape)
-  key = jax.random.key(SEED)
-  lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
-  out_sharding = get_out_sharding(GLOBAL_SHARDING_STRATEGY)
-  sharding_axis = get_sharding_axis(sharding_strategy, mesh)
+    Returns:
+      The measured time for the ICI benchmark.
+    """
+    libtpu_init_args = [
+        "--xla_jf_debug_level=3",
+        f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
+    ]
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    mesh = create_mesh(ici_size, mesh_shape)
+    key = jax.random.key(SEED)
+    lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
+    out_sharding = get_out_sharding(GLOBAL_SHARDING_STRATEGY)
+    sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
-  def f(x):
-    with jax.named_scope(MARKER):
-      return jax.lax.all_to_all(
-          x, sharding_axis, split_axis=0, concat_axis=0, tiled=True
-      )
+    def f(x):
+        with jax.named_scope(MARKER):
+            return jax.lax.all_to_all(
+                x, sharding_axis, split_axis=0, concat_axis=0, tiled=True
+            )
 
-  jit_sharded_f = jax.jit(
-      shard_map(
-          f,
-          mesh,
-          in_specs=lhs_sharding.spec,
-          out_specs=out_sharding,
-          check_rep=False,
-      )
-  )
-  m = matrix_dim
-  n = BASE_SHAPE[1]
-  k = BASE_SHAPE[2]
+    jit_sharded_f = jax.jit(
+        shard_map(
+            f,
+            mesh,
+            in_specs=lhs_sharding.spec,
+            out_specs=out_sharding,
+            check_rep=False,
+        )
+    )
+    m = matrix_dim
+    n = BASE_SHAPE[1]
+    k = BASE_SHAPE[2]
 
-  def data_generator():
-    """Creates new random data on host and puts it on device."""
-    nonlocal key  # Use and update the outer 'key'
+    def data_generator():
+        """Creates new random data on host and puts it on device."""
+        nonlocal key  # Use and update the outer 'key'
 
-    matrix = jnp.ones((m, n, k), dtype=dtype)
-    return (matrix,)
+        matrix = jnp.ones((m, n, k), dtype=dtype)
+        return (matrix,)
 
-  print("Running all_to_all benchmark", num_runs, matrix_dim)
-  time_ms_list = multiple_iteration_timeit_from_trace(
-      jit_sharded_f,
-      data_generator,
-      matrix_dim=f"{m}x{n}x{k}",
-      tries=num_runs,
-      task="all_to_all_ici_op",
-      trace_dir=trace_dir,
-  )
-  return {
-      "ici_average_time_ms_list": time_ms_list,
-      "matrix_shape": (m, n, k),
-      "op_type": "A2A",
-      "trace_dir": trace_dir,
-  }
+    print("Running all_to_all benchmark", num_runs, matrix_dim)
+    time_ms_list = multiple_iteration_timeit_from_trace(
+        jit_sharded_f,
+        data_generator,
+        matrix_dim=f"{m}x{n}x{k}",
+        tries=num_runs,
+        task="all_to_all_ici_op",
+        trace_dir=trace_dir,
+    )
+    return {
+        "ici_average_time_ms_list": time_ms_list,
+        "matrix_shape": (m, n, k),
+        "op_type": "A2A",
+        "trace_dir": trace_dir,
+    }
 
 
 def all_to_all_benchmark_calculate_metrics(
@@ -662,19 +674,19 @@ def all_to_all_benchmark_calculate_metrics(
     op_type: str,
     trace_dir: str,
 ) -> Dict[str, Any]:
-  """Calculates the metrics for the all_to_all benchmark."""
-  # Build dictionary of all the parameters in the function
+    # pylint: disable=unused-argument
+    """Calculates the metrics for the all_to_all benchmark."""
+    # Build dictionary of all the parameters in the function
 
-  return unified_ici_collectives_metrics(
-      xla_output,
-      matrix_shape,
-      dtype,
-      mesh_shape,
-      op_dimension,
-      sharding_strategy,
-      ici_average_time_ms_list,
-      matrix_dim,
-      op_type,
-      trace_dir,
-  )
-
+    return unified_ici_collectives_metrics(
+        xla_output,
+        matrix_shape,
+        dtype,
+        mesh_shape,
+        op_dimension,
+        sharding_strategy,
+        ici_average_time_ms_list,
+        matrix_dim,
+        op_type,
+        trace_dir,
+    )

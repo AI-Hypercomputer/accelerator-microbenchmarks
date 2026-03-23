@@ -41,6 +41,7 @@ def single_chip_hbm_copy(
     jax.block_until_ready(output)
 
     # Run the benchmark
+    # pylint: disable=unexpected-keyword-arg
     time_ms_list = simple_timeit(
         jitted_f,
         a,
@@ -74,8 +75,9 @@ def single_chip_hbm_copy_calculate_metrics(
         metrics_list=bw_gbyte_sec_list, metrics_name="bw_gbyte_sec"
     )
     print(
-        f"Tensor size: {tensor_size_bytes / 1024**2} MB, time taken (median):"
-        f" {time_statistics.statistics['p50']:.4f} ms, bandwidth (median): {statistics.statistics['p50']:.3f} GB/s"
+        f"Tensor size: {tensor_size_bytes / 1024**2} MB, "
+        f"time taken (median): {time_statistics.statistics["p50"]:.4f} ms, "
+        f"bandwidth (median): {statistics.statistics["p50"]:.3f} GB/s"
     )
     print()
     # Gather the metrics to report.
@@ -86,5 +88,7 @@ def single_chip_hbm_copy_calculate_metrics(
     )
     metrics.update(time_statistics.serialize_statistics())
     metrics.update(statistics.serialize_statistics())
-    metrics = {key: value for key, value in metrics.items() if value is not None}
+    metrics = {
+        key: value for key, value in metrics.items() if value is not None
+    }
     return metadata, metrics

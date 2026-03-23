@@ -19,12 +19,28 @@ import time
 from jax.experimental import multihost_utils
 
 
-def simple_timeit(f, *args, matrix_dim=None, warmup_tries = 10, tries=10, task=None, trace_dir=None) -> list[float]:
+def simple_timeit(
+    f,
+    *args,
+    matrix_dim=None,
+    warmup_tries=10,
+    tries=10,
+    task=None,
+    trace_dir=None,
+) -> list[float]:
     """Simple utility to time a function for multiple runs."""
     assert task is not None
 
     if trace_dir:
-        return timeit_from_trace(f, *args, matrix_dim=matrix_dim, warmup_tries=warmup_tries, tries=tries, task=task, trace_dir=trace_dir)
+        return timeit_from_trace(
+            f,
+            *args,
+            matrix_dim=matrix_dim,
+            warmup_tries=warmup_tries,
+            tries=tries,
+            task=task,
+            trace_dir=trace_dir,
+        )
 
     is_multihost = jax.process_count() > 1
 
@@ -38,9 +54,10 @@ def simple_timeit(f, *args, matrix_dim=None, warmup_tries = 10, tries=10, task=N
     # --- Measurement Loop ---
     outcomes_ms = []
 
-    # Final barrier after warmup to ensure all hosts are ready to start measuring together.
+    # Final barrier after warmup to ensure all hosts are ready to start
+    # measuring together.
     if is_multihost:
-        multihost_utils.sync_global_devices(f'warmup_done_{task}')
+        multihost_utils.sync_global_devices(f"warmup_done_{task}")
 
     print(f"Running measurement loop with {tries} tries...")
     for i in range(tries):
@@ -48,9 +65,10 @@ def simple_timeit(f, *args, matrix_dim=None, warmup_tries = 10, tries=10, task=N
 
         jax.block_until_ready(f(*args))
 
-        # Synchronize (Multi-Host Only): Wait for ALL hosts to finish the operation.
+        # Synchronize (Multi-Host Only): Wait for ALL hosts to finish the
+        # operation.
         if is_multihost:
-            multihost_utils.sync_global_devices(f'end_run_{i}_{task}')
+            multihost_utils.sync_global_devices(f"end_run_{i}_{task}")
 
         e_time = time.perf_counter()
         outcomes_ms.append(1000 * (e_time - s_time))
@@ -65,7 +83,9 @@ def get_trace(log_dir: str) -> dict[str, Any]:
       A trace object in JSON format.
     """
     # Navigate to the folder with the latest trace dump to find `trace.json.jz`
-    trace_folders = (pathlib.Path(log_dir).absolute() / "plugins" / "profile").iterdir()
+    trace_folders = (
+        pathlib.Path(log_dir).absolute() / "plugins" / "profile"
+    ).iterdir()
     latest_trace_folder = max(trace_folders, key=os.path.getmtime)
     trace_jsons = latest_trace_folder.glob("*.trace.json.gz")
     try:
@@ -102,22 +122,34 @@ def get_metrics_from_trace(trace: dict[str, Any], task: str) -> float:
     return durations_ms
 
 
-def is_local_directory_path(dir: str) -> bool:
+def is_local_directory_path(directory: str) -> bool:
     """
     Returns true if the path is a local path.
     """
-    if not dir:  # Handle None or empty string
+    if not directory:  # Handle None or empty string
         return False
 
     # Heuristics for local paths
-    return dir.startswith("/") or dir.startswith("./") or dir.startswith("../")
+    return (
+        directory.startswith("/")
+        or directory.startswith("./")
+        or directory.startswith("../")
+    )
 
 
-def timeit_from_trace(f, *args, matrix_dim=None, warmup_tries=10, tries=10, task=None, trace_dir=None) -> list[float]:
+def timeit_from_trace(
+    f,
+    *args,
+    matrix_dim=None,
+    warmup_tries=10,
+    tries=10,
+    task=None,
+    trace_dir=None,
+) -> list[float]:
     """
     Time a function with jax.profiler and get the run time from the trace.
     """
-    LOCAL_TRACE_DIR = "/tmp/microbenchmarks_tmptrace"
+    local_trace_dir = "/tmp/microbenchmarks_tmptrace"
     is_multihost = jax.process_count() > 1
 
     # warmup loop
@@ -126,7 +158,7 @@ def timeit_from_trace(f, *args, matrix_dim=None, warmup_tries=10, tries=10, task
         data = f(*args)
     jax.block_until_ready(data)
     if is_multihost:
-        multihost_utils.sync_global_devices(f'warmup_done_{task}')
+        multihost_utils.sync_global_devices(f"warmup_done_{task}")
 
     if matrix_dim is not None:
         trace_name = f"{task}_dim_{matrix_dim}"
@@ -137,15 +169,16 @@ def timeit_from_trace(f, *args, matrix_dim=None, warmup_tries=10, tries=10, task
 
     trace_full_dir = f"{trace_dir}/{trace_name}"
     tmp_trace_dir = trace_full_dir
-    # If the trace_dir isn't a local path, create one for dumping the trace for parsing and getting metrics.
+    # If the trace_dir isn't a local path, create one for dumping the trace for
+    # parsing and getting metrics.
     if trace_dir and not is_local_directory_path(trace_dir):
-        tmp_trace_dir = f"{LOCAL_TRACE_DIR}/{trace_name}"
+        tmp_trace_dir = f"{local_trace_dir}/{trace_name}"
     with jax.profiler.trace(tmp_trace_dir):
         for i in range(tries):
             with jax.profiler.TraceAnnotation(task):
                 jax.block_until_ready(f(*args))
             if is_multihost:
-                    multihost_utils.sync_global_devices(f'end_run_{i}_{task}')
+                multihost_utils.sync_global_devices(f"end_run_{i}_{task}")
     trace = get_trace(tmp_trace_dir)
 
     if trace_full_dir != tmp_trace_dir:
@@ -157,14 +190,18 @@ def timeit_from_trace(f, *args, matrix_dim=None, warmup_tries=10, tries=10, task
 def maybe_write_metrics_file(
     metrics_dir, metrics, metadata, test_name, test_start_time, test_end_time
 ):
-    """Writes metrics to a JSONL file to be consumed by the XLML metrics pipeline."""
+    """
+    Writes metrics to a JSONL file to be consumed by the XLML metrics pipeline.
+    """
 
     local_devices = jax.local_devices()
     tpu_worker_id = int(os.getenv("TPU_WORKER_ID", "0"))
     is_multislice = hasattr(local_devices[0], "slice_index")
 
-    # For multi-slice workload, the result is only written by the first host on the first slice (slice_index=0, tpu_worker_id=0).
-    # For single-slice workload, the result is only written by the first host (tpu_worker_id=0).
+    # For multi-slice workload, the result is only written by the first host on
+    # the first slice (slice_index=0, tpu_worker_id=0).
+    # For single-slice workload, the result is only written by the first host
+    # (tpu_worker_id=0).
     if is_multislice:
         if local_devices[0].slice_index != 0 or tpu_worker_id != 0:
             return
@@ -213,7 +250,8 @@ def upload_to_storage(trace_dir: str, local_file: str):
 
         except subprocess.CalledProcessError as e:
             print(
-                f"Failed to upload '{local_file}' to GCS: '{trace_dir}'. Error: {e.stderr.decode()}"
+                f"Failed to upload '{local_file}' to GCS: '{trace_dir}'. "
+                f"Error: {e.stderr.decode()}"
             )
     else:
         raise KeyError(f"{trace_dir} is not a valid GCS path.")
@@ -262,19 +300,23 @@ def rename_xla_dump(
 ):
     """
     Finds the latest XLA dump file matching '*jit_f*before_optimizations*.txt',
-    then identifies all other files that share the same 'jit_f.[unique_id]' identifier
-    and renames them to 'benchmark_name_serialized_params.original_suffix_with_extension'.
+    then identifies all other files that share the same 'jit_f.[unique_id]'
+    identifier and renames them to
+    'benchmark_name_serialized_params.original_suffix_with_extension'.
     """
 
     serialized_benchmark_param = "_".join(
         f"{key}_{value}" for key, value in benchmark_param.items()
     )
-    anchor_pattern = os.path.join(tmp_xla_dump_dir, "*jit_f*before_optimizations*.txt")
+    anchor_pattern = os.path.join(
+        tmp_xla_dump_dir, "*jit_f*before_optimizations*.txt"
+    )
     matching_anchor_files = glob.glob(anchor_pattern)
 
     if not matching_anchor_files:
         print(
-            f"No files found for anchor pattern: '{anchor_pattern}'. No files will be renamed."
+            f"No files found for anchor pattern: '{anchor_pattern}'. "
+            f"No files will be renamed."
         )
         return
 
@@ -289,13 +331,15 @@ def rename_xla_dump(
 
     if not jit_id_match:
         print(
-            f"Could not extract 'jit_f.[unique_id]' from '{filename_base}'. Cannot proceed with renaming."
+            f"Could not extract 'jit_f.[unique_id]' from '{filename_base}'. "
+            f"Cannot proceed with renaming."
         )
         return
 
     common_jit_id_prefix = jit_id_match.group(1)
 
-    # Find all files in the directory that contain this specific common_jit_id_prefix
+    # Find all files in the directory that contain this specific
+    # common_jit_id_prefix
     all_related_files_pattern = os.path.join(
         tmp_xla_dump_dir, f"*{common_jit_id_prefix}*"
     )
@@ -303,7 +347,8 @@ def rename_xla_dump(
 
     if not all_related_files:
         print(
-            f"No files found containing '{common_jit_id_prefix}'. This is unexpected if an anchor was found."
+            f"No files found containing '{common_jit_id_prefix}'. "
+            f"This is unexpected if an anchor was found."
         )
         return
 
@@ -313,26 +358,26 @@ def rename_xla_dump(
         original_filename = os.path.basename(original_filepath)
 
         # Find the specific suffix part *after* the common_jit_id_prefix.
-        # This regex looks for the common_jit_id_prefix, then captures everything after it,
-        # ensuring it starts with a dot if there's more.
-        # Example: if original_filename is 'module_0080.jit_f.cl_747713181.after_codegen.txt'
+        # This regex looks for the common_jit_id_prefix, then captures
+        # everything after it, ensuring it starts with a dot if there's more.
+        # Example: if original_filename is
+        # 'module_0080.jit_f.cl_747713181.after_codegen.txt'
         # and common_jit_id_prefix is 'jit_f.cl_747713181'
         # we want to capture '.after_codegen.txt'
         suffix_match = re.search(
             re.escape(common_jit_id_prefix) + r"(\..*)", original_filename
         )
-
+        original_suffix_with_extension = ""
         if suffix_match:
-            original_suffix_with_extension = suffix_match.group(
-                1
-            )  # e.g., '.after_codegen.txt'
+            original_suffix_with_extension = suffix_match.group(1)
 
         new_filename = f"{new_base_name}{original_suffix_with_extension}"
         new_filepath = os.path.join(dest_xla_dump_dir, new_filename)
 
         if original_filepath == new_filepath:
             print(
-                f"Skipping: '{original_filename}' already has the desired name or path."
+                f"Skipping: '{original_filename}' already has the desired "
+                f"name or path."
             )
             continue
 
@@ -341,10 +386,13 @@ def rename_xla_dump(
             try:
                 os.makedirs(dest_xla_dump_dir, exist_ok=True)
                 shutil.copy(original_filepath, new_filepath)
-            except Exception as e:
+            except OSError as e:
                 print(
-                    f"An unexpected error occurred while copy '{original_filepath}': {e}"
+                    f"An unexpected error occurred while copy "
+                    f"'{original_filepath}': {e}"
                 )
         else:
-            upload_to_storage(trace_dir=new_filepath, local_file=original_filepath)
+            upload_to_storage(
+                trace_dir=new_filepath, local_file=original_filepath
+            )
     print(f"The XLA dump is stored in {dest_xla_dump_dir}")
