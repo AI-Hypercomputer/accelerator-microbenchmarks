@@ -322,7 +322,10 @@ def write_to_csv(csv_path: str, calculate_metrics_results: List[Dict[str, Any]])
 
 
 def run_single_benchmark(
-    benchmark_config: Dict[str, Any], output_path: str, demo: bool = False
+    benchmark_config: Dict[str, Any],
+    output_path: str,
+    demo: bool = False,
+    nightly: bool = False,
 ):
   """Run a single benchmark with one or more configurations."""
   # Extract benchmark details
@@ -360,6 +363,9 @@ def run_single_benchmark(
 
   print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
 
+  if nightly:
+    ## sample a total of 4 configs from the benchmark_params
+    benchmark_params = random.sample(benchmark_params, 4)
   # Run the benchmark
   calculate_metrics_results = []
   for id, benchmark_param in enumerate(benchmark_params):
@@ -491,7 +497,9 @@ def main(args):
 
   else:
     for benchmark_config in benchmarks:
-      run_single_benchmark(benchmark_config, output_path, args.demo)
+      run_single_benchmark(
+          benchmark_config, output_path, args.demo, args.nightly
+      )
 
 
 def run_benchmark_multithreaded(benchmark_config, output_path):
@@ -599,6 +607,12 @@ if __name__ == "__main__":
       action="store_true",
       default=False,
       help="Run a demo.",
+  )
+  parser.add_argument(
+      "--nightly",
+      action="store_true",
+      default=False,
+      help="Run benchmarks for nightly. (default: False)",
   )
   args = parser.parse_args()
   main(args)
