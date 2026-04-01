@@ -612,7 +612,7 @@ if __name__ == "__main__":
       "--nightly_limit",
       type=int,
       default=-1,
-      help="Run benchmarks for nightly_limit. (default: -1)",
+      help="Run benchmarks for at most this many configurations. (default: -1)",
   )
   args = parser.parse_args()
   main(args)
