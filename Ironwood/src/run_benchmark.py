@@ -325,7 +325,7 @@ def run_single_benchmark(
     benchmark_config: Dict[str, Any],
     output_path: str,
     demo: bool = False,
-    nightly: bool = False,
+    nightly_limit: int = -1,
 ):
   """Run a single benchmark with one or more configurations."""
   # Extract benchmark details
@@ -363,9 +363,9 @@ def run_single_benchmark(
 
   print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
 
-  if nightly:
+  if nightly_limit > 0:
     ## sample a total of 4 configs from the benchmark_params
-    benchmark_params = random.sample(benchmark_params, 4)
+    benchmark_params = random.sample(benchmark_params, nightly_limit)
   # Run the benchmark
   calculate_metrics_results = []
   for id, benchmark_param in enumerate(benchmark_params):
@@ -498,7 +498,7 @@ def main(args):
   else:
     for benchmark_config in benchmarks:
       run_single_benchmark(
-          benchmark_config, output_path, args.demo, args.nightly
+          benchmark_config, output_path, args.demo, args.nightly_limit
       )
 
 
@@ -609,10 +609,10 @@ if __name__ == "__main__":
       help="Run a demo.",
   )
   parser.add_argument(
-      "--nightly",
-      action="store_true",
-      default=False,
-      help="Run benchmarks for nightly. (default: False)",
+      "--nightly_limit",
+      type=int,
+      default=-1,
+      help="Run benchmarks for nightly_limit. (default: -1)",
   )
   args = parser.parse_args()
   main(args)
