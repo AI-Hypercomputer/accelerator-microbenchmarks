@@ -6,6 +6,7 @@ Sample usage (on TPU vm):
 
 import argparse
 import ast
+import base64
 from concurrent.futures import ThreadPoolExecutor
 import copy
 import datetime
@@ -459,10 +460,16 @@ def run_single_benchmark(
 def main(args):
   """Main function."""
   # Load configuration
-  config_path = args.config
+  if args.config_string:
+    decoded_bytes = base64.b64decode(args.config_string)
+    config_string = decoded_bytes.decode("utf-8")
+    config = yaml.safe_load(config_string)
+  else:
+    config_path = args.config
+    config = get_benchmark_config(config_path)
+
   multithreaded = args.multithreaded
   output_path = args.output_path
-  config = get_benchmark_config(config_path)
   benchmarks = config.get("benchmarks")
   if not benchmarks or not isinstance(benchmarks, list):
     raise ValueError("Configuration must contain a 'benchmarks' list.")
@@ -584,11 +591,16 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(
       description="Run microbenchmarks and collect metrics."
   )
-  parser.add_argument(
+  group = parser.add_mutually_exclusive_group(required=True)
+  group.add_argument(
       "--config",
       type=str,
-      required=True,
       help="Path to the YAML configuration file.",
+  )
+  group.add_argument(
+      "--config_string",
+      type=str,
+      help="Base64 encoded configuration string (YAML or JSON).",
   )
   parser.add_argument(
       "--output_path",
