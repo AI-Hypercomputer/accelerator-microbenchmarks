@@ -1,0 +1,9 @@
+global:
+  warmup_tries: 2
+  num_runs: 2
+  dtype: "bfloat16"
+
+benchmarks:
+  - name: gemm_generalized
+    csv_shapes: "configs/shapes/matrix_shapes.csv"
+    in_dtype: "float8_e4m3fn"

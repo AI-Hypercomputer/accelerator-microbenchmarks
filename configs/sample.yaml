@@ -1,0 +1,57 @@
+global:
+  system: "ironwood"
+  warmup_tries: 2
+  num_runs: 5
+  dtype: "bfloat16"
+  xprof_timing: true
+
+benchmarks:
+  # Sweep over different sizes for gemm_generalized
+  - name: gemm_generalized
+    sweep:
+      m: {start: 1024, end: 4096, multiplier: 2}
+      k: 2048
+      n: 2048
+
+  # gemm_generalized demonstration
+  - name: gemm_generalized
+    m: 2048
+    k: 2048
+    n: 2048
+
+  # Collective communication demonstration
+  - name: all_reduce_sum
+    mesh_shape: "4x4x8" # Example mesh_shape, can be updated based on available devices
+    sweep:
+      matrix_dim: [512, 1024, 2048]
+
+  - name: all_reduce_sum
+    mesh_shape: "16x4x2" # Example mesh_shape, can be updated based on available devices
+    sweep:
+      matrix_dim: [512, 1024, 2048]
+
+  - name: all_gather
+    mesh_shape: "4x4x8"
+    sweep:
+      matrix_dim: [512, 1024, 2048]
+
+  - name: all_to_all
+    mesh_shape: "4x4x8"
+    sweep:
+      matrix_dim: [512, 1024, 2048]
+
+  - name: reduce_scatter
+    mesh_shape: "4x4x8"
+    sweep:
+      matrix_dim: [512, 1024, 2048]
+
+  - name: hbm_bandwidth
+    sweep:
+      # Sweep from 1MB to 1GB
+      # size is number of elements, so for bfloat16 (2 bytes):
+      # 512K elements = 1MB (total 2MB moved)
+      # 512M elements = 1GB (total 2GB moved)
+      size: 
+        start: 524288 # 0.5M elements
+        end: 536870912 # 512M elements
+        multiplier: 2

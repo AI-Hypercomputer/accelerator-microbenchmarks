@@ -1,0 +1,10 @@
+load("//devtools/python/blaze:pytype.bzl", "pytype_strict_binary")
+
+pytype_strict_binary(
+    name = "test_xplane",
+    srcs = ["test_xplane.py"],
+    deps = [
+        "//third_party/py/jax",
+        "//third_party/tensorflow/tsl/profiler/protobuf:xplane_pb2_py",
+    ],
+)
