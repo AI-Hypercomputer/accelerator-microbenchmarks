@@ -468,9 +468,6 @@ def run_single_benchmark(
 def main(args):
   """Main function."""
   # Initialize distributed JAX for multi-host synchronization
-  print(
-      f"--- PRE-INIT Local Devices: {jax.local_device_count()} ---", flush=True
-  )
   jax.distributed.initialize()
   print(
       f"--- POST-INIT Global Devices: {jax.device_count()} | Local:"
