@@ -366,6 +366,7 @@ def run_single_benchmark(
 
   if nightly_limit > 0:
     ## sample a total of 4 configs from the benchmark_params
+    random.seed(42)
     benchmark_params = random.sample(benchmark_params, nightly_limit)
   # Run the benchmark
   calculate_metrics_results = []
