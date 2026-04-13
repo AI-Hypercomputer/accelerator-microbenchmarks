@@ -446,6 +446,13 @@ def run_single_benchmark(
       )
     # Post process the xla dump
     calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
+
+    # Sync all hosts before moving to the next iteration/mesh topology
+    try:
+      jax.distributed.barrier()
+    except Exception as e:
+      print(f"Distributed barrier failed: {e}")
+
     if demo:
       break
   # Dump metrics to file.
@@ -459,6 +466,9 @@ def run_single_benchmark(
 
 def main(args):
   """Main function."""
+  # Initialize distributed JAX for multi-host synchronization
+  jax.distributed.initialize()
+
   # Load configuration
   if args.config_string:
     decoded_bytes = base64.b64decode(args.config_string)
