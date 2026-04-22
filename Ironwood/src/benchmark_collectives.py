@@ -375,19 +375,6 @@ def psum_scatter_benchmark(
   #     "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
   #     "--xla_tpu_enable_3d_reduce_scatter_decomposer=false",
   # ]
-  # libtpu_init_args = [
-  #     "--xla_jf_debug_level=3",
-  #     "--xla_sc_disable_megacore_partitioning=true",
-  #     "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
-  #     "--xla_tpu_enable_reduce_scatter_offload_tracing=true",
-  #     "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
-  #     "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
-  #     "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
-  #     "--xla_tpu_use_tc_device_shape_on_sc=true",
-  #     "--xla_tpu_enable_3d_reduce_scatter_decomposer=false",
-  #     "--xla_tpu_enable_sparse_core_reduce_scatter_padding=false",
-  #     f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-  # ]
   libtpu_init_args = [
       "--xla_jf_debug_level=3",
       "--xla_sc_disable_megacore_partitioning=true",
@@ -397,8 +384,22 @@ def psum_scatter_benchmark(
       "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
       "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
       "--xla_tpu_use_tc_device_shape_on_sc=true",
+      "--xla_tpu_enable_3d_reduce_scatter_decomposer=false",
+      "--xla_tpu_enable_sparse_core_reduce_scatter_padding=false",
+      "--xla_tpu_use_single_sparse_core_for_reduce_scatter_offload=false",
       f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
   ]
+  # libtpu_init_args = [
+  #     "--xla_jf_debug_level=3",
+  #     "--xla_sc_disable_megacore_partitioning=true",
+  #     "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
+  #     "--xla_tpu_enable_reduce_scatter_offload_tracing=true",
+  #     "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
+  #     "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
+  #     "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
+  #     "--xla_tpu_use_tc_device_shape_on_sc=true",
+  #     f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
+  # ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   mesh = create_mesh(ici_size, mesh_shape)
 
