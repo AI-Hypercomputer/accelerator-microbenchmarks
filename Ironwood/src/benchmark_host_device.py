@@ -96,8 +96,8 @@ def benchmark_host_device(
                 device_array.delete()
 
     return {
-        "H2D_Bandwidth_ms": h2d_perf,
-        "D2H_Bandwidth_ms": d2h_perf,
+        "h2d_bandwidth_ms": h2d_perf,
+        "d2h_bandwidth_ms": d2h_perf,
     }
 
 
