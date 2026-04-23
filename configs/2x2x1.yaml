@@ -1,0 +1,27 @@
+global:
+  system: "ironwood"
+  warmup_tries: 2
+  num_runs: 5
+  dtype: "bfloat16"
+  xprof_timing: true
+
+benchmarks:
+  # Sweep over different sizes for gemm_generalized
+  - name: gemm_generalized
+    sweep:
+      m: {start: 1024, end: 4096, multiplier: 2}
+      k: 2048
+      n: 2048
+
+  # gemm_generalized demonstration
+  - name: gemm_generalized
+    m: 2048
+    k: 2048
+    n: 2048
+
+  - name: hbm_bandwidth
+    sweep:
+      size: 
+        start: 524288 # 0.5M elements
+        end: 536870912 # 512M elements
+        multiplier: 2

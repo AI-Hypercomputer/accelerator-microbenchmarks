@@ -1,0 +1,35 @@
+# High-Fidelity Study Configuration: LLM-200B
+global:
+  min_duration_s: 5.0 # Power-aware sustained run
+  warmup_tries: 10
+  num_runs: 5
+  dtype: "bfloat16"
+
+benchmarks:
+  # Microbenchmarks (Section 3.1)
+  - name: gemm_generalized
+    model: "LLM-200B"
+    in_dtype: "float8_e4m3fn"
+    use_scaling_factors: true
+    sweep:
+      m: [1024, 2048, 4096]
+      k: 16384 # model_dim
+      n: 16384
+  
+  - name: swiglu
+    model: "LLM-200B"
+    dim: 16384 # model_dim
+  
+  - name: attention_flashed
+    model: "LLM-200B"
+    causal: true
+  
+  # Component Benchmarks (Section 3.4)
+  # Configuration C1 from Table
+  - name: transformer_layer_moe
+    model: "LLM-200B"
+    tp: 4
+    etp: 1
+    cp: 2
+    ep: 16
+    mslen: 8192 # seq_len / cp

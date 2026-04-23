@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jax-benchmarks"
+version = "0.1.0"
+description = "Clean, modular, and high-fidelity JAX microbenchmarks for TPU/GPU."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "absl-py",
+    "jax[tpu]",
+    "jaxlib",
+    "numpy",
+    "pandas",
+    "pyyaml",
+]
+
+[project.scripts]
+jax-bench = "jax_benchmarks.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["jax_benchmarks*"]

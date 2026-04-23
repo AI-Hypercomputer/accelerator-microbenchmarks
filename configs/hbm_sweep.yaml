@@ -1,0 +1,17 @@
+# HBM Bandwidth Sweep
+global:
+  warmup_tries: 5
+  num_runs: 20
+  dtype: "bfloat16"
+
+benchmarks:
+  - name: hbm_bandwidth
+    sweep:
+      # Sweep from 1MB to 1GB
+      # size is number of elements, so for bfloat16 (2 bytes):
+      # 512K elements = 1MB (total 2MB moved)
+      # 512M elements = 1GB (total 2GB moved)
+      size: 
+        start: 524288 # 0.5M elements
+        end: 536870912 # 512M elements
+        multiplier: 2

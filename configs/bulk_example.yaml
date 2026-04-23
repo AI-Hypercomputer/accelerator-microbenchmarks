@@ -1,0 +1,24 @@
+# Bulk Benchmark Example
+global:
+  warmup_tries: 2
+  num_runs: 5
+  dtype: "bfloat16"
+
+hardware:
+  peak_tflops: 459.0
+  hbm_bw: 1600.0
+
+benchmarks:
+  # Method 1: YAML Sweeps (Cartesian Product)
+  - name: gemm_generalized
+    sweep:
+      m: [1024, 2048]
+      k: [4096]
+      n: {start: 512, end: 2048, multiplier: 2} # 512, 1024, 2048
+    in_dtype: "float8_e4m3fn"
+    out_dtype: "bfloat16"
+
+  # Method 2: CSV Ingestion (Specific rows)
+  # Uncomment the line below to test with a local CSV
+  # - name: hbm_bandwidth
+  #   csv_shapes: "configs/memory_shapes.csv"

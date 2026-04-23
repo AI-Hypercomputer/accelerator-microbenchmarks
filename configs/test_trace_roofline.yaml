@@ -1,0 +1,20 @@
+# Trace-Based Roofline Verification Config
+global:
+  warmup_tries: 2
+  num_runs: 5
+  dtype: "bfloat16"
+  use_trace_roofline: true
+
+hardware:
+  peak_tflops: 459.0
+  hbm_bw: 1200.0
+
+benchmarks:
+  - name: gemm_generalized
+    m: 1024
+    k: 1024
+    n: 1024
+    in_dtype: "bfloat16"
+    out_dtype: "bfloat16"
+  - name: simple_add
+    size: 1048576

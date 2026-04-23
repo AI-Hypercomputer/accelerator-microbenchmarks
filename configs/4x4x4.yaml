@@ -1,0 +1,28 @@
+global:
+  system: "ironwood"
+  warmup_tries: 2
+  num_runs: 5
+  dtype: "bfloat16"
+  xprof_timing: true
+
+benchmarks:
+  # Collective communication demonstration
+  - name: all_reduce_sum
+    mesh_shape: "4x4x4"
+    sweep:
+      matrix_dim: [512, 1024, 2048]
+
+  - name: all_gather
+    mesh_shape: "4x4x4"
+    sweep:
+      matrix_dim: [512, 1024, 2048]
+
+  - name: all_to_all
+    mesh_shape: "4x4x4"
+    sweep:
+      matrix_dim: [512, 1024, 2048]
+
+  - name: reduce_scatter
+    mesh_shape: "4x4x4"
+    sweep:
+      matrix_dim: [512, 1024, 2048]

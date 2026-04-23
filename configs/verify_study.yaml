@@ -1,0 +1,15 @@
+global:
+  min_duration_s: 2.0 # Test the sustained run logic
+  warmup_tries: 2
+  num_runs: 2
+
+benchmarks:
+  - name: gemm_generalized
+    m: 1024
+    k: 1024
+    n: 1024
+    in_dtype: "float8_e4m3fn"
+  
+  - name: quantization
+    m: 2048
+    n: 2048
