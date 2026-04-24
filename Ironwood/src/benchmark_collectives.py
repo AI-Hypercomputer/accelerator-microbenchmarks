@@ -8,10 +8,10 @@ from typing import Any, Dict
 from benchmark_utils import find_sparsecore_usage_from_xplane
 from benchmark_utils import get_lhs_named_shading
 from benchmark_utils import get_out_sharding
+from benchmark_utils import get_real_dtype_bytes
 from benchmark_utils import MetricsStatistics
 from benchmark_utils import multiple_iteration_timeit_from_trace
 from benchmark_utils import ShardingStrategy
-from benchmark_utils import get_real_dtype_bytes
 from common import MARKER
 import jax
 from jax import core
@@ -29,6 +29,7 @@ SEED = 0
 GLOBAL_SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 GLOBAL_PSTATE = 7
 LOG_SPARSECORE_USAGE = True
+
 
 def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
   """Creates a mesh with the given ICI size."""
@@ -67,7 +68,7 @@ def get_metrics_helper(
     params: Dict[str, Any],
 ) -> Dict[str, Any]:
   """Helper function to build the metrics and metadata for the benchmark."""
-  exclude_keys = ["ici_average_time_ms" ,"xla_output"]
+  exclude_keys = ["ici_average_time_ms", "xla_output"]
   metadata = {
       key: value
       for key, value in params
@@ -92,8 +93,8 @@ def unified_ici_collectives_metrics(
   """Calculates the metrics for the ICI collectives benchmark."""
 
   average_time_ms_statistics = MetricsStatistics(
-        metrics_list=ici_average_time_ms_list, metrics_name="step_time_ms"
-    )
+      metrics_list=ici_average_time_ms_list, metrics_name="step_time_ms"
+  )
   hlo_input_shape = hlo_output_shape = hlo_replica_groups = None
   hlo_first_replica_group = []
 
@@ -138,7 +139,7 @@ def unified_ici_collectives_metrics(
         * 0.000000001
         * tf_multiplier
         * 2
-        /rank
+        / rank
     )
   elif op_type in ["RS", "A2A"]:
     transferred_data = (
@@ -154,7 +155,9 @@ def unified_ici_collectives_metrics(
   if LOG_SPARSECORE_USAGE:
     print("trace_dir: ", trace_dir)
     if trace_dir:
-      sparsecore_used, xplane_file = find_sparsecore_usage_from_xplane(trace_dir)
+      sparsecore_used, xplane_file = find_sparsecore_usage_from_xplane(
+          trace_dir
+      )
     print("sparsecore_used: ", sparsecore_used)
   print("hlo first replica group: ", hlo_first_replica_group)
 
@@ -179,10 +182,12 @@ def unified_ici_collectives_metrics(
       "dtype": str(dtype),
       "num_runs": len(ici_average_time_ms_list),
   }
-  achieved_bw = [transferred_data*1000/my_time for my_time in ici_average_time_ms_list]
+  achieved_bw = [
+      transferred_data * 1000 / my_time for my_time in ici_average_time_ms_list
+  ]
   achieved_bw_statistics = MetricsStatistics(
-        metrics_list=achieved_bw, metrics_name="achieved_bw (GB/s)"
-    )
+      metrics_list=achieved_bw, metrics_name="achieved_bw (GB/s)"
+  )
   metrics = {}
   metrics.update(average_time_ms_statistics.serialize_statistics())
   metrics.update(achieved_bw_statistics.serialize_statistics())
@@ -272,7 +277,7 @@ def psum_benchmark(
   def f(x):
     with jax.named_scope(MARKER):
       y = jax.lax.psum(x, sharding_axis)
-    # Insert the custom call to prevent y from being a live out buffer
+      # Insert the custom call to prevent y from being a live out buffer
       return zero_crop(y)
 
   jit_sharded_f = jax.jit(
@@ -385,10 +390,7 @@ def psum_scatter_benchmark(
       "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
       "--xla_tpu_use_tc_device_shape_on_sc=true",
       "--xla_tpu_enable_3d_reduce_scatter_decomposer=false",
-      "--xla_tpu_enable_sparse_core_reduce_scatter_padding=false",
-      "--xla_tpu_use_single_sparse_core_for_reduce_scatter_offload=false",
       f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-      "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
   ]
   # libtpu_init_args = [
   #     "--xla_jf_debug_level=3",
