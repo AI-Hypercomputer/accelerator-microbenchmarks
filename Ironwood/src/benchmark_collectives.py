@@ -406,6 +406,8 @@ def psum_scatter_benchmark(
   #     f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
   # ]
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+  
+  print("libtpu_init_args: ", os.environ["LIBTPU_INIT_ARGS"])
   mesh = create_mesh(ici_size, mesh_shape)
 
   sharding_axis = get_sharding_axis(sharding_strategy, mesh)

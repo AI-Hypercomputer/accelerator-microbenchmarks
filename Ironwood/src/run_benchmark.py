@@ -449,10 +449,10 @@ def run_single_benchmark(
     calculate_metrics_results.append({"metadata": metadata, "metrics": metrics})
 
     # Sync all hosts before moving to the next iteration/mesh topology
-    try:
-      jax.distributed.barrier()
-    except Exception as e:
-      print(f"Distributed barrier failed: {e}")
+    # try:
+    #   jax.distributed.barrier()
+    # except Exception as e:
+    #   print(f"Distributed barrier failed: {e}")
 
     if demo:
       break
@@ -468,12 +468,12 @@ def run_single_benchmark(
 def main(args):
   """Main function."""
   # Initialize distributed JAX for multi-host synchronization
-  jax.distributed.initialize()
-  print(
-      f"--- POST-INIT Global Devices: {jax.device_count()} | Local:"
-      f" {jax.local_device_count()} ---",
-      flush=True,
-  )
+  # jax.distributed.initialize()
+  # print(
+  #     f"--- POST-INIT Global Devices: {jax.device_count()} | Local:"
+  #     f" {jax.local_device_count()} ---",
+  #     flush=True,
+  # )
 
   # Load configuration
   if args.config_string:
