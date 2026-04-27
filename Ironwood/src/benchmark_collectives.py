@@ -54,6 +54,17 @@ def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
   return mesh
 
 
+def initialize_benchmark(libtpu_init_args: list[str], ici_size: int, mesh_shape: str) -> Mesh:
+  """Initializes environment and distributed JAX, and creates mesh."""
+  os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+  print("libtpu_init_args: ", os.environ["LIBTPU_INIT_ARGS"])
+  try:
+    jax.distributed.initialize()
+  except Exception as e:
+    print(f"JAX distributed initialization: {e}")
+  return create_mesh(ici_size, mesh_shape)
+
+
 def get_sharding_axis(dim_str: str, mesh: Mesh) -> tuple[str, ...]:
   """Computes sharding axis names from dimension string like '1x4' and mesh."""
   dim_tuple = dim_str.split("x")
@@ -236,8 +247,7 @@ def psum_benchmark(
       "--xla_tpu_use_tc_device_shape_on_sc=true",
       f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
   ]
-  os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-  mesh = create_mesh(ici_size, mesh_shape)
+  mesh = initialize_benchmark(libtpu_init_args, ici_size, mesh_shape)
   key = jax.random.key(SEED)
   lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
   out_sharding = get_out_sharding(GLOBAL_SHARDING_STRATEGY)
@@ -405,10 +415,7 @@ def psum_scatter_benchmark(
   #     "--xla_tpu_use_tc_device_shape_on_sc=true",
   #     f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
   # ]
-  os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-  
-  print("libtpu_init_args: ", os.environ["LIBTPU_INIT_ARGS"])
-  mesh = create_mesh(ici_size, mesh_shape)
+  mesh = initialize_benchmark(libtpu_init_args, ici_size, mesh_shape)
 
   sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
@@ -525,8 +532,7 @@ def all_gather_benchmark(
       "--xla_tpu_scoped_vmem_limit_kib=65536",
   ]
   # libtpu_init_args=[ ]
-  os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-  mesh = create_mesh(ici_size, mesh_shape)
+  mesh = initialize_benchmark(libtpu_init_args, ici_size, mesh_shape)
 
   sharding_axis = get_sharding_axis(sharding_strategy, mesh)
 
@@ -629,8 +635,7 @@ def all_to_all_benchmark(
       "--xla_jf_debug_level=3",
       f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
   ]
-  os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-  mesh = create_mesh(ici_size, mesh_shape)
+  mesh = initialize_benchmark(libtpu_init_args, ici_size, mesh_shape)
   key = jax.random.key(SEED)
   lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
   out_sharding = get_out_sharding(GLOBAL_SHARDING_STRATEGY)
