@@ -112,16 +112,19 @@ BENCHMARK_MAP.update(COMPUTE_BENCHMARK_MAP)
 BENCHMARK_MAP.update(HOST_DEVICE_BENCHMARK_MAP)
 
 
-# Mapping from dtype string to actual dtype object
-dtype_mapping = {
-    "bfloat16": jax.numpy.bfloat16,
-    "float32": jax.numpy.float32,
-    "int32": jax.numpy.int32,
-    "float8": jax.numpy.float8_e4m3fn,
-    "float16": jax.numpy.float16,
-    "float4": jax.numpy.float4_e2m1fn,
-    # Add other dtypes as needed
-}
+def get_dtype(dtype_str):
+  """Maps dtype string to actual dtype object."""
+  dtype_mapping = {
+      "bfloat16": jax.numpy.bfloat16,
+      "float32": jax.numpy.float32,
+      "int32": jax.numpy.int32,
+      "float8": jax.numpy.float8_e4m3fn,
+      "float16": jax.numpy.float16,
+      "float4": jax.numpy.float4_e2m1fn,
+  }
+  if dtype_str not in dtype_mapping:
+    raise ValueError(f"Unsupported dtype: {dtype_str}")
+  return dtype_mapping[dtype_str]
 
 # Always dump HLOs
 TMP_XLA_DUMP_DIR = "/tmp/microbenchmarks/hlo_graphs"
@@ -175,10 +178,7 @@ def preprocess_benchmark_param(
     """Preprocess the benchmark parameter before running the benchmark."""
     if "dtype" in benchmark_param:
         dtype_str = benchmark_param["dtype"]
-        if dtype_str in dtype_mapping:
-            benchmark_param["dtype"] = dtype_mapping[dtype_str]
-        else:
-            raise ValueError(f"Unsupported dtype: {dtype_str}")
+        benchmark_param["dtype"] = get_dtype(dtype_str)
 
     # Handle "SAME_AS_" parameters.
     # For example, if "n" is "SAME_AS_m", then "n" will

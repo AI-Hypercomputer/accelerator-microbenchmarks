@@ -60,6 +60,11 @@ def initialize_benchmark(libtpu_init_args: list[str], ici_size: int, mesh_shape:
   print("libtpu_init_args: ", os.environ["LIBTPU_INIT_ARGS"])
   try:
     jax.distributed.initialize()
+    print(
+        f"--- POST-INIT Global Devices: {jax.device_count()} | Local:"
+        f" {jax.local_device_count()} ---",
+        flush=True,
+    )
   except Exception as e:
     print(f"JAX distributed initialization: {e}")
   return create_mesh(ici_size, mesh_shape)
