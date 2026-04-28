@@ -481,12 +481,8 @@ def main(args):
     benchmark_config = benchmarks[0]
     benchmark_name = benchmark_config.get("benchmark_name")
     
-    # Extract operation key
-    op_key = None
-    for key in COLLECTIVE_BENCHMARK_MAP:
-      if benchmark_name.startswith(key):
-        op_key = key
-        break
+    # Extract operation key via strict match
+    op_key = benchmark_name if benchmark_name in COLLECTIVE_BENCHMARK_MAP else None
         
     if op_key:
       flags_file = "Ironwood/src/op_flags.yaml"
