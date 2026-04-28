@@ -468,12 +468,12 @@ def run_single_benchmark(
 def main(args):
   """Main function."""
   # Initialize distributed JAX for multi-host synchronization
-  jax.distributed.initialize()
-  print(
-      f"--- POST-INIT Global Devices: {jax.device_count()} | Local:"
-      f" {jax.local_device_count()} ---",
-      flush=True,
-  )
+  #   jax.distributed.initialize()
+  #   print(
+  #       f"--- POST-INIT Global Devices: {jax.device_count()} | Local:"
+  #       f" {jax.local_device_count()} ---",
+  #       flush=True,
+  #   )
 
   # Load configuration
   if args.config_string:
