@@ -10,13 +10,7 @@ import numpy as np
 from benchmark_utils import MetricsStatistics
 
 
-libtpu_init_args = [
-    "--xla_tpu_dvfs_p_state=7",
-]
-os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-# 64 GiB
-os.environ["TPU_PREMAPPED_BUFFER_SIZE"] = "68719476736"
-os.environ["TPU_PREMAPPED_BUFFER_TRANSFER_THRESHOLD_BYTES"] = "68719476736"
+# Flags and premapped buffer sizes are now handled in run_benchmark.py main
 
 
 def benchmark_host_device(

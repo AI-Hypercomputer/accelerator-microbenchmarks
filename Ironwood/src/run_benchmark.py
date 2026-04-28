@@ -467,14 +467,6 @@ def run_single_benchmark(
 
 def main(args):
   """Main function."""
-  # Initialize distributed JAX for multi-host synchronization
-  #   jax.distributed.initialize()
-  #   print(
-  #       f"--- POST-INIT Global Devices: {jax.device_count()} | Local:"
-  #       f" {jax.local_device_count()} ---",
-  #       flush=True,
-  #   )
-
   # Load configuration
   if args.config_string:
     decoded_bytes = base64.b64decode(args.config_string)
@@ -483,6 +475,50 @@ def main(args):
   else:
     config_path = args.config
     config = get_benchmark_config(config_path)
+
+  benchmarks = config.get("benchmarks")
+  if benchmarks:
+    benchmark_config = benchmarks[0]
+    benchmark_name = benchmark_config.get("benchmark_name")
+    
+    # Extract operation key
+    op_key = None
+    for key in COLLECTIVE_BENCHMARK_MAP:
+      if benchmark_name.startswith(key):
+        op_key = key
+        break
+        
+    if op_key:
+      flags_file = "Ironwood/src/op_flags.yaml"
+      if os.environ.get("CONFIG_STRING"):
+        print("Using config string, skipping flags file check.")
+      elif os.path.exists(flags_file):
+        with open(flags_file, "r") as f:
+          op_flags = yaml.safe_load(f)
+        
+        if op_key in op_flags:
+          flags = op_flags[op_key]
+          if isinstance(flags, list):
+            os.environ["LIBTPU_INIT_ARGS"] = " ".join(flags)
+            print("Set LIBTPU_INIT_ARGS from file: ", os.environ["LIBTPU_INIT_ARGS"])
+          elif isinstance(flags, dict):
+            if "flags" in flags:
+              os.environ["LIBTPU_INIT_ARGS"] = " ".join(flags["flags"])
+              print("Set LIBTPU_INIT_ARGS from file: ", os.environ["LIBTPU_INIT_ARGS"])
+            if "env" in flags:
+              for k, v in flags["env"].items():
+                os.environ[k] = str(v)
+                print(f"Set env {k} from file: {v}")
+          
+  try:
+    jax.distributed.initialize()
+    print(
+        f"--- POST-INIT Global Devices: {jax.device_count()} | Local:"
+        f" {jax.local_device_count()} ---",
+        flush=True,
+    )
+  except Exception as e:
+    print(f"JAX distributed initialization in main failed: {e}")
 
   multithreaded = args.multithreaded
   output_path = args.output_path

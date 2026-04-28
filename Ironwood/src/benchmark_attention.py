@@ -23,9 +23,7 @@ tune_jax.tune_logger.setLevel(logging.ERROR)
 
 # pylint: disable=g-importing-member,g-bad-import-order
 
-os.environ["LIBTPU_INIT_ARGS"] = (
-    "--xla_tpu_dvfs_p_state=7"
-)
+# Flags are now handled in run_benchmark.py main
 
 def generate_qkv_separate_dims(
     batch_size: int,

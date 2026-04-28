@@ -59,7 +59,7 @@ def initialize_benchmark(libtpu_init_args: list[str], ici_size: int, mesh_shape:
   os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
   print("libtpu_init_args: ", os.environ["LIBTPU_INIT_ARGS"])
   try:
-    jax.distributed.initialize()
+    # jax.distributed.initialize()
     print(
         f"--- POST-INIT Global Devices: {jax.device_count()} | Local:"
         f" {jax.local_device_count()} ---",
@@ -240,18 +240,7 @@ def psum_benchmark(
     The measured time for the ICI benchmark.
   """
 
-  libtpu_init_args = [
-      "--xla_jf_debug_level=3",
-      "--xla_sc_disable_megacore_partitioning=true",
-      "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
-      "--xla_tpu_enable_all_reduce_offload_tracing=true",
-      "--xla_tpu_enable_all_reduce_scatter_fusion=false",
-      "--xla_tpu_enable_sparse_core_collective_offload_all_reduce=true",
-      "--xla_tpu_pad_operations_input_tiles=true",
-      "--xla_tpu_sparse_core_all_reduce_offload_min_size_in_bytes=0",
-      "--xla_tpu_use_tc_device_shape_on_sc=true",
-      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-  ]
+  libtpu_init_args = []
   mesh = initialize_benchmark(libtpu_init_args, ici_size, mesh_shape)
   key = jax.random.key(SEED)
   lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
@@ -395,20 +384,7 @@ def psum_scatter_benchmark(
   #     "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
   #     "--xla_tpu_enable_3d_reduce_scatter_decomposer=false",
   # ]
-  libtpu_init_args = [
-      "--xla_jf_debug_level=3",
-      "--xla_sc_disable_megacore_partitioning=true",
-      "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
-      "--xla_tpu_enable_reduce_scatter_offload_tracing=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true",
-      "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true",
-      "--xla_tpu_use_tc_device_shape_on_sc=true",
-      "--xla_tpu_enable_3d_reduce_scatter_decomposer=false",
-      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-      "--xla_tpu_use_single_sparse_core_for_reduce_scatter_offload=false",
-      "--xla_tpu_enable_sparse_core_reduce_scatter_padding=true",
-  ]
+  libtpu_init_args = []
   # libtpu_init_args = [
   #     "--xla_jf_debug_level=3",
   #     "--xla_sc_disable_megacore_partitioning=true",
@@ -523,19 +499,7 @@ def all_gather_benchmark(
   Returns:
     The measured time for the ICI benchmark.
   """
-  libtpu_init_args = [
-      "--xla_jf_debug_level=3",
-      "--xla_sc_disable_megacore_partitioning=true",
-      "--xla_tpu_disable_sparse_core_collective_offload_remover=true",
-      "--xla_tpu_enable_all_gather_offload_tracing=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_2d_all_gather=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_3d_all_gather=true",
-      "--xla_tpu_enable_sparse_core_collective_offload_all_gather=true",
-      "--xla_tpu_use_single_sparse_core_for_all_gather_offload=true",
-      "--xla_tpu_use_tc_device_shape_on_sc=true",
-      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-      "--xla_tpu_scoped_vmem_limit_kib=65536",
-  ]
+  libtpu_init_args = []
   # libtpu_init_args=[ ]
   mesh = initialize_benchmark(libtpu_init_args, ici_size, mesh_shape)
 
@@ -636,10 +600,7 @@ def all_to_all_benchmark(
   Returns:
     The measured time for the ICI benchmark.
   """
-  libtpu_init_args = [
-      "--xla_jf_debug_level=3",
-      f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
-  ]
+  libtpu_init_args = []
   mesh = initialize_benchmark(libtpu_init_args, ici_size, mesh_shape)
   key = jax.random.key(SEED)
   lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)

@@ -15,12 +15,7 @@ import tempfile
 
 P = jax.sharding.PartitionSpec
 
-os.environ['LIBTPU_INIT_ARGS'] = (
-    '--xla_tpu_collect_sflag_wait_stats_trace=true '
-    '--xla_tpu_force_global_barriers=true '
-    '--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1 '
-    '--xla_tpu_dvfs_p_state=7 '
-)
+# Flags are now handled in run_benchmark.py main
 
 
 def _run_under_xprof(

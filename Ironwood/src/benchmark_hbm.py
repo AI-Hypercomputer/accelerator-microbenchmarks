@@ -14,11 +14,7 @@ import jax.numpy as jnp
 
 
 SEED = 0
-os.environ["LIBTPU_INIT_ARGS"] = (
-    "--xla_tpu_scoped_vmem_limit_kib=65536 "
-    "--xla_jf_bounds_check=false "
-    "--xla_tpu_dvfs_p_state=7 "
-)
+# Flags are now handled in run_benchmark.py main
 
 def get_metrics_helper(
     params: Dict[str, Any],

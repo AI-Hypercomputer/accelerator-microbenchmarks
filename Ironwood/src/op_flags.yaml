@@ -1,0 +1,119 @@
+gemm_flags: &gemm_flags
+  - "--xla_tpu_enable_async_collective_fusion=true"
+  - "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true"
+  - "--xla_tpu_enable_async_collective_fusion_multiple_steps=true"
+  - "--xla_tpu_overlap_compute_collective_tc=true"
+  - "--xla_enable_async_all_gather=true"
+  - "--xla_enable_async_collective_permute=true"
+  - "--xla_tpu_enable_all_experimental_scheduler_features=true"
+  - "--xla_tpu_accumulate_into_mrb=true"
+  - "--xla_tpu_scoped_vmem_limit_kib=65536"
+  - "--xla_tpu_vmem_scavenging_mode=NONE"
+  - "--xla_tpu_dvfs_p_state=7"
+
+gemm_numerics_flags: &gemm_numerics_flags
+  - "--xla_tpu_enable_async_collective_fusion=true"
+  - "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true"
+  - "--xla_tpu_enable_async_collective_fusion_multiple_steps=true"
+  - "--xla_tpu_overlap_compute_collective_tc=true"
+  - "--xla_enable_async_all_gather=true"
+  - "--xla_enable_async_collective_permute=true"
+  - "--xla_tpu_enable_all_experimental_scheduler_features=true"
+  - "--xla_tpu_accumulate_into_mrb=true"
+  - "--xla_tpu_scoped_vmem_limit_kib=65536"
+  - "--xla_tpu_allow_conv_input_fusion_with_downcast_convert=true"
+  - "--xla_tpu_dvfs_p_state=7"
+
+psum:
+  - "--xla_jf_debug_level=3"
+  - "--xla_sc_disable_megacore_partitioning=true"
+  - "--xla_tpu_disable_sparse_core_collective_offload_remover=true"
+  - "--xla_tpu_enable_all_reduce_offload_tracing=true"
+  - "--xla_tpu_enable_all_reduce_scatter_fusion=false"
+  - "--xla_tpu_enable_sparse_core_collective_offload_all_reduce=true"
+  - "--xla_tpu_pad_operations_input_tiles=true"
+  - "--xla_tpu_sparse_core_all_reduce_offload_min_size_in_bytes=0"
+  - "--xla_tpu_use_tc_device_shape_on_sc=true"
+  - "--xla_tpu_dvfs_p_state=7"
+
+psum_scatter:
+  - "--xla_jf_debug_level=3"
+  - "--xla_sc_disable_megacore_partitioning=true"
+  - "--xla_tpu_disable_sparse_core_collective_offload_remover=true"
+  - "--xla_tpu_enable_reduce_scatter_offload_tracing=true"
+  - "--xla_tpu_enable_sparse_core_collective_offload_nd_reduce_scatter=true"
+  - "--xla_tpu_enable_sparse_core_collective_offload_reduce_scatter=true"
+  - "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true"
+  - "--xla_tpu_use_tc_device_shape_on_sc=true"
+  - "--xla_tpu_enable_3d_reduce_scatter_decomposer=false"
+  - "--xla_tpu_dvfs_p_state=7"
+  - "--xla_tpu_use_single_sparse_core_for_reduce_scatter_offload=false"
+  - "--xla_tpu_enable_sparse_core_reduce_scatter_padding=true"
+
+all_gather:
+  - "--xla_jf_debug_level=3"
+  - "--xla_sc_disable_megacore_partitioning=true"
+  - "--xla_tpu_disable_sparse_core_collective_offload_remover=true"
+  - "--xla_tpu_enable_all_gather_offload_tracing=true"
+  - "--xla_tpu_enable_sparse_core_collective_offload_2d_all_gather=true"
+  - "--xla_tpu_enable_sparse_core_collective_offload_3d_all_gather=true"
+  - "--xla_tpu_enable_sparse_core_collective_offload_all_gather=true"
+  - "--xla_tpu_use_single_sparse_core_for_all_gather_offload=true"
+  - "--xla_tpu_use_tc_device_shape_on_sc=true"
+  - "--xla_tpu_dvfs_p_state=7"
+  - "--xla_tpu_scoped_vmem_limit_kib=65536"
+
+all_to_all:
+  - "--xla_jf_debug_level=3"
+  - "--xla_tpu_dvfs_p_state=7"
+
+send_recv:
+  - "--xla_tpu_collect_sflag_wait_stats_trace=true"
+  - "--xla_tpu_force_global_barriers=true"
+  - "--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1"
+  - "--xla_tpu_dvfs_p_state=7"
+
+host_device:
+  flags:
+    - "--xla_tpu_dvfs_p_state=7"
+  env:
+    TPU_PREMAPPED_BUFFER_SIZE: "68719476736"
+    TPU_PREMAPPED_BUFFER_TRANSFER_THRESHOLD_BYTES: "68719476736"
+
+single_device_hbm_copy:
+  - "--xla_tpu_scoped_vmem_limit_kib=65536"
+  - "--xla_jf_bounds_check=false"
+  - "--xla_tpu_dvfs_p_state=7"
+
+tokamax_splash_attention:
+  - "--xla_tpu_dvfs_p_state=7"
+
+gemm_simple: *gemm_flags
+gemm_simple_with_dtype: *gemm_flags
+gemm_multiple_run: *gemm_flags
+gemm: *gemm_flags
+gemm_accum: *gemm_flags
+gemm_throttling: *gemm_flags
+
+quantization: *gemm_flags
+transpose_quantization: *gemm_flags
+quantization_static_scaling: *gemm_flags
+transpose_quantization_static_scaling: *gemm_flags
+swiglu_fwd: *gemm_flags
+swiglu_bwd: *gemm_flags
+rmsnorm_fwd: *gemm_flags
+rmsnorm_bwd: *gemm_flags
+add: *gemm_flags
+
+inference_add: *gemm_flags
+inference_rmsnorm: *gemm_flags
+inference_silu_mul: *gemm_flags
+inference_sigmoid: *gemm_flags
+
+gemm_fp8_rowwise: *gemm_numerics_flags
+gemm_fp8_b128_fp32: *gemm_numerics_flags
+gemm_fp8_rowwise_static_scaling: *gemm_numerics_flags
+gemm_fp8_b128_fp32_static_scaling: *gemm_numerics_flags
+gemm_mxfp8_b32: *gemm_numerics_flags
+gemm_mxfp8_b32_static_scaling: *gemm_numerics_flags
+gemm_fp8_rowwise_w_dequantize: *gemm_numerics_flags
