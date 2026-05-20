@@ -291,6 +291,20 @@ def benchmark_host_device_calculate_metrics(
         )
         metrics.update(stats_bw.serialize_statistics())
 
+        if len(bw_list) > 1:
+            bw_array = np.array(bw_list)
+            sample_variance = np.var(bw_array, ddof=1)
+
+            metrics[f"{name}_bw (GiB/s)_sample_variance"] = sample_variance
+
+            print(
+                f"  {name}_bw (GiB/s) Sample Variance: {sample_variance:.4e}", 
+                flush=True
+            )
+        elif len(bw_list) == 1:
+            print(f"  {name}_bw (GiB/s): Only one sample, variance cannot be calculated.", flush=True)
+            metrics[f"{name}_bw_variance_GiBs"] = 0.0
+
     add_metric("H2D", H2D_Bandwidth_ms)
     add_metric("D2H", D2H_Bandwidth_ms)
 
