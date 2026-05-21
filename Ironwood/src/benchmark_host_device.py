@@ -295,7 +295,7 @@ def benchmark_host_device_calculate_metrics(
             bw_array = np.array(bw_list)
             sample_variance = np.var(bw_array, ddof=1)
 
-            metrics[f"{name}_bw (GiB/s)_sample_variance"] = sample_variance
+            metrics[f"{name}_bw (GiB/s)_variance"] = sample_variance
 
             print(
                 f"  {name}_bw (GiB/s) Sample Variance: {sample_variance:.4e}", 
