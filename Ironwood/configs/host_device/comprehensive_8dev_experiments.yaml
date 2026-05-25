@@ -1,6 +1,6 @@
 benchmarks:
 - benchmark_name: host_device
-  num_runs: 20
+  num_runs: 100
   benchmark_sweep_params:
   - transfer_type_list: ["pinned_memory", "simple", "pipelined"]
     num_devices_list: [8]
