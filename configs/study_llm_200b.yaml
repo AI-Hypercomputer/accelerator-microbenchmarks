@@ -10,7 +10,7 @@ benchmarks:
   - name: gemm_generalized
     model: "LLM-200B"
     in_dtype: "float8_e4m3fn"
-    use_scaling_factors: true
+    use_scaling_factors: false
     sweep:
       m: [1024, 2048, 4096]
       k: 16384 # model_dim
