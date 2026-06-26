@@ -77,26 +77,18 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark):
     sf0 = jax.random.normal(k3, (m, 1)).astype(jnp.float32) if use_sf else None
     sf1 = jax.random.normal(k4, (1, n)).astype(jnp.float32) if use_sf else None
 
-    # Explicit sharding for TPU performance
+    # Replicated sharding for computation ops to avoid discrepancies
     assert self.mesh is not None, "Mesh not initialized."
-    a_sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(self.mesh.axis_names[0], None)
-    )
-    b_sharding = jax.sharding.NamedSharding(
+    replicated_sharding = jax.sharding.NamedSharding(
         self.mesh, jax.sharding.PartitionSpec(None, None)
     )
 
-    a = jax.device_put(a, a_sharding)
-    b = jax.device_put(b, b_sharding)
+    a = jax.device_put(a, replicated_sharding)
+    b = jax.device_put(b, replicated_sharding)
 
     if use_sf:
-      sf0 = jax.device_put(sf0, a_sharding)
-      sf1 = jax.device_put(
-          sf1,
-          jax.sharding.NamedSharding(
-              self.mesh, jax.sharding.PartitionSpec(None, None)
-          ),
-      )
+      sf0 = jax.device_put(sf0, replicated_sharding)
+      sf1 = jax.device_put(sf1, replicated_sharding)
       return a, b, sf0, sf1
 
     return a, b

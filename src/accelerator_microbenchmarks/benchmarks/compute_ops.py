@@ -42,7 +42,7 @@ class SwiGLUBenchmark(base.BaseBenchmark):
     x = jax.device_put(
         x,
         jax.sharding.NamedSharding(
-            self.mesh, jax.sharding.PartitionSpec(self.mesh.axis_names[0], None)
+            self.mesh, jax.sharding.PartitionSpec(None, None)
         ),
     )
     return (x,)
@@ -105,7 +105,7 @@ class RMSNormBenchmark(base.BaseBenchmark):
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
     sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(self.mesh.axis_names[0], None)
+        self.mesh, jax.sharding.PartitionSpec(None, None)
     )
     x = jax.device_put(x, sharding)
     w = jax.device_put(
@@ -186,7 +186,7 @@ class RoPEBenchmark(base.BaseBenchmark):
       raise ValueError("Mesh not initialized.")
     sharding = jax.sharding.NamedSharding(
         self.mesh,
-        jax.sharding.PartitionSpec(self.mesh.axis_names[0], None, None, None),
+        jax.sharding.PartitionSpec(None, None, None, None),
     )
     x = jax.device_put(x, sharding)
     freq_cis = jax.device_put(
@@ -259,7 +259,7 @@ class QuantizationBenchmark(base.BaseBenchmark):
     x = jax.device_put(
         x,
         jax.sharding.NamedSharding(
-            self.mesh, jax.sharding.PartitionSpec(self.mesh.axis_names[0], None)
+            self.mesh, jax.sharding.PartitionSpec(None, None)
         ),
     )
     return (x,)
@@ -316,7 +316,7 @@ class AddBenchmark(base.BaseBenchmark):
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
     sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(self.mesh.axis_names[0])
+        self.mesh, jax.sharding.PartitionSpec(None)
     )
     return jax.device_put(x, sharding), jax.device_put(y, sharding)
 
