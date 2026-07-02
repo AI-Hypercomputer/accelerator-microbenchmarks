@@ -94,13 +94,13 @@ def apply_roofline_analysis(
       bw = 0.0
 
     # 2. Compute Roofline
-    roofline_tflops = min(peak_tflops, (intensity * bw) / 1000.0)
+    roofline_tflops = min(peak_tflops, (intensity * bw) / 1000.0)  # pyrefly: ignore[bad-specialization]
     metrics["roofline_tflops_limit"] = roofline_tflops
     metrics["peak_bw_at_size_gb_s"] = bw
 
     # 3. Efficiency
     actual_tflops = metrics.get("tflops_per_sec", 0.0)
-    if actual_tflops > 0 and roofline_tflops > 0:
+    if actual_tflops > 0 and roofline_tflops > 0:  # pyrefly: ignore[unsupported-operation]
       metrics["roofline_efficiency"] = (actual_tflops / roofline_tflops) * 100.0
 
     # 4. Bandwidth Efficiency (for memory bound ops)

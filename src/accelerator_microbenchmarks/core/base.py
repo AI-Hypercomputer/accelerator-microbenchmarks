@@ -326,7 +326,7 @@ class BaseBenchmark(abc.ABC):
           "xprof_dir_actual", params.get("xprof_dir", "/tmp/tensorboard")
       )
       cns_dir = params.get("xprof_dir_cns", xprof_dir)
-      metrics = profiler.parse_xprof_results(xprof_dir, cns_dir, metrics)
+      metrics = profiler.parse_xprof_results(xprof_dir, cns_dir, metrics)  # pyrefly: ignore[bad-argument-type]
 
     metrics["total_duration_s"] = time.perf_counter() - loop_start
     metrics["actual_runs"] = actual_runs

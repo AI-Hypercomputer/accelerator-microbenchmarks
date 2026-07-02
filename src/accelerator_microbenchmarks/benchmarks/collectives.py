@@ -125,7 +125,7 @@ class BaseCollectiveBenchmark(base.BaseBenchmark):
     # TODO(vvashishth): Verify shapes and sharding match before returning.
     shape = (num_devices, dim, dim)
     sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(sharding_axes, None, None)
+        self.mesh, jax.sharding.PartitionSpec(sharding_axes, None, None)  # pyrefly: ignore[bad-argument-type]
     )
     return shape, sharding
 
@@ -238,7 +238,7 @@ class AllReduceSumBenchmark(BaseCollectiveBenchmark):
   ) -> tuple[tuple[int, ...], jax.sharding.NamedSharding]:
     shape = (dim, _BASE_N, _BASE_K)
     sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None, None)
+        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
     )
     return shape, sharding
 
@@ -300,7 +300,7 @@ class AllGatherBenchmark(BaseCollectiveBenchmark):
   ):
     shape = (dim, _BASE_N, _BASE_K)
     sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None, None)
+        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
     )
     return shape, sharding
 
@@ -344,7 +344,7 @@ class AllToAllBenchmark(BaseCollectiveBenchmark):
   ):
     shape = (dim, _BASE_N, _BASE_K)
     sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None, None)
+        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
     )
     return shape, sharding
 
@@ -387,7 +387,7 @@ class ReduceScatterBenchmark(BaseCollectiveBenchmark):
   ):
     shape = (num_devices, dim, _REDUCE_SCATTER_K)
     sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None, None)
+        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
     )
     return shape, sharding
 
