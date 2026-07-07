@@ -11,32 +11,21 @@ import numpy as np
 MARKER = constants.MARKER
 
 
-def parse_xprof_results(xprof_dir: str, cns_dir: str, metrics: dict[str, Any]):
-  """Parses trace files to extract timing markers and stores xprof url in CNS."""
-
+def parse_xprof_durations(xprof_dir: str) -> list[float]:
+  """Parses trace files to extract timing markers and returns durations in ms."""
   trace_path = None
-  xplane_path = None
   for root, _, files in os.walk(xprof_dir):
     for file in files:
       if file.endswith(".json.gz"):
         trace_path = os.path.join(root, file)
         print(f"Found trace file: {trace_path}")
-        xplane_path = os.path.join(
-            root, file.replace("trace.json.gz", "xplane.pb")
-        )
-        print(f"Found xplane file: {xplane_path}")
         break
     if trace_path:
       break
 
-  if xplane_path and os.path.exists(xplane_path):
-    print(f"xplane_path found: {xplane_path}")
-  elif xplane_path:
-    print(f"xplane_path not found: {xplane_path}")
-
   if not trace_path or not os.path.exists(trace_path):
     print(f"No .json.gz trace file found in {xprof_dir}")
-    return metrics
+    return []
 
   # Read trace metrics
   with open(trace_path, "rb") as f_gz:
@@ -60,7 +49,7 @@ def parse_xprof_results(xprof_dir: str, cns_dir: str, metrics: dict[str, Any]):
 
   if not marker_done_events:
     print(f"Warning: No '{MARKER}' events found in {trace_path}")
-    return metrics
+    return []
 
   unique_pids = set([e["pid"] for e in marker_done_events])
   print(f"Unique PIDs: {unique_pids}")
@@ -75,7 +64,23 @@ def parse_xprof_results(xprof_dir: str, cns_dir: str, metrics: dict[str, Any]):
       durations_ms.append(float(e["dur"]) / 1e3)
 
   print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
+  return durations_ms
 
+
+def upload_xprof_trace(xprof_dir: str, cns_dir: str) -> str | None:
+  """Uploads xplane to xprof and stores xprof url in CNS. Returns xprof url."""
+  return None
+
+
+def parse_xprof_results(
+    xprof_dir: str, cns_dir: str, metrics: dict[str, Any]
+) -> dict[str, Any]:
+  """Parses trace files to extract timing markers and stores xprof url in CNS."""
+  xprof_url = upload_xprof_trace(xprof_dir, cns_dir)
+  if xprof_url:
+    metrics["xprof_url"] = xprof_url
+
+  durations_ms = parse_xprof_durations(xprof_dir)
   if durations_ms:
     metrics["xprof_avg_ms"] = float(np.mean(durations_ms))
     metrics["xprof_p50_ms"] = float(np.percentile(durations_ms, 50))

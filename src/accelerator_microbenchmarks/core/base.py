@@ -317,16 +317,48 @@ class BaseBenchmark(abc.ABC):
     end_ts = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
 
     # 4. Finalize Results
+    # Calculate host-side metrics
     metrics = self.calculate_metrics(raw_times, **params)
-    metrics = self.apply_roofline_analysis(metrics, **params)
+
+    xprof_url = None
+    xprof_durations = None
 
     if params.get("xprof_timing", False):
-
       xprof_dir = params.get(
           "xprof_dir_actual", params.get("xprof_dir", "/tmp/tensorboard")
       )
       cns_dir = params.get("xprof_dir_cns", xprof_dir)
-      metrics = profiler.parse_xprof_results(xprof_dir, cns_dir, metrics)  # pyrefly: ignore[bad-argument-type]
+      xprof_url = profiler.upload_xprof_trace(xprof_dir, cns_dir)
+      try:
+        xprof_durations = profiler.parse_xprof_durations(xprof_dir)
+        if xprof_durations:
+          print(
+              f"Using XProf device timings ({len(xprof_durations)} runs) to"
+              " calculate derived performance metrics."
+          )
+        else:
+          print(
+              "Warning: No XProf device timings found, falling back to host"
+              " timings for derived metrics."
+          )
+      except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"Error parsing XProf trace: {e}. Falling back to host timings.")
+
+    if params.get("xprof_timing", False):
+      if xprof_url:
+        metrics["xprof_url"] = xprof_url
+      if xprof_durations:
+        metrics["xprof_avg_ms"] = float(np.mean(xprof_durations))
+        metrics["xprof_p50_ms"] = float(np.percentile(xprof_durations, 50))
+        metrics["xprof_p90_ms"] = float(np.percentile(xprof_durations, 90))
+
+        # Recalculate derived metrics (like bandwidth) using XProf timings
+        device_metrics = self.calculate_metrics(xprof_durations, **params)
+        for key, value in device_metrics.items():
+          if key not in ["p50_ms", "avg_ms", "p90_ms", "std_ms"]:
+            metrics[key] = value
+
+    metrics = self.apply_roofline_analysis(metrics, **params)
 
     metrics["total_duration_s"] = time.perf_counter() - loop_start
     metrics["actual_runs"] = actual_runs
