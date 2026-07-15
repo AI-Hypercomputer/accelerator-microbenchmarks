@@ -127,8 +127,6 @@ def main(argv):
     jax.distributed.initialize()
   except Exception as e:
     print(f"Note: jax.distributed.initialize() failed or not needed: {e}")
-
-  jax.config.update("jax_enable_x64", True)
   try:
     devices = jax.devices()
     print(f"JAX devices: {len(devices)} (e.g. {devices[:4]}...)")

@@ -8,6 +8,7 @@ from typing import Any
 from accelerator_microbenchmarks.core import constants
 import numpy as np
 
+import os
 MARKER = constants.MARKER
 
 
