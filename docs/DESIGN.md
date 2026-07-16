@@ -9,7 +9,7 @@ limitations of ad-hoc benchmarking scripts, providing a standardized,
 extensible, and insight-rich platform for performance analysis on TPUs and
 GPUs.
 
-(See [RATIONALE.md](docs/RATIONALE.md) for a detailed breakdown of motivations
+(See [RATIONALE.md](RATIONALE.md) for a detailed breakdown of motivations
 and gaps addressed).
 
 ## 2. Core Features
@@ -95,7 +95,7 @@ accelerator_microbenchmarks/
 
 ## 4. Usage
 
-(See [README.md](docs/README.md) for detailed usage instructions and examples).
+(See [README.md](README.md) for detailed usage instructions and examples).
 
 -   Installation: `pip install -e .`
 -   Running: `jax-bench --config configs/sample.yaml`
@@ -103,7 +103,7 @@ accelerator_microbenchmarks/
 ## 5. Extensibility
 
 The framework is designed to be easily extensible. To add a new benchmark,
-please refer to the step-by-step guide in [DEVELOPERS.md](docs/DEVELOPERS.md).
+please refer to the step-by-step guide in [DEVELOPERS.md](DEVELOPERS.md).
 
 ## 6. Future Directions
 

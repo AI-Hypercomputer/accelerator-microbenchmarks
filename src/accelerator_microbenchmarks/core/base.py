@@ -192,10 +192,6 @@ class BaseBenchmark(abc.ABC):
         "p90_ms": float(np.percentile(filtered_times, 90)),
         "avg_ms": float(np.mean(filtered_times)),
         "std_ms": float(np.std(filtered_times)),
-        "wall_clock_p50_ms": float(np.percentile(filtered_times, 50)),
-        "wall_clock_p90_ms": float(np.percentile(filtered_times, 90)),
-        "wall_clock_avg_ms": float(np.mean(filtered_times)),
-        "wall_clock_std_ms": float(np.std(filtered_times)),
         "throughput": 0.0,  # To be overridden by subclasses
     }
 

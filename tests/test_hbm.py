@@ -69,7 +69,7 @@ class HBMBandwidthBenchmarkTest(absltest.TestCase):
   def test_calculate_metrics(self):
     """Verify that metrics are correctly calculated."""
     # total_bytes = 4096
-    # wall_clock_avg_ms = 10.0ms -> avg_latency_s = 0.01s
+    # avg_ms = 10.0ms -> avg_latency_s = 0.01s
     # bandwidth_gb_s = (4096 / 0.01) / 1e9 = 409600 / 1e9 = 0.0004096
     times_ms = [10.0, 10.0, 10.0]
     metrics = self.bm.calculate_metrics(times_ms, **self.params)
