@@ -90,36 +90,22 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     self.assertEqual(bm_class, host_device.DeviceToHostBenchmark)
 
   def test_generate_inputs(self):
-    """Verify inputs is an iterator."""
+    """Verify input is a JAX Array on device."""
     self.bm.setup(**self.params)
     inputs = self.bm.generate_inputs(**self.params)
     self.assertLen(inputs, 1)
-    array_iter = inputs[0]
-    # Should be an iterator
-    self.assertTrue(hasattr(array_iter, "__next__"))
+    device_array = inputs[0]
+    self.assertIsInstance(device_array, jax.Array)
+    self.assertEqual(device_array.shape, (8192, 128))
 
   def test_run_op(self):
     """Verify run_op returns a numpy array."""
     self.bm.setup(**self.params)
     inputs = self.bm.generate_inputs(**self.params)
 
-    # We have 3 pre-allocated arrays (2 runs + 1 warmup)
-    # First run_op call
-    out1 = self.bm.run_op(*inputs)
-    self.assertIsInstance(out1, np.ndarray)
-    self.assertEqual(out1.shape, (8192, 128))
-
-    # Second call
-    out2 = self.bm.run_op(*inputs)
-    self.assertEqual(out2.shape, (8192, 128))
-
-    # Third call
-    out3 = self.bm.run_op(*inputs)
-    self.assertEqual(out3.shape, (8192, 128))
-
-    # Fourth call should raise RuntimeError (out of pre-allocated)
-    with self.assertRaises(RuntimeError):
-      self.bm.run_op(*inputs)
+    out = self.bm.run_op(*inputs)
+    self.assertIsInstance(out, np.ndarray)
+    self.assertEqual(out.shape, (8192, 128))
 
   def test_get_total_bytes(self):
     """Verify byte calculation."""

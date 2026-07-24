@@ -59,6 +59,10 @@ class BaseBenchmark(abc.ABC):
     # Mesh creation is deferred to the run method.
     pass
 
+  def reset_data(self, arr: jax.Array, **kwargs) -> tuple[jax.Array, ...]:
+    """Reset data for the next run."""
+    return (arr,)
+
   def get_run_identifier(self, **unused_params) -> str:
     """Return a string identifier for the current run parameters."""
     return ""
@@ -249,6 +253,7 @@ class BaseBenchmark(abc.ABC):
     while i < self.warmup_tries or (
         time.perf_counter() - warmup_start < min(1.0, self.min_duration_s / 5)
     ):
+      inputs = self.reset_data(*inputs)
       outputs = self.run_op(*inputs)
       jax.block_until_ready(outputs)
       i += 1
@@ -299,6 +304,7 @@ class BaseBenchmark(abc.ABC):
       while actual_runs < self.num_runs or (
           time.perf_counter() - loop_start < self.min_duration_s
       ):
+        inputs = self.reset_data(*inputs)
         t0 = time.perf_counter()
         outputs = self.run_op(*inputs)
         jax.block_until_ready(outputs)

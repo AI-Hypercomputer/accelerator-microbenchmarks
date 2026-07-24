@@ -62,48 +62,28 @@ class HostToDeviceBenchmark(base.BaseBenchmark):
 class DeviceToHostBenchmark(base.BaseBenchmark):
   """Benchmarks Device-to-Host transfer bandwidth."""
 
-  device_arrays: list[jax.Array]
-  array_iter: Any
+  host_data: np.ndarray
+  device_array: jax.Array
 
   def setup(self, **params):
     data_size_mib = params.get("data_size_mib", 64)
-    num_runs = params.get("num_runs", self.num_runs)
-    warmup_tries = params.get("warmup_tries", self.warmup_tries)
-    total_runs = num_runs + warmup_tries
-
     num_elements = 1024 * 1024 * data_size_mib // np.dtype(np.float32).itemsize
     column = 128
-    host_data = np.random.normal(size=(num_elements // column, column)).astype(
+    self.host_data = np.random.normal(size=(num_elements // column, column)).astype(
         np.float32
     )
 
-    # Pre-allocate all device arrays.
-    # Note: This might consume significant device memory for large sizes/runs.
-    self.device_arrays = [jax.device_put(host_data) for _ in range(total_runs)]
-    for arr in self.device_arrays:
-      arr.block_until_ready()
-
-    self.array_iter = iter(self.device_arrays)
-
-  def get_run_identifier(self, **params) -> str:
-    data_size_mib = params.get("data_size_mib", 64)
-    return f"size_{data_size_mib}mib"
+  def reset_data(self, arr: jax.Array, **kwargs) -> tuple[jax.Array, ...]:
+    if arr is not None:
+      arr.delete()
+    return self.generate_inputs()
 
   def generate_inputs(self, **params) -> tuple[Any, ...]:
-    return (self.array_iter,)
+    device_array = jax.device_put(self.host_data)
+    device_array.block_until_ready()
+    return (device_array,)
 
-  def run_op(self, *args, **kwargs) -> np.ndarray:
-    array_iter = args[0]
-    # Retrieve next unused device array
-    try:
-      arr = next(array_iter)
-    except StopIteration:
-      # Fallback in case we run out of pre-allocated arrays (e.g. if timing loop
-      # runs more than expected)
-      raise RuntimeError(
-          "Ran out of pre-allocated device arrays. Ensure num_runs/warmup_tries"
-          " are configured correctly."
-      ) from None
+  def run_op(self, arr: jax.Array, **kwargs) -> np.ndarray:
     with jax.profiler.TraceAnnotation(constants.MARKER):
       return jax.device_get(arr)
 
