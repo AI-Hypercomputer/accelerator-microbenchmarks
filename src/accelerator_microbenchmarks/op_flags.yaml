@@ -73,7 +73,7 @@ send_recv:
   - "--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1"
   - "--xla_tpu_dvfs_p_state=7"
 
-host_device:
+host_device: &host_device
   flags:
     - "--xla_tpu_dvfs_p_state=7"
   env:
@@ -96,6 +96,7 @@ gemm_multiple_run: *gemm_flags
 gemm: *gemm_flags
 gemm_accum: *gemm_flags
 gemm_throttling: *gemm_flags
+gemm_generalized: *gemm_flags
 
 quantization: *gemm_flags
 transpose_quantization: *gemm_flags
@@ -119,3 +120,6 @@ gemm_fp8_b128_fp32_static_scaling: *gemm_numerics_flags
 gemm_mxfp8_b32: *gemm_numerics_flags
 gemm_mxfp8_b32_static_scaling: *gemm_numerics_flags
 gemm_fp8_rowwise_w_dequantize: *gemm_numerics_flags
+
+host_to_device: *host_device
+device_to_host: *host_device

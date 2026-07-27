@@ -82,7 +82,9 @@ def set_xla_flags(
   op_key = _BENCHMARK_NAME_MAPPING.get(benchmark_name, benchmark_name)
   try:
     if flags_file_path is None:
-      flags_file_path = "op_flags.yaml"
+      flags_file_path = os.path.join(
+          os.path.dirname(__file__), "op_flags.yaml"
+      )
 
     if flags_file_path and os.path.exists(flags_file_path):
       with open(flags_file_path, "r") as f:

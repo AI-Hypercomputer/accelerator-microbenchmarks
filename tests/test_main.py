@@ -83,6 +83,42 @@ class TestMainHelpers(absltest.TestCase):
     main.set_xla_flags([{"name": "test_op_list"}], "non_existent_file.yaml")
     self.assertNotIn("LIBTPU_INIT_ARGS", os.environ)
 
+  def test_set_xla_flags_host_to_device(self):
+    """Verifies that this fix does not break the original google3 path."""
+    main.set_xla_flags([{"name": "host_to_device"}], None)
+    init_args = os.environ.get("LIBTPU_INIT_ARGS")
+    self.assertIsNotNone(init_args)
+    self.assertIn("--xla_tpu_dvfs_p_state=7", init_args)
+
+  def test_set_xla_flags_gemm_generalized(self):
+    """Verifies that this fix does not break the original google3 path."""
+    main.set_xla_flags([{"name": "all_reduce_sum"}], None)
+    init_args = os.environ.get("LIBTPU_INIT_ARGS")
+    self.assertIsNotNone(init_args)
+    self.assertIn("--xla_jf_debug_level=3", init_args)
+
+  def test_set_xla_flags_default_path_google3(self):
+    """Verifies that this fix does not break the original google3 path."""
+    main.set_xla_flags([{"name": "gemm_generalized"}], None)
+    init_args = os.environ.get("LIBTPU_INIT_ARGS")
+    self.assertIsNotNone(init_args)
+    self.assertIn("--xla_tpu_vmem_scavenging_mode=NONE", init_args)
+
+  def test_set_xla_flags_copybara_path(self):
+    """Verifies that set_xla_flags works with the path used post-copybara."""
+    import sys
+    sys.stderr.write(f"\n--- CWD: {os.getcwd()}\n")
+    sys.stderr.write(f"--- test_main.__file__: {__file__}\n")
+    sys.stderr.write(f"--- main.__file__: {main.__file__}\n")
+    copybara_flags_path = os.path.join(
+        os.path.dirname(main.__file__), "op_flags.yaml"
+    )
+    sys.stderr.write(f"--- copybara_flags_path: {copybara_flags_path}\n")
+    main.set_xla_flags([{"name": "all_reduce_sum"}], copybara_flags_path)
+    init_args = os.environ.get("LIBTPU_INIT_ARGS")
+    self.assertIsNotNone(init_args)
+    self.assertIn("--xla_jf_debug_level=3", init_args)
+
   def test_save_output_throughput_not_overwritten(self):
     metadata = base.BenchmarkMetadata(
         benchmark_name="DummyBenchmark",
