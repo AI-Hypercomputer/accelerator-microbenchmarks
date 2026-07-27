@@ -59,9 +59,9 @@ class BaseBenchmark(abc.ABC):
     # Mesh creation is deferred to the run method.
     pass
 
-  def reset_data(self, arr: jax.Array, **kwargs) -> tuple[jax.Array, ...]:
+  def reset_data(self, *inputs, **kwargs) -> tuple[jax.Array, ...]:
     """Reset data for the next run."""
-    return (arr,)
+    return inputs
 
   def get_run_identifier(self, **unused_params) -> str:
     """Return a string identifier for the current run parameters."""
