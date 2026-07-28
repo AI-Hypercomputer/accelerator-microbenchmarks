@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
+from accelerator_microbenchmarks.core import system
 import jax
 import numpy as np
 
@@ -378,11 +379,7 @@ class BaseBenchmark(abc.ABC):
         start_time=start_ts,
         end_time=end_ts,
         params=params,
-        device_info={
-            "platform": str(jax.default_backend()),
-            "device_count": jax.device_count(),
-            "local_device_count": jax.local_device_count(),
-        },
+        device_info=system.get_runtime_device_info(),
     )
 
     return BenchmarkResult(

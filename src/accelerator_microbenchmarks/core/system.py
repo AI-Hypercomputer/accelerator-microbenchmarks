@@ -1,7 +1,7 @@
 """Hardware system specifications for roofline analysis."""
 
 import dataclasses
-
+from typing import Any
 
 @dataclasses.dataclass
 class TflopsConfig:
@@ -75,3 +75,31 @@ def get_system(name: str) -> SystemConfig:
         f"System {name} not found. Available: {list(SYSTEMS.keys())}"
     )
   return SYSTEMS[name.lower()]
+
+
+def get_runtime_device_info() -> dict[str, Any]:
+  """Extracts runtime environment details including JAX and LibTPU versions."""
+  import jax
+  import importlib.metadata
+
+  info = {
+      "platform": str(jax.default_backend()),
+      "device_count": jax.device_count(),
+      "local_device_count": jax.local_device_count(),
+      "jax_version": getattr(jax, "__version__", "unknown"),
+  }
+
+  try:
+    try:
+      info["libtpu_version"] = importlib.metadata.version("libtpu")
+    except importlib.metadata.PackageNotFoundError:
+      info["libtpu_version"] = importlib.metadata.version("libtpu-nightly")
+  except Exception:
+    pass
+
+  try:
+    info["chip_version"] = str(jax.devices()[0].device_kind)
+  except Exception:
+    pass
+
+  return info
