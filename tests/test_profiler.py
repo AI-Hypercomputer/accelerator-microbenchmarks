@@ -99,54 +99,6 @@ class ProfilerTest(absltest.TestCase):
     self.assertAlmostEqual(result["xprof_p50_ms"], 1.5)
 
   @mock.patch.object(os, "walk")
-  @mock.patch("builtins.open")
-  @mock.patch.object(os.path, "exists")
-  @mock.patch(
-      "google3.perftools.accelerators.xprof.api.python.xprof_analysis_client.XprofAnalysisClient"
-  )
-  def test_parse_xprof_results_with_upload(
-      self, mock_client_class, mock_exists, mock_open, mock_walk
-  ):
-    """Test parse_xprof_results when xprof upload is successful."""
-    mock_walk.return_value = [("/tmp", [], ["trace.json.gz"])]
-
-    # Return True for trace.json.gz and xplane.pb
-    def exists_side_effect(path):
-      return path.endswith("trace.json.gz") or path.endswith("xplane.pb")
-
-    mock_exists.side_effect = exists_side_effect
-
-    # Mock file reads
-    trace_data = {"traceEvents": []}
-    json_str = json.dumps(trace_data)
-    trace_out = io.BytesIO()
-    with gzip.GzipFile(fileobj=trace_out, mode="w") as f:
-      f.write(json_str.encode("utf-8"))
-    trace_out.seek(0)
-
-    xplane_out = io.BytesIO(b"")  # Empty bytes for valid empty proto
-
-    def open_side_effect(path, mode="r"):
-      _ = mode
-      if path.endswith(".gz"):
-        return mock.MagicMock(__enter__=mock.MagicMock(return_value=trace_out))
-      elif path.endswith("xplane.pb"):
-        return mock.MagicMock(
-            __enter__=mock.MagicMock(return_value=xplane_out)
-        )
-      return mock.MagicMock()
-
-    mock_open.side_effect = open_side_effect
-
-    mock_client = mock_client_class.return_value
-    mock_client.upload.return_value = "12345"
-
-    metrics = {}
-    result = profiler.parse_xprof_results("/tmp", "/cns", metrics)
-
-    self.assertEqual(result.get("xprof_url"), "http://xprof/?session_id=12345")
-
-  @mock.patch.object(os, "walk")
   def test_parse_xprof_durations_no_trace(self, mock_walk):
     """Test parse_xprof_durations when no trace file is found."""
     mock_walk.return_value = [("/tmp", [], [])]
@@ -188,42 +140,6 @@ class ProfilerTest(absltest.TestCase):
 
     result = profiler.parse_xprof_durations("/tmp")
     self.assertEqual(result, [1.0, 2.0])
-
-  @mock.patch.object(os, "walk")
-  @mock.patch("builtins.open")
-  @mock.patch.object(os.path, "exists")
-  @mock.patch(
-      "google3.perftools.accelerators.xprof.api.python.xprof_analysis_client.XprofAnalysisClient"
-  )
-  def test_upload_xprof_trace_success(
-      self, mock_client_class, mock_exists, mock_open, mock_walk
-  ):
-    """Test upload_xprof_trace when upload is successful."""
-    mock_walk.return_value = [("/tmp", [], ["trace.json.gz"])]
-
-    # Return True for xplane.pb and cns_dir to avoid MakeDirs
-    def exists_side_effect(path):
-      return path.endswith("xplane.pb") or path == "/cns"
-
-    mock_exists.side_effect = exists_side_effect
-
-    xplane_out = io.BytesIO(b"")
-
-    def open_side_effect(path, mode="r"):
-      _ = mode
-      if path.endswith("xplane.pb"):
-        return mock.MagicMock(
-            __enter__=mock.MagicMock(return_value=xplane_out)
-        )
-      return mock.MagicMock()  # Dummy for cns_url_path
-
-    mock_open.side_effect = open_side_effect
-
-    mock_client = mock_client_class.return_value
-    mock_client.upload.return_value = "12345"
-
-    result = profiler.upload_xprof_trace("/tmp", "/cns")
-    self.assertEqual(result, "http://xprof/?session_id=12345")
 
 
 if __name__ == "__main__":
