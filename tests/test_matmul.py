@@ -147,6 +147,20 @@ class GeneralizedGemmBenchmarkTest(absltest.TestCase):
     self.assertEqual(metrics["total_flops"], 524288)
     self.assertAlmostEqual(metrics["intensity"], 524288 / 24576)
 
+  def test_is_xprof_op(self):
+    """Test that is_xprof_op correctly identifies convolution fusion events."""
+    self.assertTrue(
+        self.bm.match_xprof_op_fallback(
+            {"args": {"hlo_category": "convolution fusion"}}
+        )
+    )
+    self.assertFalse(
+        self.bm.match_xprof_op_fallback(
+            {"args": {"hlo_category": "other fusion"}}
+        )
+    )
+    self.assertFalse(self.bm.match_xprof_op_fallback({}))
+
 
 if __name__ == "__main__":
   absltest.main()

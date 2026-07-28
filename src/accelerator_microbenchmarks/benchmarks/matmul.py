@@ -15,6 +15,11 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark):
   Pseudo-code: OUT = matmul(IN0, IN1) * rescaling_factor
   """
 
+  def match_xprof_op_fallback(self, event):
+    args = event.get("args", {})
+    hlo_category = args.get("hlo_category", "")
+    return hlo_category.strip('"') == "convolution fusion"
+
   def setup(self, **params):
     out_dtype_str = params.get("out_dtype", "bfloat16")
     out_dtype = (

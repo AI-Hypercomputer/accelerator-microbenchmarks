@@ -3,7 +3,7 @@
 import gzip
 import json
 import os
-from typing import Any
+from typing import Any, Callable, Optional
 
 from accelerator_microbenchmarks.core import constants
 import numpy as np
@@ -12,7 +12,10 @@ import os
 MARKER = constants.MARKER
 
 
-def parse_xprof_durations(xprof_dir: str) -> list[float]:
+def parse_xprof_durations(
+    xprof_dir: str,
+    is_xprof_op_fn: Optional[Callable[[dict[str, Any]], bool]] = None,
+) -> list[float]:
   """Parses trace files to extract timing markers and returns durations in ms."""
   trace_path = None
   for root, _, files in os.walk(xprof_dir):
@@ -49,8 +52,17 @@ def parse_xprof_durations(xprof_dir: str) -> list[float]:
     marker_done_events = marker_call_done_events
 
   if not marker_done_events:
-    print(f"Warning: No '{MARKER}' events found in {trace_path}")
-    return []
+    if is_xprof_op_fn:
+      print(
+          f"No '{MARKER}' events found in {trace_path}; "
+          "falling back to XProf op matching."
+      )
+      for event in trace.get("traceEvents", []):
+        if is_xprof_op_fn(event):
+          marker_done_events.append(event)
+    if not marker_done_events:
+      print(f"Warning: No '{MARKER}' or XProf op events found in {trace_path}")
+      return []
 
   unique_pids = set([e["pid"] for e in marker_done_events])
   print(f"Unique PIDs: {unique_pids}")

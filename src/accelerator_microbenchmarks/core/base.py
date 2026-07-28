@@ -199,6 +199,11 @@ class BaseBenchmark(abc.ABC):
         "throughput": 0.0,  # To be overridden by subclasses
     }
 
+  def match_xprof_op_fallback(self, event: dict[str, Any]) -> bool:
+    """Fallback to capture relevant xprof op when MARKER is not present."""
+    del event  # Unused in base class.
+    return False
+
   def apply_roofline_analysis(
       self, metrics: dict[str, Any], **params
   ) -> dict[str, Any]:
@@ -332,7 +337,9 @@ class BaseBenchmark(abc.ABC):
       cns_dir = params.get("xprof_dir_cns", xprof_dir)
       xprof_url = profiler.upload_xprof_trace(xprof_dir, cns_dir)
       try:
-        xprof_durations = profiler.parse_xprof_durations(xprof_dir)
+        xprof_durations = profiler.parse_xprof_durations(
+            xprof_dir, self.match_xprof_op_fallback
+        )
         if xprof_durations:
           print(
               f"Using XProf device timings ({len(xprof_durations)} runs) to"
