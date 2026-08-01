@@ -336,9 +336,10 @@ class BaseBenchmark(abc.ABC):
           "xprof_dir_actual", params.get("xprof_dir", "/tmp/tensorboard")
       )
       cns_dir = params.get("xprof_dir_cns", xprof_dir)
-      xprof_url = profiler.upload_xprof_trace(xprof_dir, cns_dir)
+      xprof_url = profiler.upload_xprof_trace(xprof_dir, cns_dir)  # pyrefly: ignore[bad-argument-type]
       try:
         xprof_durations = profiler.parse_xprof_durations(
+            # pyrefly: ignore[bad-argument-type]
             xprof_dir, self.match_xprof_op_fallback
         )
         if xprof_durations:
