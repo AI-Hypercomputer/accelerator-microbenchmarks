@@ -15,6 +15,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pyyaml",
+    "simple_parsing",
 ]
 
 [project.scripts]
