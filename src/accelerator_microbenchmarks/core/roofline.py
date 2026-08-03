@@ -4,14 +4,16 @@ from typing import Any
 
 
 def apply_roofline_analysis(
-    benchmark_instance, metrics: dict[str, Any], **params
+    benchmark_instance, metrics: dict[str, Any]
 ) -> dict[str, Any]:
   """Apply roofline estimation to finalized metrics."""
-  use_trace = params.get("use_trace_roofline", False)
+  config = benchmark_instance.config
+
+  use_trace = config.use_trace_roofline
 
   if use_trace:
     # Override intensity if tracing is requested
-    trace_stats = benchmark_instance.get_trace_metrics(**params)
+    trace_stats = benchmark_instance.get_trace_metrics()
     if trace_stats:
       metrics["trace_flops"] = trace_stats.get("flops", 0)
       metrics["trace_hbm_bytes"] = trace_stats.get("hbm_bytes", 0)
@@ -21,10 +23,11 @@ def apply_roofline_analysis(
             metrics["trace_flops"] / metrics["trace_hbm_bytes"]
         )
 
-  if "hardware_stats" in params:
-    hw = params["hardware_stats"]
+  hardware_stats = config.hardware_stats
+  if hardware_stats:
+    hw = hardware_stats
     if isinstance(hw, dict):
-      dtype = params.get("dtype", "bfloat16")
+      dtype = benchmark_instance.get_compute_dtype()
       tflops_dict = hw.get("tflops", {})
       if isinstance(tflops_dict, dict):
         peak_tflops = tflops_dict.get(dtype, tflops_dict.get("bfloat16", 0.0))
@@ -35,8 +38,8 @@ def apply_roofline_analysis(
       peak_tflops = 0.0
       hbm_bw_data = 0.0
 
-    intensity = benchmark_instance.get_arithmetic_intensity(**params)
-    total_bytes = benchmark_instance.get_total_bytes(**params)
+    intensity = benchmark_instance.get_arithmetic_intensity()
+    total_bytes = benchmark_instance.get_total_bytes()
 
     # 1. Resolve BW for this transfer size
     if isinstance(hbm_bw_data, (int, float)):
@@ -58,6 +61,8 @@ def apply_roofline_analysis(
             bw = bw0 + (bw1 - bw0) * (total_bytes - s0) / (s1 - s0)
             break
     elif isinstance(hbm_bw_data, dict):
+      # Simple linear interpolation or nearest neighbor
+      # Sorting by transfer size
       sorted_sizes = sorted([int(k) for k in hbm_bw_data.keys()])
       if not sorted_sizes:
         bw = 0.0

@@ -1,32 +1,44 @@
 """Matrix multiplication and GEMM benchmarks including FP8 support."""
 
+import dataclasses
 from typing import Any
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
 
 
+@dataclasses.dataclass
+class GemmParams(base.BaseBenchmarkParams):
+  m: int = 1024
+  k: int = 1024
+  n: int = 1024
+  in_dtype: str = "float8_e4m3fn"
+  out_dtype: str = "bfloat16"
+  seed: int = 0
+  use_scaling_factors: bool = False
+
+
 @registry.benchmark_registry.register("gemm_generalized")
-class GeneralizedGemmBenchmark(base.BaseBenchmark):
+class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
+  Config = GemmParams
   """Generalized GEMM benchmark supporting FP8 and throughput projection.
 
   Pseudo-code: OUT = matmul(IN0, IN1) * rescaling_factor
   """
+
+  def get_compute_dtype(self) -> str:
+    return self.config.in_dtype
 
   def match_xprof_op_fallback(self, event):
     args = event.get("args", {})
     hlo_category = args.get("hlo_category", "")
     return hlo_category.strip('"') == "convolution fusion"
 
-  def setup(self, **params):
-    out_dtype_str = params.get("out_dtype", "bfloat16")
-    out_dtype = (
-        getattr(jnp, out_dtype_str)
-        if hasattr(jnp, out_dtype_str)
-        else jnp.bfloat16
-    )
+  def setup(self):
+    out_dtype = utils.parse_dtype(self.config.out_dtype)
 
     @jax.jit
     def gemm_fn(a, b, sf0=None, sf1=None):
@@ -41,34 +53,15 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark):
 
     self._jit_fn = gemm_fn
 
-  def get_run_identifier(self, **params) -> str:
-    m = params.get("m")
-    k = params.get("k")
-    n = params.get("n")
-    in_dtype = params.get("in_dtype")
-    out_dtype = params.get("out_dtype")
-    if any(v is not None for v in (m, k, n, in_dtype, out_dtype)):
-      return (
-          f"m_{m or 1024}_k_{k or 1024}_n_{n or 1024}_{in_dtype or 'float8_e4m3fn'}_to_{out_dtype or 'bfloat16'}"
-      )
-    return ""
+  def get_run_identifier(self) -> str:
+    return f"m_{self.config.m}_k_{self.config.k}_n_{self.config.n}_{self.config.in_dtype}_to_{self.config.out_dtype}"
 
-  def generate_inputs(self, **params) -> tuple[Any, ...]:
-    m, k, n = (
-        params.get("m", 1024),
-        params.get("k", 1024),
-        params.get("n", 1024),
-    )
-    in_dtype_str = params.get("in_dtype", "float8_e4m3fn")
-
+  def generate_inputs(self) -> tuple[Any, ...]:
+    m, k, n = self.config.m, self.config.k, self.config.n
     # Resolve dtypes
-    in_dtype = (
-        getattr(jnp, in_dtype_str)
-        if hasattr(jnp, in_dtype_str)
-        else jnp.bfloat16
-    )
+    in_dtype = utils.parse_dtype(self.config.in_dtype)
 
-    key = jax.random.PRNGKey(params.get("seed", 0))
+    key = jax.random.PRNGKey(self.config.seed)
     k1, k2, k3, k4 = jax.random.split(key, 4)
 
     # Data generation in HBM
@@ -78,7 +71,7 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark):
     b = jax.random.normal(k2, (k, n)).astype(in_dtype)
 
     # Optional scaling factors
-    use_sf = params.get("use_scaling_factors", False)
+    use_sf = self.config.use_scaling_factors
     sf0 = jax.random.normal(k3, (m, 1)).astype(jnp.float32) if use_sf else None
     sf1 = jax.random.normal(k4, (1, n)).astype(jnp.float32) if use_sf else None
 
@@ -102,25 +95,10 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark):
     assert self._jit_fn is not None
     return self._jit_fn(*args)
 
-  def get_total_bytes(self, **params) -> float:
-    m, k, n = (
-        params.get("m", 1024),
-        params.get("k", 1024),
-        params.get("n", 1024),
-    )
-    in_dtype_str = params.get("in_dtype", "float8_e4m3fn")
-    out_dtype_str = params.get("out_dtype", "bfloat16")
-
-    in_itemsize = jnp.dtype(
-        getattr(jnp, in_dtype_str)
-        if hasattr(jnp, in_dtype_str)
-        else jnp.bfloat16
-    ).itemsize
-    out_itemsize = jnp.dtype(
-        getattr(jnp, out_dtype_str)
-        if hasattr(jnp, out_dtype_str)
-        else jnp.bfloat16
-    ).itemsize
+  def get_total_bytes(self) -> float:
+    m, k, n = self.config.m, self.config.k, self.config.n
+    in_itemsize = jnp.dtype(utils.parse_dtype(self.config.in_dtype)).itemsize
+    out_itemsize = jnp.dtype(utils.parse_dtype(self.config.out_dtype)).itemsize
 
     # Bytes = Load(A) + Load(B) + Store(Out)
     # Scaling factors are small (row-wise), ignoring for intensity but could be
@@ -129,28 +107,18 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark):
         (m * k * in_itemsize) + (k * n * in_itemsize) + (m * n * out_itemsize)
     )
 
-  def get_arithmetic_intensity(self, **params) -> float:
-    m, k, n = (
-        params.get("m", 1024),
-        params.get("k", 1024),
-        params.get("n", 1024),
-    )
+  def get_arithmetic_intensity(self) -> float:
+    m, k, n = self.config.m, self.config.k, self.config.n
     flops = 2 * m * n * k
-    bytes_moved = self.get_total_bytes(**params)
+    bytes_moved = self.get_total_bytes()
     return flops / bytes_moved if bytes_moved > 0 else 0.0
 
-  def calculate_metrics(
-      self, times_ms: list[float], **params
-  ) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms, **params)
-    m, k, n = (
-        params.get("m", 1024),
-        params.get("k", 1024),
-        params.get("n", 1024),
-    )
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    metrics = super().calculate_metrics(times_ms)
+    m, k, n = self.config.m, self.config.k, self.config.n
 
     total_flops = 2 * m * n * k
-    if params.get("use_scaling_factors", False):
+    if self.config.use_scaling_factors:
       total_flops += m * n
 
     avg_latency_s = metrics["avg_ms"] / 1000.0
@@ -161,5 +129,5 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark):
 
     metrics["tflops_per_sec"] = tflops_per_sec
     metrics["total_flops"] = total_flops
-    metrics["intensity"] = self.get_arithmetic_intensity(**params)
+    metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics

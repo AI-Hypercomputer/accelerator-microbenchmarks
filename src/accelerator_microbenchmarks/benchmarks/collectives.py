@@ -1,9 +1,11 @@
 """Collective communication benchmarks."""
 
+import dataclasses
 from typing import Any, Optional
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import utils
 import jax
 from jax import core
 from jax import ffi
@@ -50,15 +52,27 @@ def zero_crop(x):
   )(x)
 
 
-class BaseCollectiveBenchmark(base.BaseBenchmark):
+@dataclasses.dataclass
+class CollectivesParams(base.BaseBenchmarkParams):
+  mesh_shape: Optional[str] = None
+  sharding_strategy: Optional[str] = None
+  matrix_dim: int = 1024
+  dtype: str = "bfloat16"
+  seed: int = 0
+
+
+class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
+  Config = CollectivesParams
   """Base class for all collective communication benchmarks."""
 
-  def __init__(self, mesh: Optional[jax.sharding.Mesh] = None):
-    super().__init__(mesh)
+  def __init__(
+      self, config: CollectivesParams, mesh: Optional[jax.sharding.Mesh] = None
+  ):
+    super().__init__(config, mesh)
     self.sharding_strategy = None
 
-  def setup(self, **params):
-    mesh_shape_str = params.get("mesh_shape", None)
+  def setup(self):
+    mesh_shape_str = self.config.mesh_shape
     if mesh_shape_str is not None:
       try:
 
@@ -77,12 +91,12 @@ class BaseCollectiveBenchmark(base.BaseBenchmark):
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
 
-    self.sharding_strategy = params.get("sharding_strategy", None)
+    self.sharding_strategy = self.config.sharding_strategy
 
-    self._setup_jit_fn(**params)
+    self._setup_jit_fn()
 
-  def get_run_identifier(self, **params) -> str:
-    dim = params.get("matrix_dim")
+  def get_run_identifier(self) -> str:
+    dim = self.config.matrix_dim
     if dim is not None:
       return f"dim_{dim}"
     return ""
@@ -116,7 +130,7 @@ class BaseCollectiveBenchmark(base.BaseBenchmark):
 
     return tuple(self.mesh.axis_names)
 
-  def _setup_jit_fn(self, **params):
+  def _setup_jit_fn(self):
     raise NotImplementedError("Subclasses must implement _setup_jit_fn")
 
   def _get_input_shape_and_sharding(
@@ -129,12 +143,11 @@ class BaseCollectiveBenchmark(base.BaseBenchmark):
     )
     return shape, sharding
 
-  def generate_inputs(self, **params) -> tuple[jnp.ndarray, ...]:
+  def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
-    dim = params.get("matrix_dim", 1024)
-    dtype_str = params.get("dtype", "bfloat16")
-    dtype = getattr(jnp, dtype_str)
+    dim = self.config.matrix_dim
+    dtype = utils.parse_dtype(self.config.dtype)
 
     sharding_axes = self._get_sharding_axes()
     if isinstance(sharding_axes, str):
@@ -148,7 +161,7 @@ class BaseCollectiveBenchmark(base.BaseBenchmark):
         sharding_size, dim, sharding_axes
     )
 
-    key = jax.random.PRNGKey(params.get("seed", 0))
+    key = jax.random.PRNGKey(self.config.seed)
 
     generate_data = jax.jit(
         lambda k: jax.random.normal(k, shape, dtype=dtype),
@@ -163,16 +176,13 @@ class BaseCollectiveBenchmark(base.BaseBenchmark):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(data)
 
-  def calculate_metrics(
-      self, times_ms: list[float], **params
-  ) -> dict[str, Any]:
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
-    metrics = super().calculate_metrics(times_ms, **params)
+    metrics = super().calculate_metrics(times_ms)
 
-    dim = params.get("matrix_dim", 1024)
-    dtype_str = params.get("dtype", "bfloat16")
-    dtype = getattr(jnp, dtype_str)
+    dim = self.config.matrix_dim
+    dtype = utils.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
 
     sharding_axes = self._get_sharding_axes()
@@ -198,10 +208,9 @@ class BaseCollectiveBenchmark(base.BaseBenchmark):
     metrics.update(extra_metrics)
     return metrics
 
-  def get_total_bytes(self, **params) -> float:
-    dim = params.get("matrix_dim", 1024)
-    dtype_str = params.get("dtype", "bfloat16")
-    dtype = getattr(jnp, dtype_str)
+  def get_total_bytes(self) -> float:
+    dim = self.config.matrix_dim
+    dtype = utils.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
 
     if self.mesh:
@@ -220,7 +229,7 @@ class BaseCollectiveBenchmark(base.BaseBenchmark):
     )
     return bytes_moved
 
-  def get_arithmetic_intensity(self, **params) -> float:
+  def get_arithmetic_intensity(self) -> float:
     return 0.0
 
   def _get_transfer_metrics(
@@ -242,7 +251,7 @@ class AllReduceSumBenchmark(BaseCollectiveBenchmark):
     )
     return shape, sharding
 
-  def _setup_jit_fn(self, **params):
+  def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
 
     @jax.jit
@@ -272,7 +281,7 @@ class AllReduceSumBenchmark(BaseCollectiveBenchmark):
 class AllGatherBenchmark(BaseCollectiveBenchmark):
   """Benchmarks the latency and bandwidth of jax.lax.all_gather across devices."""
 
-  def _setup_jit_fn(self, **params):
+  def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
 
     @jax.jit
@@ -314,7 +323,7 @@ class AllGatherBenchmark(BaseCollectiveBenchmark):
 class AllToAllBenchmark(BaseCollectiveBenchmark):
   """Benchmarks the latency and bandwidth of jax.lax.all_to_all across devices."""
 
-  def _setup_jit_fn(self, **params):
+  def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
 
     @jax.jit
@@ -359,7 +368,7 @@ class AllToAllBenchmark(BaseCollectiveBenchmark):
 class ReduceScatterBenchmark(BaseCollectiveBenchmark):
   """Benchmarks the latency and bandwidth of jax.lax.psum_scatter across devices."""
 
-  def _setup_jit_fn(self, **params):
+  def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
 
     @jax.jit

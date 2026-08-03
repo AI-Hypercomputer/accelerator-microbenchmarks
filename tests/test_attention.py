@@ -21,7 +21,6 @@ class AttentionBenchmarkTest(absltest.TestCase):
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
-    self.bm = attention.AttentionBenchmark(mesh=self.mock_mesh)
 
   def test_benchmark_registered(self):
     """Verify that the benchmark is correctly registered."""
@@ -37,8 +36,10 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "num_kv_heads": 4,
         "head_dim": 64,
     }
-    self.bm.setup(**params)
-    q, k, v = self.bm.generate_inputs(**params)
+    config = attention.AttentionParams(**params)
+    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm.setup()
+    q, k, v = self.bm.generate_inputs()
 
     self.assertEqual(q.shape, (2, 4, 128, 64))
     self.assertEqual(k.shape, (2, 4, 128, 64))
@@ -58,8 +59,10 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "head_dim": 32,
         "causal": True,
     }
-    self.bm.setup(**params)
-    q, k, v = self.bm.generate_inputs(**params)
+    config = attention.AttentionParams(**params)
+    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm.setup()
+    q, k, v = self.bm.generate_inputs()
     out = self.bm.run_op(q, k, v)
 
     self.assertEqual(out.shape, (1, 2, 64, 32))
@@ -74,6 +77,8 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "num_kv_heads": 2,
         "head_dim": 64,
     }
+    config = attention.AttentionParams(**params)
+    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
     # q_len = kv_len = 128
     # itemsize = 2 (bfloat16)
     # Q: 2 * 4 * 128 * 64 * 2 = 131072
@@ -82,7 +87,7 @@ class AttentionBenchmarkTest(absltest.TestCase):
     # Out: 2 * 4 * 128 * 64 * 2 = 131072
     # Total = 393216
     expected_bytes = 393216.0
-    self.assertAlmostEqual(self.bm.get_total_bytes(**params), expected_bytes)
+    self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
 
   def test_get_arithmetic_intensity(self):
     """Verify the intensity calculation."""
@@ -93,13 +98,15 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "num_kv_heads": 4,
         "head_dim": 64,
     }
+    config = attention.AttentionParams(**params)
+    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
     # q_len = kv_len = 128
     # flops: (4 * 128 * 128 - 2 * 128 * 128) * 4 * 64 = (65536 - 32768) * 256 = 32768 * 256 = 8388608
     # bytes: 1 * ((4*128*64*2) + (4*128*64*2) + (4*128*64*2) + (4*128*64*2)) = 262144
     # intensity = 8388608 / 262144 = 32.0
     expected_intensity = 32.0
     self.assertAlmostEqual(
-        self.bm.get_arithmetic_intensity(**params), expected_intensity
+        self.bm.get_arithmetic_intensity(), expected_intensity
     )
 
   def test_calculate_metrics(self):
@@ -111,11 +118,13 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "num_kv_heads": 4,
         "head_dim": 64,
     }
+    config = attention.AttentionParams(**params)
+    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
     # total_flops = 8388608 (from above)
     # avg_ms = 10.0ms -> avg_latency_s = 0.01s
     # tflops_per_sec = (8388608 / 0.01) / 1e12 = 8.388608e8 / 1e12 = 0.0008388608
     times_ms = [10.0, 10.0, 10.0]
-    metrics = self.bm.calculate_metrics(times_ms, **params)
+    metrics = self.bm.calculate_metrics(times_ms)
 
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
     self.assertAlmostEqual(metrics["total_flops"], 8388608)
@@ -133,8 +142,10 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "causal": True,
         "mode": "bwd",
     }
-    self.bm.setup(**params)
-    q, k, v = self.bm.generate_inputs(**params)
+    config = attention.AttentionParams(**params)
+    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm.setup()
+    q, k, v = self.bm.generate_inputs()
     dq, dk, dv = self.bm.run_op(q, k, v)
 
     self.assertEqual(dq.shape, (1, 2, 64, 32))
@@ -154,8 +165,10 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "head_dim": 64,
         "mode": "bwd",
     }
+    config = attention.AttentionParams(**params)
+    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
     expected_bytes = 786432.0
-    self.assertAlmostEqual(self.bm.get_total_bytes(**params), expected_bytes)
+    self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
 
   def test_get_arithmetic_intensity_bwd(self):
     """Verify the intensity calculation for bwd mode."""
@@ -167,9 +180,11 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "head_dim": 64,
         "mode": "bwd",
     }
+    config = attention.AttentionParams(**params)
+    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
     expected_intensity = 32.0
     self.assertAlmostEqual(
-        self.bm.get_arithmetic_intensity(**params), expected_intensity
+        self.bm.get_arithmetic_intensity(), expected_intensity
     )
 
   def test_get_arithmetic_intensity_non_causal(self):
@@ -182,11 +197,12 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "head_dim": 64,
         "causal": False,
     }
+    config = attention.AttentionParams(**params)
+    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
     expected_intensity = 64.0
     self.assertAlmostEqual(
-        self.bm.get_arithmetic_intensity(**params), expected_intensity
+        self.bm.get_arithmetic_intensity(), expected_intensity
     )
-
 
 
 if __name__ == "__main__":

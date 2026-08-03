@@ -5,6 +5,7 @@ import tempfile
 
 from absl.testing import absltest
 from accelerator_microbenchmarks import main
+from accelerator_microbenchmarks.benchmarks import matmul
 from accelerator_microbenchmarks.core import base
 import pandas as pd
 import yaml
@@ -147,6 +148,63 @@ class TestMainHelpers(absltest.TestCase):
 
       df = pd.read_csv(csv_path)
       self.assertEqual(df["throughput"].iloc[0], 100.0)
+
+  def test_mutually_exclusive_config_and_cli(self):
+    main.FLAGS.config = None
+    main.FLAGS.run = None
+    with self.assertRaisesRegex(
+        ValueError,
+        "Cannot specify both --config \\(YAML\\) and --run \\(CLI\\)",
+    ):
+      main.parse_args(["main.py", "--run=gemm_generalized", "--config=my.yaml"])
+
+  def test_only_config_allowed(self):
+    main.FLAGS.config = None
+    main.FLAGS.run = None
+    remaining = main.parse_args(["main.py", "--config=my.yaml"])
+    self.assertEqual(main.FLAGS.config, "my.yaml")
+    self.assertEqual(main.FLAGS.run, None)
+    self.assertEqual(remaining, ["main.py"])
+
+  def test_only_cli_allowed(self):
+    main.FLAGS.config = None
+    main.FLAGS.run = None
+    remaining = main.parse_args(
+        ["main.py", "--run=gemm_generalized", "--m=1024", "--n=512"]
+    )
+
+    self.assertIsNone(main.FLAGS.config)
+    self.assertEqual(main.FLAGS.run, "gemm_generalized")
+    self.assertEqual(remaining, ["main.py", "--m=1024", "--n=512"])
+
+    parsed_config = main._parse_benchmark_cli_args(
+        "gemm_generalized", remaining[1:]
+    )
+    expected_config = matmul.GemmParams(m=1024, k=1024, n=512)
+    self.assertEqual(parsed_config, expected_config)
+
+  def test_cli_strict_parsing_fails_on_unknown_arg(self):
+    main.FLAGS.config = None
+    main.FLAGS.run = None
+    remaining = main.parse_args(
+        ["main.py", "--run=gemm_generalized", "--unknown_flag=123"]
+    )
+
+    with self.assertRaises(SystemExit) as cm:
+      main._parse_benchmark_cli_args("gemm_generalized", remaining[1:])
+    self.assertEqual(cm.exception.code, 2)
+
+  def test_yaml_strict_parsing_fails_on_unknown_arg(self):
+    gemm_cls = main.registry.benchmark_registry.get_benchmark(
+        "gemm_generalized"
+    )
+    config_cls = gemm_cls.Config
+
+    # Simulate a YAML config with an unknown key
+    cfg = {"m": 128, "n": 128, "k": 128, "typo_batch_size": 16}
+
+    with self.assertRaisesRegex(TypeError, "unexpected keyword argument"):
+      config_cls(**cfg)
 
 
 if __name__ == "__main__":

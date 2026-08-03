@@ -1,15 +1,31 @@
 """Attention benchmarks."""
 
+import dataclasses
 from typing import Any
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
 
 
+@dataclasses.dataclass
+class AttentionParams(base.BaseBenchmarkParams):
+  mode: str = "fwd"
+  causal: bool = True
+  batch: int = 1
+  seq_len: int = 8192
+  num_q_heads: int = 56
+  num_kv_heads: int = 56
+  head_dim: int = 128
+
+
 @registry.benchmark_registry.register("attention_flashed")
-class AttentionBenchmark(base.BaseBenchmark):
+
+
+class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
+  Config = AttentionParams
   """Attention benchmark simulating FlashAttention behavior.
 
   Supports:
@@ -18,9 +34,9 @@ class AttentionBenchmark(base.BaseBenchmark):
   - Causal masking
   """
 
-  def setup(self, **params):
-    mode = params.get("mode", "fwd")
-    causal = params.get("causal", True)
+  def setup(self):
+    mode = self.config.mode
+    causal = self.config.causal
 
     @jax.jit
     def attention_fwd(q, k, v, mask=None):
@@ -54,12 +70,12 @@ class AttentionBenchmark(base.BaseBenchmark):
     else:
       raise ValueError(f"Unknown mode: {mode}")
 
-  def get_run_identifier(self, **params) -> str:
-    batch = params.get("batch")
-    seq_len = params.get("seq_len")
-    num_q_heads = params.get("num_q_heads")
-    num_kv_heads = params.get("num_kv_heads")
-    head_dim = params.get("head_dim")
+  def get_run_identifier(self) -> str:
+    batch = self.config.batch
+    seq_len = self.config.seq_len
+    num_q_heads = self.config.num_q_heads
+    num_kv_heads = self.config.num_kv_heads
+    head_dim = self.config.head_dim
     if any(
         v is not None
         for v in (batch, seq_len, num_q_heads, num_kv_heads, head_dim)
@@ -69,13 +85,13 @@ class AttentionBenchmark(base.BaseBenchmark):
       )
     return ""
 
-  def generate_inputs(self, **params) -> tuple[Any, ...]:
-    batch = params.get("batch", 1)
-    seq_len = params.get("seq_len", 8192)
-    heads_q = params.get("num_q_heads", 56)
-    heads_kv = params.get("num_kv_heads", 56)
-    head_dim = params.get("head_dim", 128)
-    dtype = jnp.bfloat16
+  def generate_inputs(self) -> tuple[Any, ...]:
+    batch = self.config.batch
+    seq_len = self.config.seq_len
+    heads_q = self.config.num_q_heads
+    heads_kv = self.config.num_kv_heads
+    head_dim = self.config.head_dim
+    dtype = utils.parse_dtype(self.config.dtype)
 
     key = jax.random.PRNGKey(0)
     k1, k2, k3 = jax.random.split(key, 3)
@@ -117,15 +133,15 @@ class AttentionBenchmark(base.BaseBenchmark):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(q, k, v)
 
-  def get_total_bytes(self, **params) -> float:
-    batch = params.get("batch", 1)
-    q_len = params.get("seq_len", 8192)
+  def get_total_bytes(self) -> float:
+    batch = self.config.batch
+    q_len = self.config.seq_len
     kv_len = q_len
-    heads_q = params.get("num_q_heads", 56)
-    heads_kv = params.get("num_kv_heads", 56)
-    head_dim = params.get("head_dim", 128)
+    heads_q = self.config.num_q_heads
+    heads_kv = self.config.num_kv_heads
+    head_dim = self.config.head_dim
     itemsize = jnp.dtype(jnp.bfloat16).itemsize
-    mode = params.get("mode", "fwd")
+    mode = self.config.mode
 
     if mode == "fwd":
       # Bytes = Load(Q, K, V) + Store(Out)
@@ -147,13 +163,13 @@ class AttentionBenchmark(base.BaseBenchmark):
     else:
       raise ValueError(f"Unknown mode: {mode}")
 
-  def get_arithmetic_intensity(self, **params) -> float:
-    q_len = params.get("seq_len", 8192)
+  def get_arithmetic_intensity(self) -> float:
+    q_len = self.config.seq_len
     kv_len = q_len
-    heads = params.get("num_q_heads", 56)
-    head_dim = params.get("head_dim", 128)
-    causal = params.get("causal", True)
-    mode = params.get("mode", "fwd")
+    heads = self.config.num_q_heads
+    head_dim = self.config.head_dim
+    causal = self.config.causal
+    mode = self.config.mode
 
     if causal:
       # (4 * Q * K - 2 * Q * Q) * Heads * HeadDim
@@ -164,18 +180,16 @@ class AttentionBenchmark(base.BaseBenchmark):
     if mode == "bwd":
       flops *= 2
 
-    return flops / self.get_total_bytes(**params)
+    return flops / self.get_total_bytes()
 
-  def calculate_metrics(
-      self, times_ms: list[float], **params
-  ) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms, **params)
-    q_len = params.get("seq_len", 8192)
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    metrics = super().calculate_metrics(times_ms)
+    q_len = self.config.seq_len
     kv_len = q_len
-    heads = params.get("num_q_heads", 56)
-    head_dim = params.get("head_dim", 128)
-    causal = params.get("causal", True)
-    mode = params.get("mode", "fwd")
+    heads = self.config.num_q_heads
+    head_dim = self.config.head_dim
+    causal = self.config.causal
+    mode = self.config.mode
 
     if causal:
       total_flops = (4 * q_len * kv_len - 2 * q_len * q_len) * heads * head_dim
@@ -190,5 +204,5 @@ class AttentionBenchmark(base.BaseBenchmark):
 
     metrics["tflops_per_sec"] = tflops_per_sec
     metrics["total_flops"] = total_flops
-    metrics["intensity"] = self.get_arithmetic_intensity(**params)
+    metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics

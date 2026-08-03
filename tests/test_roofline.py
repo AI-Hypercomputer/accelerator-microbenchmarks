@@ -1,9 +1,16 @@
 """Unit tests for roofline.py."""
 
+import dataclasses
 from unittest import mock
 
 from absl.testing import absltest
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import roofline
+
+
+@dataclasses.dataclass
+class MockConfig(base.BaseBenchmarkParams):
+  dtype: str = "bfloat16"
 
 
 class RooflineTest(absltest.TestCase):
@@ -23,9 +30,9 @@ class RooflineTest(absltest.TestCase):
         "dtype": "bfloat16",
     }
 
-    result = roofline.apply_roofline_analysis(
-        self.mock_benchmark, metrics, **params
-    )
+    # setup config instead of passing params
+    self.mock_benchmark.config = MockConfig(**params)
+    result = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
 
     # intensity = 1.0, bw = 200.0
     # roofline = min(100.0, 1.0 * 200.0 / 1000.0) = min(100.0, 0.2) = 0.2
@@ -46,9 +53,8 @@ class RooflineTest(absltest.TestCase):
         "dtype": "bfloat16",
     }
 
-    result = roofline.apply_roofline_analysis(
-        self.mock_benchmark, metrics, **params
-    )
+    self.mock_benchmark.config = MockConfig(**params)
+    result = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
 
     # total_bytes = 300, between 100 and 500
     # bw = 50 + (250 - 50) * (300 - 100) / (500 - 100)
@@ -67,9 +73,8 @@ class RooflineTest(absltest.TestCase):
         "dtype": "bfloat16",
     }
 
-    result = roofline.apply_roofline_analysis(
-        self.mock_benchmark, metrics, **params
-    )
+    self.mock_benchmark.config = MockConfig(**params)
+    result = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
 
     self.assertAlmostEqual(result["peak_bw_at_size_gb_s"], 150.0)
 
@@ -81,10 +86,8 @@ class RooflineTest(absltest.TestCase):
     }
     metrics = {}
     params = {"use_trace_roofline": True}
-
-    result = roofline.apply_roofline_analysis(
-        self.mock_benchmark, metrics, **params
-    )
+    self.mock_benchmark.config = MockConfig(**params)
+    result = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
 
     self.assertEqual(result["trace_flops"], 2000)
     self.assertEqual(result["trace_hbm_bytes"], 1000)

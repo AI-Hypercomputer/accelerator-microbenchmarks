@@ -5,15 +5,17 @@ import json
 import os
 import traceback
 from typing import Any, List
+
 from absl import app
 from absl import flags
-from accelerator_microbenchmarks.benchmarks import benchmark_loader
+import accelerator_microbenchmarks.benchmarks  # pylint: disable=unused-import
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import system
 import jax
 import pandas as pd
+import simple_parsing
 import yaml
 
 _REPO_ROOT = "third_party/py/accelerator_microbenchmarks"
@@ -30,8 +32,29 @@ flags.DEFINE_string("config", None, "YAML config path")
 flags.DEFINE_string("output", "results", "Output directory")
 flags.DEFINE_string("hw", None, "Hardware target environment defined in config")
 flags.DEFINE_string(
+    "run", None, "CLI benchmark to run (mutually exclusive with config)"
+)
+flags.DEFINE_string(
     "xprof_dir", "/tmp/tensorboard", "Directory for xprof traces"
 )
+
+
+def parse_args(argv):
+  # Pass 1: Parse standard absl flags first, ignoring custom dataclass arguments
+  remaining_argv = FLAGS(argv, known_only=True)
+
+  if FLAGS.config and FLAGS.run:
+    raise ValueError(
+        "Cannot specify both --config (YAML) and --run (CLI). "
+        "They are mutually exclusive."
+    )
+  if not FLAGS.config and not FLAGS.run:
+    raise ValueError(
+        "Must specify either --config <yaml> or --run <benchmark_name>."
+    )
+
+  # Hand remaining unparsed argv over to main()
+  return remaining_argv
 
 
 def save_output(results: List[base.BenchmarkResult], output_dir: str):
@@ -107,17 +130,48 @@ def set_xla_flags(
     print(f"Warning: Failed to load op_flags.yaml: {e}")
 
 
+def _parse_benchmark_cli_args(bench_name: str, argv: List[str]):
+  parser = simple_parsing.ArgumentParser(add_help=False)
+
+  all_benchmarks = registry.benchmark_registry.get_all()
+  if bench_name in all_benchmarks:
+    bench_cls = all_benchmarks[bench_name]
+    config_cls = bench_cls.Config
+    if config_cls:
+      parser.add_arguments(config_cls, dest="benchmark_config")
+  else:
+    raise ValueError(f"Unknown benchmark: {bench_name}")
+
+  parsed = parser.parse_args(argv)
+
+  return getattr(parsed, "benchmark_config", None)
+
+
 def main(argv):
   if len(argv) > 1:
     print(f"Warning: Unexpected positional arguments: {argv[1:]}")
 
   # 1. Load Config
-  try:
-    config_path = FLAGS.config
-    print(f"Loading config from: {config_path}")
-    benchmark_configs = config.load_config(config_path)
-  except Exception as e:
-    print(f"Error loading config: {e}")
+  benchmark_configs = []
+  if FLAGS.config:
+    try:
+      config_path = FLAGS.config
+      print(f"Loading config from: {config_path}")
+      benchmark_configs = config.load_config(config_path)
+    except Exception as e:
+      print(f"Error loading config: {e}")
+      return
+  elif FLAGS.run:
+    bench_name = FLAGS.run
+    config_obj = _parse_benchmark_cli_args(bench_name, argv[1:])
+    cfg = dataclasses.asdict(config_obj)
+    cfg["name"] = bench_name
+    benchmark_configs.append(cfg)
+  else:
+    print(
+        "Error: Must provide either --config <yaml> or --run <benchmark_name>"
+        " (e.g. gemm)"
+    )
     return
 
   # 2. Set Env Vars from op_flags.yaml
@@ -134,14 +188,6 @@ def main(argv):
     print(f"JAX devices: {len(devices)} (e.g. {devices[:4]}...)")
   except Exception as e:
     print(f"Error initializing JAX devices: {e}")
-
-  # Dynamically load all benchmarks to register them.
-  # This is needed to allow for registration in subpackages.
-  try:
-    benchmark_loader.load_all_benchmarks()
-  except Exception as e:
-    print(f"Error loading benchmarks: {e}")
-    return
 
   all_results = []
   for cfg in benchmark_configs:
@@ -170,8 +216,17 @@ def main(argv):
           print(f"Warning: Could not load system config for {sys_name}: {e}")
 
       benchmark_cls = registry.benchmark_registry.get_benchmark(name)
-      benchmark_instance = benchmark_cls()
-      result = benchmark_instance.run(**cfg)
+      config_cls = benchmark_cls.Config
+
+      if config_cls and dataclasses.is_dataclass(config_cls):
+        config_obj = config_cls(**cfg)
+      else:
+        raise ValueError(
+            f"Benchmark {name} must define a valid dataclass Config."
+        )
+
+      benchmark_instance = benchmark_cls(config_obj)
+      result = benchmark_instance.run()
       all_results.append(result)
       print(f"Success. Metrics: {result.metrics}")
     except Exception as e:
@@ -192,8 +247,7 @@ def main(argv):
 
 
 def run_main():
-  flags.mark_flag_as_required("config")
-  app.run(main)
+  app.run(main, flags_parser=parse_args)
 
 
 if __name__ == "__main__":

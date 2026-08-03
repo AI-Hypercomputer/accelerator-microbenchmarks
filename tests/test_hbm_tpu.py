@@ -15,7 +15,6 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.bm = hbm.HBMBandwidthBenchmark()
 
     # Use Xprof to pull exact on-device execution time, meaning we don't need
     # massive arrays to dilute python overhead anymore.
@@ -52,12 +51,15 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
       self.skipTest("This test requires a TPU backend.")
 
     params = dict(self.params, op_type=op_type)
-    result = self.bm.run(**params)
+    config = hbm.HBMBandwidthParams(**params)
+    self.bm = hbm.HBMBandwidthBenchmark(config=config)
+    self.bm.setup()
+    result = self.bm.run()
 
     # Use xprof_avg_ms for precise device-level timing if available
     xprof_avg_ms = result.metrics.get("xprof_avg_ms", None)
     if xprof_avg_ms is not None:
-      total_bytes = self.bm.get_total_bytes(**params)
+      total_bytes = self.bm.get_total_bytes()
       bw_gb_s = (total_bytes / (xprof_avg_ms / 1000.0)) / 1e9
     else:
       bw_gb_s = result.metrics.get("bandwidth_gb_s", 0)

@@ -56,36 +56,39 @@ class CollectivesBenchmarkTest(absltest.TestCase):
 
   def test_all_reduce_sum_generate_inputs(self):
     """Verify input generation for all_reduce_sum."""
-    bm = collectives.AllReduceSumBenchmark(mesh=self.mock_mesh)
     params = {
         "matrix_dim": 64,
         "dtype": "bfloat16",
     }
-    bm.setup(**params)
-    (data,) = bm.generate_inputs(**params)
+    config = collectives.CollectivesParams(**params)
+    bm = collectives.AllReduceSumBenchmark(config=config, mesh=self.mock_mesh)
+    bm.setup()
+    (data,) = bm.generate_inputs()
     self.assertEqual(data.shape, (64, 8, 128))
     self.assertEqual(data.dtype, jnp.bfloat16)
 
   def test_all_gather_generate_inputs(self):
     """Verify input generation for all_gather."""
-    bm = collectives.AllGatherBenchmark(mesh=self.mock_mesh)
     params = {
         "matrix_dim": 64,
         "dtype": "bfloat16",
     }
-    bm.setup(**params)
-    (data,) = bm.generate_inputs(**params)
+    config = collectives.CollectivesParams(**params)
+    bm = collectives.AllGatherBenchmark(config=config, mesh=self.mock_mesh)
+    bm.setup()
+    (data,) = bm.generate_inputs()
     self.assertEqual(data.shape, (64, 8, 128))
     self.assertEqual(data.dtype, jnp.bfloat16)
 
   def test_all_reduce_sum_correctness(self):
-    bm = collectives.AllReduceSumBenchmark(mesh=self.mock_mesh)
     params = {
         "matrix_dim": 2,
         "dtype": "float32",
     }
-    bm.setup(**params)
-    (data,) = bm.generate_inputs(**params)
+    config = collectives.CollectivesParams(**params)
+    bm = collectives.AllReduceSumBenchmark(config=config, mesh=self.mock_mesh)
+    bm.setup()
+    (data,) = bm.generate_inputs()
     out = bm.run_op(data)
     expected_sum = 4 * np.array(data)  # 4 devices
     for shard in out.addressable_shards:
@@ -96,8 +99,6 @@ class CollectivesBenchmarkTest(absltest.TestCase):
   def test_all_gather_with_sharding_strategy(self):
     devices = np.array(jax.devices()).reshape((2, 2))
     mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
-    bm = collectives.AllGatherBenchmark(mesh=mesh)
-
     # Case 1: sharding_strategy = 2x1 (only d_0)
     params_2x1 = {
         "matrix_dim": 64,
@@ -105,11 +106,13 @@ class CollectivesBenchmarkTest(absltest.TestCase):
         "mesh_shape": "2x2",
         "sharding_strategy": "2x1",
     }
-    bm.setup(**params_2x1)
+    config_2x1 = collectives.CollectivesParams(**params_2x1)
+    bm = collectives.AllGatherBenchmark(config=config_2x1, mesh=mesh)
+    bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x1")
     self.assertEqual(bm._get_sharding_axes(), ("d_0",))
 
-    (data_2x1,) = bm.generate_inputs(**params_2x1)
+    (data_2x1,) = bm.generate_inputs()
     self.assertEqual(data_2x1.shape, (64, 8, 128))
 
     out_2x1 = bm.run_op(data_2x1)
@@ -122,11 +125,13 @@ class CollectivesBenchmarkTest(absltest.TestCase):
         "mesh_shape": "2x2",
         "sharding_strategy": "2x2",
     }
-    bm.setup(**params_2x2)
+    config_2x2 = collectives.CollectivesParams(**params_2x2)
+    bm = collectives.AllGatherBenchmark(config=config_2x2, mesh=mesh)
+    bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x2")
     self.assertEqual(bm._get_sharding_axes(), ("d_0", "d_1"))
 
-    (data_2x2,) = bm.generate_inputs(**params_2x2)
+    (data_2x2,) = bm.generate_inputs()
     self.assertEqual(data_2x2.shape, (64, 8, 128))
 
     out_2x2 = bm.run_op(data_2x2)
@@ -135,8 +140,6 @@ class CollectivesBenchmarkTest(absltest.TestCase):
   def test_reduce_scatter_with_sharding_strategy(self):
     devices = np.array(jax.devices()).reshape((2, 2))
     mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
-    bm = collectives.ReduceScatterBenchmark(mesh=mesh)
-
     # Case 1: sharding_strategy = 2x1 (only d_0)
     params_2x1 = {
         "matrix_dim": 64,
@@ -144,11 +147,13 @@ class CollectivesBenchmarkTest(absltest.TestCase):
         "mesh_shape": "2x2",
         "sharding_strategy": "2x1",
     }
-    bm.setup(**params_2x1)
+    config_2x1 = collectives.CollectivesParams(**params_2x1)
+    bm = collectives.ReduceScatterBenchmark(config=config_2x1, mesh=mesh)
+    bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x1")
     self.assertEqual(bm._get_sharding_axes(), ("d_0",))
 
-    (data_2x1,) = bm.generate_inputs(**params_2x1)
+    (data_2x1,) = bm.generate_inputs()
     self.assertEqual(data_2x1.shape, (2, 64, 256))
 
     out_2x1 = bm.run_op(data_2x1)
@@ -161,11 +166,13 @@ class CollectivesBenchmarkTest(absltest.TestCase):
         "mesh_shape": "2x2",
         "sharding_strategy": "2x2",
     }
-    bm.setup(**params_2x2)
+    config_2x2 = collectives.CollectivesParams(**params_2x2)
+    bm = collectives.ReduceScatterBenchmark(config=config_2x2, mesh=mesh)
+    bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x2")
     self.assertEqual(bm._get_sharding_axes(), ("d_0", "d_1"))
 
-    (data_2x2,) = bm.generate_inputs(**params_2x2)
+    (data_2x2,) = bm.generate_inputs()
     self.assertEqual(data_2x2.shape, (4, 64, 256))
 
     out_2x2 = bm.run_op(data_2x2)

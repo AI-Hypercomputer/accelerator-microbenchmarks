@@ -17,6 +17,11 @@ jax.config.update("jax_platform_name", "cpu")
 class DummyBenchmark(base.BaseBenchmark):
   """A dummy benchmark for testing the BaseBenchmark class."""
 
+  def __init__(self, config=None, mesh=None):
+    if config is None:
+      config = base.BaseBenchmarkParams()
+    super().__init__(config=config, mesh=mesh)
+
   def run_op(self, x):
     return x * 2.0
 
@@ -47,8 +52,8 @@ class BaseBenchmarkTest(absltest.TestCase):
   def test_init_without_mesh(self):
     bm = DummyBenchmark()
     self.assertIsNone(bm.mesh)
-    self.assertEqual(bm.warmup_tries, 10)
-    self.assertEqual(bm.num_runs, 10)
+    self.assertEqual(bm.config.warmup_tries, 10)
+    self.assertEqual(bm.config.num_runs, 10)
     self.assertIsNone(bm._jit_fn)  # pylint: disable=protected-access
 
   def test_init_with_mesh(self):
@@ -106,7 +111,6 @@ class BaseBenchmarkTest(absltest.TestCase):
 
   def test_run_orchestration(self):
     """Tests the full run orchestration of the BaseBenchmark."""
-    bm = DummyBenchmark()
 
     params = {
         "warmup_tries": 2,
@@ -120,7 +124,9 @@ class BaseBenchmarkTest(absltest.TestCase):
         "xprof_timing": False,
     }
 
-    result = bm.run(**params)
+    config = base.BaseBenchmarkParams(**params)
+    bm = DummyBenchmark(config=config)
+    result = bm.run()
 
     self.assertEqual(result.metadata.benchmark_name, "DummyBenchmark")
     self.assertEqual(result.metrics["actual_runs"], 5)
@@ -136,10 +142,9 @@ class BaseBenchmarkTest(absltest.TestCase):
   def test_xprof_naming_with_identifier(self, mock_trace):
     class BenchmarkWithId(DummyBenchmark):
 
-      def get_run_identifier(self, **params) -> str:
-        return f"test_id_{params.get('val')}"
+      def get_run_identifier(self) -> str:
+        return "test_id_42"
 
-    bm = BenchmarkWithId()
     mock_trace.return_value = contextlib.nullcontext()
 
     params = {
@@ -147,9 +152,11 @@ class BaseBenchmarkTest(absltest.TestCase):
         "num_runs": 1,
         "xprof_timing": True,
         "xprof_dir": "/tmp/test_xprof",
-        "val": 42,
     }
-    bm.run(**params)
+
+    config = base.BaseBenchmarkParams(**params)
+    bm = BenchmarkWithId(config=config)
+    bm.run()
 
     mock_trace.assert_called_once()
     called_path = mock_trace.call_args[0][0]
@@ -167,7 +174,6 @@ class BaseBenchmarkTest(absltest.TestCase):
       self, mock_trace, mock_upload, mock_parse_durations
   ):
     """Tests that benchmark uses XProf durations for derived metrics only."""
-    bm = DummyBenchmark()
     mock_trace.return_value = contextlib.nullcontext()
     mock_upload.return_value = "http://mock_xprof_url"
     # Mock XProf durations to be exactly 5.0 ms
@@ -179,7 +185,10 @@ class BaseBenchmarkTest(absltest.TestCase):
         "xprof_timing": True,
         "xprof_dir": "/tmp/test_xprof",
     }
-    result = bm.run(**params)
+
+    config = base.BaseBenchmarkParams(**params)
+    bm = DummyBenchmark(config=config)
+    result = bm.run()
 
     # Assert that the base metrics retain the host timings (not 5.0 ms)
     self.assertNotEqual(result.metrics.get("avg_ms"), 5.0)

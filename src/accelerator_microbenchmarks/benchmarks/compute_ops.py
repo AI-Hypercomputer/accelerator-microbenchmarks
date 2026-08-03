@@ -1,5 +1,6 @@
 """Specialized compute benchmarks for LLM components."""
 
+import dataclasses
 from typing import Any
 
 from accelerator_microbenchmarks.core import base
@@ -9,14 +10,40 @@ import jax
 import jax.numpy as jnp
 
 
+@dataclasses.dataclass
+class ComputeParams(base.BaseBenchmarkParams):
+  dim: int = 4096
+  batch: int = 1024
+
+
+@dataclasses.dataclass
+class RoPEParams(base.BaseBenchmarkParams):
+  seq_len: int = 1024
+  head_dim: int = 128
+  batch: int = 32
+  heads: int = 32
+
+
+@dataclasses.dataclass
+class QuantParams(base.BaseBenchmarkParams):
+  m: int = 4096
+  n: int = 4096
+
+
+@dataclasses.dataclass
+class AddParams(base.BaseBenchmarkParams):
+  size: int = 1024 * 1024
+
+
 @registry.benchmark_registry.register("swiglu")
-class SwiGLUBenchmark(base.BaseBenchmark):
+class SwiGLUBenchmark(base.BaseBenchmark[ComputeParams]):
   """SwiGLU activation benchmark.
 
   Y = Swish(A) * B, where [A, B] = Split(X, 2)
   """
+  Config = ComputeParams
 
-  def setup(self, **params):
+  def setup(self):
     @jax.jit
     def swiglu_fn(x):
       with jax.named_scope(constants.MARKER):
@@ -25,16 +52,16 @@ class SwiGLUBenchmark(base.BaseBenchmark):
 
     self._jit_fn = swiglu_fn
 
-  def get_run_identifier(self, **params) -> str:
-    dim = params.get("dim")
-    batch = params.get("batch")
+  def get_run_identifier(self) -> str:
+    dim = self.config.dim
+    batch = self.config.batch
     if dim is not None or batch is not None:
       return f"batch_{batch or 1024}_dim_{dim or 4096}"
     return ""
 
-  def generate_inputs(self, **params) -> tuple[Any, ...]:
-    dim = params.get("dim", 4096)
-    batch = params.get("batch", 1024)
+  def generate_inputs(self) -> tuple[Any, ...]:
+    dim = self.config.dim
+    batch = self.config.batch
     key = jax.random.PRNGKey(0)
     x = jax.random.normal(key, (batch, dim * 2), dtype=jnp.bfloat16)
     if self.mesh is None:
@@ -52,34 +79,33 @@ class SwiGLUBenchmark(base.BaseBenchmark):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(x)
 
-  def get_total_bytes(self, **params) -> float:
-    dim = params.get("dim", 4096)
-    batch = params.get("batch", 1024)
+  def get_total_bytes(self) -> float:
+    dim = self.config.dim
+    batch = self.config.batch
     itemsize = jnp.dtype(jnp.bfloat16).itemsize
     # Read X (batch * dim * 2), Write Out (batch * dim)
     return (batch * dim * 2 * itemsize) + (batch * dim * itemsize)
 
-  def get_arithmetic_intensity(self, **params) -> float:
-    dim = params.get("dim", 4096)
-    batch = params.get("batch", 1024)
+  def get_arithmetic_intensity(self) -> float:
+    dim = self.config.dim
+    batch = self.config.batch
     # 1 sigmoid (~4-10 flops) + 2 multiplies per element (dim)
     # Approximation: 10 flops per 'dim' element
     total_flops = batch * dim * 10
-    return total_flops / self.get_total_bytes(**params)
+    return total_flops / self.get_total_bytes()
 
-  def calculate_metrics(
-      self, times_ms: list[float], **params
-  ) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms, **params)
-    metrics["intensity"] = self.get_arithmetic_intensity(**params)
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    metrics = super().calculate_metrics(times_ms)
+    metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics
 
 
 @registry.benchmark_registry.register("rmsnorm")
-class RMSNormBenchmark(base.BaseBenchmark):
+class RMSNormBenchmark(base.BaseBenchmark[ComputeParams]):
   """RMSNorm benchmark: Y = X / rms(X) * weight."""
+  Config = ComputeParams
 
-  def setup(self, **params):
+  def setup(self):
     @jax.jit
     def rmsnorm_fn(x, w):
       with jax.named_scope(constants.MARKER):
@@ -88,16 +114,16 @@ class RMSNormBenchmark(base.BaseBenchmark):
 
     self._jit_fn = rmsnorm_fn
 
-  def get_run_identifier(self, **params) -> str:
-    dim = params.get("dim")
-    batch = params.get("batch")
+  def get_run_identifier(self) -> str:
+    dim = self.config.dim
+    batch = self.config.batch
     if dim is not None or batch is not None:
       return f"batch_{batch or 1024}_dim_{dim or 4096}"
     return ""
 
-  def generate_inputs(self, **params) -> tuple[jnp.ndarray, jnp.ndarray]:
-    dim = params.get("dim", 4096)
-    batch = params.get("batch", 1024)
+  def generate_inputs(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+    dim = self.config.dim
+    batch = self.config.batch
     key = jax.random.PRNGKey(0)
     x = jax.random.normal(key, (batch, dim), dtype=jnp.bfloat16)
     w = jnp.ones((dim,), dtype=jnp.bfloat16)
@@ -119,33 +145,32 @@ class RMSNormBenchmark(base.BaseBenchmark):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(x, w)
 
-  def get_total_bytes(self, **params) -> float:
-    dim = params.get("dim", 4096)
-    batch = params.get("batch", 1024)
+  def get_total_bytes(self) -> float:
+    dim = self.config.dim
+    batch = self.config.batch
     itemsize = jnp.dtype(jnp.bfloat16).itemsize
     # Read X, Read W (small), Write Out
     return (batch * dim * itemsize * 2) + (dim * itemsize)
 
-  def get_arithmetic_intensity(self, **params) -> float:
-    dim = params.get("dim", 4096)
-    batch = params.get("batch", 1024)
+  def get_arithmetic_intensity(self) -> float:
+    dim = self.config.dim
+    batch = self.config.batch
     # square, sum, sqrt, div, mul = ~5 flops per element
     total_flops = batch * dim * 5
-    return total_flops / self.get_total_bytes(**params)
+    return total_flops / self.get_total_bytes()
 
-  def calculate_metrics(
-      self, times_ms: list[float], **params
-  ) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms, **params)
-    metrics["intensity"] = self.get_arithmetic_intensity(**params)
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    metrics = super().calculate_metrics(times_ms)
+    metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics
 
 
 @registry.benchmark_registry.register("rope")
-class RoPEBenchmark(base.BaseBenchmark):
+class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
   """Rotary Positional Embedding (RoPE) benchmark."""
+  Config = RoPEParams
 
-  def setup(self, **params):
+  def setup(self):
     # Simplified RoPE logic for benchmarking
     @jax.jit
     def rope_fn(x, freq_cis):
@@ -156,20 +181,20 @@ class RoPEBenchmark(base.BaseBenchmark):
 
     self._jit_fn = rope_fn
 
-  def get_run_identifier(self, **params) -> str:
-    seq_len = params.get("seq_len")
-    head_dim = params.get("head_dim")
-    batch = params.get("batch")
-    heads = params.get("heads")
+  def get_run_identifier(self) -> str:
+    seq_len = self.config.seq_len
+    head_dim = self.config.head_dim
+    batch = self.config.batch
+    heads = self.config.heads
     if any(v is not None for v in (seq_len, head_dim, batch, heads)):
       return f"b_{batch or 32}_h_{heads or 32}_s_{seq_len or 1024}_d_{head_dim or 128}"
     return ""
 
-  def generate_inputs(self, **params) -> tuple[jnp.ndarray, jnp.ndarray]:
-    m = params.get("seq_len", 1024)
-    n = params.get("head_dim", 128)
-    batch = params.get("batch", 32)
-    heads = params.get("heads", 32)
+  def generate_inputs(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+    m = self.config.seq_len
+    n = self.config.head_dim
+    batch = self.config.batch
+    heads = self.config.heads
 
     key = jax.random.PRNGKey(0)
     # Convert to complex64 for internal compute as requested
@@ -202,37 +227,36 @@ class RoPEBenchmark(base.BaseBenchmark):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(x, freq_cis)
 
-  def get_total_bytes(self, **params) -> float:
-    m = params.get("seq_len", 1024)
-    n = params.get("head_dim", 128)
-    batch = params.get("batch", 32)
-    heads = params.get("heads", 32)
+  def get_total_bytes(self) -> float:
+    m = self.config.seq_len
+    n = self.config.head_dim
+    batch = self.config.batch
+    heads = self.config.heads
     # complex64 = 8 bytes per element
     itemsize = 8
     return batch * heads * m * (n // 2) * itemsize * 2
 
-  def get_arithmetic_intensity(self, **params) -> float:
-    m = params.get("seq_len", 1024)
-    n = params.get("head_dim", 128)
-    batch = params.get("batch", 32)
-    heads = params.get("heads", 32)
+  def get_arithmetic_intensity(self) -> float:
+    m = self.config.seq_len
+    n = self.config.head_dim
+    batch = self.config.batch
+    heads = self.config.heads
     # 1 complex mul = 6 flops (4 mul, 2 add)
     total_flops = batch * heads * m * (n // 2) * 6
-    return total_flops / self.get_total_bytes(**params)
+    return total_flops / self.get_total_bytes()
 
-  def calculate_metrics(
-      self, times_ms: list[float], **params
-  ) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms, **params)
-    metrics["intensity"] = self.get_arithmetic_intensity(**params)
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    metrics = super().calculate_metrics(times_ms)
+    metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics
 
 
 @registry.benchmark_registry.register("quantization")
-class QuantizationBenchmark(base.BaseBenchmark):
+class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
   """Rowwise quantization to FP8: OUT = cast_fp8(X / SF)."""
+  Config = QuantParams
 
-  def setup(self, **params):
+  def setup(self):
     @jax.jit
     def quant_fn(x):
       with jax.named_scope(constants.MARKER):
@@ -243,15 +267,15 @@ class QuantizationBenchmark(base.BaseBenchmark):
 
     self._jit_fn = quant_fn
 
-  def get_run_identifier(self, **params) -> str:
-    m = params.get("m")
-    n = params.get("n")
+  def get_run_identifier(self) -> str:
+    m = self.config.m
+    n = self.config.n
     if m is not None or n is not None:
       return f"m_{m or 4096}_n_{n or 4096}"
     return ""
 
-  def generate_inputs(self, **params) -> tuple[jnp.ndarray, ...]:
-    m, n = params.get("m", 4096), params.get("n", 4096)
+  def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
+    m, n = self.config.m, self.config.n
     key = jax.random.PRNGKey(0)
     x = jax.random.normal(key, (m, n), dtype=jnp.bfloat16)
     if self.mesh is None:
@@ -269,32 +293,31 @@ class QuantizationBenchmark(base.BaseBenchmark):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(x)
 
-  def get_total_bytes(self, **params) -> float:
-    m, n = params.get("m", 4096), params.get("n", 4096)
+  def get_total_bytes(self) -> float:
+    m, n = self.config.m, self.config.n
     in_itemsize = jnp.dtype(jnp.bfloat16).itemsize
     out_itemsize = jnp.dtype(jnp.float8_e4m3fn).itemsize
     # Read X, Write Out, Write SF (rowwise)
     return (m * n * in_itemsize) + (m * n * out_itemsize) + (m * 4)
 
-  def get_arithmetic_intensity(self, **params) -> float:
-    m, n = params.get("m", 4096), params.get("n", 4096)
+  def get_arithmetic_intensity(self) -> float:
+    m, n = self.config.m, self.config.n
     # 1 abs, 1 max (per row), 1 div, 1 mul
     # Approximation: 4 flops per element
-    return (m * n * 4) / self.get_total_bytes(**params)
+    return (m * n * 4) / self.get_total_bytes()
 
-  def calculate_metrics(
-      self, times_ms: list[float], **params
-  ) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms, **params)
-    metrics["intensity"] = self.get_arithmetic_intensity(**params)
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    metrics = super().calculate_metrics(times_ms)
+    metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics
 
 
 @registry.benchmark_registry.register("simple_add")
-class AddBenchmark(base.BaseBenchmark):
+class AddBenchmark(base.BaseBenchmark[AddParams]):
   """Simple Z = X + Y benchmark."""
+  Config = AddParams
 
-  def setup(self, **params):
+  def setup(self):
     @jax.jit
     def add_fn(x, y):
       with jax.named_scope(constants.MARKER):
@@ -302,14 +325,14 @@ class AddBenchmark(base.BaseBenchmark):
 
     self._jit_fn = add_fn
 
-  def get_run_identifier(self, **params) -> str:
-    size = params.get("size")
+  def get_run_identifier(self) -> str:
+    size = self.config.size
     if size is not None:
       return f"size_{size}"
     return ""
 
-  def generate_inputs(self, **params) -> tuple[jnp.ndarray, jnp.ndarray]:
-    size = params.get("size", 1024 * 1024)
+  def generate_inputs(self) -> tuple[jnp.ndarray, jnp.ndarray]:
+    size = self.config.size
     key = jax.random.PRNGKey(0)
     x = jax.random.normal(key, (size,), dtype=jnp.bfloat16)
     y = jax.random.normal(key, (size,), dtype=jnp.bfloat16)
@@ -325,20 +348,18 @@ class AddBenchmark(base.BaseBenchmark):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(x, y)
 
-  def get_total_bytes(self, **params) -> float:
-    size = params.get("size", 1024 * 1024)
+  def get_total_bytes(self) -> float:
+    size = self.config.size
     itemsize = jnp.dtype(jnp.bfloat16).itemsize
     # Read X, Read Y, Write Z
     return size * itemsize * 3
 
-  def get_arithmetic_intensity(self, **params) -> float:
-    size = params.get("size", 1024 * 1024)
+  def get_arithmetic_intensity(self) -> float:
+    size = self.config.size
     # 1 add per element
-    return size / self.get_total_bytes(**params)
+    return size / self.get_total_bytes()
 
-  def calculate_metrics(
-      self, times_ms: list[float], **params
-  ) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms, **params)
-    metrics["intensity"] = self.get_arithmetic_intensity(**params)
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    metrics = super().calculate_metrics(times_ms)
+    metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics

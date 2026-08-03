@@ -19,10 +19,22 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
-    self.bm = host_device.HostToDeviceBenchmark(mesh=self.mock_mesh)
     self.params = {
         "data_size_mib": 4,
     }
+
+  def _setup_benchmark(self, **kwargs):
+    config_params = {
+        k: v
+        for k, v in self.params.items()
+        if k not in ("num_runs", "warmup_tries")
+    }
+    config_params.update(kwargs)
+    config = host_device.HostDeviceParams(**config_params)
+    self.bm = host_device.HostToDeviceBenchmark(
+        config=config, mesh=self.mock_mesh
+    )
+    self.bm.setup()
 
   def test_benchmark_registered(self):
     """Verify registration."""
@@ -31,8 +43,8 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
 
   def test_generate_inputs(self):
     """Verify input shape."""
-    self.bm.setup(**self.params)
-    inputs = self.bm.generate_inputs(**self.params)
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
     self.assertLen(inputs, 1)
     host_data = inputs[0]
     # 4MB of float32 = 1M elements.
@@ -43,8 +55,8 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
 
   def test_run_op(self):
     """Verify run_op returns a JAX array on device."""
-    self.bm.setup(**self.params)
-    inputs = self.bm.generate_inputs(**self.params)
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
     out = self.bm.run_op(*inputs)
     self.assertIsInstance(out, jax.Array)
     self.assertEqual(out.shape, (8192, 128))
@@ -52,14 +64,14 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
   def test_get_total_bytes(self):
     """Verify byte calculation."""
     expected_bytes = 4.0 * 1024 * 1024
-    self.assertAlmostEqual(
-        self.bm.get_total_bytes(**self.params), expected_bytes
-    )
+    self._setup_benchmark()
+    self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
 
   def test_calculate_metrics(self):
     """Verify metrics calculation."""
     times_ms = [10.0, 10.0, 10.0]
-    metrics = self.bm.calculate_metrics(times_ms, **self.params)
+    self._setup_benchmark()
+    metrics = self.bm.calculate_metrics(times_ms)
     # avg_ms = 10.0 -> avg_latency_s = 0.01s
     # data_size_mib = 4 -> 4 / 1024 = 0.00390625 GiB
     # bandwidth_gb_s = 0.00390625 / 0.01 = 0.390625 GiB/s
@@ -76,13 +88,25 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
-    self.bm = host_device.DeviceToHostBenchmark(mesh=self.mock_mesh)
     # Use small runs for testing to limit memory
     self.params = {
         "data_size_mib": 4,
         "num_runs": 2,
         "warmup_tries": 1,
     }
+
+  def _setup_benchmark(self, **kwargs):
+    config_params = {
+        k: v
+        for k, v in self.params.items()
+        if k not in ("num_runs", "warmup_tries")
+    }
+    config_params.update(kwargs)
+    config = host_device.HostDeviceParams(**config_params)
+    self.bm = host_device.DeviceToHostBenchmark(
+        config=config, mesh=self.mock_mesh
+    )
+    self.bm.setup()
 
   def test_benchmark_registered(self):
     """Verify registration."""
@@ -91,8 +115,8 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
 
   def test_generate_inputs(self):
     """Verify input is a JAX Array on device."""
-    self.bm.setup(**self.params)
-    inputs = self.bm.generate_inputs(**self.params)
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
     self.assertLen(inputs, 1)
     device_array = inputs[0]
     self.assertIsInstance(device_array, jax.Array)
@@ -100,8 +124,8 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
 
   def test_run_op(self):
     """Verify run_op returns a numpy array."""
-    self.bm.setup(**self.params)
-    inputs = self.bm.generate_inputs(**self.params)
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
 
     out = self.bm.run_op(*inputs)
     self.assertIsInstance(out, np.ndarray)
@@ -110,14 +134,14 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
   def test_get_total_bytes(self):
     """Verify byte calculation."""
     expected_bytes = 4.0 * 1024 * 1024
-    self.assertAlmostEqual(
-        self.bm.get_total_bytes(**self.params), expected_bytes
-    )
+    self._setup_benchmark()
+    self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
 
   def test_calculate_metrics(self):
     """Verify metrics calculation."""
     times_ms = [10.0, 10.0]
-    metrics = self.bm.calculate_metrics(times_ms, **self.params)
+    self._setup_benchmark()
+    metrics = self.bm.calculate_metrics(times_ms)
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
     self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.390625)
     self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)

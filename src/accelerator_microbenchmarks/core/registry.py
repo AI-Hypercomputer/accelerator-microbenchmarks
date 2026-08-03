@@ -31,6 +31,10 @@ class BenchmarkRegistry:
     """List all registered benchmarks."""
     return sorted(list(self._benchmarks.keys()))
 
+  def get_all(self) -> dict[str, type[Any]]:
+    """Get a dictionary of all registered benchmarks."""
+    return self._benchmarks
+
 
 # Default global registry instance
 benchmark_registry = BenchmarkRegistry()

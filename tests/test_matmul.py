@@ -19,7 +19,21 @@ class GeneralizedGemmBenchmarkTest(absltest.TestCase):
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
-    self.bm = matmul.GeneralizedGemmBenchmark(mesh=self.mock_mesh)
+
+  def _setup_benchmark(self, **kwargs):
+    params = {
+        "m": 64,
+        "k": 64,
+        "n": 64,
+        "in_dtype": "bfloat16",
+        "out_dtype": "bfloat16",
+    }
+    params.update(kwargs)
+    config = matmul.GemmParams(**params)
+    self.bm = matmul.GeneralizedGemmBenchmark(
+        config=config, mesh=self.mock_mesh
+    )
+    self.bm.setup()
 
   def test_benchmark_registered(self):
     """Test that the benchmark is properly registered."""
@@ -28,15 +42,8 @@ class GeneralizedGemmBenchmarkTest(absltest.TestCase):
 
   def test_generate_inputs(self):
     """Test generating inputs without scaling factors."""
-    params = {
-        "m": 64,
-        "k": 64,
-        "n": 64,
-        "in_dtype": "bfloat16",
-        "out_dtype": "bfloat16",
-    }
-    self.bm.setup(**params)
-    inputs = self.bm.generate_inputs(**params)
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
     self.assertLen(inputs, 2)
     a, b = inputs
     self.assertEqual(a.shape, (64, 64))
@@ -46,16 +53,8 @@ class GeneralizedGemmBenchmarkTest(absltest.TestCase):
 
   def test_generate_inputs_with_scaling_factors(self):
     """Test generating inputs with scaling factors."""
-    params = {
-        "m": 64,
-        "k": 64,
-        "n": 64,
-        "in_dtype": "bfloat16",
-        "out_dtype": "bfloat16",
-        "use_scaling_factors": True,
-    }
-    self.bm.setup(**params)
-    inputs = self.bm.generate_inputs(**params)
+    self._setup_benchmark(use_scaling_factors=True)
+    inputs = self.bm.generate_inputs()
     self.assertLen(inputs, 4)
     a, b, sf0, sf1 = inputs
     self.assertEqual(a.shape, (64, 64))
@@ -69,77 +68,43 @@ class GeneralizedGemmBenchmarkTest(absltest.TestCase):
 
   def test_run_op(self):
     """Test run op without scaling factors."""
-    params = {
-        "m": 64,
-        "k": 64,
-        "n": 64,
-        "in_dtype": "bfloat16",
-        "out_dtype": "bfloat16",
-    }
-    self.bm.setup(**params)
-    inputs = self.bm.generate_inputs(**params)
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
     out = self.bm.run_op(*inputs)
     self.assertEqual(out.shape, (64, 64))
     self.assertEqual(out.dtype, jnp.bfloat16)
 
   def test_run_op_with_scaling_factors(self):
     """Test run op with scaling factors."""
-    params = {
-        "m": 64,
-        "k": 64,
-        "n": 64,
-        "in_dtype": "bfloat16",
-        "out_dtype": "bfloat16",
-        "use_scaling_factors": True,
-    }
-    self.bm.setup(**params)
-    inputs = self.bm.generate_inputs(**params)
+    self._setup_benchmark(use_scaling_factors=True)
+    inputs = self.bm.generate_inputs()
     out = self.bm.run_op(*inputs)
     self.assertEqual(out.shape, (64, 64))
     self.assertEqual(out.dtype, jnp.bfloat16)
 
   def test_get_total_bytes(self):
     """Test calculating total bytes."""
-    params = {
-        "m": 64,
-        "k": 64,
-        "n": 64,
-        "in_dtype": "bfloat16",
-        "out_dtype": "bfloat16",
-    }
+    self._setup_benchmark()
     # Read A (64 * 64 * 2), Read B (64 * 64 * 2), Write Out (64 * 64 * 2)
     # 8192 * 3 = 24576
     expected_bytes = 24576.0
-    self.assertAlmostEqual(self.bm.get_total_bytes(**params), expected_bytes)
+    self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
 
   def test_get_arithmetic_intensity(self):
     """Test calculating arithmetic intensity."""
-    params = {
-        "m": 64,
-        "k": 64,
-        "n": 64,
-        "in_dtype": "bfloat16",
-        "out_dtype": "bfloat16",
-    }
+    self._setup_benchmark()
     # flops = 2 * 64 * 64 * 64 = 524288
     # bytes = 24576
     # intensity = 524288 / 24576 = 21.333333333333332
     expected_intensity = 524288 / 24576
     self.assertAlmostEqual(
-        self.bm.get_arithmetic_intensity(**params), expected_intensity
+        self.bm.get_arithmetic_intensity(), expected_intensity
     )
 
   def test_calculate_metrics(self):
     """Test calculating performance metrics."""
-    params = {
-        "m": 64,
-        "k": 64,
-        "n": 64,
-        "in_dtype": "bfloat16",
-        "out_dtype": "bfloat16",
-    }
-    self.bm.setup(**params)
-    metrics = self.bm.calculate_metrics([1.0, 1.5, 2.0], **params)
+    self._setup_benchmark()
+    metrics = self.bm.calculate_metrics([1.0, 1.5, 2.0])
     self.assertIn("avg_ms", metrics)
     self.assertIn("tflops_per_sec", metrics)
     self.assertIn("total_flops", metrics)
@@ -149,6 +114,10 @@ class GeneralizedGemmBenchmarkTest(absltest.TestCase):
 
   def test_is_xprof_op(self):
     """Test that is_xprof_op correctly identifies convolution fusion events."""
+    config = matmul.GemmParams(m=128, n=128, k=128)
+    self.bm = matmul.GeneralizedGemmBenchmark(
+        config=config, mesh=self.mock_mesh
+    )
     self.assertTrue(
         self.bm.match_xprof_op_fallback(
             {"args": {"hlo_category": "convolution fusion"}}

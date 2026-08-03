@@ -6,6 +6,7 @@ from typing import Any, Callable
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
 
@@ -63,39 +64,41 @@ HBM_KERNELS: dict[str, HBMKernelSpec] = {
 }
 
 
+@dataclasses.dataclass
+class HBMBandwidthParams(base.BaseBenchmarkParams):
+  op_type: str = "copy"
+  size: int = 134217728  # default ~256MB for bfloat16 (128M elements * 2 bytes)
+  dtype: str = "bfloat16"
+
+
 @registry.benchmark_registry.register("hbm_bandwidth")
-class HBMBandwidthBenchmark(base.BaseBenchmark):
+class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
+  Config = HBMBandwidthParams
   """HBM bandwidth microbenchmark supporting standard STREAM kernels."""
 
-  def __init__(self, mesh=None):
-    super().__init__(mesh)
+  def __init__(
+      self, config: HBMBandwidthParams, mesh: jax.sharding.Mesh | None = None
+  ):
+    super().__init__(config=config, mesh=mesh)
     self.spec: HBMKernelSpec | None = None
     self.scalar: Any | None = None
 
-  def _resolve_spec(self, **params) -> HBMKernelSpec:
-    """Resolve the active HBMKernelSpec from params or instance state."""
-    if "op_type" in params:
-      op_type = params["op_type"].lower()
-      if op_type in HBM_KERNELS:
-        return HBM_KERNELS[op_type]
+  def setup(self):
+    op_type = self.config.op_type
+    if op_type is None:
+      raise ValueError("op_type must be specified.")
+
+    op_type = op_type.lower()
+    if op_type in HBM_KERNELS:
+      spec = HBM_KERNELS[op_type]
+    else:
       supported = ", ".join(HBM_KERNELS.keys())
       raise ValueError(
           f"Unsupported op_type: '{op_type}'. Supported: {supported}."
       )
-    if self.spec is not None:
-      return self.spec
-    raise ValueError(
-        "HBMBandwidthBenchmark is not configured. Call setup() before accessing"
-        " benchmark properties or pass 'op_type' in params."
-    )
-
-  def setup(self, **params):
-    op_type = params.get("op_type", "copy")
-    spec = self._resolve_spec(op_type=op_type)
     self.spec = spec
 
-    dtype_str = params.get("dtype", "bfloat16")
-    dtype = getattr(jnp, dtype_str) if hasattr(jnp, dtype_str) else jnp.bfloat16
+    dtype = utils.parse_dtype(self.config.dtype)
     self.scalar = jnp.array(random.uniform(1.1, 10.0), dtype=dtype)
     scalar = self.scalar
 
@@ -106,18 +109,15 @@ class HBMBandwidthBenchmark(base.BaseBenchmark):
 
     self._jit_fn = hbm_op
 
-  def get_run_identifier(self, **params) -> str:
-    spec = self._resolve_spec(**params)
-    size = params.get("size")
-    if size is not None:
-      return f"{spec.name}_dim_{size}"
-    return f"{spec.name}"
+  def get_run_identifier(self) -> str:
+    assert self.spec is not None
+    return f"{self.spec.name}_dim_{self.config.size}"
 
-  def generate_inputs(self, **params) -> tuple[jnp.ndarray, ...]:
-    spec = self._resolve_spec(**params)
-    size = params.get("size", 1024 * 1024 * 128)  # Default ~256MB for float16
-    dtype_str = params.get("dtype", "bfloat16")
-    dtype = getattr(jnp, dtype_str) if hasattr(jnp, dtype_str) else jnp.bfloat16
+  def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
+    assert self.spec is not None
+    # 'size' being the number of elements
+    size = self.config.size
+    dtype = utils.parse_dtype(self.config.dtype)
 
     # Force execution on local device 0 for single-device benchmark
     local_device = jax.local_devices()[0]
@@ -130,7 +130,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark):
     )
 
     inputs = []
-    for i in range(spec.num_inputs):
+    for i in range(self.spec.num_inputs):
       key = jax.random.PRNGKey(i)
       inputs.append(generate_data(key))
     return tuple(inputs)
@@ -140,28 +140,25 @@ class HBMBandwidthBenchmark(base.BaseBenchmark):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(*args, **kwargs)
 
-  def get_total_bytes(self, **params) -> float:
-    spec = self._resolve_spec(**params)
-    size = params.get("size", 1024 * 1024 * 128)
-    dtype_str = params.get("dtype", "bfloat16")
-    dtype = getattr(jnp, dtype_str) if hasattr(jnp, dtype_str) else jnp.bfloat16
+  def get_total_bytes(self) -> float:
+    assert self.spec is not None
+    size = self.config.size
+    dtype = utils.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
 
-    return float(size * itemsize * spec.num_arrays)
+    return float(size * itemsize * self.spec.num_arrays)
 
-  def get_arithmetic_intensity(self, **params) -> float:
-    spec = self._resolve_spec(**params)
-    size = params.get("size", 1024 * 1024 * 128)
-    flops = float(spec.num_flops_per_element * size)
-    bytes_moved = self.get_total_bytes(**params)
+  def get_arithmetic_intensity(self) -> float:
+    assert self.spec is not None
+    size = self.config.size
+    flops = float(self.spec.num_flops_per_element * size)
+    bytes_moved = self.get_total_bytes()
     return flops / bytes_moved
 
-  def calculate_metrics(
-      self, times_ms: list[float], **params
-  ) -> dict[str, Any]:
-    spec = self._resolve_spec(**params)
-    metrics = super().calculate_metrics(times_ms, **params)
-    total_bytes = self.get_total_bytes(**params)
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    assert self.spec is not None
+    metrics = super().calculate_metrics(times_ms)
+    total_bytes = self.get_total_bytes()
 
     avg_latency_s = metrics["avg_ms"] / 1000.0
     if avg_latency_s == 0:
@@ -171,6 +168,6 @@ class HBMBandwidthBenchmark(base.BaseBenchmark):
 
     metrics["bandwidth_gb_s"] = bandwidth_gb_s
     metrics["total_bytes_mb"] = total_bytes / 1e6
-    metrics["intensity"] = self.get_arithmetic_intensity(**params)
-    metrics["op_type"] = spec.name
+    metrics["intensity"] = self.get_arithmetic_intensity()
+    metrics["op_type"] = self.spec.name
     return metrics

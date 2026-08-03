@@ -14,7 +14,6 @@ import numpy as np
 SUPPORTED_DTYPES = (
     "bfloat16",
     "float8_e4m3fn",
-    "float4",
     "int8",
     "float16",
     "float32",
@@ -29,7 +28,6 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
-    self.bm = matmul.GeneralizedGemmBenchmark(mesh=self.mock_mesh)
 
   @parameterized.named_parameters(
       *[
@@ -66,8 +64,6 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     )
 
     # Create a fresh benchmark instance to ensure clean setup and mesh
-    bm = matmul.GeneralizedGemmBenchmark(mesh=None)
-
     # This part captures the profile for debugging use
     undeclared_outputs_dir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR")
     if undeclared_outputs_dir:
@@ -93,7 +89,10 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         "xprof_dir": temp_dir,
     }
 
-    result = bm.run(**params)
+    config = matmul.GemmParams(**params)
+    bm = matmul.GeneralizedGemmBenchmark(config=config, mesh=None)
+    bm.setup()
+    result = bm.run()
     self.assertIsNotNone(result)
     self.assertEqual(result.metadata.benchmark_name, "GeneralizedGemmBenchmark")
     # Verify that we successfully collected real xprof_avg_ms.

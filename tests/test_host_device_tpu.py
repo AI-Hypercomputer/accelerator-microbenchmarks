@@ -15,7 +15,6 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
-    self.bm = host_device.DeviceToHostBenchmark(mesh=self.mock_mesh)
     # Use small runs for testing to limit memory
     self.params = {
         "data_size_mib": 4,
@@ -47,8 +46,17 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     if "tpu" not in jax.devices()[0].platform:
       self.fail("This test is meaninglesss on CPU.")
 
-    self.bm.setup(**self.params)
-    self.bm.inputs = list(self.bm.generate_inputs(**self.params))
+    d2h_params = {
+        k: v
+        for k, v in self.params.items()
+        if k not in ("num_runs", "warmup_tries")
+    }
+    config = host_device.HostDeviceParams(**d2h_params)
+    self.bm = host_device.DeviceToHostBenchmark(
+        config=config, mesh=self.mock_mesh
+    )
+    self.bm.setup()
+    self.bm.inputs = list(self.bm.generate_inputs())
 
     old_array = self.bm.inputs[0]
     self.assertFalse(old_array.is_deleted())
@@ -72,6 +80,15 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
       self.fail("This test is meaninglesss on CPU.")
 
     # Capture the array returned by generate_inputs
+    d2h_params = {
+        k: v
+        for k, v in self.params.items()
+        if k not in ("num_runs", "warmup_tries")
+    }
+    config = host_device.HostDeviceParams(**d2h_params)
+    self.bm = host_device.DeviceToHostBenchmark(
+        config=config, mesh=self.mock_mesh
+    )
     original_generate_inputs = self.bm.generate_inputs
     generated_arrays = []
 
@@ -82,7 +99,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
 
     self.bm.generate_inputs = wrapped_generate_inputs
     # Run the benchmark
-    self.bm.run(**self.params)
+    self.bm.run()
 
     # If reset_data() was executed, the generated array must have been deleted
     self.assertGreater(len(generated_arrays), 1)
@@ -103,8 +120,15 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
       self.skipTest("This test is a corner case for Ghostfish.")
 
     params = {"data_size_mib": size_mib, "num_runs": 20, "warmup_tries": 2}
-    self.bm.setup(**params)
-    inputs = self.bm.generate_inputs(**params)
+    d2h_params = {
+        k: v for k, v in params.items() if k not in ("num_runs", "warmup_tries")
+    }
+    config = host_device.HostDeviceParams(**d2h_params)
+    self.bm = host_device.DeviceToHostBenchmark(
+        config=config, mesh=self.mock_mesh
+    )
+    self.bm.setup()
+    inputs = self.bm.generate_inputs()
 
     # 1M elements * size_mib / float32_size (4 bytes)
     num_elements = (1024 * 1024 * size_mib) // np.dtype(np.float32).itemsize

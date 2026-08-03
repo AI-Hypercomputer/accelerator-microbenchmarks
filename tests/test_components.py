@@ -20,7 +20,6 @@ class ComponentsBenchmarkTest(absltest.TestCase):
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
-    self.bm = components.TransformerLayerMoE(mesh=self.mock_mesh)
 
   def test_benchmark_registered(self):
     """Verify that the benchmark is correctly registered."""
@@ -35,8 +34,10 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "model_dim": 256,
         "mslen": 64,
     }
-    self.bm.setup(**params)
-    x, w_attn, b_attn, w_ffn, b_ffn = self.bm.generate_inputs(**params)
+    config = components.TransformerLayerParams(**params)
+    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
+    self.bm.setup()
+    x, w_attn, b_attn, w_ffn, b_ffn = self.bm.generate_inputs()
 
     self.assertEqual(x.shape, (1, 64, 256))
     self.assertEqual(w_attn.shape, (256, 256 * 3))
@@ -56,8 +57,10 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "model_dim": 256,
         "mslen": 64,
     }
-    self.bm.setup(**params)
-    inputs = self.bm.generate_inputs(**params)
+    config = components.TransformerLayerParams(**params)
+    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
+    self.bm.setup()
+    inputs = self.bm.generate_inputs()
     out = self.bm.run_op(*inputs)
 
     self.assertEqual(out.shape, (1, 64, 256))
@@ -69,6 +72,8 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "model_dim": 256,
         "mslen": 64,
     }
+    config = components.TransformerLayerParams(**params)
+    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
     # model_dim = 256
     # seq_len = 64
     # itemsize = 2 (bfloat16)
@@ -76,7 +81,7 @@ class ComponentsBenchmarkTest(absltest.TestCase):
     # w_size = (256 * 256 * 10) * 2 = 1310720
     # Total = 10 * 32768 + 1310720 = 327680 + 1310720 = 1638400
     expected_bytes = 1638400.0
-    self.assertAlmostEqual(self.bm.get_total_bytes(**params), expected_bytes)
+    self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
 
   def test_get_arithmetic_intensity(self):
     """Verify the intensity calculation."""
@@ -84,12 +89,14 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "model_dim": 256,
         "mslen": 64,
     }
+    config = components.TransformerLayerParams(**params)
+    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
     # flops = 24 * 64 * (256^2) = 1536 * 65536 = 100663296
     # bytes = 1638400
     # intensity = 100663296 / 1638400 = 61.44
     expected_intensity = 61.44
     self.assertAlmostEqual(
-        self.bm.get_arithmetic_intensity(**params), expected_intensity
+        self.bm.get_arithmetic_intensity(), expected_intensity
     )
 
   def test_calculate_metrics(self):
@@ -98,11 +105,13 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "model_dim": 256,
         "mslen": 64,
     }
+    config = components.TransformerLayerParams(**params)
+    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
     # avg_ms = 10.0ms -> avg_latency_s = 0.01s
     # flops = 100663296 (from above)
     # tflops_per_sec = (100663296 / 0.01) / 1e12 = 10066329600 / 1e12 = 0.010066
     times_ms = [10.0, 10.0, 10.0]
-    metrics = self.bm.calculate_metrics(times_ms, **params)
+    metrics = self.bm.calculate_metrics(times_ms)
 
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
     self.assertAlmostEqual(metrics["intensity"], 61.44)
