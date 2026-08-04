@@ -96,9 +96,12 @@ def set_xla_flags(
     benchmark_configs: List[dict[str, Any]], flags_file_path: str | None = None
 ):
   """Set env vars based on first benchmark in config and op_flags.yaml."""
-  if not benchmark_configs:
-    return
-  benchmark_name = benchmark_configs[0].get("name")
+  benchmark_sets = set([conf["name"] for conf in benchmark_configs])
+  if not benchmark_sets:
+    raise ValueError("No benchmarks in config")
+  if len(benchmark_sets) > 1:
+    raise ValueError("Multiple benchmarks in config: %s" % benchmark_sets)
+  benchmark_name = benchmark_sets.pop()
   if not benchmark_name:
     return
 
@@ -228,7 +231,8 @@ def main(argv):
       benchmark_instance = benchmark_cls(config_obj)
       result = benchmark_instance.run()
       all_results.append(result)
-      print(f"Success. Metrics: {result.metrics}")
+      benchmark_id = f"{name}-{cfg}"
+      print(f"Success. Benchmark ID: {benchmark_id}. Metrics: {result.metrics}")
     except Exception as e:
       print(f"Benchmark '{name}' failed: {e}")
       traceback.print_exc()

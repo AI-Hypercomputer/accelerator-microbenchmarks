@@ -52,12 +52,19 @@ class TestMainHelpers(absltest.TestCase):
     super().tearDown()
 
   def test_set_xla_flags_no_configs(self):
-    main.set_xla_flags([], self.flags_file_path)
-    self.assertNotIn("LIBTPU_INIT_ARGS", os.environ)
+    with self.assertRaises(ValueError):
+      main.set_xla_flags([], self.flags_file_path)
 
   def test_set_xla_flags_no_name(self):
-    main.set_xla_flags([{"matrix_dim": 512}], self.flags_file_path)
-    self.assertNotIn("LIBTPU_INIT_ARGS", os.environ)
+    with self.assertRaises(KeyError):
+      main.set_xla_flags([{"matrix_dim": 512}], self.flags_file_path)
+
+  def test_set_xla_flags_multiple_benchmarks(self):
+    with self.assertRaisesRegex(ValueError, "Multiple benchmarks in config"):
+      main.set_xla_flags(
+          [{"name": "benchmark_1"}, {"name": "benchmark_2"}],
+          self.flags_file_path,
+      )
 
   def test_set_xla_flags_list_config(self):
     main.set_xla_flags([{"name": "test_op_list"}], self.flags_file_path)

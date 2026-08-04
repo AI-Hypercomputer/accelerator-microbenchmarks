@@ -1,0 +1,19 @@
+global:
+  system: ironwood
+  warmup_tries: 2
+  num_runs: 5
+  dtype: bfloat16
+  xprof_timing: true
+benchmarks:
+- k: 2048
+  n: 2048
+  name: gemm_generalized
+  sweep:
+    m:
+      end: 4096
+      multiplier: 2
+      start: 1024
+- k: 2048
+  m: 2048
+  n: 2048
+  name: gemm_generalized

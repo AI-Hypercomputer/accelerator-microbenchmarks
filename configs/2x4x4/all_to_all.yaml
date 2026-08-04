@@ -1,0 +1,12 @@
+global:
+  system: ironwood
+  warmup_tries: 2
+  num_runs: 5
+  dtype: bfloat16
+  xprof_timing: true
+benchmarks:
+- mesh_shape: 8x4x2
+  name: all_to_all
+  sweep:
+    matrix_dim: [512, 1024, 2048]
+  sharding_strategy: 8x4x2

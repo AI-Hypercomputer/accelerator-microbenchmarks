@@ -1,0 +1,13 @@
+global:
+  system: ironwood
+  warmup_tries: 2
+  num_runs: 5
+  dtype: bfloat16
+  xprof_timing: true
+benchmarks:
+- name: hbm_bandwidth
+  sweep:
+    size:
+      end: 536870912
+      multiplier: 2
+      start: 524288
