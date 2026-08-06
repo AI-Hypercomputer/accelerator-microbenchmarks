@@ -1,6 +1,7 @@
 """Unit tests for matlmul.py."""
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import matmul
 from accelerator_microbenchmarks.core import registry
 import jax
@@ -11,7 +12,7 @@ import numpy as np
 jax.config.update("jax_platform_name", "cpu")
 
 
-class GeneralizedGemmBenchmarkTest(absltest.TestCase):
+class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
   """Unit tests for Generalized GEMM benchmark."""
 
   def setUp(self):
@@ -129,6 +130,131 @@ class GeneralizedGemmBenchmarkTest(absltest.TestCase):
         )
     )
     self.assertFalse(self.bm.match_xprof_op_fallback({}))
+
+  @parameterized.named_parameters(
+      ("normal", False, False, (32, 64), (64, 128)),
+      ("transposed_a", True, False, (64, 32), (64, 128)),
+      ("transposed_b", False, True, (32, 64), (128, 64)),
+      ("both_transposed", True, True, (64, 32), (128, 64)),
+  )
+  def test_generate_inputs_transposed(
+      self, ta, tb, expected_a_shape, expected_b_shape
+  ):
+    """Test shape generation for transposed inputs with non-square matrices."""
+    m, k, n = 32, 64, 128
+
+    params = {
+        "m": m,
+        "k": k,
+        "n": n,
+        "in_dtype": "float32",
+        "out_dtype": "float32",
+        "transpose_a": ta,
+        "transpose_b": tb,
+    }
+    self._setup_benchmark(**params)
+    a, b = self.bm.generate_inputs()
+    self.assertEqual(
+        a.shape,
+        expected_a_shape,
+        f"Failed a.shape for ta={ta}, tb={tb} using transpose_a={ta}, "
+        f"transpose_b={tb}",
+    )
+    self.assertEqual(
+        b.shape,
+        expected_b_shape,
+        f"Failed b.shape for ta={ta}, tb={tb} using transpose_a={ta}, "
+        f"transpose_b={tb}",
+    )
+
+  @parameterized.named_parameters(
+      ("normal", False, False),
+      ("transposed_a", True, False),
+      ("transposed_b", False, True),
+      ("both_transposed", True, True),
+  )
+  def test_run_op_transposed(self, ta, tb):
+    """Test output shape and numerical correctness for transposed matmuls."""
+    m, k, n = 32, 64, 128
+    params = {
+        "m": m,
+        "k": k,
+        "n": n,
+        "in_dtype": "float32",
+        "out_dtype": "float32",
+        "transpose_a": ta,
+        "transpose_b": tb,
+    }
+    self._setup_benchmark(**params)
+    inputs = self.bm.generate_inputs()
+    a, b = inputs[0], inputs[1]
+    out = self.bm.run_op(*inputs)
+    self.assertEqual(out.shape, (32, 128))
+
+    a_ref = a.T if ta else a
+    b_ref = b.T if tb else b
+    expected_out = jnp.matmul(a_ref, b_ref)
+    np.testing.assert_allclose(out, expected_out, rtol=1e-4, atol=1e-4)
+
+  def test_run_op_transposed_with_scaling_factors(self):
+    """Test run op transposed with scaling factors."""
+    m, k, n = 32, 64, 128
+    params = {
+        "m": m,
+        "k": k,
+        "n": n,
+        "in_dtype": "float32",
+        "out_dtype": "float32",
+        "transpose_a": True,
+        "transpose_b": True,
+        "use_scaling_factors": True,
+    }
+    self._setup_benchmark(**params)
+    inputs = self.bm.generate_inputs()
+    self.assertLen(inputs, 4)
+    a, b, sf0, sf1 = inputs
+    self.assertEqual(a.shape, (k, m))
+    self.assertEqual(b.shape, (n, k))
+    self.assertEqual(sf0.shape, (m, 1))
+    self.assertEqual(sf1.shape, (1, n))
+
+    out = self.bm.run_op(*inputs)
+    self.assertEqual(out.shape, (m, n))
+
+    expected_out = jnp.matmul(a.T, b.T) * (sf0 @ sf1)
+    np.testing.assert_allclose(out, expected_out, rtol=1e-4, atol=1e-4)
+
+  def test_get_run_identifier_transposed(self):
+    """Test run identifier formatting for transposed layouts."""
+    params = {
+        "m": 32,
+        "k": 64,
+        "n": 128,
+        "in_dtype": "bfloat16",
+        "out_dtype": "bfloat16",
+        "transpose_a": True,
+        "transpose_b": True,
+    }
+    self._setup_benchmark(**params)
+    self.assertEqual(
+        self.bm.get_run_identifier(),
+        "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_True_tb_True",
+    )
+
+    params_untransposed = {
+        "m": 32,
+        "k": 64,
+        "n": 128,
+        "in_dtype": "bfloat16",
+        "out_dtype": "bfloat16",
+        "transpose_a": False,
+        "transpose_b": False,
+    }
+    self._setup_benchmark(**params_untransposed)
+    self.assertEqual(
+        self.bm.get_run_identifier(),
+        "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_False",
+    )
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ class GemmParams(base.BaseBenchmarkParams):
   out_dtype: str = "bfloat16"
   seed: int = 0
   use_scaling_factors: bool = False
+  transpose_a: bool = False
+  transpose_b: bool = False
 
 
 @registry.benchmark_registry.register("gemm_generalized")
@@ -40,11 +42,19 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
   def setup(self):
     out_dtype = utils.parse_dtype(self.config.out_dtype)
 
-    @jax.jit
     def gemm_fn(a, b, sf0=None, sf1=None):
       with jax.named_scope(constants.MARKER):
         # Standard matmul
-        out = jnp.matmul(a, b)
+        lhs_contracting_dim = (0,) if self.config.transpose_a else (1,)
+        rhs_contracting_dim = (1,) if self.config.transpose_b else (0,)
+        out = jax.lax.dot_general(
+            a,
+            b,
+            dimension_numbers=(
+                (lhs_contracting_dim, rhs_contracting_dim),
+                ((), ()),
+            ),
+        )
         # Optional rescaling (row-wise scaling factors as requested)
         if sf0 is not None and sf1 is not None:
           # Assuming rowwise scaling factor SF0<M, 1> and SF1<1, N>
@@ -54,10 +64,24 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     self._jit_fn = gemm_fn
 
   def get_run_identifier(self) -> str:
-    return f"m_{self.config.m}_k_{self.config.k}_n_{self.config.n}_{self.config.in_dtype}_to_{self.config.out_dtype}"
+    return f"m_{self.config.m}_k_{self.config.k}_n_{self.config.n}_{self.config.in_dtype}_to_{self.config.out_dtype}_ta_{self.config.transpose_a}_tb_{self.config.transpose_b}"
 
   def generate_inputs(self) -> tuple[Any, ...]:
-    m, k, n = self.config.m, self.config.k, self.config.n
+    (
+        m,
+        k,
+        n,
+        transpose_a,
+        transpose_b,
+    ) = (
+        self.config.m,
+        self.config.k,
+        self.config.n,
+        self.config.transpose_a,
+        self.config.transpose_b,
+    )
+
+
     # Resolve dtypes
     in_dtype = utils.parse_dtype(self.config.in_dtype)
 
@@ -67,8 +91,10 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     # Data generation in HBM
     # Note: JAX might require intermediate conversion for random.normal if
     # dtypes aren't supported
-    a = jax.random.normal(k1, (m, k)).astype(in_dtype)
-    b = jax.random.normal(k2, (k, n)).astype(in_dtype)
+    a_shape = (k, m) if transpose_a else (m, k)
+    b_shape = (n, k) if transpose_b else (k, n)
+    a = jax.random.normal(k1, a_shape).astype(in_dtype)
+    b = jax.random.normal(k2, b_shape).astype(in_dtype)
 
     # Optional scaling factors
     use_sf = self.config.use_scaling_factors

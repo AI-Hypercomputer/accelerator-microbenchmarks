@@ -19,6 +19,13 @@ SUPPORTED_DTYPES = (
     "float32",
 )
 
+TRANSPOSE_CASES = (
+    ("nn", False, False),
+    ("tn", True, False),
+    ("nt", False, True),
+    ("tt", True, True),
+)
+
 
 class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
   """Unit tests for Generalized GEMM benchmark."""
@@ -32,19 +39,27 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
   @parameterized.named_parameters(
       *[
           {
-              "testcase_name": f"{in_dtype}_to_{out_dtype}",
+              "testcase_name": f"{case_label}_{in_dtype}_to_{out_dtype}",
               "in_dtype": in_dtype,
               "out_dtype": out_dtype,
+              "transpose_a": transpose_a,
+              "transpose_b": transpose_b,
           }
-          for in_dtype, out_dtype in itertools.product(
-              SUPPORTED_DTYPES, repeat=2
+          for (case_label, transpose_a, transpose_b), (
+              in_dtype,
+              out_dtype,
+          ) in itertools.product(
+              TRANSPOSE_CASES,
+              itertools.product(SUPPORTED_DTYPES, repeat=2),
           )
       ]
   )
   @unittest.mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
   )
-  def test_real_e2e_matmul_with_xprof(self, mock_upload, in_dtype, out_dtype):
+  def test_real_e2e_matmul_with_xprof(
+      self, mock_upload, in_dtype, out_dtype, transpose_a, transpose_b
+  ):
     """Test running a real e2e matmul with real trace collection."""
     mock_upload.return_value = "http://mock_xprof_url"
 
@@ -83,6 +98,8 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         "n": 128,
         "in_dtype": in_dtype,
         "out_dtype": out_dtype,
+        "transpose_a": transpose_a,
+        "transpose_b": transpose_b,
         "warmup_tries": 2,
         "num_runs": 3,
         "xprof_timing": True,
