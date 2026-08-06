@@ -42,6 +42,7 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
   def setup(self):
     out_dtype = utils.parse_dtype(self.config.out_dtype)
 
+    @jax.jit
     def gemm_fn(a, b, sf0=None, sf1=None):
       with jax.named_scope(constants.MARKER):
         # Standard matmul
