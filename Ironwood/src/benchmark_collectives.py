@@ -122,11 +122,13 @@ def unified_ici_collectives_metrics(
     hlo_input_shape = xla_output_json.get("hlo_input_shape")
     hlo_output_shape = xla_output_json.get("hlo_output_shape")
     hlo_replica_groups = xla_output_json.get("hlo_replica_groups")
-    hlo_first_replica_group = xla_output_json.get("hlo_first_replica_group")
+    hlo_first_replica_group = (
+        xla_output_json.get("hlo_first_replica_group") or []
+    )
 
   rank = max(len(hlo_first_replica_group), 1)
 
-  if all(i % 2 == 0 for i in hlo_first_replica_group):
+  if hlo_first_replica_group and all(i % 2 == 0 for i in hlo_first_replica_group):
     replica_group_type = "parallel"
   else:
     replica_group_type = "non-parallel"

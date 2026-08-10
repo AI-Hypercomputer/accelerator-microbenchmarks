@@ -940,7 +940,10 @@ def rename_xla_dump(
         if is_local_directory_path(dest_xla_dump_dir):
             try:
                 os.makedirs(dest_xla_dump_dir, exist_ok=True)
-                shutil.copy(original_filepath, new_filepath)
+                if os.path.isfile(original_filepath):
+                    shutil.copy(original_filepath, new_filepath)
+                elif os.path.isdir(original_filepath):
+                    shutil.copytree(original_filepath, new_filepath, dirs_exist_ok=True)
             except Exception as e:
                 print(
                     f"An unexpected error occurred while copy '{original_filepath}': {e}"
