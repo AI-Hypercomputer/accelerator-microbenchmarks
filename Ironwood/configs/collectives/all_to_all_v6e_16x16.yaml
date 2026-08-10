@@ -1,0 +1,9 @@
+benchmarks:
+- benchmark_name: all_to_all
+  topology: "16x16"
+  benchmark_sweep_params:
+  - {matrix_dim_range: {start: 8, end: 16384, multiplier: 2}, dtype: "float32",  mesh_shape: "16x16", ici_size_range: 256, sharding_strategy: "16x16", op_dimension: 0, num_runs: 5} # Full sharding
+  trace_dir: "../microbenchmarks/all_to_all_v6e_16x16"
+  csv_path: "../microbenchmarks/all_to_all_v6e_16x16"
+  xlml_metrics_dir: "../microbenchmarks/all_to_all_v6e_16x16"
+  xla_dump_dir: "../microbenchmarks/all_to_all_v6e_16x16/hlo_graphs"

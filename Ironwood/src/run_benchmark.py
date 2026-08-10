@@ -132,6 +132,7 @@ dtype_mapping = {
 # Always dump HLOs
 TMP_XLA_DUMP_DIR = "/tmp/microbenchmarks/hlo_graphs"
 os.environ["XLA_FLAGS"] = f"--xla_dump_to={TMP_XLA_DUMP_DIR}"
+print(f"RUNTIME_CFG: XLA_FLAGS={os.environ['XLA_FLAGS']}")
 
 
 def get_benchmark_config(config_path: str) -> Dict[str, Any]:
@@ -369,6 +370,12 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         for param in benchmark_params:
             if "num_runs" not in param:
                 param["num_runs"] = global_num_runs
+    # Inject topology from config if present in benchmark_config
+    global_topology = benchmark_config.get("topology")
+    if global_topology is not None:
+        for param in benchmark_params:
+            if "topology" not in param:
+                param["topology"] = global_topology
 
     if not benchmark_name:
         raise ValueError("Each benchmark must have a benchmark_name.")
@@ -518,6 +525,12 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
         for param in benchmark_params:
             if "num_runs" not in param:
                 param["num_runs"] = global_num_runs
+    # Inject topology from config if present in benchmark_config
+    global_topology = benchmark_config.get("topology")
+    if global_topology is not None:
+        for param in benchmark_params:
+            if "topology" not in param:
+                param["topology"] = global_topology
 
     # Get the benchmark function
     benchmark_func, calculate_metrics_func = get_benchmark_functions(
