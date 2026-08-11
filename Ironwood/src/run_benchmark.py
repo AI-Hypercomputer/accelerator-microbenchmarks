@@ -463,6 +463,8 @@ def run_single_benchmark(
         random.choices(string.ascii_uppercase + string.digits, k=10)
     )
     write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
+    os.makedirs("results", exist_ok=True)
+    write_to_csv("results/summary.csv", calculate_metrics_results)
 
 
 def main(args):
@@ -633,6 +635,8 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
     if csv_path:
         os.makedirs(csv_path, exist_ok=True)
         write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
+        os.makedirs("results", exist_ok=True)
+        write_to_csv("results/summary.csv", calculate_metrics_results)
 
 
 if __name__ == "__main__":
