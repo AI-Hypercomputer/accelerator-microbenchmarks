@@ -40,14 +40,14 @@ def calculate_all_to_all_theoretical_bandwidth(
     participating_ranks: int,
 ) -> Any:
     """Calculates theoretical peak All-to-All bandwidth in GB/s."""
-    if not topology:
+    if not topology or rank is None or rank <= 0 or participating_ranks is None or participating_ranks <= 0:
         return None
 
     try:
         topo_dims = [
             int(x) for x in topology.split("x") if x.strip() and int(x) > 0
         ]
-    except Exception:
+    except (ValueError, AttributeError):
         return None
 
     if not topo_dims:
