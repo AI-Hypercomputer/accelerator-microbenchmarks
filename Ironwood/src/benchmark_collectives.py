@@ -40,7 +40,13 @@ def calculate_all_to_all_theoretical_bandwidth(
     participating_ranks: int,
 ) -> Any:
     """Calculates theoretical peak All-to-All bandwidth in GB/s."""
-    if not topology or rank is None or rank <= 0 or participating_ranks is None or participating_ranks <= 0:
+    if (
+        not topology
+        or rank is None
+        or rank <= 0
+        or participating_ranks is None
+        or participating_ranks <= 0
+    ):
         return None
 
     try:
@@ -74,7 +80,7 @@ def calculate_all_to_all_theoretical_bandwidth(
         link_multiplier = sorted_dims[0] * sorted_dims[1] * wrap_factor
 
     # Generic All-To-All Formula :
-    # 4 * link_bw (100.0) * link_multiplier * participating_ranks / (rank * rank)
+    # 4 * link_bw (100.0) * link_multiplier * participating_ranks / (rank^2)
     theo_bw = (
         4.0
         * PEAK_ICI_LINK_BW
@@ -332,7 +338,6 @@ def psum_benchmark(
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
     ]
     os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-    print(f"RUNTIME_CFG: LIBTPU_INIT_ARGS={os.environ['LIBTPU_INIT_ARGS']}")
     mesh = create_mesh(ici_size, mesh_shape)
     key = jax.random.key(SEED)
     lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
@@ -487,7 +492,6 @@ def psum_scatter_benchmark(
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
     ]
     os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-    print(f"RUNTIME_CFG: LIBTPU_INIT_ARGS={os.environ['LIBTPU_INIT_ARGS']}")
     mesh = create_mesh(ici_size, mesh_shape)
 
     sharding_axis = get_sharding_axis(sharding_strategy, mesh)
@@ -610,7 +614,6 @@ def all_gather_benchmark(
         "--xla_tpu_scoped_vmem_limit_kib=65536",
     ]
     os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-    print(f"RUNTIME_CFG: LIBTPU_INIT_ARGS={os.environ['LIBTPU_INIT_ARGS']}")
     mesh = create_mesh(ici_size, mesh_shape)
 
     sharding_axis = get_sharding_axis(sharding_strategy, mesh)
@@ -720,7 +723,6 @@ def all_to_all_benchmark(
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
     ]
     os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
-    print(f"RUNTIME_CFG: LIBTPU_INIT_ARGS={os.environ['LIBTPU_INIT_ARGS']}")
     mesh = create_mesh(ici_size, mesh_shape)
     key = jax.random.key(SEED)
     lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
