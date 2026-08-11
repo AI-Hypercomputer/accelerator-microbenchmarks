@@ -30,6 +30,65 @@ GLOBAL_SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 GLOBAL_PSTATE = 7
 LOG_SPARSECORE_USAGE = False
 V6E_DEVICE_KINDS = ["TPU v6 lite", "TPU v6e"]
+PEAK_ICI_LINK_BW = 100.0  # GB/s unidirectional for both v6e and tpu7x
+
+
+def calculate_all_to_all_theoretical_bandwidth(
+    topology: str,
+    device_kind: str,
+    rank: int,
+    participating_ranks: int,
+) -> Any:
+    """Calculates theoretical peak All-to-All bandwidth in GB/s."""
+    if (
+        not topology
+        or rank is None
+        or rank <= 0
+        or participating_ranks is None
+        or participating_ranks <= 0
+    ):
+        return None
+
+    try:
+        topo_dims = [
+            int(x) for x in topology.split("x") if x.strip() and int(x) > 0
+        ]
+    except (ValueError, AttributeError):
+        return None
+
+    if not topo_dims:
+        return None
+
+    spatial_dims = [d for d in topo_dims if d > 1] or [1]
+    dim_count = len(spatial_dims)
+
+    if device_kind in V6E_DEVICE_KINDS:
+        # TPU v6e (2D): wrap-around link exists if any dimension >= 16
+        has_wrap = any(d >= 16 for d in topo_dims)
+    else:
+        # TPU v7x (3D): wrap-around torus requires all 3 spatial dimensions >= 4
+        has_wrap = (len(topo_dims) >= 3) and all(d >= 4 for d in topo_dims[:3])
+
+    wrap_factor = 2.0 if has_wrap else 1.0
+    sorted_dims = sorted(spatial_dims)
+
+    if dim_count == 1:
+        link_multiplier = 1.0 * wrap_factor
+    elif dim_count == 2:
+        link_multiplier = sorted_dims[0] * wrap_factor
+    else:
+        link_multiplier = sorted_dims[0] * sorted_dims[1] * wrap_factor
+
+    # Generic All-To-All Formula :
+    # 4 * link_bw (100.0) * link_multiplier * participating_ranks / (rank^2)
+    theo_bw = (
+        4.0
+        * PEAK_ICI_LINK_BW
+        * link_multiplier
+        * float(participating_ranks)
+        / (float(rank) * float(rank))
+    )
+    return theo_bw
 
 
 def create_mesh(ici_size: int, mesh_shape: str) -> Mesh:
@@ -97,6 +156,7 @@ def unified_ici_collectives_metrics(
     iteration: int,
     op_type: str,
     trace_dir: str = None,
+    topology: str = None,
 ) -> Dict[str, Any]:
     """Calculates the metrics for the ICI collectives benchmark."""
 
@@ -172,6 +232,18 @@ def unified_ici_collectives_metrics(
             / rank
         )
 
+    # Calculate All-to-All Theoretical Peak Bandwidth if topology is provided
+    theo_bw = None
+    if op_type == "A2A" and topology:
+        theo_bw = calculate_all_to_all_theoretical_bandwidth(
+            topology=topology,
+            device_kind=device_kind,
+            rank=rank,
+            participating_ranks=participating_ranks,
+        )
+
+    has_valid_theo_bw = theo_bw is not None and theo_bw > 0
+
     sparsecore_used = "NA"
     if LOG_SPARSECORE_USAGE:
         print("trace_dir: ", trace_dir)
@@ -197,6 +269,10 @@ def unified_ici_collectives_metrics(
         "hlo_replica_groups": json.dumps(hlo_replica_groups),
         "sparsecore_used": sparsecore_used,
     }
+    if topology:
+        metadata["topology"] = topology
+    if has_valid_theo_bw:
+        metadata["theoretical_bw (GB/s)"] = theo_bw
     achieved_bw = [
         transferred_data * 1000 / my_time
         for my_time in ici_average_time_ms_list
@@ -207,6 +283,13 @@ def unified_ici_collectives_metrics(
     metrics = {}
     metrics.update(average_time_ms_statistics.serialize_statistics())
     metrics.update(achieved_bw_statistics.serialize_statistics())
+
+    if has_valid_theo_bw:
+        utilization_list = [(bw / theo_bw) * 100.0 for bw in achieved_bw]
+        util_stats = MetricsStatistics(
+            metrics_list=utilization_list, metrics_name="utilization_pct"
+        )
+        metrics.update(util_stats.serialize_statistics())
 
     print("metadata: ", metadata)
     print("metrics: ", metrics)
@@ -222,6 +305,7 @@ def psum_benchmark(
     dtype: jnp.dtype = jax.numpy.bfloat16,
     num_runs: int = 1,
     trace_dir: str = None,
+    topology: str = None,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     """Benchmarks the psum collective operation.
@@ -345,7 +429,8 @@ def psum_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
-    trace_dir: str,
+    trace_dir: str = None,
+    topology: str = None,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     """Calculates the metrics for the psum benchmark."""
@@ -361,7 +446,8 @@ def psum_benchmark_calculate_metrics(
         ici_average_time_ms_list,
         matrix_dim,
         op_type,
-        trace_dir,
+        trace_dir=trace_dir,
+        topology=topology,
     )
 
 
@@ -374,6 +460,7 @@ def psum_scatter_benchmark(
     op_dimension: int = 1,
     num_runs: int = 1,
     trace_dir: str = None,
+    topology: str = None,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     """Benchmarks the psum_scatter collective operation.
@@ -462,7 +549,8 @@ def psum_scatter_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
-    trace_dir: str,
+    trace_dir: str = None,
+    topology: str = None,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     """Calculates the metrics for the psum_scatter benchmark."""
@@ -478,7 +566,8 @@ def psum_scatter_benchmark_calculate_metrics(
         ici_average_time_ms_list,
         matrix_dim,
         op_type,
-        trace_dir,
+        trace_dir=trace_dir,
+        topology=topology,
     )
 
 
@@ -491,6 +580,7 @@ def all_gather_benchmark(
     op_dimension: int = 1,
     num_runs: int = 1,
     trace_dir: str = None,
+    topology: str = None,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     """Benchmarks the all_gather collective operation.
@@ -523,7 +613,6 @@ def all_gather_benchmark(
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
         "--xla_tpu_scoped_vmem_limit_kib=65536",
     ]
-    # libtpu_init_args=[ ]
     os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
     mesh = create_mesh(ici_size, mesh_shape)
 
@@ -579,7 +668,8 @@ def all_gather_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
-    trace_dir: str,
+    trace_dir: str = None,
+    topology: str = None,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     """Calculates the metrics for the all_gather benchmark."""
@@ -595,7 +685,8 @@ def all_gather_benchmark_calculate_metrics(
         ici_average_time_ms_list,
         matrix_dim,
         op_type,
-        trace_dir,
+        trace_dir=trace_dir,
+        topology=topology,
     )
 
 
@@ -608,6 +699,7 @@ def all_to_all_benchmark(
     op_dimension: int = 1,
     num_runs: int = 1,
     trace_dir: str = None,
+    topology: str = None,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     """Benchmarks the all_to_all collective operation.
@@ -691,7 +783,8 @@ def all_to_all_benchmark_calculate_metrics(
     matrix_shape: tuple[int, int, int],
     xla_output: str,
     op_type: str,
-    trace_dir: str,
+    trace_dir: str = None,
+    topology: str = None,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     """Calculates the metrics for the all_to_all benchmark."""
@@ -707,5 +800,6 @@ def all_to_all_benchmark_calculate_metrics(
         ici_average_time_ms_list,
         matrix_dim,
         op_type,
-        trace_dir,
+        trace_dir=trace_dir,
+        topology=topology,
     )
