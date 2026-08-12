@@ -21,6 +21,7 @@ class GemmParams(base.BaseBenchmarkParams):
   use_scaling_factors: bool = False
   transpose_a: bool = False
   transpose_b: bool = False
+  alpha: float = 1.0
 
 
 @registry.benchmark_registry.register("gemm_generalized")
@@ -41,6 +42,7 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
 
   def setup(self):
     out_dtype = utils.parse_dtype(self.config.out_dtype)
+    alpha = self.config.alpha
 
     @jax.jit
     def gemm_fn(a, b, sf0=None, sf1=None):
@@ -60,12 +62,14 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
         if sf0 is not None and sf1 is not None:
           # Assuming rowwise scaling factor SF0<M, 1> and SF1<1, N>
           out = out * (sf0 @ sf1)
+        if alpha != 1.0:
+          out = out * alpha
         return out.astype(out_dtype)
 
     self._jit_fn = gemm_fn
 
   def get_run_identifier(self) -> str:
-    return f"m_{self.config.m}_k_{self.config.k}_n_{self.config.n}_{self.config.in_dtype}_to_{self.config.out_dtype}_ta_{self.config.transpose_a}_tb_{self.config.transpose_b}"
+    return f"m_{self.config.m}_k_{self.config.k}_n_{self.config.n}_{self.config.in_dtype}_to_{self.config.out_dtype}_ta_{self.config.transpose_a}_tb_{self.config.transpose_b}_alpha_{self.config.alpha}"
 
   def generate_inputs(self) -> tuple[Any, ...]:
     (
@@ -134,19 +138,23 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
         (m * k * in_itemsize) + (k * n * in_itemsize) + (m * n * out_itemsize)
     )
 
-  def get_arithmetic_intensity(self) -> float:
+  def get_total_flops(self) -> float:
     m, k, n = self.config.m, self.config.k, self.config.n
     flops = 2 * m * n * k
+    if self.config.use_scaling_factors:
+      flops += 2 * m * n
+    if self.config.alpha != 1.0:
+      flops += m * n
+    return flops
+
+  def get_arithmetic_intensity(self) -> float:
+    flops = self.get_total_flops()
     bytes_moved = self.get_total_bytes()
     return flops / bytes_moved if bytes_moved > 0 else 0.0
 
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     metrics = super().calculate_metrics(times_ms)
-    m, k, n = self.config.m, self.config.k, self.config.n
-
-    total_flops = 2 * m * n * k
-    if self.config.use_scaling_factors:
-      total_flops += m * n
+    total_flops = self.get_total_flops()
 
     avg_latency_s = metrics["avg_ms"] / 1000.0
     if avg_latency_s == 0:

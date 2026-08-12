@@ -238,7 +238,7 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self._setup_benchmark(**params)
     self.assertEqual(
         self.bm.get_run_identifier(),
-        "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_True_tb_True",
+        "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_True_tb_True_alpha_1.0",
     )
 
     params_untransposed = {
@@ -253,8 +253,69 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self._setup_benchmark(**params_untransposed)
     self.assertEqual(
         self.bm.get_run_identifier(),
-        "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_False",
+        "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_False_alpha_1.0",
     )
+
+  @parameterized.named_parameters(
+      ("no_scaling_factors_alpha_1", False, 1.0),
+      ("scaling_factors_alpha_1", True, 1.0),
+      ("no_scaling_factors_alpha_2", False, 2.0),
+      ("scaling_factors_alpha_2", True, 2.0),
+  )
+  def test_run_op_with_alpha_scaling_factor(
+      self, use_scaling_factors, alpha
+  ):
+    """Test run op with scalar multiplier alpha and scaling factors."""
+    m, k, n = 32, 64, 128
+    params = {
+        "m": m,
+        "k": k,
+        "n": n,
+        "in_dtype": "float32",
+        "out_dtype": "float32",
+        "use_scaling_factors": use_scaling_factors,
+        "alpha": alpha,
+    }
+    self._setup_benchmark(**params)
+    inputs = self.bm.generate_inputs()
+    a, b = inputs[0], inputs[1]
+    out = self.bm.run_op(*inputs)
+    self.assertEqual(out.shape, (m, n))
+
+    expected_out = alpha * jnp.matmul(a, b)
+    if use_scaling_factors:
+      sf0, sf1 = inputs[2], inputs[3]
+      expected_out = expected_out * (sf0 @ sf1)
+    np.testing.assert_allclose(out, expected_out, rtol=1e-4, atol=1e-4)
+
+  def test_calculate_metrics_with_alpha(self):
+    """Test FLOPs and arithmetic intensity calculation when alpha != 1.0."""
+    self._setup_benchmark(alpha=0.5)
+    # m=64, k=64, n=64
+    # base_flops = 2 * 64 * 64 * 64 = 524288
+    # alpha_flops = 64 * 64 = 4096
+    # total_flops = 528384
+    # bytes = 24576
+    # intensity = 528384 / 24576 = 21.5
+    metrics = self.bm.calculate_metrics([1.0, 1.5, 2.0])
+    self.assertEqual(metrics["total_flops"], 528384)
+    self.assertAlmostEqual(metrics["intensity"], 528384 / 24576)
+    self.assertAlmostEqual(self.bm.get_arithmetic_intensity(), 528384 / 24576)
+
+  def test_calculate_metrics_with_scaling_factors(self):
+    """Test FLOPs and arithmetic intensity calculation when use_scaling_factors=True."""
+    self._setup_benchmark(use_scaling_factors=True)
+    # m=64, k=64, n=64
+    # base_flops = 2 * 64 * 64 * 64 = 524288
+    # scaling_flops = 2 * 64 * 64 = 8192
+    # total_flops = 532480
+    # bytes = 24576
+    # intensity = 532480 / 24576
+    metrics = self.bm.calculate_metrics([1.0, 1.5, 2.0])
+    self.assertEqual(metrics["total_flops"], 532480)
+    self.assertAlmostEqual(metrics["intensity"], 532480 / 24576)
+    self.assertAlmostEqual(self.bm.get_arithmetic_intensity(), 532480 / 24576)
+
 
 
 if __name__ == "__main__":
