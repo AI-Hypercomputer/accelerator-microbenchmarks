@@ -887,6 +887,7 @@ def rename_xla_dump(
     dest_xla_dump_dir: str,
     benchmark_name: str,
     benchmark_param: Dict[str, Any],
+    anchor_func_name: str = "jit_f",
 ):
     """
     Finds the latest XLA dump file matching '*jit_f*before_optimizations*.txt',
@@ -899,7 +900,7 @@ def rename_xla_dump(
         f"{key}_{value}" for key, value in benchmark_param.items()
     )
     anchor_pattern = os.path.join(
-        tmp_xla_dump_dir, "*jit_f*before_optimizations*.txt"
+        tmp_xla_dump_dir, f"*{anchor_func_name}*before_optimizations*.txt"
     )
     matching_anchor_files = glob.glob(anchor_pattern)
 
@@ -917,11 +918,11 @@ def rename_xla_dump(
     # Example: 'module_0080.jit_f.cl_747713181.before_optimizations.txt'
     # This will extract 'module_0080.jit_f.cl_747713181'
     filename_base = os.path.basename(latest_anchor_file)
-    jit_id_match = re.search(r"(module.*jit_f\.[^.]+)", filename_base)
+    jit_id_match = re.search(rf"(module.*{anchor_func_name}\.[^.]+)", filename_base)
 
     if not jit_id_match:
         print(
-            f"Could not extract 'jit_f.[unique_id]' from '{filename_base}'."
+            f"Could not extract '{anchor_func_name}.[unique_id]' from '{filename_base}'."
             " Cannot proceed with renaming."
         )
         return
