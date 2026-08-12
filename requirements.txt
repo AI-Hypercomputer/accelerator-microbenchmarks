@@ -1,7 +1,8 @@
-jax[tpu]
+jax[tpu]==0.10.1
 absl-py
-flax
-jaxlib
+flax==0.12.7
+jaxlib==0.10.1
+libtpu==0.0.41
 numpy
 pandas
 jsonlines
@@ -12,7 +13,7 @@ tensorboard-plugin-profile
 tensorflow
 qwix@git+https://github.com/google/qwix.git
 tokamax
-tune-jax
+tune-jax==0.7.2
 immutabledict
 pylint
 black
