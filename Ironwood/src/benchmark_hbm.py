@@ -89,8 +89,18 @@ def single_device_hbm_copy_calculate_metrics(
     )
     print(
         f"Tensor size: {tensor_size_bytes / 1024**2} MB, "
-        f"time taken (median): {time_statistics.statistics["p50"]:.4f} ms, "
-        f"bandwidth (median): {statistics.statistics["p50"]:.3f} GB/s"
+        f"time taken (p10): "
+        f"{time_statistics.statistics["p10"]:.4f} ms, "
+        f"time taken (median): "
+        f"{time_statistics.statistics["p50"]:.4f} ms, "
+        f"time taken (p90): "
+        f"{time_statistics.statistics["p90"]:.4f} ms, "
+        f"bandwidth (p10): "
+        f"{statistics.statistics["p10"]:.3f} GB/s, "
+        f"bandwidth (median): "
+        f"{statistics.statistics["p50"]:.3f} GB/s, "
+        f"bandwidth (p90): "
+        f"{statistics.statistics["p90"]:.3f} GB/s"
     )
     print()
     # Gather the metrics to report.

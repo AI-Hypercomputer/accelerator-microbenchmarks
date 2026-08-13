@@ -858,6 +858,7 @@ class MetricsStatistics:
         if not self.metrics_list:
             return {}  # Return an empty dict if metrics_list is empty
         return {
+            "p10": np.percentile(self.metrics_list, 10),
             "p50": np.percentile(self.metrics_list, 50),
             "p90": np.percentile(self.metrics_list, 90),
             "p95": np.percentile(self.metrics_list, 95),
@@ -1288,15 +1289,34 @@ def unified_flops_metrics(
     dtype_prefix = f"[{dtype}] " if dtype is not None else ""
     print(
         f"{dtype_prefix}"
-        f"Total floating-point ops: {total_flops}, Step Time (median): "
+        f"Total floating-point ops: {total_flops}, "
+        f"Step Time (p10): "
+        f"{average_time_ms_statistics.statistics["p10"]:.2f}, "
+        f"Step Time (median): "
         f"{average_time_ms_statistics.statistics["p50"]:.2f}, "
+        f"Step Time (p90): "
+        f"{average_time_ms_statistics.statistics["p90"]:.2f}, "
+        f"Throughput (p10): "
+        f"{tflops_per_sec_statistics.statistics["p10"]:.2f}"
+        f" TFLOP / second / device, "
         f"Throughput (median): "
         f"{tflops_per_sec_statistics.statistics["p50"]:.2f}"
         f" TFLOP / second / device, "
+        f"Throughput (p90): "
+        f"{tflops_per_sec_statistics.statistics["p90"]:.2f}"
+        f" TFLOP / second / device, "
+        f"TotalThroughput (p10): "
+        f"{tflops_per_sec_all_devices_statistics.statistics["p10"]:.2f} "
+        f"TFLOP / second, "
         f"TotalThroughput (median): "
         f"{tflops_per_sec_all_devices_statistics.statistics["p50"]:.2f} "
         f"TFLOP / second, "
-        f"MFU: {mfu_statistics.statistics["p50"]:.2%}"
+        f"TotalThroughput (p90): "
+        f"{tflops_per_sec_all_devices_statistics.statistics["p90"]:.2f} "
+        f"TFLOP / second, "
+        f"MFU (p10): {mfu_statistics.statistics["p10"]:.2%}, "
+        f"MFU (median): {mfu_statistics.statistics["p50"]:.2%}, "
+        f"MFU (p90): {mfu_statistics.statistics["p90"]:.2%}"
     )
 
     # Gather the metrics to report.
@@ -1373,13 +1393,30 @@ def unified_bytes_metrics(
         type_prefix = f"[d={dtype}] "
     print(
         f"{type_prefix}"
-        f"Total bytes: {total_bytes}, Step Time (median): "
+        f"Total bytes: {total_bytes}, "
+        f"Step Time (p10): "
+        f"{average_time_ms_statistics.statistics["p10"]:.2f}, "
+        f"Step Time (median): "
         f"{average_time_ms_statistics.statistics["p50"]:.2f}, "
-        f"Throughput (median):"
+        f"Step Time (p90): "
+        f"{average_time_ms_statistics.statistics["p90"]:.2f}, "
+        f"Throughput (p10): "
+        f"{gigabytes_per_sec_statistics.statistics["p10"]:.2f} "
+        f"GBytes / second / device, "
+        f"Throughput (median): "
         f"{gigabytes_per_sec_statistics.statistics["p50"]:.2f} "
         f"GBytes / second / device, "
+        f"Throughput (p90): "
+        f"{gigabytes_per_sec_statistics.statistics["p90"]:.2f} "
+        f"GBytes / second / device, "
+        f"TotalThroughput (p10): "
+        f"{gigabytes_per_sec_all_devices_statistics.statistics["p10"]:.2f} "
+        f"GBytes / second, "
         f"TotalThroughput (median): "
         f"{gigabytes_per_sec_all_devices_statistics.statistics["p50"]:.2f} "
+        f"GBytes / second, "
+        f"TotalThroughput (p90): "
+        f"{gigabytes_per_sec_all_devices_statistics.statistics["p90"]:.2f} "
         f"GBytes / second"
     )
     print()
