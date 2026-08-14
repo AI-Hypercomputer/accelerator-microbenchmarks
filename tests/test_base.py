@@ -1,6 +1,7 @@
 """Unit tests for the BaseBenchmark execution loop on CPU."""
 
 import contextlib
+import dataclasses
 import unittest
 
 from absl.testing import absltest
@@ -33,6 +34,32 @@ class DummyBenchmark(base.BaseBenchmark):
 
   def get_total_bytes(self, **_params):
     return 400.0
+
+
+class BaseBenchmarkParamsTest(absltest.TestCase):
+  """Tests for BaseBenchmarkParams configuration and expansion contract."""
+
+  def test_expand_test_cases_default_identity(self):
+    """Verifies default 1-to-1 identity mapping: returns [self]."""
+    params = base.BaseBenchmarkParams(warmup_tries=5, num_runs=20)
+    cases = params.expand_test_cases()
+    self.assertLen(cases, 1)
+    self.assertIs(cases[0], params)
+    self.assertEqual(cases[0].warmup_tries, 5)
+    self.assertEqual(cases[0].num_runs, 20)
+
+  def test_expand_test_cases_subclass_inheritance(self):
+    """Verifies subclasses without override inherit the [self] identity contract."""
+
+    @dataclasses.dataclass
+    class CustomConfig(base.BaseBenchmarkParams):
+      custom_flag: str = "test"
+
+    cfg = CustomConfig(warmup_tries=3, custom_flag="hello")
+    cases = cfg.expand_test_cases()
+    self.assertLen(cases, 1)
+    self.assertIs(cases[0], cfg)
+    self.assertEqual(cases[0].custom_flag, "hello")
 
 
 class BaseBenchmarkTest(absltest.TestCase):
@@ -200,6 +227,172 @@ class BaseBenchmarkTest(absltest.TestCase):
 
     mock_upload.assert_called_once()
     mock_parse_durations.assert_called_once()
+
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @unittest.mock.patch("jax.profiler.trace")
+  def test_apply_xprof_timing_and_sync_host_cpu_override(
+      self, mock_trace, mock_upload, mock_parse_durations
+  ):
+    """Tests that xprof_target_host_cpu=True passes local_device_id=None."""
+
+    class HostCpuBenchmark(DummyBenchmark):
+
+      @property
+      def xprof_target_host_cpu(self) -> bool:
+        return True
+
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = "http://mock_xprof_url"
+    mock_parse_durations.return_value = [2.0]
+
+    params = {
+        "warmup_tries": 1,
+        "num_runs": 1,
+        "xprof_timing": True,
+        "xprof_dir": "/tmp/test_xprof",
+    }
+    config = base.BaseBenchmarkParams(**params)
+    bm = HostCpuBenchmark(config=config)
+    bm.run()
+
+    mock_parse_durations.assert_called_once()
+    self.assertIsNone(
+        mock_parse_durations.call_args.kwargs.get("local_device_id")
+    )
+
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @unittest.mock.patch("jax.profiler.trace")
+  def test_apply_xprof_timing_and_sync_empty_durations_fallback(
+      self, mock_trace, mock_upload, mock_parse_durations
+  ):
+    """Tests that empty XProf durations set xprof metrics to None while keeping host timings."""
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = None
+    mock_parse_durations.return_value = []  # Empty durations
+
+    params = {
+        "warmup_tries": 1,
+        "num_runs": 1,
+        "xprof_timing": True,
+        "xprof_dir": "/tmp/test_xprof",
+    }
+    config = base.BaseBenchmarkParams(**params)
+    bm = DummyBenchmark(config=config)
+    result = bm.run()
+
+    mock_parse_durations.assert_called_once()
+    self.assertIsNone(result.metrics["xprof_avg_ms"])
+    self.assertIsNone(result.metrics["xprof_p50_ms"])
+    self.assertGreater(result.metrics["avg_ms"], 0.0)
+
+  @unittest.mock.patch("jax.experimental.multihost_utils.broadcast_one_to_all")
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @unittest.mock.patch("jax.profiler.trace")
+  @unittest.mock.patch("jax.process_index")
+  def test_apply_xprof_timing_and_sync_with_multihost_sync(
+      self,
+      mock_process_index,
+      mock_trace,
+      mock_upload,
+      mock_parse_durations,
+      mock_broadcast,
+  ):
+    """Tests requires_multihost_sync=True (e.g., asymmetric D2D): non-owner hosts use broadcast metrics."""
+
+    class MultihostBenchmark(DummyBenchmark):
+
+      @property
+      def requires_multihost_sync(self) -> bool:
+        return True
+
+      def get_device_to_measure(self):
+        mock_device = unittest.mock.Mock()
+        mock_device.id = 0
+        mock_device.process_index = 0  # Host 0 is the owner
+        mock_device.local_hardware_id = 0
+        return mock_device
+
+    mock_process_index.return_value = 1  # Current host is Host 1 (non-owner)
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = "http://mock_xprof_url"
+    mock_broadcast.return_value = jnp.array([4.2, 4.1, 4.5], dtype=jnp.float32)
+
+    params = {
+        "warmup_tries": 1,
+        "num_runs": 1,
+        "xprof_timing": True,
+        "xprof_dir": "/tmp/test_xprof",
+    }
+    config = base.BaseBenchmarkParams(**params)
+    bm = MultihostBenchmark(config=config)
+    result = bm.run()
+
+    # When requires_multihost_sync=True (e.g. Device-to-Device asymmetric
+    # benchmarks), only the owner host parses the trace; non-owner hosts
+    # skip local trace parsing and use broadcast metrics.
+    mock_parse_durations.assert_not_called()
+    self.assertAlmostEqual(result.metrics["xprof_avg_ms"], 4.2, places=4)
+    self.assertAlmostEqual(result.metrics["xprof_p50_ms"], 4.1, places=4)
+
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @unittest.mock.patch("jax.profiler.trace")
+  @unittest.mock.patch("jax.process_index")
+  def test_apply_xprof_timing_and_sync_without_multihost_sync(
+      self,
+      mock_process_index,
+      mock_trace,
+      mock_upload,
+      mock_parse_durations,
+  ):
+    """Tests requires_multihost_sync=False (e.g., Collectives): each host parses its trace locally."""
+
+    class MultihostBenchmark(DummyBenchmark):
+
+      @property
+      def requires_multihost_sync(self) -> bool:
+        # Each host parses its local trace without cross-host sync
+        return False
+
+    mock_process_index.return_value = 1  # Current host is Host 1
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = "http://mock_xprof_url"
+    mock_parse_durations.return_value = [3.5, 3.5, 3.5]
+
+    params = {
+        "warmup_tries": 1,
+        "num_runs": 3,
+        "xprof_timing": True,
+        "xprof_dir": "/tmp/test_xprof",
+    }
+    config = base.BaseBenchmarkParams(**params)
+    bm = MultihostBenchmark(config=config)
+    result = bm.run()
+
+    # When requires_multihost_sync=False (e.g., Collective symmetric benchmarks),
+    # even though hosts exchange data during execution, each host parses its own local
+    # XProf trace for its local device without invoking cross-host metric broadcast.
+    mock_parse_durations.assert_called_once()
+    self.assertEqual(result.metrics["xprof_avg_ms"], 3.5)
 
 
 if __name__ == "__main__":

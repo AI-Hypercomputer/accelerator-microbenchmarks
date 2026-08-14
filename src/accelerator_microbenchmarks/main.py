@@ -1,6 +1,7 @@
 """Main entry point for JAX microbenchmarks."""
 
 import dataclasses
+import gc
 import json
 import os
 import traceback
@@ -132,6 +133,11 @@ def set_xla_flags(
   except Exception as e:
     print(f"Warning: Failed to load op_flags.yaml: {e}")
 
+  print(f"RUNTIME_CFG: XLA_FLAGS={os.environ.get('XLA_FLAGS', '')}")
+  print(
+      f"RUNTIME_CFG: LIBTPU_INIT_ARGS={os.environ.get('LIBTPU_INIT_ARGS', '')}"
+  )
+
 
 def _parse_benchmark_cli_args(bench_name: str, argv: List[str]):
   parser = simple_parsing.ArgumentParser(add_help=False)
@@ -220,19 +226,27 @@ def main(argv):
 
       benchmark_cls = registry.benchmark_registry.get_benchmark(name)
       config_cls = benchmark_cls.Config
-
       if config_cls and dataclasses.is_dataclass(config_cls):
-        config_obj = config_cls(**cfg)
+        base_config = config_cls(**cfg)
       else:
         raise ValueError(
             f"Benchmark {name} must define a valid dataclass Config."
         )
 
-      benchmark_instance = benchmark_cls(config_obj)
-      result = benchmark_instance.run()
-      all_results.append(result)
-      benchmark_id = f"{name}-{cfg}"
-      print(f"Success. Benchmark ID: {benchmark_id}. Metrics: {result.metrics}")
+      test_case_configs = base_config.expand_test_cases()
+      total_cases = len(test_case_configs)
+      for idx, test_case_config in enumerate(test_case_configs, 1):
+        benchmark_instance = benchmark_cls(test_case_config)
+        run_id = benchmark_instance.get_run_identifier()
+        print(f"\nRunning [{idx}/{total_cases}] {name} ({run_id})...")
+        result = benchmark_instance.run()
+        all_results.append(result)
+        benchmark_id = f"{name}-{cfg}"
+        print(
+            f"Success [{idx}/{total_cases}]. Benchmark ID: {benchmark_id}."
+            f" Metrics: {result.metrics}"
+        )
+        gc.collect()
     except Exception as e:
       print(f"Benchmark '{name}' failed: {e}")
       traceback.print_exc()
@@ -246,7 +260,7 @@ def main(argv):
   if not os.path.exists(FLAGS.output):
     os.makedirs(FLAGS.output)
 
-  if all_results and jax.process_index() == 0:
+  if all_results:
     save_output(all_results, FLAGS.output)
 
 

@@ -41,6 +41,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "simple_add",
             "host_to_device",
             "device_to_host",
+            "device_to_device",
         ],
     )
 

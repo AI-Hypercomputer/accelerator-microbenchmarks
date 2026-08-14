@@ -80,6 +80,11 @@ host_device: &host_device
     TPU_PREMAPPED_BUFFER_SIZE: "68719476736"
     TPU_PREMAPPED_BUFFER_TRANSFER_THRESHOLD_BYTES: "68719476736"
 
+device_to_device:
+  - "--xla_tpu_collect_sflag_wait_stats_trace=true"
+  - "--xla_tpu_force_global_barriers=true"
+  - "--xla_tpu_dvfs_p_state=7"
+
 hbm_bandwidth:
   - "--xla_tpu_scoped_vmem_limit_kib=65536"
   - "--xla_jf_bounds_check=false"

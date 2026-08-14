@@ -6,12 +6,14 @@ import dataclasses
 import datetime
 import os
 import time
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, Optional, Sequence, TypeVar
 
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
 from accelerator_microbenchmarks.core import system
 import jax
+from jax.experimental import multihost_utils
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -26,6 +28,10 @@ class BaseBenchmarkParams:
   use_trace_roofline: bool = False
   hardware_stats: dict[str, Any] = dataclasses.field(default_factory=dict)
   dtype: str = "bfloat16"
+
+  def expand_test_cases(self) -> Sequence["BaseBenchmarkParams"]:
+    """Default 1-to-1 mapping: returns [self]."""
+    return [self]
 
 
 @dataclasses.dataclass
@@ -54,13 +60,13 @@ TConfig = TypeVar("TConfig", bound=BaseBenchmarkParams)
 
 class BaseBenchmark(Generic[TConfig], abc.ABC):
   """Abstract base class for microbenchmarks."""
-
   Config = BaseBenchmarkParams
+  DEFAULT_LOCAL_DEVICE_ID: int = 0
 
   def __init__(self, config: TConfig, mesh: Optional[jax.sharding.Mesh] = None):
     if config is None:
       raise ValueError("A configuration object must be explicitly provided.")
-    self.config = config
+    self.config: TConfig = config
     self.mesh: Optional[jax.sharding.Mesh] = mesh
     self._jit_fn = None
     self._xprof_dir_actual: str = self.config.xprof_dir
@@ -92,9 +98,6 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   def generate_inputs(self) -> tuple[Any, ...]:
     """Generate or retrieve inputs for the benchmark.
 
-    Args:
-      **params: Additional parameters to customize input generation.
-
     Returns:
       A tuple of arguments passed to run_op.
     """
@@ -105,9 +108,6 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     """Calculate the arithmetic intensity (Flops / Bytes) for the operation.
 
     To be implemented by subclasses.
-
-    Args:
-      **params: Additional parameters to customize intensity calculation.
 
     Returns:
       The arithmetic intensity as a float.
@@ -123,7 +123,6 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       peak_tflops: The peak theoretical TFLOPS of the device.
       hbm_bw_data: HBM bandwidth data, either a float (peak GB/s) or a dict of
         {transfer_size_bytes: bandwidth_gb_s} for interpolation.
-      **params: Additional parameters for intensity and byte calculation.
 
     Returns:
       The theoretical roofline performance ceiling in TFLOPS.
@@ -257,6 +256,127 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     """Return the primary data type used for compute math, to determine peak TFLOPS."""
     return self.config.dtype
 
+  def get_device_to_measure(self) -> jax.Device:
+    """Returns the local JAX Device to observe in XProf (default: local device 0)."""
+    return jax.local_devices()[self.DEFAULT_LOCAL_DEVICE_ID]
+
+  @property
+  def requires_multihost_sync(self) -> bool:
+    """Whether this benchmark targets a single remote host and requires broadcast to collect metrics.
+
+    By default (symmetric workloads like matmul, collectives, hbm), each host
+    independently parses its own local XProf trace without broadcasting.
+    """
+    return False
+
+  @property
+  def xprof_target_host_cpu(self) -> bool:
+    """Whether XProf timing measures /host:CPU events instead of /device:TPU:{id}.
+
+    Default is False (measures accelerator hardware kernels on
+    /device:TPU:{id}). HostToDeviceBenchmark overrides this to True because
+    H2D/D2H DMA transfers are recorded on the CPU host process.
+    """
+    return False
+
+  def _apply_xprof_timing_and_sync(
+      self, metrics: dict[str, Any]
+  ) -> dict[str, Any]:
+    """Parses XProf trace, syncs across hosts, and recalculates metrics."""
+    xprof_dir = self._xprof_dir_actual
+    cns_dir = self._xprof_dir_cns
+
+    xprof_url = profiler.upload_xprof_trace(xprof_dir, cns_dir)
+    if xprof_url:
+      metrics["xprof_url"] = xprof_url
+
+    measured_device = self.get_device_to_measure()
+    is_owner = jax.process_index() == measured_device.process_index
+
+    all_devs_str = [f"{d.id}(p{d.process_index})" for d in jax.devices()]
+    local_devs_str = [
+        f"{d.id}(p{d.process_index})" for d in jax.local_devices()
+    ]
+    print(f"[Host {jax.process_index()}] All devices: {all_devs_str}")
+    print(f"[Host {jax.process_index()}] Local devices: {local_devs_str}")
+    print(
+        f"[Host {jax.process_index()}] Measured device:"
+        f" {measured_device.id}(p{measured_device.process_index}),"
+        f" owner_process={measured_device.process_index}, is_owner={is_owner}"
+    )
+
+    # 1. Parse local XProf trace on relevant hosts
+    should_parse = not self.requires_multihost_sync or is_owner
+    local_avg, local_p50, local_p90 = 0.0, 0.0, 0.0
+
+    if should_parse:
+      try:
+        local_device_id = (
+            None
+            if self.xprof_target_host_cpu
+            else measured_device.local_hardware_id
+        )
+        durations = profiler.parse_xprof_durations(
+            xprof_dir,
+            self.match_xprof_op_fallback,
+            local_device_id=local_device_id,
+        )
+        if durations:
+          print(
+              f"Using XProf device timings ({len(durations)} runs)"
+              " to calculate derived performance metrics."
+          )
+          local_avg = float(np.mean(durations))
+          local_p50 = float(np.percentile(durations, 50))
+          local_p90 = float(np.percentile(durations, 90))
+        else:
+          print("Warning: No XProf device timings found locally.")
+      except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"Error parsing local XProf trace: {e}")
+    else:
+      print(
+          f"Note: Measured device {measured_device.id} is on remote Host"
+          f" {measured_device.process_index} (current Host is"
+          f" {jax.process_index()}). Skipping local XProf parsing."
+      )
+
+    # 2. Optionally broadcast stats across hosts for asymmetric targets (D2D)
+    synced_avg, synced_p50, synced_p90 = local_avg, local_p50, local_p90
+    if self.requires_multihost_sync:
+      try:
+        stats = jnp.array([local_avg, local_p50, local_p90], dtype=jnp.float32)
+        synced_stats = multihost_utils.broadcast_one_to_all(
+            stats, is_source=is_owner
+        )
+        synced_avg = float(synced_stats[0])
+        synced_p50 = float(synced_stats[1])
+        synced_p90 = float(synced_stats[2])
+      except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"Warning: multihost broadcast failed ({e}); using local values.")
+
+    # 3. Apply XProf timings or fallback to None for unmeasured durations
+    if synced_avg > 0:
+      metrics.update({
+          "xprof_avg_ms": synced_avg,
+          "xprof_p50_ms": synced_p50,
+          "xprof_p90_ms": synced_p90,
+      })
+      ignore_keys = {"avg_ms", "p50_ms", "p90_ms", "std_ms"}
+      derived = self.calculate_metrics([synced_avg])
+      metrics.update({k: v for k, v in derived.items() if k not in ignore_keys})
+    else:
+      print(
+          "Warning: No valid XProf timings recorded; setting XProf metrics to"
+          " None."
+      )
+      metrics.update({
+          "xprof_avg_ms": None,
+          "xprof_p50_ms": None,
+          "xprof_p90_ms": None,
+          "bandwidth_gb_s": None,
+      })
+    return metrics
+
   def run(self) -> BenchmarkResult:
     """Standard orchestration flow for a benchmark."""
 
@@ -345,44 +465,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     # Calculate host-side metrics
     metrics = self.calculate_metrics(raw_times)
 
-    xprof_url = None
-    xprof_durations = None
-
     if self.config.xprof_timing:
-      xprof_dir = self._xprof_dir_actual
-      cns_dir = self._xprof_dir_cns
-      xprof_url = profiler.upload_xprof_trace(xprof_dir, cns_dir)  # pyrefly: ignore[bad-argument-type]
-      try:
-        xprof_durations = profiler.parse_xprof_durations(
-            # pyrefly: ignore[bad-argument-type]
-            xprof_dir, self.match_xprof_op_fallback
-        )
-        if xprof_durations:
-          print(
-              f"Using XProf device timings ({len(xprof_durations)} runs) to"
-              " calculate derived performance metrics."
-          )
-        else:
-          print(
-              "Warning: No XProf device timings found, falling back to host"
-              " timings for derived metrics."
-          )
-      except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Error parsing XProf trace: {e}. Falling back to host timings.")
-
-    if self.config.xprof_timing:
-      if xprof_url:
-        metrics["xprof_url"] = xprof_url
-      if xprof_durations:
-        metrics["xprof_avg_ms"] = float(np.mean(xprof_durations))
-        metrics["xprof_p50_ms"] = float(np.percentile(xprof_durations, 50))
-        metrics["xprof_p90_ms"] = float(np.percentile(xprof_durations, 90))
-
-        # Recalculate derived metrics (like bandwidth) using XProf timings
-        device_metrics = self.calculate_metrics(xprof_durations)
-        for key, value in device_metrics.items():
-          if key not in ["p50_ms", "avg_ms", "p90_ms", "std_ms"]:
-            metrics[key] = value
+      metrics = self._apply_xprof_timing_and_sync(metrics)
 
     metrics = self.apply_roofline_analysis(metrics)
 

@@ -48,6 +48,12 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self.bm.setup()
     self.assertEqual(self.bm.get_run_identifier(), f"{op_type}_dim_2048")
 
+  def test_get_run_identifier_before_setup(self):
+    """Verify get_run_identifier works before setup() is called."""
+    config = hbm.HBMBandwidthParams(op_type="add", size=4096)
+    bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
+    self.assertEqual(bm.get_run_identifier(), "add_dim_4096")
+
   @parameterized.parameters("copy", "scale", "add", "triad")
   def test_stream_ops_execution(self, op_type):
     """Verify that all STREAM operations generate correct inputs and execute."""

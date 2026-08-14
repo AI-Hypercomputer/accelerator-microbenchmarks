@@ -110,8 +110,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     self._jit_fn = hbm_op
 
   def get_run_identifier(self) -> str:
-    assert self.spec is not None
-    return f"{self.spec.name}_dim_{self.config.size}"
+    return f"{self.config.op_type}_dim_{self.config.size}"
 
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     assert self.spec is not None
