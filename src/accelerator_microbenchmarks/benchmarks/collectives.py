@@ -52,6 +52,14 @@ def zero_crop(x):
   )(x)
 
 
+_REDUCE_OP_MAP = {
+    "sum": jax.lax.psum,
+    "mean": jax.lax.pmean,
+    "max": jax.lax.pmax,
+    "min": jax.lax.pmin,
+}
+
+
 @dataclasses.dataclass
 class CollectivesParams(base.BaseBenchmarkParams):
   mesh_shape: Optional[str] = None
@@ -59,6 +67,12 @@ class CollectivesParams(base.BaseBenchmarkParams):
   matrix_dim: int = 1024
   dtype: str = "bfloat16"
   seed: int = 0
+  reduce_op: str = dataclasses.field(
+      default="sum",
+      metadata={
+          "help": "Reduction operation: sum, mean, max, min",
+      },
+  )
 
 
 class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
@@ -238,9 +252,24 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
     raise NotImplementedError("Subclasses must implement _get_transfer_metrics")
 
 
+@registry.benchmark_registry.register("all_reduce")
 @registry.benchmark_registry.register("all_reduce_sum")
-class AllReduceSumBenchmark(BaseCollectiveBenchmark):
-  """Benchmarks the latency and bandwidth of jax.lax.psum across devices."""
+class AllReduceBenchmark(BaseCollectiveBenchmark):
+  """Benchmarks latency and bandwidth of all-reduce collective ops across devices."""
+
+  def setup(self):
+    op = self.config.reduce_op.lower()
+    if op not in _REDUCE_OP_MAP:
+      raise ValueError(
+          f"Invalid reduce_op '{self.config.reduce_op}'. "
+          f"Must be one of {list(_REDUCE_OP_MAP.keys())}"
+      )
+    super().setup()
+
+  def get_run_identifier(self) -> str:
+    dim = self.config.matrix_dim
+    op = self.config.reduce_op.lower()
+    return f"dim_{dim}_op_{op}"
 
   def _get_input_shape_and_sharding(
       self, num_devices: int, dim: int, sharding_axes
@@ -253,13 +282,14 @@ class AllReduceSumBenchmark(BaseCollectiveBenchmark):
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
+    op_fn = _REDUCE_OP_MAP[self.config.reduce_op.lower()]
 
     @jax.jit
-    def psum_sharded(x):
+    def all_reduce_sharded(x):
       def f(a):
         with jax.named_scope(constants.MARKER):
           # Insert the custom call to prevent result from being a live out buffer
-          return zero_crop(jax.lax.psum(a, axis_name=sharding_axes))
+          return zero_crop(op_fn(a, axis_name=sharding_axes))
 
       return jax.shard_map(
           f,
@@ -269,12 +299,15 @@ class AllReduceSumBenchmark(BaseCollectiveBenchmark):
           check_vma=False,
       )(x)
 
-    self._jit_fn = psum_sharded
+    self._jit_fn = all_reduce_sharded
 
   def _get_transfer_metrics(self, dim: int, itemsize: int, num_devices: int):
     local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
     data_transferred = local_size_bytes * 2 * (num_devices - 1) / num_devices
     return data_transferred, {"shard_size_mb": local_size_bytes / 1e6}
+
+
+AllReduceSumBenchmark = AllReduceBenchmark
 
 
 @registry.benchmark_registry.register("all_gather")
