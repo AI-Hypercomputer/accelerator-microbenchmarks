@@ -230,21 +230,22 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   def get_trace_metrics(self) -> Optional[dict[str, Any]]:
     """Extract Bottom-Up metrics using jax.experimental.roofline."""
     try:
+      import jax.experimental.roofline as jax_roofline  # pylint: disable=g-import-not-at-top
       # We need the inputs to trace the function
       inputs = self.generate_inputs()
       # Trace the run_op function
       # Note: roofline() returns a wrapped function that returns
       # (out_shape, RooflineResult)
-      roofline_fn = jax.experimental.roofline.roofline(self.run_op)
+      roofline_fn = jax_roofline.roofline(self.run_op)
       _, result = roofline_fn(*inputs)
 
       return {
           "flops": result.flops,
           "hbm_bytes": result.hbm_bytes,
       }
-    except ImportError as e:
+    except (ImportError, AttributeError) as e:
       print(
-          "Warning: jax.experimental.roofline or dependencies (absl-py) not"
+          "Warning: jax.experimental.roofline or dependencies not"
           f" available: {e}"
       )
       return None

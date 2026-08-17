@@ -22,6 +22,7 @@ class GemmParams(base.BaseBenchmarkParams):
   transpose_a: bool = False
   transpose_b: bool = False
   alpha: float = 1.0
+  beta: float = 0.0
 
 
 @registry.benchmark_registry.register("gemm_generalized")
@@ -43,9 +44,10 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
   def setup(self):
     out_dtype = utils.parse_dtype(self.config.out_dtype)
     alpha = self.config.alpha
+    beta = self.config.beta
 
     @jax.jit
-    def gemm_fn(a, b, sf0=None, sf1=None):
+    def gemm_fn(a, b, sf0=None, sf1=None, c=None):
       with jax.named_scope(constants.MARKER):
         # Standard matmul
         lhs_contracting_dim = (0,) if self.config.transpose_a else (1,)
@@ -58,18 +60,30 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
                 ((), ()),
             ),
         )
+        if alpha != 1.0:
+          out = out * alpha
+        if c is not None:
+          out = out + (c * beta if beta != 1.0 else c)
         # Optional rescaling (row-wise scaling factors as requested)
         if sf0 is not None and sf1 is not None:
           # Assuming rowwise scaling factor SF0<M, 1> and SF1<1, N>
           out = out * (sf0 @ sf1)
-        if alpha != 1.0:
-          out = out * alpha
         return out.astype(out_dtype)
 
     self._jit_fn = gemm_fn
 
   def get_run_identifier(self) -> str:
-    return f"m_{self.config.m}_k_{self.config.k}_n_{self.config.n}_{self.config.in_dtype}_to_{self.config.out_dtype}_ta_{self.config.transpose_a}_tb_{self.config.transpose_b}_alpha_{self.config.alpha}"
+    run_identifier = (
+        f"m_{self.config.m}_k_{self.config.k}_n_{self.config.n}_"
+        f"{self.config.in_dtype}_to_{self.config.out_dtype}_"
+        f"ta_{self.config.transpose_a}_tb_{self.config.transpose_b}_"
+        f"alpha_{self.config.alpha}"
+    )
+    if self.config.beta != 0.0:
+      run_identifier += f"_beta_{self.config.beta}"
+    if self.config.use_scaling_factors:
+      run_identifier += "_sf"
+    return run_identifier
 
   def generate_inputs(self) -> tuple[Any, ...]:
     (
@@ -91,7 +105,7 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     in_dtype = utils.parse_dtype(self.config.in_dtype)
 
     key = jax.random.PRNGKey(self.config.seed)
-    k1, k2, k3, k4 = jax.random.split(key, 4)
+    k1, k2, k3, k4, k5 = jax.random.split(key, 5)
 
     # Data generation in HBM
     # Note: JAX might require intermediate conversion for random.normal if
@@ -106,21 +120,44 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     sf0 = jax.random.normal(k3, (m, 1)).astype(jnp.float32) if use_sf else None
     sf1 = jax.random.normal(k4, (1, n)).astype(jnp.float32) if use_sf else None
 
+    use_accumulator_matrix = True if self.config.beta != 0.0 else False
+    c = (
+        jax.random.normal(k5, (m, n)).astype(in_dtype)
+        if use_accumulator_matrix
+        else None
+    )
+
     # Replicated sharding for computation ops to avoid discrepancies
     assert self.mesh is not None, "Mesh not initialized."
     replicated_sharding = jax.sharding.NamedSharding(
         self.mesh, jax.sharding.PartitionSpec(None, None)
     )
 
-    a = jax.device_put(a, replicated_sharding)
-    b = jax.device_put(b, replicated_sharding)
-
+    # Row and column scaling factor vectors (sf0: m x 1, sf1: 1 x n)
+    # Unpacked as sf0, sf1 args into gemm_fn(a, b, sf0, sf1, c) if enabled,
+    # else (None, None).
     if use_sf:
-      sf0 = jax.device_put(sf0, replicated_sharding)
-      sf1 = jax.device_put(sf1, replicated_sharding)
-      return a, b, sf0, sf1
+      sf_args = [
+          jax.device_put(sf0, replicated_sharding),
+          jax.device_put(sf1, replicated_sharding),
+      ]
+    else:
+      sf_args = [None, None]
 
-    return a, b
+    # Accumulator matrix C (M x N) for fused GEMM addition when beta != 0.0.
+    # Unpacked as c arg into gemm_fn(a, b, sf0, sf1, c) if enabled, else [].
+    if use_accumulator_matrix:
+      acc_args = [jax.device_put(c, replicated_sharding)]
+    else:
+      acc_args = []
+
+    return (
+        jax.device_put(a, replicated_sharding),
+        jax.device_put(b, replicated_sharding),
+        *sf_args,
+        *acc_args,
+    )
+
 
   def run_op(self, *args) -> jnp.ndarray:
     assert self._jit_fn is not None
@@ -131,12 +168,16 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     in_itemsize = jnp.dtype(utils.parse_dtype(self.config.in_dtype)).itemsize
     out_itemsize = jnp.dtype(utils.parse_dtype(self.config.out_dtype)).itemsize
 
-    # Bytes = Load(A) + Load(B) + Store(Out)
-    # Scaling factors are small (row-wise), ignoring for intensity but could be
-    # added.
-    return (
-        (m * k * in_itemsize) + (k * n * in_itemsize) + (m * n * out_itemsize)
-    )
+    # Base memory traffic: Load A (M x K) and B (K x N), Store Out (M x N)
+    bytes_a = m * k * in_itemsize
+    bytes_b = k * n * in_itemsize
+    bytes_out = m * n * out_itemsize
+
+    # Optional memory traffic: Load C (M x N) when accumulator matrix is used (beta != 0.0).
+    # Note: Row-wise scaling factors (sf0, sf1) are small and ignored.
+    bytes_c = m * n * out_itemsize if self.config.beta != 0.0 else 0
+
+    return float(bytes_a + bytes_b + bytes_out + bytes_c)
 
   def get_total_flops(self) -> float:
     m, k, n = self.config.m, self.config.k, self.config.n
@@ -145,7 +186,9 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
       flops += 2 * m * n
     if self.config.alpha != 1.0:
       flops += m * n
-    return flops
+    if self.config.beta != 0.0:
+      flops += 2 * m * n if self.config.beta != 1.0 else m * n
+    return float(flops)
 
   def get_arithmetic_intensity(self) -> float:
     flops = self.get_total_flops()

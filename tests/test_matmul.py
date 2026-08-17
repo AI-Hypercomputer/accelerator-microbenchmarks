@@ -45,8 +45,8 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     """Test generating inputs without scaling factors."""
     self._setup_benchmark()
     inputs = self.bm.generate_inputs()
-    self.assertLen(inputs, 2)
-    a, b = inputs
+    self.assertLen(inputs, 4)
+    a, b = inputs[0], inputs[1]
     self.assertEqual(a.shape, (64, 64))
     self.assertEqual(b.shape, (64, 64))
     self.assertEqual(a.dtype, jnp.bfloat16)
@@ -153,7 +153,8 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         "transpose_b": tb,
     }
     self._setup_benchmark(**params)
-    a, b = self.bm.generate_inputs()
+    inputs = self.bm.generate_inputs()
+    a, b = inputs[0], inputs[1]
     self.assertEqual(
         a.shape,
         expected_a_shape,
@@ -212,7 +213,7 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self._setup_benchmark(**params)
     inputs = self.bm.generate_inputs()
     self.assertLen(inputs, 4)
-    a, b, sf0, sf1 = inputs
+    a, b, sf0, sf1 = inputs[:4]
     self.assertEqual(a.shape, (k, m))
     self.assertEqual(b.shape, (n, k))
     self.assertEqual(sf0.shape, (m, 1))
@@ -224,37 +225,71 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     expected_out = jnp.matmul(a.T, b.T) * (sf0 @ sf1)
     np.testing.assert_allclose(out, expected_out, rtol=1e-4, atol=1e-4)
 
-  def test_get_run_identifier_transposed(self):
-    """Test run identifier formatting for transposed layouts."""
+  @parameterized.named_parameters(
+      (
+          "default",
+          {},
+          "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_False_alpha_1.0",
+      ),
+      (
+          "transposed_a",
+          {"transpose_a": True},
+          "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_True_tb_False_alpha_1.0",
+      ),
+      (
+          "transposed_b",
+          {"transpose_b": True},
+          "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_True_alpha_1.0",
+      ),
+      (
+          "both_transposed",
+          {"transpose_a": True, "transpose_b": True},
+          "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_True_tb_True_alpha_1.0",
+      ),
+      (
+          "with_alpha_not_equal_to_1",
+          {"alpha": 2.0},
+          "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_False_alpha_2.0",
+      ),
+      (
+          "with_beta",
+          {"beta": 2.0},
+          "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_False_alpha_1.0_beta_2.0",
+      ),
+      (
+          "with_scaling_factors",
+          {"use_scaling_factors": True},
+          "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_False_alpha_1.0_sf",
+      ),
+      (
+          "with_beta_and_scaling_factors",
+          {"beta": 1.5, "use_scaling_factors": True},
+          "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_False_alpha_1.0_beta_1.5_sf",
+      ),
+      (
+          "all_options",
+          {
+              "transpose_a": True,
+              "transpose_b": True,
+              "alpha": 0.5,
+              "beta": 1.5,
+              "use_scaling_factors": True,
+          },
+          "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_True_tb_True_alpha_0.5_beta_1.5_sf",
+      ),
+  )
+  def test_get_run_identifier(self, kwargs_override, expected_identifier):
+    """Test run identifier formatting across various configuration options."""
     params = {
         "m": 32,
         "k": 64,
         "n": 128,
         "in_dtype": "bfloat16",
         "out_dtype": "bfloat16",
-        "transpose_a": True,
-        "transpose_b": True,
     }
+    params.update(kwargs_override)
     self._setup_benchmark(**params)
-    self.assertEqual(
-        self.bm.get_run_identifier(),
-        "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_True_tb_True_alpha_1.0",
-    )
-
-    params_untransposed = {
-        "m": 32,
-        "k": 64,
-        "n": 128,
-        "in_dtype": "bfloat16",
-        "out_dtype": "bfloat16",
-        "transpose_a": False,
-        "transpose_b": False,
-    }
-    self._setup_benchmark(**params_untransposed)
-    self.assertEqual(
-        self.bm.get_run_identifier(),
-        "m_32_k_64_n_128_bfloat16_to_bfloat16_ta_False_tb_False_alpha_1.0",
-    )
+    self.assertEqual(self.bm.get_run_identifier(), expected_identifier)
 
   @parameterized.named_parameters(
       ("no_scaling_factors_alpha_1", False, 1.0),
@@ -316,7 +351,56 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.assertAlmostEqual(metrics["intensity"], 532480 / 24576)
     self.assertAlmostEqual(self.bm.get_arithmetic_intensity(), 532480 / 24576)
 
+  def test_generate_inputs_with_accumulator_matrix(self):
+    """Test generating inputs with accumulator matrix (beta != 0.0)."""
+    self._setup_benchmark(beta=1.0)
+    inputs = self.bm.generate_inputs()
+    self.assertLen(inputs, 5)
+    a, b, sf0, sf1, c = inputs
+    self.assertEqual(a.shape, (64, 64))
+    self.assertEqual(b.shape, (64, 64))
+    self.assertIsNone(sf0)
+    self.assertIsNone(sf1)
+    self.assertEqual(c.shape, (64, 64))
+
+  def test_run_op_with_accumulator_matrix(self):
+    """Test run op with accumulator matrix and beta scaling factor."""
+    m, k, n = 32, 64, 128
+    params = {
+        "m": m,
+        "k": k,
+        "n": n,
+        "in_dtype": "float32",
+        "out_dtype": "float32",
+        "beta": 2.0,
+    }
+    self._setup_benchmark(**params)
+    inputs = self.bm.generate_inputs()
+    a, b, _, _, c = inputs
+    out = self.bm.run_op(*inputs)
+    self.assertEqual(out.shape, (m, n))
+
+    expected_out = jnp.matmul(a, b) + 2.0 * c
+    np.testing.assert_allclose(out, expected_out, rtol=1e-4, atol=1e-4)
+
+  def test_calculate_metrics_with_accumulator_matrix(self):
+    """Test FLOPs and bytes calculation when beta != 0.0."""
+    self._setup_benchmark(beta=2.0)
+    # m=64, k=64, n=64
+    # base_flops = 2 * 64 * 64 * 64 = 524288
+    # beta_flops (beta != 1.0) = 2 * 64 * 64 = 8192
+    # total_flops = 532480
+    # bytes = 24576 + (64 * 64 * 2) = 32768
+    # intensity = 532480 / 32768 = 16.25
+    metrics = self.bm.calculate_metrics([1.0, 1.5, 2.0])
+    self.assertEqual(metrics["total_flops"], 532480)
+    self.assertEqual(self.bm.get_total_bytes(), 32768.0)
+    self.assertAlmostEqual(metrics["intensity"], 532480 / 32768)
+    self.assertAlmostEqual(self.bm.get_arithmetic_intensity(), 532480 / 32768)
+
 
 
 if __name__ == "__main__":
   absltest.main()
+
+
