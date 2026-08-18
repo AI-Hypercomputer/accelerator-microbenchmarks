@@ -37,7 +37,7 @@ class TestMainHelpers(absltest.TestCase):
                 "ANOTHER_VAR": "456",
             },
         },
-        "psum": [
+        "all_reduce": [
             "--mapped_flag=true",
         ],
     }
@@ -78,9 +78,9 @@ class TestMainHelpers(absltest.TestCase):
     self.assertEqual(os.environ.get("SOME_ENV_VAR"), "some_value")
     self.assertEqual(os.environ.get("ANOTHER_VAR"), "456")
 
-  def test_set_xla_flags_mapped_name(self):
-    # all_reduce_sum should map to psum
-    main.set_xla_flags([{"name": "all_reduce_sum"}], self.flags_file_path)
+  def test_set_xla_flags_direct_name(self):
+    # all_reduce should directly match all_reduce flags
+    main.set_xla_flags([{"name": "all_reduce"}], self.flags_file_path)
     self.assertEqual(os.environ.get("LIBTPU_INIT_ARGS"), "--mapped_flag=true")
 
   def test_set_xla_flags_unmatched_name(self):
@@ -98,9 +98,9 @@ class TestMainHelpers(absltest.TestCase):
     self.assertIsNotNone(init_args)
     self.assertIn("--xla_tpu_dvfs_p_state=7", init_args)
 
-  def test_set_xla_flags_gemm_generalized(self):
-    """Verifies that this fix does not break the original google3 path."""
-    main.set_xla_flags([{"name": "all_reduce_sum"}], None)
+  def test_set_xla_flags_all_reduce(self):
+    """Verifies that all_reduce maps to all_reduce flags in op_flags.yaml."""
+    main.set_xla_flags([{"name": "all_reduce"}], None)
     init_args = os.environ.get("LIBTPU_INIT_ARGS")
     self.assertIsNotNone(init_args)
     self.assertIn("--xla_jf_debug_level=3", init_args)
@@ -122,7 +122,7 @@ class TestMainHelpers(absltest.TestCase):
         os.path.dirname(main.__file__), "op_flags.yaml"
     )
     sys.stderr.write(f"--- copybara_flags_path: {copybara_flags_path}\n")
-    main.set_xla_flags([{"name": "all_reduce_sum"}], copybara_flags_path)
+    main.set_xla_flags([{"name": "all_reduce"}], copybara_flags_path)
     init_args = os.environ.get("LIBTPU_INIT_ARGS")
     self.assertIsNotNone(init_args)
     self.assertIn("--xla_jf_debug_level=3", init_args)

@@ -30,7 +30,6 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "hbm_bandwidth",
             "attention_flashed",
             "all_reduce",
-            "all_reduce_sum",
             "all_to_all",
             "reduce_scatter",
             "all_gather",

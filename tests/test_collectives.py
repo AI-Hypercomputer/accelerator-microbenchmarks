@@ -37,11 +37,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     )
 
   def test_all_reduce_registered(self):
-    """Verify that all_reduce and all_reduce_sum are correctly registered."""
+    """Verify that all_reduce is correctly registered."""
     bm_class = registry.benchmark_registry.get_benchmark("all_reduce")
     self.assertEqual(bm_class, collectives.AllReduceBenchmark)
-    bm_class_sum = registry.benchmark_registry.get_benchmark("all_reduce_sum")
-    self.assertEqual(bm_class_sum, collectives.AllReduceBenchmark)
 
   def test_all_reduce_invalid_op_raises_error(self):
     """Verify that invalid reduce_op raises ValueError in setup()."""

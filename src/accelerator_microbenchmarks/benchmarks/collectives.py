@@ -253,7 +253,6 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
 
 
 @registry.benchmark_registry.register("all_reduce")
-@registry.benchmark_registry.register("all_reduce_sum")
 class AllReduceBenchmark(BaseCollectiveBenchmark):
   """Benchmarks latency and bandwidth of all-reduce collective ops across devices."""
 
@@ -305,9 +304,6 @@ class AllReduceBenchmark(BaseCollectiveBenchmark):
     local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
     data_transferred = local_size_bytes * 2 * (num_devices - 1) / num_devices
     return data_transferred, {"shard_size_mb": local_size_bytes / 1e6}
-
-
-AllReduceSumBenchmark = AllReduceBenchmark
 
 
 @registry.benchmark_registry.register("all_gather")

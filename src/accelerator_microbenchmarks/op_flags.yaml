@@ -24,7 +24,7 @@ gemm_numerics_flags: &gemm_numerics_flags
   - "--xla_tpu_allow_conv_input_fusion_with_downcast_convert=true"
   - "--xla_tpu_dvfs_p_state=7"
 
-psum:
+all_reduce:
   - "--xla_jf_debug_level=3"
   - "--xla_sc_disable_megacore_partitioning=true"
   - "--xla_tpu_disable_sparse_core_collective_offload_remover=true"

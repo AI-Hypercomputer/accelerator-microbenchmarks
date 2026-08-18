@@ -23,8 +23,7 @@ _REPO_ROOT = "third_party/py/accelerator_microbenchmarks"
 
 # Map g3 benchmark names to op_flags.yaml keys
 _BENCHMARK_NAME_MAPPING = {
-    "all_reduce": "psum",
-    "all_reduce_sum": "psum",
+    "all_reduce": "all_reduce",
     "reduce_scatter": "psum_scatter",
 }
 

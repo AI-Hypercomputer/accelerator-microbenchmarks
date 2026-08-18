@@ -20,12 +20,14 @@ benchmarks:
     n: 2048
 
   # Collective communication demonstration
-  - name: all_reduce_sum
+  - name: all_reduce
+    reduce_op: "sum"
     mesh_shape: "4x4x8" # Example mesh_shape, can be updated based on available devices
     sweep:
       matrix_dim: [512, 1024, 2048]
 
-  - name: all_reduce_sum
+  - name: all_reduce
+    reduce_op: "sum"
     mesh_shape: "16x4x2" # Example mesh_shape, can be updated based on available devices
     sweep:
       matrix_dim: [512, 1024, 2048]

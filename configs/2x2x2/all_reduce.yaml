@@ -5,8 +5,9 @@ global:
   dtype: bfloat16
   xprof_timing: true
 benchmarks:
-- mesh_shape: 8x4x2
-  name: all_reduce_sum
+- mesh_shape: 4x2x2
+  name: all_reduce
+  reduce_op: sum
   sweep:
     matrix_dim: [512, 1024, 2048]
-  sharding_strategy: 8x4x2
+  sharding_strategy: 4x2x2
