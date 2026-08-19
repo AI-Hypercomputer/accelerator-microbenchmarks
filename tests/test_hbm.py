@@ -1,5 +1,7 @@
 """Unit tests for hbm.py."""
 
+from unittest import mock
+
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import hbm
@@ -40,19 +42,51 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     bm_class = registry.benchmark_registry.get_benchmark("hbm_bandwidth")
     self.assertEqual(bm_class, hbm.HBMBandwidthBenchmark)
 
-  @parameterized.parameters("copy", "scale", "add", "triad")
-  def test_get_run_identifier(self, op_type):
+  @parameterized.named_parameters(
+      ("copy", "copy", 2048, 0, "copy_dim_2048_dev_0"),
+      ("scale", "scale", 2048, 0, "scale_dim_2048_dev_0"),
+      ("add", "add", 2048, 0, "add_dim_2048_dev_0"),
+      ("triad", "triad", 2048, 0, "triad_dim_2048_dev_0"),
+      ("custom_size", "copy", 4096, 0, "copy_dim_4096_dev_0"),
+      ("large_size", "add", 134217728, 0, "add_dim_134217728_dev_0"),
+  )
+  def test_get_run_identifier(
+      self, op_type, size, device_id, expected_identifier
+  ):
     """Verify run identifier generation for all STREAM ops."""
-    config = hbm.HBMBandwidthParams(op_type=op_type, size=2048)
+    config = hbm.HBMBandwidthParams(
+        op_type=op_type, size=size, device_id=device_id
+    )
     self.bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
     self.bm.setup()
-    self.assertEqual(self.bm.get_run_identifier(), f"{op_type}_dim_2048")
+    self.assertEqual(self.bm.get_run_identifier(), expected_identifier)
 
-  def test_get_run_identifier_before_setup(self):
-    """Verify get_run_identifier works before setup() is called."""
-    config = hbm.HBMBandwidthParams(op_type="add", size=4096)
+  def test_device_id_validation(self):
+    """Verify setup validates device_id is within range of local devices."""
+    num_devices = len(jax.devices())
+
+    # Invalid negative device_id
+    config = hbm.HBMBandwidthParams(device_id=-1)
     bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
-    self.assertEqual(bm.get_run_identifier(), "add_dim_4096")
+    with self.assertRaisesRegex(ValueError, "Invalid device_id: -1"):
+      bm.setup()
+
+    # Invalid out of range device_id
+    config = hbm.HBMBandwidthParams(device_id=num_devices)
+    bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
+    with self.assertRaisesRegex(
+        ValueError, f"Invalid device_id: {num_devices}"
+    ):
+      bm.setup()
+
+  def test_get_device_to_measure(self):
+    """Verify get_device_to_measure returns targeted local device."""
+    mock_devices = [mock.MagicMock() for _ in range(8)]
+    with mock.patch.object(jax, "devices", return_value=mock_devices):
+      config = hbm.HBMBandwidthParams(device_id=7)
+      bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
+      bm.setup()
+      self.assertEqual(bm.get_device_to_measure(), mock_devices[7])
 
   @parameterized.parameters("copy", "scale", "add", "triad")
   def test_stream_ops_execution(self, op_type):
@@ -108,7 +142,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     with self.assertRaisesRegex(
         ValueError, "A configuration object must be explicitly provided."
     ):
-      unconfigured_bm = hbm.HBMBandwidthBenchmark(config=None)
+      hbm.HBMBandwidthBenchmark(config=None)
 
   def test_run_op_uninitialized(self):
     """Verify calling run_op before setup raises a ValueError."""

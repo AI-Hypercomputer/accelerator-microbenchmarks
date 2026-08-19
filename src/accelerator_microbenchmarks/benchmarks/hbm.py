@@ -69,6 +69,7 @@ class HBMBandwidthParams(base.BaseBenchmarkParams):
   op_type: str = "copy"
   size: int = 134217728  # default ~256MB for bfloat16 (128M elements * 2 bytes)
   dtype: str = "bfloat16"
+  device_id: int = 0
 
 
 @registry.benchmark_registry.register("hbm_bandwidth")
@@ -84,6 +85,13 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     self.scalar: Any | None = None
 
   def setup(self):
+    num_devices = len(jax.devices())
+    if not (0 <= self.config.device_id < num_devices):
+      raise ValueError(
+          f"Invalid device_id: {self.config.device_id}. Must be in range"
+          f" [0, {num_devices - 1}] (found {num_devices} local device(s))."
+      )
+
     op_type = self.config.op_type
     if op_type is None:
       raise ValueError("op_type must be specified.")
@@ -110,7 +118,10 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     self._jit_fn = hbm_op
 
   def get_run_identifier(self) -> str:
-    return f"{self.config.op_type}_dim_{self.config.size}"
+    return f"{self.config.op_type}_dim_{self.config.size}_dev_{self.config.device_id}"
+
+  def get_device_to_measure(self) -> jax.Device:
+    return jax.devices()[self.config.device_id]
 
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     assert self.spec is not None
@@ -118,9 +129,9 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     size = self.config.size
     dtype = utils.parse_dtype(self.config.dtype)
 
-    # Force execution on local device 0 for single-device benchmark
-    local_device = jax.local_devices()[0]
-    sharding = jax.sharding.SingleDeviceSharding(local_device)
+    # Force execution on target local device for single-device benchmark
+    device_to_measure = self.get_device_to_measure()
+    sharding = jax.sharding.SingleDeviceSharding(device_to_measure)
 
     # Use jit with out_shardings to generate on device to avoid host OOM
     generate_data = jax.jit(
