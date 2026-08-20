@@ -59,7 +59,7 @@ def gemm_throttling(
             )
             return acc.astype(jnp.bfloat16)
 
-    mesh = create_mesh(SHARDING_STRATEGY)
+    mesh = create_mesh(SHARDING_STRATEGY, local_mesh=True)
     lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
     rhs_sharding = get_rhs_named_shading(mesh, SHARDING_STRATEGY)
     out_sharding = get_out_sharding(SHARDING_STRATEGY)
@@ -124,8 +124,9 @@ def gemm_throttling_calculate_metrics(
     # pylint: disable=unused-argument
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
+    device_count = jax.local_device_count()
     total_flops, total_flops_all_devices = handle_based_on_sharding(
-        total_flops, SHARDING_STRATEGY
+        total_flops, SHARDING_STRATEGY, device_count=device_count
     )
     return unified_flops_metrics(
         m,
