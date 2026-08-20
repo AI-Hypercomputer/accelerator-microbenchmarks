@@ -1202,7 +1202,7 @@ def create_mesh(strategy: ShardingStrategy, local_mesh: bool = False) -> Mesh:
         local_mesh: If True, restricts the mesh to local devices.
                     If False, uses all available devices.
     """
-    devices = jax.local_devices() if local_mesh else jax.devices()
+    devices = jax.local_devices()[0:1] if local_mesh else jax.devices()[0:1]
     num_devices = len(devices)
     if (
         strategy == ShardingStrategy.SHARDING_ON_SINGLE_CHIP_WITH_M
