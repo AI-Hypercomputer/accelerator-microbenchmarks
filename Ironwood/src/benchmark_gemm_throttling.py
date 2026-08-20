@@ -126,9 +126,7 @@ def gemm_throttling_calculate_metrics(
     # pylint: disable=unused-argument
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
-    device_count = (
-        jax.local_device_count() if run_on_local_node else jax.device_count()
-    )
+    device_count = 1
     total_flops, total_flops_all_devices = handle_based_on_sharding(
         total_flops, SHARDING_STRATEGY, device_count=device_count
     )
