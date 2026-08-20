@@ -16,8 +16,9 @@ from common import MARKER
 import jax
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
+import numpy as np
 
-os.environ["LIBTPU_INIT_ARGS"] = (
+libtpu_args_str = (
     "--xla_tpu_enable_async_collective_fusion=true "
     "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true "
     "--xla_tpu_enable_async_collective_fusion_multiple_steps=true "
@@ -30,6 +31,8 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_vmem_scavenging_mode=NONE "
     "--xla_tpu_dvfs_p_state=7"
 )
+os.environ["LIBTPU_INIT_ARGS"] = libtpu_args_str
+print(f"RUNTIME_CFG: LIBTPU_INIT_ARGS={libtpu_args_str}")
 
 SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 SEED = 0
@@ -59,7 +62,8 @@ def gemm_throttling(
             )
             return acc.astype(jnp.bfloat16)
 
-    mesh = create_mesh(SHARDING_STRATEGY)
+    ## Run on a single device (device 0)
+    mesh = jax.sharding.Mesh(np.array([jax.devices()[0]]), axis_names="device")
     lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
     rhs_sharding = get_rhs_named_shading(mesh, SHARDING_STRATEGY)
     out_sharding = get_out_sharding(SHARDING_STRATEGY)

@@ -88,9 +88,16 @@ def multiple_iteration_timeit_from_trace_throttling(
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{local_trace_dir}/{trace_name}"
 
+    options = jax.profiler.ProfileOptions()
+    options.advanced_configuration = {
+        "tpu_trace_mode": "TRACE_ONLY_XLA",
+        "tpu_num_sparse_cores_to_trace": 0,
+        "tpu_num_sparse_core_tiles_to_trace": 0,
+    }
+
     if gap_strategy == "data_gen_once_block_every_iter":
         data_args = data_generator()
-        with jax.profiler.trace(tmp_trace_dir):
+        with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
             for i in range(tries):
                 if i % 10 == 0:
                     print(
@@ -104,15 +111,9 @@ def multiple_iteration_timeit_from_trace_throttling(
                         jax.block_until_ready(result)
     elif gap_strategy == "data_gen_once_noblock":
         data_args = data_generator()
-        with jax.profiler.trace(tmp_trace_dir):
+        with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
             results = []
             for i in range(tries):
-                if i % 10 == 0:
-                    print(
-                        f"[{task}] Running iteration {i} of {tries} with "
-                        f"{matrix_dim}..."
-                    )
-                jax.devices()
                 with jax.profiler.StepTraceAnnotation(task, step_num=i):
                     with jax.named_scope(f"{MARKER}_{i}"):
                         compute_func(*data_args)
@@ -121,7 +122,7 @@ def multiple_iteration_timeit_from_trace_throttling(
             if results:
                 jax.block_until_ready(results)
     elif gap_strategy == "data_gen_every_iter_block_every_iter":
-        with jax.profiler.trace(tmp_trace_dir):
+        with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
             for i in range(tries):
                 if i % 10 == 0:
                     print(
@@ -867,7 +868,7 @@ class MetricsStatistics:
             "max": np.max(self.metrics_list),
             "num_runs": len(self.metrics_list),
             "min": np.min(self.metrics_list),
-            # "all_values": json.dumps(self.metrics_list),
+            "all_values": [float(x) for x in self.metrics_list],
         }
 
     def __repr__(self):
