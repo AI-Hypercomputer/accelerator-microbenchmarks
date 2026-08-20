@@ -9,13 +9,9 @@ jsonlines
 ray[default]
 # For profiling
 tensorboard-plugin-profile
-# Install tensorflow to avoid spurring "Can't import tensorflow.python.profiler.trace" error from jax.profiler.
-tensorflow
+# Install tensorflow-cpu to avoid spurring "Can't import tensorflow.python.profiler.trace" error from jax.profiler.
+tensorflow-cpu
 qwix@git+https://github.com/google/qwix.git
 tokamax
 tune-jax==0.7.2
 immutabledict
-pylint
-black
-isort
-pre-commit
