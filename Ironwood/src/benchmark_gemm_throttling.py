@@ -19,6 +19,9 @@ import jax.numpy as jnp
 
 os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_overlap_compute_collective_tc=true "
+    "--xla_tpu_enable_async_collective_fusion=true "
+    "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true "
+    "--xla_tpu_enable_async_collective_fusion_multiple_steps=true "
     "--xla_enable_async_all_gather=true "
     "--xla_enable_async_collective_permute=true "
     "--xla_tpu_enable_all_experimental_scheduler_features=true "

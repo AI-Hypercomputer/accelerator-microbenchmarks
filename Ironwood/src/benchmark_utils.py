@@ -75,22 +75,20 @@ def multiple_iteration_timeit_from_trace_throttling(
     gap_strategy: str = None,
     all_devices: bool = False,
 ) -> list[float]:
-    """Time a function with jax.profiler and get the run time from the trace."""
+    """Time a throttling function with jax.profiler and extract step durations."""
     local_trace_dir = "/tmp/microbenchmarks_tmptrace"
-
-    if matrix_dim is not None:
-        trace_name = f"{task}_dim_{matrix_dim}"
-    else:
-        trace_name = f"t_{task}_" + "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=10)
-        )
-
+    trace_name = (
+        f"{task}_dim_{matrix_dim}"
+        if matrix_dim
+        else f"t_{task}_"
+        + "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
+    )
     trace_full_dir = f"{trace_dir}/{trace_name}"
-    tmp_trace_dir = trace_full_dir
-    # If the trace_dir isn't a local path, create one for dumping the trace for
-    # parsing and getting metrics.
-    if trace_dir and not is_local_directory_path(trace_dir):
-        tmp_trace_dir = f"{local_trace_dir}/{trace_name}"
+    tmp_trace_dir = (
+        trace_full_dir
+        if is_local_directory_path(trace_dir)
+        else f"{local_trace_dir}/{trace_name}"
+    )
 
     options = jax.profiler.ProfileOptions()
     options.advanced_configuration = {
@@ -105,114 +103,75 @@ def multiple_iteration_timeit_from_trace_throttling(
     print(f"[{task}] Warming up JIT compilation...")
     if all_devices:
         for d_args in warmup_args:
-            warmup_res = compute_func(*d_args)
-            jax.block_until_ready(warmup_res)
+            jax.block_until_ready(compute_func(*d_args))
     else:
-        warmup_res = compute_func(*warmup_args)
-        jax.block_until_ready(warmup_res)
+        jax.block_until_ready(compute_func(*warmup_args))
     print(f"[{task}] Warmup finished.")
 
-    if gap_strategy == "data_gen_once_block_every_iter":
-        data_args = data_generator()
+    # Execute benchmark under profiler trace
+    with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
         if all_devices:
-            def run_device_block(dev_idx, dev_data):
-                latest = dev_data[0]
-                rhs = dev_data[1]
-                for i in range(tries):
-                    with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                        with jax.named_scope(f"{MARKER}_{i}"):
-                            latest = compute_func(latest, rhs)
-                            jax.block_until_ready(latest)
+            data_args = data_generator()
+            block_every_iter = gap_strategy == "data_gen_once_block_every_iter"
 
-            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
-                print(
-                    f"[{task}] Running all_devices block_every_iter of {tries} with {matrix_dim}..."
-                )
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=len(data_args)
-                ) as pool:
-                    futures = [
-                        pool.submit(run_device_block, idx, d_args)
-                        for idx, d_args in enumerate(data_args)
-                    ]
-                    concurrent.futures.wait(futures)
-        else:
-            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
-                for i in range(tries):
-                    if i % 10 == 0:
-                        print(
-                            f"[{task}] Running iteration {i} of {tries} with "
-                            f"{matrix_dim}..."
-                        )
-                    jax.devices()
-                    with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                        with jax.named_scope(f"{MARKER}_{i}"):
-                            result = compute_func(*data_args)
-                            jax.block_until_ready(result)
-    elif gap_strategy == "data_gen_once_noblock":
-        data_args = data_generator()
-        if all_devices:
-            def run_device_noblock(dev_idx, dev_data):
-                latest = dev_data[0]
-                rhs = dev_data[1]
+            def run_device(dev_data):
+                latest, rhs = dev_data[0], dev_data[1]
                 for i in range(tries):
                     with jax.profiler.StepTraceAnnotation(task, step_num=i):
                         with jax.named_scope(f"{MARKER}_{i}"):
                             latest = compute_func(latest, rhs)
-                if latest is not None:
+                            if block_every_iter:
+                                jax.block_until_ready(latest)
+                if latest is not None and not block_every_iter:
                     jax.block_until_ready(latest)
 
-            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
-                print(
-                    f"[{task}] Running all_devices noblock of {tries} with {matrix_dim}..."
-                )
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=len(data_args)
-                ) as pool:
-                    futures = [
-                        pool.submit(run_device_noblock, idx, d_args)
-                        for idx, d_args in enumerate(data_args)
-                    ]
-                    concurrent.futures.wait(futures)
-        else:
-            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
-                latest_result = None
-                for i in range(tries):
-                    if i % 10 == 0:
-                        print(
-                            f"[{task}] Running iteration {i} of {tries} with "
-                            f"{matrix_dim}..."
-                        )
-                    jax.devices()
-                    with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                        with jax.named_scope(f"{MARKER}_{i}"):
-                            latest_result = compute_func(*data_args)
+            print(
+                f"[{task}] Running all_devices {gap_strategy} of {tries} with"
+                f" {matrix_dim}..."
+            )
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=len(data_args)
+            ) as pool:
+                futures = [pool.submit(run_device, d) for d in data_args]
+                concurrent.futures.wait(futures)
 
-                if latest_result is not None:
-                    jax.block_until_ready(latest_result)
-    elif gap_strategy == "data_gen_every_iter_block_every_iter":
-        with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
+        elif gap_strategy == "data_gen_every_iter_block_every_iter":
             for i in range(tries):
-                if i % 10 == 0:
-                    print(
-                        f"[{task}] Running iteration {i} of {tries} with"
-                        f"{matrix_dim}..."
-                    )
                 data_args = data_generator()
-                jax.devices()
                 with jax.profiler.StepTraceAnnotation(task, step_num=i):
                     with jax.named_scope(f"{MARKER}_{i}"):
-                        result = compute_func(*data_args)
-                        jax.block_until_ready(result)
-    else:
-        raise ValueError(f"Unknown gap strategy: {gap_strategy}")
-    trace = get_trace(tmp_trace_dir)
+                        jax.block_until_ready(compute_func(*data_args))
 
+        elif gap_strategy == "data_gen_once_block_every_iter":
+            data_args = data_generator()
+            for i in range(tries):
+                with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                    with jax.named_scope(f"{MARKER}_{i}"):
+                        jax.block_until_ready(compute_func(*data_args))
+
+        elif gap_strategy == "data_gen_once_noblock":
+            data_args = data_generator()
+            latest_result = None
+            for i in range(tries):
+                with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                    with jax.named_scope(f"{MARKER}_{i}"):
+                        latest_result = compute_func(*data_args)
+            if latest_result is not None:
+                jax.block_until_ready(latest_result)
+
+        else:
+            raise ValueError(f"Unknown gap strategy: {gap_strategy}")
+
+    trace = get_trace(tmp_trace_dir)
     if trace_full_dir != tmp_trace_dir:
-        # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
+
     return multiple_iteration_get_metrics_from_trace(
-        trace, task, tries=tries, gap_strategy=gap_strategy, all_devices=all_devices
+        trace,
+        task,
+        tries=tries,
+        gap_strategy=gap_strategy,
+        all_devices=all_devices,
     )
 
 
