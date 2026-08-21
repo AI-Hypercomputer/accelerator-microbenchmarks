@@ -1,0 +1,12 @@
+global:
+  system: ghostlite # TODO - b/544761589: Add support for ghostlite in systems.py
+  warmup_tries: 2
+  num_runs: 5
+  dtype: bfloat16
+  xprof_timing: false
+benchmarks:
+- mesh_shape: 4x2x2
+  name: all_gather
+  sweep:
+    matrix_dim: [512, 1024, 2048]
+  sharding_strategy: 4x2x2
