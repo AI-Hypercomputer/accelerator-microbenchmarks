@@ -18,9 +18,6 @@ from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 
 os.environ["LIBTPU_INIT_ARGS"] = (
-    "--xla_tpu_enable_async_collective_fusion=true "
-    "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true "
-    "--xla_tpu_enable_async_collective_fusion_multiple_steps=true "
     "--xla_tpu_overlap_compute_collective_tc=true "
     "--xla_enable_async_all_gather=true "
     "--xla_enable_async_collective_permute=true "
@@ -47,33 +44,45 @@ def gemm_throttling(
     gap_strategy: str = "data_gen_every_iter_block_every_iter",
     trace_dir: str = None,
     run_on_local_node: bool = False,
+    all_devices: bool = False,
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8.
 
     Accumulation is FP32.
     """
 
-    def f(x, y):
-        with jax.named_scope(MARKER):
-            acc = jax.numpy.einsum(
-                "ij,jk->ik", x, y, preferred_element_type=jnp.float32
-            )
-            return acc.astype(jnp.bfloat16)
+    if gap_strategy in ("data_gen_once_fori_loop", "data_gen_once_unroll_loop"):
 
-    mesh = create_mesh(SHARDING_STRATEGY, local_mesh=run_on_local_node)
-    lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
-    rhs_sharding = get_rhs_named_shading(mesh, SHARDING_STRATEGY)
-    out_sharding = get_out_sharding(SHARDING_STRATEGY)
+        def f(x, y):
+            with jax.named_scope(MARKER):
+                if gap_strategy == "data_gen_once_unroll_loop":
+                    cur_x = x
+                    for i in range(num_runs):
+                        with jax.named_scope(f"iter_{i}"):
+                            cur_x = jax.numpy.einsum(
+                                "ij,jk->ik",
+                                cur_x,
+                                y,
+                                preferred_element_type=jnp.float32,
+                            ).astype(cur_x.dtype)
+                    return cur_x
+                else:
+                    def body_fn(i, cur_x):
+                        out = jax.numpy.einsum(
+                            "ij,jk->ik", cur_x, y, preferred_element_type=jnp.float32
+                        )
+                        return out.astype(cur_x.dtype)
 
-    jit_sharded_f = jax.jit(
-        shard_map(
-            f,
-            mesh,
-            in_specs=(lhs_sharding.spec, rhs_sharding.spec),
-            out_specs=out_sharding,
-            check_rep=False,
-        )
-    )
+                    return jax.lax.fori_loop(0, num_runs, body_fn, x)
+
+    else:
+
+        def f(x, y):
+            with jax.named_scope(MARKER):
+                acc = jax.numpy.einsum(
+                    "ij,jk->ik", x, y, preferred_element_type=jnp.float32
+                )
+                return acc.astype(dtype)
 
     lhs_shape = (m, k)
     rhs_shape = (k, n)
@@ -83,31 +92,66 @@ def gemm_throttling(
 
     key = jax.random.key(SEED)
 
-    def data_generator():
-        """Creates new random data on host and puts it on device."""
-        nonlocal key  # Use and update the outer 'key'
-        key, key_lhs, key_rhs = jax.random.split(key, 3)
+    if all_devices:
+        devices = (
+            jax.local_devices() if run_on_local_node else jax.devices()
+        )
+        jit_compute_f = jax.jit(f)
 
-        # Create random data on host
-        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
-        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+        def data_generator():
+            nonlocal key
+            key, key_lhs, key_rhs = jax.random.split(key, 3)
+            lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+            rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
 
-        # Put on device (HBM)
-        lhs_device = jax.device_put(lhs_host, lhs_sharding)
-        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+            device_data = [
+                (jax.device_put(lhs_host, d), jax.device_put(rhs_host, d))
+                for d in devices
+            ]
+            return device_data
 
-        return (lhs_device, rhs_device)
+    else:
+        mesh = create_mesh(SHARDING_STRATEGY, local_mesh=run_on_local_node)
+        lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
+        rhs_sharding = get_rhs_named_shading(mesh, SHARDING_STRATEGY)
+        out_sharding = get_out_sharding(SHARDING_STRATEGY)
+
+        jit_compute_f = jax.jit(
+            shard_map(
+                f,
+                mesh,
+                in_specs=(lhs_sharding.spec, rhs_sharding.spec),
+                out_specs=out_sharding,
+                check_rep=False,
+            )
+        )
+
+        def data_generator():
+            """Creates new random data on host and puts it on device."""
+            nonlocal key  # Use and update the outer 'key'
+            key, key_lhs, key_rhs = jax.random.split(key, 3)
+
+            # Create random data on host
+            lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+            rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+
+            # Put on device (HBM)
+            lhs_device = jax.device_put(lhs_host, lhs_sharding)
+            rhs_device = jax.device_put(rhs_host, rhs_sharding)
+
+            return (lhs_device, rhs_device)
 
     # Run the benchmark
-    print("Running gemm_throttling benchmark", num_runs)
+    print("Running gemm_throttling benchmark", num_runs, "all_devices =", all_devices)
     time_ms_list = multiple_iteration_timeit_from_trace_throttling(
-        jit_sharded_f,
+        jit_compute_f,
         data_generator,
         matrix_dim=f"{m}x{n}x{k}",
         tries=num_runs,
         task="gemm_throttling",
         trace_dir=trace_dir,
         gap_strategy=gap_strategy,
+        all_devices=all_devices,
     )
     return {
         "time_ms_list": time_ms_list,
@@ -122,6 +166,7 @@ def gemm_throttling_calculate_metrics(
     dtype: jnp.dtype,
     time_ms_list: list[float],
     run_on_local_node: bool = False,
+    all_devices: bool = False,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     # Calculate FLOPs

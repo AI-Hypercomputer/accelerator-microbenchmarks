@@ -19,8 +19,10 @@ from benchmark_utils import (
 )
 import jax
 import yaml
-import ray
-from concurrent.futures import ThreadPoolExecutor
+try:
+    import ray
+except ImportError:
+    ray = None
 import os
 import copy
 import pandas as pd
@@ -476,8 +478,11 @@ def main(args):
     if os.path.exists(TMP_XLA_DUMP_DIR):
         for filename in os.listdir(TMP_XLA_DUMP_DIR):
             file_path = os.path.join(TMP_XLA_DUMP_DIR, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except Exception:
+                pass
 
     if multithreaded:
         ray.init(

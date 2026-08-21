@@ -25,8 +25,11 @@ from jax.sharding import Mesh
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
 import gc
-import jax.extend
-from tensorflow.tsl.profiler.protobuf import xplane_pb2
+import concurrent.futures
+try:
+    from tensorflow.tsl.profiler.protobuf import xplane_pb2
+except ImportError:
+    xplane_pb2 = None
 
 
 def get_real_dtype_bytes(dtype) -> float:
@@ -70,6 +73,7 @@ def multiple_iteration_timeit_from_trace_throttling(
     task: str = None,
     trace_dir: str = None,
     gap_strategy: str = None,
+    all_devices: bool = False,
 ) -> list[float]:
     """Time a function with jax.profiler and get the run time from the trace."""
     local_trace_dir = "/tmp/microbenchmarks_tmptrace"
@@ -88,40 +92,135 @@ def multiple_iteration_timeit_from_trace_throttling(
     if trace_dir and not is_local_directory_path(trace_dir):
         tmp_trace_dir = f"{local_trace_dir}/{trace_name}"
 
-    if gap_strategy == "data_gen_once_block_every_iter":
+    options = jax.profiler.ProfileOptions()
+    options.advanced_configuration = {
+        "tpu_perf_counters": False,
+        "tpu_power_trace_level": 1,
+        "tpu_e2e_enable_fw_throttle_event": True,
+        "tpu_e2e_enable_fw_thermal_event": True,
+    }
+
+    # Warmup to compile JIT function before trace collection
+    warmup_args = data_generator()
+    print(f"[{task}] Warming up JIT compilation...")
+    if all_devices:
+        for d_args in warmup_args:
+            warmup_res = compute_func(*d_args)
+            jax.block_until_ready(warmup_res)
+    else:
+        warmup_res = compute_func(*warmup_args)
+        jax.block_until_ready(warmup_res)
+    print(f"[{task}] Warmup finished.")
+
+    if gap_strategy in ("data_gen_once_fori_loop", "data_gen_once_unroll_loop"):
         data_args = data_generator()
-        with jax.profiler.trace(tmp_trace_dir):
-            for i in range(tries):
-                if i % 10 == 0:
-                    print(
-                        f"[{task}] Running iteration {i} of {tries} with "
-                        f"{matrix_dim}..."
-                    )
-                jax.devices()
-                with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                    with jax.named_scope(f"{MARKER}_{i}"):
+        if all_devices:
+            def run_device_loop(dev_data):
+                with jax.named_scope(f"{MARKER}_loop"):
+                    result = compute_func(*dev_data)
+                    jax.block_until_ready(result)
+
+            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
+                print(
+                    f"[{task}] Running all_devices loop of {tries} with {matrix_dim}..."
+                )
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=len(data_args)
+                ) as pool:
+                    futures = [
+                        pool.submit(run_device_loop, d_args)
+                        for d_args in data_args
+                    ]
+                    concurrent.futures.wait(futures)
+        else:
+            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
+                print(
+                    f"[{task}] Running loop of {tries} with {matrix_dim}..."
+                )
+                with jax.profiler.StepTraceAnnotation(task, step_num=0):
+                    with jax.named_scope(f"{MARKER}_loop"):
                         result = compute_func(*data_args)
                         jax.block_until_ready(result)
+    elif gap_strategy == "data_gen_once_block_every_iter":
+        data_args = data_generator()
+        if all_devices:
+            def run_device_block(dev_idx, dev_data):
+                latest = dev_data[0]
+                rhs = dev_data[1]
+                for i in range(tries):
+                    with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                        with jax.named_scope(f"{MARKER}_{i}"):
+                            latest = compute_func(latest, rhs)
+                            jax.block_until_ready(latest)
+
+            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
+                print(
+                    f"[{task}] Running all_devices block_every_iter of {tries} with {matrix_dim}..."
+                )
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=len(data_args)
+                ) as pool:
+                    futures = [
+                        pool.submit(run_device_block, idx, d_args)
+                        for idx, d_args in enumerate(data_args)
+                    ]
+                    concurrent.futures.wait(futures)
+        else:
+            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
+                for i in range(tries):
+                    if i % 10 == 0:
+                        print(
+                            f"[{task}] Running iteration {i} of {tries} with "
+                            f"{matrix_dim}..."
+                        )
+                    jax.devices()
+                    with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                        with jax.named_scope(f"{MARKER}_{i}"):
+                            result = compute_func(*data_args)
+                            jax.block_until_ready(result)
     elif gap_strategy == "data_gen_once_noblock":
         data_args = data_generator()
-        with jax.profiler.trace(tmp_trace_dir):
-            results = []
-            for i in range(tries):
-                if i % 10 == 0:
-                    print(
-                        f"[{task}] Running iteration {i} of {tries} with "
-                        f"{matrix_dim}..."
-                    )
-                jax.devices()
-                with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                    with jax.named_scope(f"{MARKER}_{i}"):
-                        compute_func(*data_args)
-                        results.append(True)
+        if all_devices:
+            def run_device_noblock(dev_idx, dev_data):
+                latest = dev_data[0]
+                rhs = dev_data[1]
+                for i in range(tries):
+                    with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                        with jax.named_scope(f"{MARKER}_{i}"):
+                            latest = compute_func(latest, rhs)
+                if latest is not None:
+                    jax.block_until_ready(latest)
 
-            if results:
-                jax.block_until_ready(results)
+            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
+                print(
+                    f"[{task}] Running all_devices noblock of {tries} with {matrix_dim}..."
+                )
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=len(data_args)
+                ) as pool:
+                    futures = [
+                        pool.submit(run_device_noblock, idx, d_args)
+                        for idx, d_args in enumerate(data_args)
+                    ]
+                    concurrent.futures.wait(futures)
+        else:
+            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
+                latest_result = None
+                for i in range(tries):
+                    if i % 10 == 0:
+                        print(
+                            f"[{task}] Running iteration {i} of {tries} with "
+                            f"{matrix_dim}..."
+                        )
+                    jax.devices()
+                    with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                        with jax.named_scope(f"{MARKER}_{i}"):
+                            latest_result = compute_func(*data_args)
+
+                if latest_result is not None:
+                    jax.block_until_ready(latest_result)
     elif gap_strategy == "data_gen_every_iter_block_every_iter":
-        with jax.profiler.trace(tmp_trace_dir):
+        with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
             for i in range(tries):
                 if i % 10 == 0:
                     print(
@@ -141,7 +240,9 @@ def multiple_iteration_timeit_from_trace_throttling(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return multiple_iteration_get_metrics_from_trace(trace)
+    return multiple_iteration_get_metrics_from_trace(
+        trace, task, tries=tries, gap_strategy=gap_strategy, all_devices=all_devices
+    )
 
 
 def clear_jax_memory():
@@ -211,8 +312,13 @@ def multiple_iteration_timeit_from_trace(
 
 
 def multiple_iteration_get_metrics_from_trace(
-    trace: dict[str, Any], task: str = None
+    trace: dict[str, Any],
+    task: str = None,
+    tries: int = 1,
+    gap_strategy: str = None,
+    all_devices: bool = False,
 ) -> list[float]:
+    # 1. First try to find explicit MARKER events on device
     marker_done_events = []
     for event in trace["traceEvents"]:
         args = event.get("args", {})
@@ -225,44 +331,83 @@ def multiple_iteration_get_metrics_from_trace(
     ]
     if marker_call_done_events:
         marker_done_events = marker_call_done_events
-    unique_pids = set([e["pid"] for e in marker_done_events])
-    print(f"Unique PIDs: {unique_pids}")
-    if not marker_done_events:
-        event_matcher = re.compile(task)
 
-        if "traceEvents" not in trace:
-            raise KeyError("Key 'traceEvents' not found in trace.")
-        events = []
-        for e in trace["traceEvents"]:
-            if "name" in e and event_matcher.match(e["name"]):
-                events.append(e)
-        # For each trace, find the TPU with smallest `pid` value and consider it
-        # to be TPU-0
-        min_pid = min([e["pid"] for e in events])
-        events_from_min_pid = [e for e in events if e["pid"] == min_pid]
-        durations_ms = []
-        for e in events_from_min_pid:
-            if e.get("args", {}).get("device_duration_ps"):
-                durations_ms.append(
-                    float(e["args"]["device_duration_ps"]) / 1e9
-                )
-            elif "dur" in e:
-                durations_ms.append(float(e["dur"]) / 1e3)
-        if not durations_ms and events_from_min_pid:
-            print(
-                "Warning: No event duration found in "
-                "legacy_get_metrics_from_trace_tpu."
+    # 2. If no explicit MARKER in tf_op, look for TPU device execution events with device_duration_ps
+    if not marker_done_events:
+        tpu_pids = set(
+            e["pid"]
+            for e in trace["traceEvents"]
+            if e.get("name") == "process_name"
+            and re.match(r"^/device:TPU:\d+$", e.get("args", {}).get("name", ""))
+        )
+        if not tpu_pids:
+            tpu_pids = set(
+                e["pid"]
+                for e in trace["traceEvents"]
+                if "device_duration_ps" in e.get("args", {})
             )
+        marker_done_events = [
+            e
+            for e in trace["traceEvents"]
+            if e.get("pid") in tpu_pids
+            and "device_duration_ps" in e.get("args", {})
+            and e.get("name") not in ("Trace Buffers Dropped", "P state")
+        ]
+
+    unique_pids = sorted(list(set([e["pid"] for e in marker_done_events])))
+    print(f"TPU TensorCore PIDs found: {unique_pids}")
+
+    if all_devices:
+        device_events = {pid: [] for pid in unique_pids}
+        for e in marker_done_events:
+            device_events[e["pid"]].append(e)
+
+        durations_ms = []
+        for i in range(tries):
+            step_durations = []
+            for pid in unique_pids:
+                if i < len(device_events[pid]):
+                    ev = device_events[pid][i]
+                    if ev.get("args", {}).get("device_duration_ps"):
+                        step_durations.append(
+                            float(ev["args"]["device_duration_ps"]) / 1e9
+                        )
+                    elif "dur" in ev:
+                        step_durations.append(float(ev["dur"]) / 1e3)
+            if step_durations:
+                durations_ms.append(max(step_durations))
+
+        if (
+            len(durations_ms) == 1
+            and gap_strategy
+            in ("data_gen_once_fori_loop", "data_gen_once_unroll_loop")
+            and tries > 1
+        ):
+            avg_ms = durations_ms[0] / tries
+            durations_ms = [avg_ms] * tries
+        print(
+            f"Collected {len(durations_ms)} aggregated max-ts events across"
+            f" {len(unique_pids)} devices."
+        )
+        print(f"Per-step Max TS (ms): {[f'{d:.3f}' for d in durations_ms]}")
         return durations_ms
 
-    min_pid = min([e["pid"] for e in marker_done_events])
+    min_pid = min(unique_pids) if unique_pids else None
     events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
     durations_ms = [
         float(e["args"]["device_duration_ps"]) / 1e9
         for e in events_from_min_pid
+        if "device_duration_ps" in e.get("args", {})
     ]
+    if (
+        len(durations_ms) == 1
+        and gap_strategy in ("data_gen_once_fori_loop", "data_gen_once_unroll_loop")
+        and tries > 1
+    ):
+        avg_ms = durations_ms[0] / tries
+        durations_ms = [avg_ms] * tries
     print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
-    print(durations_ms)
+    print(f"Step durations (ms): {[f'{d:.3f}' for d in durations_ms]}")
 
     return durations_ms
 
@@ -571,7 +716,7 @@ def get_trace(log_dir: str) -> dict[str, Any]:
     return trace
 
 
-def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
+def find_sparsecore_usage_from_xplane(log_dir: str) -> Any:
     """Extract the XSpace object from the log directory.
 
     Returns:
