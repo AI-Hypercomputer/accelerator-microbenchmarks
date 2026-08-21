@@ -112,36 +112,7 @@ def multiple_iteration_timeit_from_trace_throttling(
         jax.block_until_ready(warmup_res)
     print(f"[{task}] Warmup finished.")
 
-    if gap_strategy in ("data_gen_once_fori_loop", "data_gen_once_unroll_loop"):
-        data_args = data_generator()
-        if all_devices:
-            def run_device_loop(dev_data):
-                with jax.named_scope(f"{MARKER}_loop"):
-                    result = compute_func(*dev_data)
-                    jax.block_until_ready(result)
-
-            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
-                print(
-                    f"[{task}] Running all_devices loop of {tries} with {matrix_dim}..."
-                )
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=len(data_args)
-                ) as pool:
-                    futures = [
-                        pool.submit(run_device_loop, d_args)
-                        for d_args in data_args
-                    ]
-                    concurrent.futures.wait(futures)
-        else:
-            with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
-                print(
-                    f"[{task}] Running loop of {tries} with {matrix_dim}..."
-                )
-                with jax.profiler.StepTraceAnnotation(task, step_num=0):
-                    with jax.named_scope(f"{MARKER}_loop"):
-                        result = compute_func(*data_args)
-                        jax.block_until_ready(result)
-    elif gap_strategy == "data_gen_once_block_every_iter":
+    if gap_strategy == "data_gen_once_block_every_iter":
         data_args = data_generator()
         if all_devices:
             def run_device_block(dev_idx, dev_data):
@@ -377,14 +348,6 @@ def multiple_iteration_get_metrics_from_trace(
             if step_durations:
                 durations_ms.append(max(step_durations))
 
-        if (
-            len(durations_ms) == 1
-            and gap_strategy
-            in ("data_gen_once_fori_loop", "data_gen_once_unroll_loop")
-            and tries > 1
-        ):
-            avg_ms = durations_ms[0] / tries
-            durations_ms = [avg_ms] * tries
         print(
             f"Collected {len(durations_ms)} aggregated max-ts events across"
             f" {len(unique_pids)} devices."
@@ -399,13 +362,6 @@ def multiple_iteration_get_metrics_from_trace(
         for e in events_from_min_pid
         if "device_duration_ps" in e.get("args", {})
     ]
-    if (
-        len(durations_ms) == 1
-        and gap_strategy in ("data_gen_once_fori_loop", "data_gen_once_unroll_loop")
-        and tries > 1
-    ):
-        avg_ms = durations_ms[0] / tries
-        durations_ms = [avg_ms] * tries
     print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
     print(f"Step durations (ms): {[f'{d:.3f}' for d in durations_ms]}")
 

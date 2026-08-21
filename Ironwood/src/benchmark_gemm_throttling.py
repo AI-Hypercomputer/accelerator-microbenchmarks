@@ -51,38 +51,12 @@ def gemm_throttling(
     Accumulation is FP32.
     """
 
-    if gap_strategy in ("data_gen_once_fori_loop", "data_gen_once_unroll_loop"):
-
-        def f(x, y):
-            with jax.named_scope(MARKER):
-                if gap_strategy == "data_gen_once_unroll_loop":
-                    cur_x = x
-                    for i in range(num_runs):
-                        with jax.named_scope(f"iter_{i}"):
-                            cur_x = jax.numpy.einsum(
-                                "ij,jk->ik",
-                                cur_x,
-                                y,
-                                preferred_element_type=jnp.float32,
-                            ).astype(cur_x.dtype)
-                    return cur_x
-                else:
-                    def body_fn(i, cur_x):
-                        out = jax.numpy.einsum(
-                            "ij,jk->ik", cur_x, y, preferred_element_type=jnp.float32
-                        )
-                        return out.astype(cur_x.dtype)
-
-                    return jax.lax.fori_loop(0, num_runs, body_fn, x)
-
-    else:
-
-        def f(x, y):
-            with jax.named_scope(MARKER):
-                acc = jax.numpy.einsum(
-                    "ij,jk->ik", x, y, preferred_element_type=jnp.float32
-                )
-                return acc.astype(dtype)
+    def f(x, y):
+        with jax.named_scope(MARKER):
+            acc = jax.numpy.einsum(
+                "ij,jk->ik", x, y, preferred_element_type=jnp.float32
+            )
+            return acc.astype(dtype)
 
     lhs_shape = (m, k)
     rhs_shape = (k, n)
