@@ -163,13 +163,13 @@ def multiple_iteration_timeit_from_trace_throttling(
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
 
     if gap_strategy == "data_gen_once_noblock_stressed_no_sharding":
-        return multiple_iteration_get_metrics_from_trace_throttling(
+        return multiple_iteration_get_metrics_from_multithread_trace_throttling(
             trace, tries=tries
         )
     return multiple_iteration_get_metrics_from_trace(trace, task)
 
 
-def multiple_iteration_get_metrics_from_trace_throttling(
+def multiple_iteration_get_metrics_from_multithread_trace_throttling(
     trace: dict[str, Any],
     tries: int = 1,
 ) -> list[float]:
