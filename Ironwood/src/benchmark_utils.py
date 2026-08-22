@@ -174,25 +174,42 @@ def multiple_iteration_get_metrics_from_multithread_trace_throttling(
     tries: int = 1,
 ) -> list[float]:
     """Extracts aggregated max device execution time across all TPU devices per step."""
-    tpu_pids = set(
-        e["pid"]
-        for e in trace["traceEvents"]
-        if e.get("name") == "process_name"
-        and re.match(r"^/device:TPU:\d+$", e.get("args", {}).get("name", ""))
-    )
-    if not tpu_pids:
+    # 1. First try to find explicit MARKER events on device
+    marker_done_events = []
+    for event in trace["traceEvents"]:
+        args = event.get("args", {})
+        tf_op = args.get("tf_op", "")
+        if MARKER in tf_op or MARKER in event.get("name", ""):
+            marker_done_events.append(event)
+
+    marker_call_done_events = [
+        e for e in marker_done_events if e.get("name", "").endswith("call-done")
+    ]
+    if marker_call_done_events:
+        marker_done_events = marker_call_done_events
+
+    # 2. If no explicit MARKER on device, filter all TPU TensorCore execution events
+    if not marker_done_events:
         tpu_pids = set(
             e["pid"]
             for e in trace["traceEvents"]
-            if "device_duration_ps" in e.get("args", {})
+            if e.get("name") == "process_name"
+            and re.match(r"^/device:TPU:\d+$", e.get("args", {}).get("name", ""))
         )
-    marker_done_events = [
-        e
-        for e in trace["traceEvents"]
-        if e.get("pid") in tpu_pids
-        and "device_duration_ps" in e.get("args", {})
-        and e.get("name") not in ("Trace Buffers Dropped", "P state")
-    ]
+        if not tpu_pids:
+            tpu_pids = set(
+                e["pid"]
+                for e in trace["traceEvents"]
+                if "device_duration_ps" in e.get("args", {})
+            )
+        marker_done_events = [
+            e
+            for e in trace["traceEvents"]
+            if e.get("pid") in tpu_pids
+            and "device_duration_ps" in e.get("args", {})
+            and e.get("name") not in ("Trace Buffers Dropped", "P state")
+        ]
+
     unique_pids = sorted(list(set([e["pid"] for e in marker_done_events])))
     print(f"TPU TensorCore PIDs found: {unique_pids}")
 
