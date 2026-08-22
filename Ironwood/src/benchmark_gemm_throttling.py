@@ -42,7 +42,7 @@ def gemm_throttling(
     n: int,
     num_runs: int = 1,
     dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
-    gap_strategy: str = "data_gen_once_noblock_stressed_no_sharding",
+    gap_strategy: str = None,
     trace_dir: str = None,
     run_on_local_node: bool = False,
 ) -> Dict[str, Any]:

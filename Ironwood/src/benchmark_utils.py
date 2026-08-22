@@ -70,7 +70,7 @@ def multiple_iteration_timeit_from_trace_throttling(
     tries: int = 17,
     task: str = None,
     trace_dir: str = None,
-    gap_strategy: str = "data_gen_once_noblock_stressed_no_sharding",
+    gap_strategy: str = None,
 ) -> list[float]:
     """Time a throttling function with jax.profiler and extract step durations."""
     local_trace_dir = "/tmp/microbenchmarks_tmptrace"
