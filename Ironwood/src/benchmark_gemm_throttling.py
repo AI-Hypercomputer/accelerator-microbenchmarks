@@ -42,10 +42,9 @@ def gemm_throttling(
     n: int,
     num_runs: int = 1,
     dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
-    gap_strategy: str = "data_gen_every_iter_block_every_iter",
+    gap_strategy: str = "data_gen_once_noblock_stressed_no_sharding",
     trace_dir: str = None,
     run_on_local_node: bool = False,
-    all_devices: bool = False,
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8.
 
@@ -67,7 +66,7 @@ def gemm_throttling(
 
     key = jax.random.key(SEED)
 
-    if all_devices:
+    if gap_strategy == "data_gen_once_noblock_stressed_no_sharding":
         devices = (
             jax.local_devices() if run_on_local_node else jax.devices()
         )
@@ -117,7 +116,7 @@ def gemm_throttling(
             return (lhs_device, rhs_device)
 
     # Run the benchmark
-    print("Running gemm_throttling benchmark", num_runs, "all_devices =", all_devices)
+    print(f"Running gemm_throttling benchmark {num_runs} with gap_strategy={gap_strategy}")
     time_ms_list = multiple_iteration_timeit_from_trace_throttling(
         jit_compute_f,
         data_generator,
@@ -126,7 +125,6 @@ def gemm_throttling(
         task="gemm_throttling",
         trace_dir=trace_dir,
         gap_strategy=gap_strategy,
-        all_devices=all_devices,
     )
     return {
         "time_ms_list": time_ms_list,
@@ -141,7 +139,6 @@ def gemm_throttling_calculate_metrics(
     dtype: jnp.dtype,
     time_ms_list: list[float],
     run_on_local_node: bool = False,
-    all_devices: bool = False,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     # Calculate FLOPs

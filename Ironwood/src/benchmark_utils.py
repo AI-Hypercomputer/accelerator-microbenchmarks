@@ -72,8 +72,7 @@ def multiple_iteration_timeit_from_trace_throttling(
     tries: int = 17,
     task: str = None,
     trace_dir: str = None,
-    gap_strategy: str = None,
-    all_devices: bool = False,
+    gap_strategy: str = "data_gen_once_noblock_stressed_no_sharding",
 ) -> list[float]:
     """Time a throttling function with jax.profiler and extract step durations."""
     local_trace_dir = "/tmp/microbenchmarks_tmptrace"
@@ -101,7 +100,7 @@ def multiple_iteration_timeit_from_trace_throttling(
     # Warmup to compile JIT function before trace collection
     warmup_args = data_generator()
     print(f"[{task}] Warming up JIT compilation...")
-    if all_devices:
+    if gap_strategy == "data_gen_once_noblock_stressed_no_sharding":
         for d_args in warmup_args:
             jax.block_until_ready(compute_func(*d_args))
     else:
@@ -110,9 +109,8 @@ def multiple_iteration_timeit_from_trace_throttling(
 
     # Execute benchmark under profiler trace
     with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
-        if all_devices:
+        if gap_strategy == "data_gen_once_noblock_stressed_no_sharding":
             data_args = data_generator()
-            block_every_iter = gap_strategy == "data_gen_once_block_every_iter"
 
             def run_device(dev_data):
                 latest, rhs = dev_data[0], dev_data[1]
@@ -120,13 +118,11 @@ def multiple_iteration_timeit_from_trace_throttling(
                     with jax.profiler.StepTraceAnnotation(task, step_num=i):
                         with jax.named_scope(f"{MARKER}_{i}"):
                             latest = compute_func(latest, rhs)
-                            if block_every_iter:
-                                jax.block_until_ready(latest)
-                if latest is not None and not block_every_iter:
+                if latest is not None:
                     jax.block_until_ready(latest)
 
             print(
-                f"[{task}] Running all_devices {gap_strategy} of {tries} with"
+                f"[{task}] Running {gap_strategy} of {tries} with"
                 f" {matrix_dim}..."
             )
             with concurrent.futures.ThreadPoolExecutor(
@@ -171,7 +167,6 @@ def multiple_iteration_timeit_from_trace_throttling(
         task,
         tries=tries,
         gap_strategy=gap_strategy,
-        all_devices=all_devices,
     )
 
 
@@ -246,7 +241,6 @@ def multiple_iteration_get_metrics_from_trace(
     task: str = None,
     tries: int = 1,
     gap_strategy: str = None,
-    all_devices: bool = False,
 ) -> list[float]:
     # 1. First try to find explicit MARKER events on device
     marker_done_events = []
@@ -287,7 +281,7 @@ def multiple_iteration_get_metrics_from_trace(
     unique_pids = sorted(list(set([e["pid"] for e in marker_done_events])))
     print(f"TPU TensorCore PIDs found: {unique_pids}")
 
-    if all_devices:
+    if gap_strategy == "data_gen_once_noblock_stressed_no_sharding":
         device_events = {pid: [] for pid in unique_pids}
         for e in marker_done_events:
             device_events[e["pid"]].append(e)

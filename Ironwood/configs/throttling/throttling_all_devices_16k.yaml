@@ -3,6 +3,5 @@ benchmarks:
   trace_dir: "/tmp/ninja_v7x_all_devices_trace"
   csv_path: "/tmp/ninja_v7x_all_devices_trace"
   xlml_metrics_dir: "/tmp/ninja_v7x_all_devices_trace"
-  xla_dump_dir: "/tmp/ninja_v7x_all_devices_trace/hlo_graphs"
   benchmark_sweep_params:
-  - {m: 16384, k: 16384, n: 16384, num_runs: 1000, dtype: 'bfloat16', gap_strategy: 'data_gen_once_noblock', all_devices: True}
+  - {m: 16384, k: 16384, n: 16384, num_runs: 1000, dtype: 'bfloat16', gap_strategy: 'data_gen_once_noblock_stressed_no_sharding'}
