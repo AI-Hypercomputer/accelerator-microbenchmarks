@@ -25,11 +25,9 @@ from jax.sharding import Mesh
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
 import gc
+import jax.extend
 import concurrent.futures
-try:
-    from tensorflow.tsl.profiler.protobuf import xplane_pb2
-except ImportError:
-    xplane_pb2 = None
+from tensorflow.tsl.profiler.protobuf import xplane_pb2
 
 
 def get_real_dtype_bytes(dtype) -> float:
@@ -164,12 +162,65 @@ def multiple_iteration_timeit_from_trace_throttling(
     if trace_full_dir != tmp_trace_dir:
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
 
-    return multiple_iteration_get_metrics_from_trace(
-        trace,
-        task,
-        tries=tries,
-        gap_strategy=gap_strategy,
+    if gap_strategy == "data_gen_once_noblock_stressed_no_sharding":
+        return multiple_iteration_get_metrics_from_trace_throttling(
+            trace, tries=tries
+        )
+    return multiple_iteration_get_metrics_from_trace(trace, task)
+
+
+def multiple_iteration_get_metrics_from_trace_throttling(
+    trace: dict[str, Any],
+    tries: int = 1,
+) -> list[float]:
+    """Extracts aggregated max device execution time across all TPU devices per step."""
+    tpu_pids = set(
+        e["pid"]
+        for e in trace["traceEvents"]
+        if e.get("name") == "process_name"
+        and re.match(r"^/device:TPU:\d+$", e.get("args", {}).get("name", ""))
     )
+    if not tpu_pids:
+        tpu_pids = set(
+            e["pid"]
+            for e in trace["traceEvents"]
+            if "device_duration_ps" in e.get("args", {})
+        )
+    marker_done_events = [
+        e
+        for e in trace["traceEvents"]
+        if e.get("pid") in tpu_pids
+        and "device_duration_ps" in e.get("args", {})
+        and e.get("name") not in ("Trace Buffers Dropped", "P state")
+    ]
+    unique_pids = sorted(list(set([e["pid"] for e in marker_done_events])))
+    print(f"TPU TensorCore PIDs found: {unique_pids}")
+
+    device_events = {pid: [] for pid in unique_pids}
+    for e in marker_done_events:
+        device_events[e["pid"]].append(e)
+
+    durations_ms = []
+    for i in range(tries):
+        step_durations = []
+        for pid in unique_pids:
+            if i < len(device_events[pid]):
+                ev = device_events[pid][i]
+                if ev.get("args", {}).get("device_duration_ps"):
+                    step_durations.append(
+                        float(ev["args"]["device_duration_ps"]) / 1e9
+                    )
+                elif "dur" in ev:
+                    step_durations.append(float(ev["dur"]) / 1e3)
+        if step_durations:
+            durations_ms.append(max(step_durations))
+
+    print(
+        f"Collected {len(durations_ms)} aggregated max-ts events across"
+        f" {len(unique_pids)} devices."
+    )
+    print(f"Per-step Max TS (ms): {[f'{d:.3f}' for d in durations_ms]}")
+    return durations_ms
 
 
 def clear_jax_memory():
@@ -239,12 +290,8 @@ def multiple_iteration_timeit_from_trace(
 
 
 def multiple_iteration_get_metrics_from_trace(
-    trace: dict[str, Any],
-    task: str = None,
-    tries: int = 1,
-    gap_strategy: str = None,
+    trace: dict[str, Any], task: str = None
 ) -> list[float]:
-    # 1. First try to find explicit MARKER events on device
     marker_done_events = []
     for event in trace["traceEvents"]:
         args = event.get("args", {})
@@ -257,68 +304,44 @@ def multiple_iteration_get_metrics_from_trace(
     ]
     if marker_call_done_events:
         marker_done_events = marker_call_done_events
-
-    # 2. If no explicit MARKER in tf_op, look for TPU device execution events with device_duration_ps
+    unique_pids = set([e["pid"] for e in marker_done_events])
+    print(f"Unique PIDs: {unique_pids}")
     if not marker_done_events:
-        tpu_pids = set(
-            e["pid"]
-            for e in trace["traceEvents"]
-            if e.get("name") == "process_name"
-            and re.match(r"^/device:TPU:\d+$", e.get("args", {}).get("name", ""))
-        )
-        if not tpu_pids:
-            tpu_pids = set(
-                e["pid"]
-                for e in trace["traceEvents"]
-                if "device_duration_ps" in e.get("args", {})
-            )
-        marker_done_events = [
-            e
-            for e in trace["traceEvents"]
-            if e.get("pid") in tpu_pids
-            and "device_duration_ps" in e.get("args", {})
-            and e.get("name") not in ("Trace Buffers Dropped", "P state")
-        ]
+        event_matcher = re.compile(task)
 
-    unique_pids = sorted(list(set([e["pid"] for e in marker_done_events])))
-    print(f"TPU TensorCore PIDs found: {unique_pids}")
-
-    if gap_strategy == "data_gen_once_noblock_stressed_no_sharding":
-        device_events = {pid: [] for pid in unique_pids}
-        for e in marker_done_events:
-            device_events[e["pid"]].append(e)
-
+        if "traceEvents" not in trace:
+            raise KeyError("Key 'traceEvents' not found in trace.")
+        events = []
+        for e in trace["traceEvents"]:
+            if "name" in e and event_matcher.match(e["name"]):
+                events.append(e)
+        # For each trace, find the TPU with smallest `pid` value and consider it
+        # to be TPU-0
+        min_pid = min([e["pid"] for e in events])
+        events_from_min_pid = [e for e in events if e["pid"] == min_pid]
         durations_ms = []
-        for i in range(tries):
-            step_durations = []
-            for pid in unique_pids:
-                if i < len(device_events[pid]):
-                    ev = device_events[pid][i]
-                    if ev.get("args", {}).get("device_duration_ps"):
-                        step_durations.append(
-                            float(ev["args"]["device_duration_ps"]) / 1e9
-                        )
-                    elif "dur" in ev:
-                        step_durations.append(float(ev["dur"]) / 1e3)
-            if step_durations:
-                durations_ms.append(max(step_durations))
-
-        print(
-            f"Collected {len(durations_ms)} aggregated max-ts events across"
-            f" {len(unique_pids)} devices."
-        )
-        print(f"Per-step Max TS (ms): {[f'{d:.3f}' for d in durations_ms]}")
+        for e in events_from_min_pid:
+            if e.get("args", {}).get("device_duration_ps"):
+                durations_ms.append(
+                    float(e["args"]["device_duration_ps"]) / 1e9
+                )
+            elif "dur" in e:
+                durations_ms.append(float(e["dur"]) / 1e3)
+        if not durations_ms and events_from_min_pid:
+            print(
+                "Warning: No event duration found in "
+                "legacy_get_metrics_from_trace_tpu."
+            )
         return durations_ms
 
-    min_pid = min(unique_pids) if unique_pids else None
+    min_pid = min([e["pid"] for e in marker_done_events])
     events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
     durations_ms = [
         float(e["args"]["device_duration_ps"]) / 1e9
         for e in events_from_min_pid
-        if "device_duration_ps" in e.get("args", {})
     ]
     print(f"Collected {len(durations_ms)} events from trace for pid {min_pid}.")
-    print(f"Step durations (ms): {[f'{d:.3f}' for d in durations_ms]}")
+    print(durations_ms)
 
     return durations_ms
 
@@ -627,7 +650,7 @@ def get_trace(log_dir: str) -> dict[str, Any]:
     return trace
 
 
-def find_sparsecore_usage_from_xplane(log_dir: str) -> Any:
+def find_sparsecore_usage_from_xplane(log_dir: str) -> xplane_pb2.XSpace:
     """Extract the XSpace object from the log directory.
 
     Returns:
@@ -1513,33 +1536,24 @@ def str_to_dtype(dtype_str: str) -> jnp.dtype:
         raise ValueError(f"Unsupported dtype string: {dtype_str}")
 
 
-def get_peak_flops_multiplier(in_dtype: Any) -> float:
+def get_peak_flops_multiplier(in_dtype_str: str) -> float:
     """
     Returns the peak FLOPS multiplier relative to the baseline
     (PEAK_FLOPS_PER_DEVICE) based on the input data type.
     """
-    if hasattr(in_dtype, "name"):
-        dtype_str = in_dtype.name.lower()
-    else:
-        dtype_str = str(in_dtype).lower()
-
-    if "fp8" in dtype_str or "float8" in dtype_str:
+    in_dtype_lower = in_dtype_str.lower()
+    if in_dtype_lower == "fp8":
         # FP8 is 2x faster than BF16
         # The baseline PEAK_FLOPS_PER_DEVICE is 1153.5 * 2 = 2307, which is FP8
         # peak. So the multiplier should be 1.0
         return 1.0
-    elif (
-        "bf16" in dtype_str
-        or "bfloat16" in dtype_str
-        or "fp16" in dtype_str
-        or "float16" in dtype_str
-    ):
+    elif in_dtype_lower == "bf16" or in_dtype_lower == "fp16":
         # BF16/FP16 is 2x slower than FP8 peak
         return 0.5
-    elif "fp32" in dtype_str or "float32" in dtype_str:
+    elif in_dtype_lower == "fp32":
         # FP32 is 4x slower than FP8 peak
         return 0.25
     else:
         raise RuntimeError(
-            f"No support for {in_dtype} in setting peak_flops_multiplier."
+            f"No support for {in_dtype_lower} in setting peak_flops_multiplier."
         )
