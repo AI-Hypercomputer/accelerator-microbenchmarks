@@ -149,7 +149,8 @@ def gemm_throttling_calculate_metrics(
     total_flops, total_flops_all_devices = handle_based_on_sharding(
         total_flops, SHARDING_STRATEGY, device_count=device_count
     )
-    in_dtype_str = dtype if isinstance(dtype, str) else jnp.dtype(dtype).name
+    d_str = (dtype if isinstance(dtype, str) else jnp.dtype(dtype).name).lower()
+    in_dtype_str = "bf16" if "bf16" in d_str or "bfloat16" in d_str else d_str
     peak_flops_multiplier = get_peak_flops_multiplier(in_dtype_str)
     peak_flops = PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier
     return unified_flops_metrics(
