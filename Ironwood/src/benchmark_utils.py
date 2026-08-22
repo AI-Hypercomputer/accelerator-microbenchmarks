@@ -109,7 +109,33 @@ def multiple_iteration_timeit_from_trace_throttling(
 
     # Execute benchmark under profiler trace
     with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
-        if gap_strategy == "data_gen_once_noblock_stressed_no_sharding":
+        if gap_strategy == "data_gen_once_block_every_iter":
+            data_args = data_generator()
+            for i in range(tries):
+                with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                    with jax.named_scope(f"{MARKER}_{i}"):
+                        result = compute_func(*data_args)
+                        jax.block_until_ready(result)
+
+        elif gap_strategy == "data_gen_once_noblock":
+            data_args = data_generator()
+            latest_result = None
+            for i in range(tries):
+                with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                    with jax.named_scope(f"{MARKER}_{i}"):
+                        latest_result = compute_func(*data_args)
+            if latest_result is not None:
+                jax.block_until_ready(latest_result)
+
+        elif gap_strategy == "data_gen_every_iter_block_every_iter":
+            for i in range(tries):
+                data_args = data_generator()
+                with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                    with jax.named_scope(f"{MARKER}_{i}"):
+                        result = compute_func(*data_args)
+                        jax.block_until_ready(result)
+
+        elif gap_strategy == "data_gen_once_noblock_stressed_no_sharding":
             data_args = data_generator()
 
             def run_device(dev_data):
@@ -130,30 +156,6 @@ def multiple_iteration_timeit_from_trace_throttling(
             ) as pool:
                 futures = [pool.submit(run_device, d) for d in data_args]
                 concurrent.futures.wait(futures)
-
-        elif gap_strategy == "data_gen_every_iter_block_every_iter":
-            for i in range(tries):
-                data_args = data_generator()
-                with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                    with jax.named_scope(f"{MARKER}_{i}"):
-                        jax.block_until_ready(compute_func(*data_args))
-
-        elif gap_strategy == "data_gen_once_block_every_iter":
-            data_args = data_generator()
-            for i in range(tries):
-                with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                    with jax.named_scope(f"{MARKER}_{i}"):
-                        jax.block_until_ready(compute_func(*data_args))
-
-        elif gap_strategy == "data_gen_once_noblock":
-            data_args = data_generator()
-            latest_result = None
-            for i in range(tries):
-                with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                    with jax.named_scope(f"{MARKER}_{i}"):
-                        latest_result = compute_func(*data_args)
-            if latest_result is not None:
-                jax.block_until_ready(latest_result)
 
         else:
             raise ValueError(f"Unknown gap strategy: {gap_strategy}")
