@@ -1513,24 +1513,33 @@ def str_to_dtype(dtype_str: str) -> jnp.dtype:
         raise ValueError(f"Unsupported dtype string: {dtype_str}")
 
 
-def get_peak_flops_multiplier(in_dtype_str: str) -> float:
+def get_peak_flops_multiplier(in_dtype: Any) -> float:
     """
     Returns the peak FLOPS multiplier relative to the baseline
     (PEAK_FLOPS_PER_DEVICE) based on the input data type.
     """
-    in_dtype_lower = in_dtype_str.lower()
-    if in_dtype_lower == "fp8":
+    if hasattr(in_dtype, "name"):
+        dtype_str = in_dtype.name.lower()
+    else:
+        dtype_str = str(in_dtype).lower()
+
+    if "fp8" in dtype_str or "float8" in dtype_str:
         # FP8 is 2x faster than BF16
         # The baseline PEAK_FLOPS_PER_DEVICE is 1153.5 * 2 = 2307, which is FP8
         # peak. So the multiplier should be 1.0
         return 1.0
-    elif in_dtype_lower == "bf16" or in_dtype_lower == "fp16":
+    elif (
+        "bf16" in dtype_str
+        or "bfloat16" in dtype_str
+        or "fp16" in dtype_str
+        or "float16" in dtype_str
+    ):
         # BF16/FP16 is 2x slower than FP8 peak
         return 0.5
-    elif in_dtype_lower == "fp32":
+    elif "fp32" in dtype_str or "float32" in dtype_str:
         # FP32 is 4x slower than FP8 peak
         return 0.25
     else:
         raise RuntimeError(
-            f"No support for {in_dtype_lower} in setting peak_flops_multiplier."
+            f"No support for {in_dtype} in setting peak_flops_multiplier."
         )

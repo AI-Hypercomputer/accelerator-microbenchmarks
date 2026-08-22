@@ -149,8 +149,7 @@ def gemm_throttling_calculate_metrics(
     total_flops, total_flops_all_devices = handle_based_on_sharding(
         total_flops, SHARDING_STRATEGY, device_count=device_count
     )
-    in_dtype_str = str(dtype).split(".")[-1]
-    peak_flops_multiplier = get_peak_flops_multiplier(in_dtype_str)
+    peak_flops_multiplier = get_peak_flops_multiplier(dtype)
     peak_flops = PEAK_FLOPS_PER_DEVICE * peak_flops_multiplier
     return unified_flops_metrics(
         m,
