@@ -48,6 +48,7 @@ def gemm_throttling(
     num_runs: int = 1,
     dtype: jnp.dtype = jax.numpy.float8_e4m3fn,
     gap_strategy: str = "data_gen_every_iter_block_every_iter",
+    device_id: int = 0,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K>:FP8 x IN1<N, K>:FP8.
@@ -62,8 +63,14 @@ def gemm_throttling(
             )
             return acc.astype(jnp.bfloat16)
 
-    ## Run on a single device (device 0)
-    mesh = jax.sharding.Mesh(np.array([jax.devices()[0]]), axis_names="device")
+    ## Run on a single target device (default: device 0)
+    devices = jax.devices()
+    if device_id < 0 or device_id >= len(devices):
+        raise ValueError(
+            f"Invalid device_id={device_id}. Available devices: 0 to {len(devices) - 1}."
+        )
+    target_device = devices[device_id]
+    mesh = jax.sharding.Mesh(np.array([target_device]), axis_names="device")
     lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
     rhs_sharding = get_rhs_named_shading(mesh, SHARDING_STRATEGY)
     out_sharding = get_out_sharding(SHARDING_STRATEGY)
@@ -124,12 +131,13 @@ def gemm_throttling_calculate_metrics(
     gap_strategy: str,
     dtype: jnp.dtype,
     time_ms_list: list[float],
+    device_id: int = 0,
 ) -> Dict[str, Any]:
     # pylint: disable=unused-argument
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
     total_flops, total_flops_all_devices = handle_based_on_sharding(
-        total_flops, SHARDING_STRATEGY
+        total_flops, SHARDING_STRATEGY, device_count=1
     )
     return unified_flops_metrics(
         m,

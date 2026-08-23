@@ -90,10 +90,22 @@ def multiple_iteration_timeit_from_trace_throttling(
 
     options = jax.profiler.ProfileOptions()
     options.advanced_configuration = {
-        "tpu_trace_mode": "TRACE_ONLY_XLA",
-        "tpu_num_sparse_cores_to_trace": 0,
-        "tpu_num_sparse_core_tiles_to_trace": 0,
+        # Increase trace buffer capacity to prevent Trace Buffers Dropped
+        "max_trace_buffers": 32768,
+        # 1. Total hardware counter registers table in XProf Counters view
+        "tpu_perf_counters": False,
+        # 2. Real-time firmware power and thermal throttling events in timeline
+        "tpu_power_trace_level": 1,
+        "tpu_e2e_enable_fw_throttle_event": True,
+        "tpu_e2e_enable_fw_power_level_event": True,
+        "tpu_e2e_enable_fw_thermal_event": True,
     }
+
+    # Warmup to compile JIT function before trace collection
+    warmup_args = data_generator()
+    print(f"[{task}] Warming up JIT compilation...")
+    jax.block_until_ready(compute_func(*warmup_args))
+    print(f"[{task}] Warmup finished.")
 
     if gap_strategy == "data_gen_once_block_every_iter":
         data_args = data_generator()
@@ -112,15 +124,14 @@ def multiple_iteration_timeit_from_trace_throttling(
     elif gap_strategy == "data_gen_once_noblock":
         data_args = data_generator()
         with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
-            results = []
+            last_result = None
             for i in range(tries):
                 with jax.profiler.StepTraceAnnotation(task, step_num=i):
                     with jax.named_scope(f"{MARKER}_{i}"):
-                        compute_func(*data_args)
-                        results.append(True)
+                        last_result = compute_func(*data_args)
 
-            if results:
-                jax.block_until_ready(results)
+            if last_result is not None:
+                jax.block_until_ready(last_result)
     elif gap_strategy == "data_gen_every_iter_block_every_iter":
         with jax.profiler.trace(tmp_trace_dir, profiler_options=options):
             for i in range(tries):
@@ -142,7 +153,7 @@ def multiple_iteration_timeit_from_trace_throttling(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return multiple_iteration_get_metrics_from_trace(trace)
+    return multiple_iteration_get_metrics_from_trace(trace, task)
 
 
 def clear_jax_memory():
@@ -218,7 +229,7 @@ def multiple_iteration_get_metrics_from_trace(
     for event in trace["traceEvents"]:
         args = event.get("args", {})
         tf_op = args.get("tf_op", "")
-        if MARKER in tf_op:
+        if MARKER in tf_op or MARKER in event.get("name", ""):
             marker_done_events.append(event)
     # when offloaded to sparse core look for call-done events
     marker_call_done_events = [
@@ -229,7 +240,8 @@ def multiple_iteration_get_metrics_from_trace(
     unique_pids = set([e["pid"] for e in marker_done_events])
     print(f"Unique PIDs: {unique_pids}")
     if not marker_done_events:
-        event_matcher = re.compile(task)
+        task_pattern = task if task else ".*"
+        event_matcher = re.compile(task_pattern)
 
         if "traceEvents" not in trace:
             raise KeyError("Key 'traceEvents' not found in trace.")
@@ -950,6 +962,8 @@ def rename_xla_dump(
     ) = None
 
     for original_filepath in all_related_files:
+        if os.path.isdir(original_filepath):
+            continue
         original_filename = os.path.basename(original_filepath)
         original_suffix_with_extension = ""
 
