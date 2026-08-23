@@ -34,7 +34,9 @@ class ComponentBenchmark(base.BaseBenchmark[TransformerLayerParams]):
     self.ep = parallelism_cfg.get("ep", 1)
 
 
-@registry.benchmark_registry.register("transformer_layer_moe")
+@registry.benchmark_registry.register(
+    "transformer_layer_moe", is_experimental=True
+)
 class TransformerLayerMoE(ComponentBenchmark):
   """Comprehensive Transformer Layer benchmark representing DeepSeek-like MoE architectures.
 

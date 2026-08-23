@@ -72,7 +72,7 @@ class HBMBandwidthParams(base.BaseBenchmarkParams):
   device_id: int = 0
 
 
-@registry.benchmark_registry.register("hbm_bandwidth")
+@registry.benchmark_registry.register("hbm", aliases=["hbm_bandwidth"])
 class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
   Config = HBMBandwidthParams
   """HBM bandwidth microbenchmark supporting standard STREAM kernels."""

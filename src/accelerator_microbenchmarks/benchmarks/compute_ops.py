@@ -35,7 +35,7 @@ class AddParams(base.BaseBenchmarkParams):
   size: int = 1024 * 1024
 
 
-@registry.benchmark_registry.register("swiglu")
+@registry.benchmark_registry.register("swiglu", is_experimental=True)
 class SwiGLUBenchmark(base.BaseBenchmark[ComputeParams]):
   """SwiGLU activation benchmark.
 
@@ -100,7 +100,7 @@ class SwiGLUBenchmark(base.BaseBenchmark[ComputeParams]):
     return metrics
 
 
-@registry.benchmark_registry.register("rmsnorm")
+@registry.benchmark_registry.register("rmsnorm", is_experimental=True)
 class RMSNormBenchmark(base.BaseBenchmark[ComputeParams]):
   """RMSNorm benchmark: Y = X / rms(X) * weight."""
   Config = ComputeParams
@@ -165,7 +165,7 @@ class RMSNormBenchmark(base.BaseBenchmark[ComputeParams]):
     return metrics
 
 
-@registry.benchmark_registry.register("rope")
+@registry.benchmark_registry.register("rope", is_experimental=True)
 class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
   """Rotary Positional Embedding (RoPE) benchmark."""
   Config = RoPEParams
@@ -251,7 +251,7 @@ class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
     return metrics
 
 
-@registry.benchmark_registry.register("quantization")
+@registry.benchmark_registry.register("quantization", is_experimental=True)
 class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
   """Rowwise quantization to FP8: OUT = cast_fp8(X / SF)."""
   Config = QuantParams
@@ -312,7 +312,7 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     return metrics
 
 
-@registry.benchmark_registry.register("simple_add")
+@registry.benchmark_registry.register("simple_add", is_experimental=True)
 class AddBenchmark(base.BaseBenchmark[AddParams]):
   """Simple Z = X + Y benchmark."""
   Config = AddParams

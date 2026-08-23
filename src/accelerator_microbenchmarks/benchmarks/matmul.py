@@ -25,7 +25,7 @@ class GemmParams(base.BaseBenchmarkParams):
   beta: float = 0.0
 
 
-@registry.benchmark_registry.register("gemm_generalized")
+@registry.benchmark_registry.register("gemm", aliases=["gemm_generalized"])
 class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
   Config = GemmParams
   """Generalized GEMM benchmark supporting FP8 and throughput projection.

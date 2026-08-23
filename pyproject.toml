@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
+tpums = "accelerator_microbenchmarks.cli:main"
 jax-bench = "accelerator_microbenchmarks.main:run_main"
 
 [tool.setuptools.packages.find]

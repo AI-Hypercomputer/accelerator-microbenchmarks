@@ -1,69 +1,35 @@
-"""Main entry point for JAX microbenchmarks."""
+"""Execution runner engine for accelerator microbenchmarks."""
 
 import dataclasses
 import gc
 import json
 import os
 import traceback
-from typing import Any, List
+from typing import Any, List, Optional
 
-from absl import app
-from absl import flags
-import accelerator_microbenchmarks.benchmarks  # pylint: disable=unused-import
+from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import system
 import jax
 import pandas as pd
-import simple_parsing
 import yaml
 
 _REPO_ROOT = "third_party/py/accelerator_microbenchmarks"
 
 # TODO: Revisit benchmark name mapping design.
-# Map g3 benchmark names to op_flags.yaml keys
 _BENCHMARK_NAME_MAPPING = {
     "all_reduce": "all_reduce",
     "reduce_scatter": "psum_scatter",
     "hbm": "hbm_bandwidth",
 }
 
-FLAGS = flags.FLAGS
-
-flags.DEFINE_string("config", None, "YAML config path")
-flags.DEFINE_string("output", "results", "Output directory")
-flags.DEFINE_string("hw", None, "Hardware target environment defined in config")
-flags.DEFINE_string(
-    "run", None, "CLI benchmark to run (mutually exclusive with config)"
-)
-flags.DEFINE_string(
-    "xprof_dir", "/tmp/tensorboard", "Directory for xprof traces"
-)
-
-
-def parse_args(argv):
-  # Pass 1: Parse standard absl flags first, ignoring custom dataclass arguments
-  remaining_argv = FLAGS(argv, known_only=True)
-
-  if FLAGS.config and FLAGS.run:
-    raise ValueError(
-        "Cannot specify both --config (YAML) and --run (CLI). "
-        "They are mutually exclusive."
-    )
-  if not FLAGS.config and not FLAGS.run:
-    raise ValueError(
-        "Must specify either --config <yaml> or --run <benchmark_name>."
-    )
-
-  # Hand remaining unparsed argv over to main()
-  return remaining_argv
-
 
 def save_output(results: List[base.BenchmarkResult], output_dir: str):
   """Save results in both digestible CSV and detailed JSON formats."""
   if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
 
   flat_results = []
   for res in results:
@@ -112,7 +78,7 @@ def set_xla_flags(
   try:
     if flags_file_path is None:
       flags_file_path = os.path.join(
-          os.path.dirname(__file__), "op_flags.yaml"
+          os.path.dirname(__file__), "..", "op_flags.yaml"
       )
 
     if flags_file_path and os.path.exists(flags_file_path):
@@ -141,54 +107,8 @@ def set_xla_flags(
   )
 
 
-def _parse_benchmark_cli_args(bench_name: str, argv: List[str]):
-  parser = simple_parsing.ArgumentParser(add_help=False)
-
-  all_benchmarks = registry.benchmark_registry.get_all()
-  if bench_name in all_benchmarks:
-    bench_cls = all_benchmarks[bench_name]
-    config_cls = bench_cls.Config
-    if config_cls:
-      parser.add_arguments(config_cls, dest="benchmark_config")
-  else:
-    raise ValueError(f"Unknown benchmark: {bench_name}")
-
-  parsed = parser.parse_args(argv)
-
-  return getattr(parsed, "benchmark_config", None)
-
-
-def main(argv):
-  if len(argv) > 1:
-    print(f"Warning: Unexpected positional arguments: {argv[1:]}")
-
-  # 1. Load Config
-  benchmark_configs = []
-  if FLAGS.config:
-    try:
-      config_path = FLAGS.config
-      print(f"Loading config from: {config_path}")
-      benchmark_configs = config.load_config(config_path)
-    except Exception as e:
-      print(f"Error loading config: {e}")
-      return
-  elif FLAGS.run:
-    bench_name = FLAGS.run
-    config_obj = _parse_benchmark_cli_args(bench_name, argv[1:])
-    cfg = dataclasses.asdict(config_obj)
-    cfg["name"] = bench_name
-    benchmark_configs.append(cfg)
-  else:
-    print(
-        "Error: Must provide either --config <yaml> or --run <benchmark_name>"
-        " (e.g. gemm)"
-    )
-    return
-
-  # 2. Set Env Vars from op_flags.yaml
-  set_xla_flags(benchmark_configs)
-
-  # 3. Ensure JAX is initialized
+def init_jax_distributed():
+  """Ensures JAX distributed coordinator is initialized."""
   print("Initializing JAX distributed system...")
   try:
     jax.distributed.initialize()
@@ -200,22 +120,36 @@ def main(argv):
   except Exception as e:
     print(f"Error initializing JAX devices: {e}")
 
-  all_results = []
-  for cfg in benchmark_configs:
-    name = cfg.pop("name")
-    print(f"\n>>> Running Benchmark: {name} with {cfg}")
+
+def run_benchmarks(
+    tasks: List[tuple[str, base.BaseBenchmarkParams]],
+    output_dir: str = "results",
+    hw: Optional[str] = None,
+    xprof_dir: str = "/tmp/tensorboard",
+    config_path: Optional[str] = None,
+) -> List[base.BenchmarkResult]:
+  """Core execution engine for typed benchmark task configurations."""
+  benchmark_loader.load_all_benchmarks()
+
+  # 1. Set Env Vars from op_flags.yaml
+  set_xla_flags([{"name": task_name} for task_name, _ in tasks])
+
+  # 2. Ensure JAX is initialized
+  init_jax_distributed()
+
+  all_results: List[base.BenchmarkResult] = []
+  for task_name, config_obj in tasks:
+    print(f"\n>>> Running Benchmark: {task_name} with {config_obj}")
 
     try:
-      # Inject flag value if not explicitly in config
-      if "xprof_dir" not in cfg:
-        cfg["xprof_dir"] = FLAGS.xprof_dir
+      if not config_obj.xprof_dir or config_obj.xprof_dir == "/tmp/tensorboard":
+        config_obj.xprof_dir = xprof_dir
 
-      # Determine system from config or flag
-      sys_name = cfg.get("system", FLAGS.hw)
-      if sys_name and "hardware_stats" not in cfg:
+      sys_name = config_obj.system or hw
+      if sys_name and not config_obj.hardware_stats:
         try:
           sys_config = system.get_system(sys_name)
-          cfg["hardware_stats"] = {
+          config_obj.hardware_stats = {
               "tflops": sys_config.tflops.peak_tflops_per_dtype,
               "hbm_bw": sys_config.hbm.curve_gbps,
               "ici": {
@@ -226,49 +160,31 @@ def main(argv):
         except Exception as e:
           print(f"Warning: Could not load system config for {sys_name}: {e}")
 
-      benchmark_cls = registry.benchmark_registry.get_benchmark(name)
-      config_cls = benchmark_cls.Config
-      if config_cls and dataclasses.is_dataclass(config_cls):
-        base_config = config_cls(**cfg)
-      else:
-        raise ValueError(
-            f"Benchmark {name} must define a valid dataclass Config."
-        )
+      benchmark_cls = registry.benchmark_registry.get_benchmark(task_name)
 
-      test_case_configs = base_config.expand_test_cases()
+      test_case_configs = config_obj.expand_test_cases()
       total_cases = len(test_case_configs)
       for idx, test_case_config in enumerate(test_case_configs, 1):
         benchmark_instance = benchmark_cls(test_case_config)
         run_id = benchmark_instance.get_run_identifier()
-        print(f"\nRunning [{idx}/{total_cases}] {name} ({run_id})...")
+        print(f"\nRunning [{idx}/{total_cases}] {task_name} ({run_id})...")
         result = benchmark_instance.run()
         all_results.append(result)
-        benchmark_id = f"{name}-{cfg}"
         print(
-            f"Success [{idx}/{total_cases}]. Benchmark ID: {benchmark_id}."
-            f" Metrics: {result.metrics}"
+            f"Success [{idx}/{total_cases}] {task_name}. Metrics:"
+            f" {result.metrics}"
         )
         gc.collect()
     except Exception as e:
-      print(f"Benchmark '{name}' failed: {e}")
+      print(f"Benchmark '{task_name}' failed: {e}")
       traceback.print_exc()
 
   print(
-      f"Process {jax.process_index()} reached end of main. all_results length:"
+      f"Process {jax.process_index()} reached end of run. all_results length:"
       f" {len(all_results)}"
   )
 
-  # Ensure output directory exists on all processes to avoid tar errors
-  if not os.path.exists(FLAGS.output):
-    os.makedirs(FLAGS.output)
-
   if all_results:
-    save_output(all_results, FLAGS.output)
+    save_output(all_results, output_dir)
 
-
-def run_main():
-  app.run(main, flags_parser=parse_args)
-
-
-if __name__ == "__main__":
-  run_main()
+  return all_results

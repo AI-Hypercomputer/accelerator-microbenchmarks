@@ -21,7 +21,9 @@ class AttentionParams(base.BaseBenchmarkParams):
   head_dim: int = 128
 
 
-@registry.benchmark_registry.register("attention_flashed")
+@registry.benchmark_registry.register(
+    "attention_flashed", is_experimental=True
+)
 
 
 class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
