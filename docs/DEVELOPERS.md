@@ -72,19 +72,11 @@ def load_all_benchmarks():
     passed via `params`.
 -   **Trace-Ready**: Ensure `run_op` is a pure JAX function to support
     `use_trace_roofline: true`.
-<!-- copybara:strip_begin(internal) -->
--   **Stable Test Names**: Ensure your benchmark has a stable name to enable regression tracking in MLCompass. Avoid adding timestamps to test names.
--   **Numeric Metrics**: Ensure all reported metrics are numeric (int or float) to be compatible with MLCompass.
-<!-- copybara:strip_end -->
 
 ## 5. Local Verification
 
-Test your new benchmark using a minimal config:
+Test your new benchmark using the CLI:
 
 ```bash
-python3 -m accelerator_microbenchmarks.main --config - <<EOF
-benchmarks:
-  - name: my_new_op
-    size: 2048
-EOF
+tpums benchmark run my_new_op --size 2048
 ```

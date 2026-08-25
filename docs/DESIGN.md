@@ -33,7 +33,7 @@ and gaps addressed).
     (`min_duration_s`) to capture thermal/power effects.
 -   **Model Presets:** Pre-defined configurations for common LLM sizes (e.g.,
     `LLM-200B`) in `core/model_configs.py`.
--   **Installable Package:** Packaged using `pyproject.toml` with a `jax-bench`
+-   **Installable Package:** Packaged using `pyproject.toml` with a `tpums`
     CLI entry point.
 
 ## 3. Architecture & Design
@@ -42,8 +42,6 @@ and gaps addressed).
 
 ```text
 accelerator_microbenchmarks/
-├── BUILD
-├── BUILD_test_xplane
 ├── configs/            # YAML configuration files (e.g., sample.yaml, hbm_sweep.yaml)
 ├── docs/               # Documentation (README, DEVELOPERS, DESIGN, RATIONALE)
 │   ├── DESIGN.md
@@ -55,10 +53,7 @@ accelerator_microbenchmarks/
 │   └── accelerator_microbenchmarks/
 │       ├── benchmarks/ # Concrete benchmark implementations (collectives, matmul, etc.)
 │       ├── core/       # Framework core (BaseBenchmark, registry, config parsing)
-│       └── main.py     # Entry point for running benchmarks
-<!-- copybara:strip_begin(internal) -->
-└── tools/              # Utility scripts (e.g., syncing results)
-<!-- copybara:strip_end -->
+│       └── cli.py      # Entry point for running benchmarks (tpums)
 ```
 
 ### Core Components
@@ -81,8 +76,8 @@ accelerator_microbenchmarks/
 -   **`core/config.py`:** Handles loading YAML files, expanding sweeps, loading
     shapes from CSVs (`core/csv_loader.py`), and merging with model presets
     (`core/model_configs.py`).
--   **`accelerator_microbenchmarks/main.py`:** The main entry point for the
-    `jax-bench` CLI, parses arguments, loads configs, and runs the selected
+-   **`accelerator_microbenchmarks/cli.py`:** The main entry point for the
+    `tpums` CLI, parses arguments, loads configs, and runs the selected
     benchmarks.
 
 ### Configuration System Flow
@@ -98,7 +93,7 @@ accelerator_microbenchmarks/
 (See [README.md](README.md) for detailed usage instructions and examples).
 
 -   Installation: `pip install -e .`
--   Running: `jax-bench --config configs/sample.yaml`
+-   Running: `tpums benchmark run-config configs/sample.yaml`
 
 ## 5. Extensibility
 

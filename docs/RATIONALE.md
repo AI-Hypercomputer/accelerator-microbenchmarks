@@ -62,7 +62,7 @@ address the above limitations:
     for contributors, lowering the barrier to entry.
 7.  **Installable Package:** Facilitates easy distribution and usage within
     other projects or CI/CD pipelines with a simple `pip install` and
-    `jax-bench` CLI.
+    `tpums` CLI.
 
 ## Addressing the Gaps
 

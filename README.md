@@ -33,8 +33,11 @@ accelerator_microbenchmarks/
 │   └── accelerator_microbenchmarks/
 │       ├── benchmarks/ # Concrete benchmark implementations (collectives, matmul, etc.)
 │       ├── core/       # Framework core (BaseBenchmark, registry, config parsing)
-│       └── main.py     # Entry point for running benchmarks
+│       └── cli.py      # Entry point for running benchmarks (tpums)
 ├── README.md
+<!-- copybara:strip_begin(internal) -->
+└── tools/              # Utility scripts (e.g., syncing results)
+<!-- copybara:strip_end -->
 ```
 
 ## How It Works
@@ -43,7 +46,7 @@ accelerator_microbenchmarks/
 settings (number of runs, warmup tries) and a list of benchmarks to execute. It
 supports parameter "sweeps" to automatically test a range of dimensions or mesh
 shapes.
-2.  **Registry:** The `main.py` runner parses the YAML and looks up the
+2.  **Registry:** The `tpums` CLI parses the YAML and looks up the
 requested benchmark names in a central registry.
 3.  **Execution:** For each configuration permutation, the framework
 instantiates the benchmark, calls its `setup()`, runs `warmup_tries` iterations,
@@ -66,16 +69,40 @@ pip install -e .
 
 ## Running Benchmarks
 
+<!-- copybara:strip_begin(internal) -->
+### Using XManager (Recommended for TPUs)
 
+A launch script is provided one level up to deploy benchmarks to a TPU slice via
+XManager.
+
+```bash
+# From third_party/py/accelerator_microbenchmarks/
+bash orchestration/launch.sh
+```
+
+You can customize `launch.sh` to change the `TOPOLOGY` (e.g., `4x4x4`), the Borg
+cell, or the YAML config path.
+<!-- copybara:strip_end -->
+
+### Running via CLI
+
+Once installed, you can run benchmarks directly using the `tpums` CLI:
+
+```bash
+tpums benchmark run-config configs/sample.yaml
+```
+
+<!-- copybara:strip_begin(internal) -->
 ### Running Locally with Bazel
 
 If you are on a machine with available accelerators or want to test
 functionality on CPU, you can run the binary directly via Bazel:
 
 ```bash
-bazel run //src/accelerator_microbenchmarks:main -- \
-  --config configs/sample.yaml
+bazel run //src/accelerator_microbenchmarks:tpums -- \
+  benchmark run-config configs/sample.yaml
 ```
+<!-- copybara:strip_end -->
 
 ## Adding a New Benchmark
 
@@ -115,6 +142,10 @@ benchmarks:
 
 By default, the benchmark runner aggregates results and writes them to the
 `results/` directory as `detailed.json` and `summary.csv`.
+<!-- copybara:strip_begin(internal) -->
+You can use `tools/sync_results.py` to copy these results out of the XManager
+execution environment.
+<!-- copybara:strip_end -->
 
 ## Note for old users
 

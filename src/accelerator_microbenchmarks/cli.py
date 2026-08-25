@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import simple_parsing
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
@@ -113,17 +113,18 @@ def create_parser() -> simple_parsing.ArgumentParser:
   return parser
 
 
-def main(argv: Optional[List[str]] = None):
-  """Entry point for the tpums CLI."""
-  if argv is None:
-    argv = sys.argv[1:]
+def run(argv: Sequence[str]) -> None:
+  """Application entry point for parsing and executing tpums commands.
 
-  parser = create_parser()
+  Parses application-level arguments (subcommands, YAML configs, benchmarks)
+  using simple_parsing. Framework-agnostic and directly testable.
+  """
   if not argv:
-    parser.print_help()
+    create_parser().print_help()
     return
 
-  args = parser.parse_args(argv)
+  parser = create_parser()
+  args, _ = parser.parse_known_args(argv)
 
   # 1. Handle `tpums platform describe`
   if args.resource == "platform" and args.action == "describe":
@@ -170,6 +171,12 @@ def main(argv: Optional[List[str]] = None):
         xprof_dir=args.profile_dir,
     )
     return
+
+
+def main() -> None:
+  """Top-level executable entry point."""
+  # Open Source: Standard Python entry point.
+  run(sys.argv[1:])
 
 
 if __name__ == "__main__":
