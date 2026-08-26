@@ -1,6 +1,9 @@
 """Collective communication benchmarks."""
 
 import dataclasses
+import glob
+import os
+import re
 from typing import Any, Optional
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
@@ -67,6 +70,7 @@ class CollectivesParams(base.BaseBenchmarkParams):
   matrix_dim: int = 1024
   dtype: str = "bfloat16"
   seed: int = 0
+  xla_dump_dir: Optional[str] = "/tmp/xla_dump"
   reduce_op: str = dataclasses.field(
       default="sum",
       metadata={
@@ -190,6 +194,57 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(data)
 
+  def _extract_first_replica_group_from_hlo_dump(self) -> list[int]:
+    """Reads disk-based HLO dump files and extracts the first replica group."""
+    search_dirs = []
+    if self.config.xla_dump_dir:
+      search_dirs.append(self.config.xla_dump_dir)
+
+    xla_flags = os.environ.get("XLA_FLAGS", "")
+    match = re.search(r"--xla_dump_to=([^ ]+)", xla_flags)
+    if match:
+      search_dirs.append(match.group(1))
+
+    for dump_dir in search_dirs:
+      if not os.path.exists(dump_dir):
+        continue
+      files = glob.glob(
+          os.path.join(dump_dir, "*after_optimizations*.txt")
+      ) + glob.glob(os.path.join(dump_dir, "*.txt"))
+      files.sort(key=os.path.getmtime, reverse=True)
+      for fpath in files:
+        if os.path.isfile(fpath):
+          try:
+            with open(fpath, "r") as f:
+              content = f.read()
+            rg_match = re.search(
+                r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})",
+                content,
+                re.DOTALL,
+            )
+            if rg_match:
+              content_rg = rg_match.group(1)[2:-2]
+              first_group_str = content_rg.split("},{")[0]
+              return [int(x) for x in first_group_str.split(",")]
+          except Exception:
+            pass
+
+    # Fallback for CPU unit testing when no disk HLO is dumped
+    if self.mesh:
+      sharding_axes = self._get_sharding_axes()
+      if isinstance(sharding_axes, str):
+        sharding_size = self.mesh.shape[sharding_axes]
+      else:
+        sharding_size = 1
+        for axis in sharding_axes:
+          sharding_size *= self.mesh.shape[axis]
+      return list(range(sharding_size))
+
+    raise ValueError(
+        "Could not find or parse replica_groups from disk HLO dump files in"
+        f" search directories: {search_dirs}"
+    )
+
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
@@ -207,10 +262,37 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
       for axis in sharding_axes:
         sharding_size *= self.mesh.shape[axis]
 
+    try:
+      first_replica_group = self._extract_first_replica_group_from_hlo_dump()
+      rank = len(first_replica_group)
+
+      if first_replica_group and all(i % 2 == 0 for i in first_replica_group):
+        replica_group_type = "parallel"
+        participating_ranks = max(rank - 1, 1)
+        tf_multiplier = 2
+      else:
+        replica_group_type = "non-parallel"
+        participating_ranks = max(rank - 2, 1)
+        tf_multiplier = 1
+    except Exception as e:
+      replica_group_type = "non-parallel"
+      rank = sharding_size
+      participating_ranks = max(rank - 1, 1)
+      tf_multiplier = 1
+      print(
+          "Warning: Failed to extract replica group from HLO dump. Falling"
+          f" back to non-parallel replica group. Error: {e}"
+      )
+
     avg_latency_s = metrics["avg_ms"] / 1000.0
 
     data_transferred_bytes, extra_metrics = self._get_transfer_metrics(
-        dim=dim, itemsize=itemsize, num_devices=sharding_size
+        dim=dim,
+        itemsize=itemsize,
+        num_devices=sharding_size,
+        rank=rank,
+        participating_ranks=participating_ranks,
+        tf_multiplier=tf_multiplier,
     )
 
     if sharding_size > 1:
@@ -219,6 +301,8 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
       bandwidth_gb_s = 0.0
 
     metrics["bandwidth_gb_s"] = bandwidth_gb_s
+    metrics["replica_group_type"] = replica_group_type
+    metrics["replica_group_rank"] = rank
     metrics.update(extra_metrics)
     return metrics
 
@@ -238,8 +322,27 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
     else:
       sharding_size = 1
 
+    try:
+      first_replica_group = self._extract_first_replica_group_from_hlo_dump()
+      rank = len(first_replica_group)
+      if first_replica_group and all(i % 2 == 0 for i in first_replica_group):
+        participating_ranks = max(rank - 1, 1)
+        tf_multiplier = 2
+      else:
+        participating_ranks = max(rank - 2, 1)
+        tf_multiplier = 1
+    except Exception:
+      rank = sharding_size
+      participating_ranks = max(rank - 1, 1)
+      tf_multiplier = 1
+
     bytes_moved, _ = self._get_transfer_metrics(
-        dim=dim, itemsize=itemsize, num_devices=sharding_size
+        dim=dim,
+        itemsize=itemsize,
+        num_devices=sharding_size,
+        rank=rank,
+        participating_ranks=participating_ranks,
+        tf_multiplier=tf_multiplier,
     )
     return bytes_moved
 
@@ -247,7 +350,13 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
     return 0.0
 
   def _get_transfer_metrics(
-      self, dim: int, itemsize: int, num_devices: int
+      self,
+      dim: int,
+      itemsize: int,
+      num_devices: int,
+      rank: int = 1,
+      participating_ranks: int = 1,
+      tf_multiplier: int = 1,
   ) -> tuple[float, dict[str, float]]:
     raise NotImplementedError("Subclasses must implement _get_transfer_metrics")
 
@@ -300,9 +409,22 @@ class AllReduceBenchmark(BaseCollectiveBenchmark):
 
     self._jit_fn = all_reduce_sharded
 
-  def _get_transfer_metrics(self, dim: int, itemsize: int, num_devices: int):
+  def _get_transfer_metrics(
+      self,
+      dim: int,
+      itemsize: int,
+      num_devices: int,
+      rank: int = 1,
+      participating_ranks: int = 1,
+      tf_multiplier: int = 1,
+  ):
     local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
-    data_transferred = local_size_bytes * 2 * (num_devices - 1) / num_devices
+    data_transferred = (
+        2
+        * local_size_bytes
+        * (participating_ranks / max(rank, 1))
+        * tf_multiplier
+    )
     return data_transferred, {"shard_size_mb": local_size_bytes / 1e6}
 
 
@@ -342,9 +464,17 @@ class AllGatherBenchmark(BaseCollectiveBenchmark):
     )
     return shape, sharding
 
-  def _get_transfer_metrics(self, dim: int, itemsize: int, num_devices: int):
+  def _get_transfer_metrics(
+      self,
+      dim: int,
+      itemsize: int,
+      num_devices: int,
+      rank: int = 1,
+      participating_ranks: int = 1,
+      tf_multiplier: int = 1,
+  ):
     local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
-    data_transferred = local_size_bytes * (num_devices - 1)
+    data_transferred = local_size_bytes * participating_ranks * tf_multiplier
     return data_transferred, {"shard_size_mb": local_size_bytes / 1e6}
 
 
@@ -380,16 +510,25 @@ class AllToAllBenchmark(BaseCollectiveBenchmark):
   def _get_input_shape_and_sharding(
       self, num_devices: int, dim: int, sharding_axes
   ):
-    shape = (dim, _BASE_N, _BASE_K)
+    shape = (dim * num_devices, _BASE_N, _BASE_K)
     sharding = jax.sharding.NamedSharding(
         self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
     )
     return shape, sharding
 
-  def _get_transfer_metrics(self, dim: int, itemsize: int, num_devices: int):
-    local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
-    chunk_size_bytes = local_size_bytes / num_devices
-    data_transferred = chunk_size_bytes * (num_devices - 1)
+  def _get_transfer_metrics(
+      self,
+      dim: int,
+      itemsize: int,
+      num_devices: int,
+      rank: int = 1,
+      participating_ranks: int = 1,
+      tf_multiplier: int = 1,
+  ):
+    local_size_bytes = dim * num_devices * _BASE_N * _BASE_K * itemsize
+    data_transferred = (
+        local_size_bytes * (participating_ranks / max(rank, 1)) * tf_multiplier
+    )
     return data_transferred, {"local_size_mb": local_size_bytes / 1e6}
 
 
@@ -429,7 +568,17 @@ class ReduceScatterBenchmark(BaseCollectiveBenchmark):
     )
     return shape, sharding
 
-  def _get_transfer_metrics(self, dim: int, itemsize: int, num_devices: int):
+  def _get_transfer_metrics(
+      self,
+      dim: int,
+      itemsize: int,
+      num_devices: int,
+      rank: int = 1,
+      participating_ranks: int = 1,
+      tf_multiplier: int = 1,
+  ):
     chunk_size_bytes = dim * _REDUCE_SCATTER_K * itemsize
-    data_transferred = chunk_size_bytes * (num_devices - 1)
+    data_transferred = (
+        chunk_size_bytes * (participating_ranks / max(rank, 1)) * tf_multiplier
+    )
     return data_transferred, {"shard_size_mb": chunk_size_bytes / 1e6}

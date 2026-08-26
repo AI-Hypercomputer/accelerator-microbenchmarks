@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-
 # Force 4 CPU devices for testing collectives
 os.environ["XLA_FLAGS"] = (
     os.environ.get("XLA_FLAGS", "")
@@ -207,6 +206,100 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
 
     out_2x2 = bm.run_op(data_2x2)
     self.assertEqual(out_2x2.shape, (4, 64, 256))
+
+  def test_transfer_metrics_calculation(self):
+    devices = np.array(jax.devices()).reshape((2, 2))
+    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
+    config = collectives.CollectivesParams(
+        matrix_dim=1024,
+        dtype="float32",
+        mesh_shape="2x2",
+        sharding_strategy="2x2",
+    )
+    # AllGather
+    ag_bm = collectives.AllGatherBenchmark(config=config, mesh=mesh)
+    ag_bm.setup()
+    ag_metrics = ag_bm.calculate_metrics([1.0])  # 1.0 ms latency
+    # local_size = 1024 * 8 * 128 * 4 = 4194304 bytes
+    # non-parallel: participating_ranks = 4 - 2 = 2
+    # data_transferred = 4194304 * 2 = 8388608 bytes
+    # avg_latency = 0.001 s -> bandwidth = 8.388608 GB/s
+    self.assertAlmostEqual(ag_metrics["bandwidth_gb_s"], 8.388608, places=4)
+
+    # AllReduce
+    ar_bm = collectives.AllReduceBenchmark(config=config, mesh=mesh)
+    ar_bm.setup()
+    ar_metrics = ar_bm.calculate_metrics([1.0])
+    # local_size = 4194304 bytes
+    # data_transferred = 2 * 4194304 * (2 / 4) = 4194304 bytes
+    # avg_latency = 0.001 s -> bandwidth = 4.194304 GB/s
+    self.assertAlmostEqual(ar_metrics["bandwidth_gb_s"], 4.194304, places=4)
+
+  def test_replica_groups_hlo_parsing(self):
+    devices = np.array(jax.devices()).reshape((2, 2))
+    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
+
+    # Parallel replica groups (strided)
+    dump_dir_p = self.create_tempdir().full_path
+    with open(os.path.join(dump_dir_p, "after_optimizations.txt"), "w") as f:
+      f.write("HloModule ... replica_groups={{0,2,4,6},{1,3,5,7}}")
+
+    config_parallel = collectives.CollectivesParams(
+        matrix_dim=1024,
+        dtype="float32",
+        mesh_shape="2x2",
+        sharding_strategy="2x2",
+        xla_dump_dir=dump_dir_p,
+    )
+    ag_parallel = collectives.AllGatherBenchmark(
+        config=config_parallel, mesh=mesh
+    )
+    ag_parallel.setup()
+    metrics_p = ag_parallel.calculate_metrics([1.0])
+    self.assertEqual(metrics_p["replica_group_type"], "parallel")
+    self.assertEqual(metrics_p["replica_group_rank"], 4)
+
+    # Non-parallel replica groups (contiguous)
+    dump_dir_np = self.create_tempdir().full_path
+    with open(os.path.join(dump_dir_np, "after_optimizations.txt"), "w") as f:
+      f.write("HloModule ... replica_groups={{0,1,2,3},{4,5,6,7}}")
+
+    config_non_parallel = collectives.CollectivesParams(
+        matrix_dim=1024,
+        dtype="float32",
+        mesh_shape="2x2",
+        sharding_strategy="2x2",
+        xla_dump_dir=dump_dir_np,
+    )
+    ag_non_parallel = collectives.AllGatherBenchmark(
+        config=config_non_parallel, mesh=mesh
+    )
+    ag_non_parallel.setup()
+    metrics_np = ag_non_parallel.calculate_metrics([1.0])
+    self.assertEqual(metrics_np["replica_group_type"], "non-parallel")
+    self.assertEqual(metrics_np["replica_group_rank"], 4)
+
+  def test_calculate_metrics_exception_fallback(self):
+    devices = np.array(jax.devices()).reshape((2, 2))
+    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
+
+    config = collectives.CollectivesParams(
+        matrix_dim=1024,
+        dtype="float32",
+        mesh_shape="2x2",
+        sharding_strategy="2x2",
+    )
+    ag_bm = collectives.AllGatherBenchmark(config=config, mesh=mesh)
+    ag_bm.setup()
+
+    def mock_extract_raises():
+      raise ValueError("Mocked error")
+
+    ag_bm._extract_first_replica_group_from_hlo_dump = mock_extract_raises
+
+    metrics = ag_bm.calculate_metrics([1.0])
+    self.assertEqual(metrics["replica_group_type"], "non-parallel")
+    self.assertEqual(metrics["replica_group_rank"], 4)
 
 
 if __name__ == "__main__":
