@@ -50,10 +50,50 @@ class TestXmLaunchSelectTests(parameterized.TestCase):
         xm_launch._parse_selected_benchmarks(select_tests_str), expected
     )
 
+  @parameterized.parameters(
+      (
+          "tpums_gfl_2x2x2_AllGatherBenchmark",
+          {"all_gather"},
+      ),
+      (
+          "tpums_gfl_2x2x1_GeneralizedGemmBenchmark",
+          {"gemm", "gemm_generalized"},
+      ),
+      (
+          "tpums_gfl_2x2x1_HBMBandwidthBenchmark",
+          {"hbm", "hbm_bandwidth"},
+      ),
+      (
+          "tpums_gfl_2x2x2_AllReduceBenchmark",
+          {"all_reduce"},
+      ),
+      (
+          "tpums_gfl_2x2x2_AllToAllBenchmark",
+          {"all_to_all"},
+      ),
+      (
+          "tpums_gfl_2x2x2_ReduceScatterBenchmark",
+          {"reduce_scatter"},
+      ),
+  )
+  def test_shortened_target(self, select_tests_str, expected):
+    self.assertEqual(
+        xm_launch._parse_selected_benchmarks(select_tests_str), expected
+    )
+
   def test_multiple_comma_separated_targets(self):
     select_tests_str = (
         "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x2/AllGatherBenchmark,"
         "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x2/AllReduceBenchmark"
+    )
+    self.assertEqual(
+        xm_launch._parse_selected_benchmarks(select_tests_str),
+        {"all_gather", "all_reduce"},
+    )
+
+  def test_multiple_shortened_targets(self):
+    select_tests_str = (
+        "tpums_gfl_2x2x2_AllGatherBenchmark,tpums_gfl_2x2x2_AllReduceBenchmark"
     )
     self.assertEqual(
         xm_launch._parse_selected_benchmarks(select_tests_str),
