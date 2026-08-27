@@ -4,7 +4,10 @@ import os
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import device_to_device
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 
 # Force 4 CPU devices for testing multi-device D2D transfers
@@ -186,6 +189,70 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
     out = self.bm.run_op(*inputs)
     self.assertEqual(out.shape, inputs[0].shape)
     self.assertEqual(out.dtype, inputs[0].dtype)
+
+  def test_format_benchmark_table(self):
+    """Tests formatting of Device-to-Device benchmark tables."""
+    res = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="DeviceToDeviceBenchmark",
+            test_name="DeviceToDeviceBenchmark_test",
+            start_time="2026-08-18T10:00:00",
+            end_time="2026-08-18T10:01:00",
+            params={
+                "dtype": "float32",
+                "direction": "uni",
+                "src_device_index": 7783,
+                "data_size_mib": 1024,
+                "dst_device_index": 153,
+            },
+            device_info={"platform": "tpu"},
+        ),
+        metrics={
+            "bandwidth_gb_s": 85.50,
+            "p50_ms": 12.3456,
+            "xprof_p50_ms": 12.3400,
+        },
+        raw_times_ms=[1.0],
+    )
+    expected_cols = [
+        "dtype",
+        "direction",
+        "src_device_index",
+        "dst_device_index",
+        "data_size_mib",
+        "bandwidth_gb_s",
+        "p50_ms",
+        "xprof_p50_ms",
+    ]
+    schema_cols = [
+        col for col, _ in device_to_device.DeviceToDeviceBenchmark.REPORT_SCHEMA
+    ]
+    self.assertEqual(schema_cols, expected_cols)
+
+    df = report.results_to_dataframe([res])
+    table = report.format_benchmark_table(
+        df,
+        schema=device_to_device.DeviceToDeviceBenchmark.REPORT_SCHEMA,
+        title="DeviceToDeviceBenchmark",
+    )
+    self.assertIn("Benchmark Results (DeviceToDeviceBenchmark)", table)
+    for col in expected_cols:
+      self.assertIn(col, table)
+    self.assertIn("float32", table)
+    self.assertIn("uni", table)
+    self.assertIn("7783", table)
+    self.assertIn("153", table)
+    self.assertIn("1024", table)
+    self.assertIn("85.50", table)
+    self.assertIn("12.3456", table)
+    self.assertIn("12.3400", table)
+
+  def test_schema_coverage(self):
+    """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
+    self.bm.setup()
+    test_report_utils.assert_schema_matches_output(
+        self, self.bm, ignored_keys={"total_bytes_mb"}
+    )
 
 
 if __name__ == "__main__":

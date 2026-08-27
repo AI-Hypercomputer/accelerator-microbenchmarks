@@ -1,10 +1,11 @@
 """Matrix multiplication and GEMM benchmarks including FP8 support."""
 
 import dataclasses
-from typing import Any
+from typing import Any, Callable, Sequence
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
@@ -27,11 +28,28 @@ class GemmParams(base.BaseBenchmarkParams):
 
 @registry.benchmark_registry.register("gemm", aliases=["gemm_generalized"])
 class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
-  Config = GemmParams
   """Generalized GEMM benchmark supporting FP8 and throughput projection.
 
   Pseudo-code: OUT = matmul(IN0, IN1) * rescaling_factor
   """
+
+  Config = GemmParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("in_dtype", report.format_str),
+      ("out_dtype", report.format_str),
+      ("m", report.format_str),
+      ("k", report.format_str),
+      ("n", report.format_str),
+      ("transpose_a", report.format_str),
+      ("transpose_b", report.format_str),
+      ("alpha", report.format_str),
+      ("beta", report.format_str),
+      ("use_scaling_factors", report.format_str),
+      ("total_flops", report.format_2f),
+      ("tflops_per_sec", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
 
   def get_compute_dtype(self) -> str:
     return self.config.in_dtype
@@ -100,7 +118,6 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
         self.config.transpose_b,
     )
 
-
     # Resolve dtypes
     in_dtype = utils.parse_dtype(self.config.in_dtype)
 
@@ -157,7 +174,6 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
         *sf_args,
         *acc_args,
     )
-
 
   def run_op(self, *args) -> jnp.ndarray:
     assert self._jit_fn is not None

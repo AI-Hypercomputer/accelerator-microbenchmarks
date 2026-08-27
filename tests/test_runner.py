@@ -1,6 +1,5 @@
 """Unit tests for the benchmark execution runner (runner.py)."""
 
-import json
 import os
 import tempfile
 from unittest import mock
@@ -8,9 +7,7 @@ from unittest import mock
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import runner
-import pandas as pd
 import yaml
-
 
 
 class TestRunner(absltest.TestCase):
@@ -129,76 +126,6 @@ class TestRunner(absltest.TestCase):
       runner.init_jax_distributed()
       mock_init.assert_called_once()
 
-  def test_save_output_throughput_not_overwritten(self):
-    metadata = base.BenchmarkMetadata(
-        benchmark_name="DummyBenchmark",
-        test_name="DummyTest",
-        start_time="now",
-        end_time="then",
-        params={"param1": "val1"},
-        device_info={"device": "tpu"},
-    )
-    metrics = {
-        "avg_ms": 10.0,
-        "bandwidth_gb_s": 100.0,
-        "throughput": 0.0,
-    }
-    result = base.BenchmarkResult(
-        metadata=metadata,
-        metrics=metrics,
-        raw_times_ms=[10.0],
-    )
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-      runner.save_output([result], tmpdir)
-
-      csv_path = os.path.join(tmpdir, "summary.csv")
-      json_path = os.path.join(tmpdir, "detailed.json")
-      self.assertTrue(os.path.exists(csv_path))
-      self.assertTrue(os.path.exists(json_path))
-
-      df = pd.read_csv(csv_path)
-      self.assertNotIn("Unnamed: 0", df.columns)
-      self.assertEqual(df["throughput"].iloc[0], 100.0)
-      self.assertEqual(df["KET_ms"].iloc[0], 10.0)
-      self.assertEqual(df["benchmark"].iloc[0], "DummyBenchmark")
-
-  def test_save_output_tflops(self):
-    metadata = base.BenchmarkMetadata(
-        benchmark_name="GemmBenchmark",
-        test_name="GemmTest",
-        start_time="now",
-        end_time="then",
-        params={"m": 1024, "n": 1024},
-        device_info={"device": "tpu"},
-    )
-    metrics = {
-        "avg_ms": 5.0,
-        "tflops_per_sec": 250.0,
-    }
-    result = base.BenchmarkResult(
-        metadata=metadata, metrics=metrics, raw_times_ms=[5.0]
-    )
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-      runner.save_output([result], tmpdir)
-
-      csv_path = os.path.join(tmpdir, "summary.csv")
-      json_path = os.path.join(tmpdir, "detailed.json")
-      self.assertTrue(os.path.exists(csv_path))
-      self.assertTrue(os.path.exists(json_path))
-
-      df = pd.read_csv(csv_path)
-      self.assertNotIn("Unnamed: 0", df.columns)
-      self.assertEqual(df["throughput"].iloc[0], 250.0)
-      self.assertEqual(df["KET_ms"].iloc[0], 5.0)
-      self.assertEqual(df["m"].iloc[0], 1024)
-
-      with open(json_path, "r") as f:
-        data = json.load(f)
-      self.assertEqual(len(data), 1)
-      self.assertEqual(data[0]["metadata"]["benchmark_name"], "GemmBenchmark")
-
   def test_run_benchmarks(self):
     """Verifies that run_benchmarks executes typed benchmark tasks."""
     dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
@@ -227,7 +154,10 @@ class TestRunner(absltest.TestCase):
                     raw_times_ms=[1.0],
                 )
                 mock_bench_instance.get_run_identifier.return_value = "run_1"
-                mock_bench_cls = mock.MagicMock(return_value=mock_bench_instance)
+                mock_bench_cls = mock.MagicMock(
+                    return_value=mock_bench_instance,
+                    __name__="MockBenchmark",
+                )
                 mock_get_benchmark.return_value = mock_bench_cls
 
                 results = runner.run_benchmarks(
@@ -275,7 +205,10 @@ class TestRunner(absltest.TestCase):
                   raw_times_ms=[1.0],
               )
               mock_bench_instance.get_run_identifier.return_value = "run_1"
-              mock_bench_cls = mock.MagicMock(return_value=mock_bench_instance)
+              mock_bench_cls = mock.MagicMock(
+                  return_value=mock_bench_instance,
+                  __name__="MockBenchmark",
+              )
               mock_get_benchmark.return_value = mock_bench_cls
 
               results = runner.run_benchmarks(
@@ -298,7 +231,10 @@ class TestRunner(absltest.TestCase):
           ) as mock_get_benchmark:
             mock_bench_instance = mock.MagicMock()
             mock_bench_instance.run.side_effect = RuntimeError("Kernel failed")
-            mock_bench_cls = mock.MagicMock(return_value=mock_bench_instance)
+            mock_bench_cls = mock.MagicMock(
+                return_value=mock_bench_instance,
+                __name__="MockBenchmark",
+            )
             mock_get_benchmark.return_value = mock_bench_cls
 
             results = runner.run_benchmarks(
@@ -306,6 +242,67 @@ class TestRunner(absltest.TestCase):
                 output_dir=tmpdir,
             )
             self.assertEqual(results, [])
+
+  def test_run_benchmarks_print_table(self):
+    """Verifies that run_benchmarks passes print_table to report.report_results."""
+    dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with mock.patch.object(runner, "set_xla_flags"):
+        with mock.patch.object(runner, "init_jax_distributed"):
+          with mock.patch.object(runner, "export_to_mlcompass"):
+            with mock.patch(
+                "accelerator_microbenchmarks.core.registry.benchmark_registry.get_benchmark"
+            ) as mock_get_benchmark:
+              with mock.patch.object(
+                  runner.report, "report_results"
+              ) as mock_report_results:
+                mock_bench_instance = mock.MagicMock()
+                mock_metadata = base.BenchmarkMetadata(
+                    benchmark_name="dummy",
+                    test_name="dummy_test",
+                    start_time="now",
+                    end_time="then",
+                    params={},
+                    device_info={},
+                )
+                mock_result = base.BenchmarkResult(
+                    metadata=mock_metadata,
+                    metrics={"avg_ms": 1.0},
+                    raw_times_ms=[1.0],
+                )
+                mock_bench_instance.run.return_value = mock_result
+                mock_bench_instance.get_run_identifier.return_value = "run_1"
+                mock_bench_cls = mock.MagicMock(
+                    return_value=mock_bench_instance,
+                    __name__="MockBenchmark",
+                )
+                mock_get_benchmark.return_value = mock_bench_cls
+
+                # Test print_table=True
+                runner.run_benchmarks(
+                    tasks=[("dummy", dummy_params)],
+                    output_dir=tmpdir,
+                    print_table=True,
+                )
+                mock_report_results.assert_called_once_with(
+                    [mock_result],
+                    output_dir=tmpdir,
+                    print_table=True,
+                )
+
+                mock_report_results.reset_mock()
+
+                # Test print_table=False
+                runner.run_benchmarks(
+                    tasks=[("dummy", dummy_params)],
+                    output_dir=tmpdir,
+                    print_table=False,
+                )
+                mock_report_results.assert_called_once_with(
+                    [mock_result],
+                    output_dir=tmpdir,
+                    print_table=False,
+                )
 
 
 if __name__ == "__main__":

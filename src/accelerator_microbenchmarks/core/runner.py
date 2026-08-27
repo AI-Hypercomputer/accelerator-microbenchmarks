@@ -1,6 +1,5 @@
 """Execution runner engine for accelerator microbenchmarks."""
 
-import dataclasses
 import gc
 import json
 import os
@@ -11,9 +10,9 @@ from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
 import jax
-import pandas as pd
 import yaml
 
 _REPO_ROOT = "third_party/py/accelerator_microbenchmarks"
@@ -24,41 +23,6 @@ _BENCHMARK_NAME_MAPPING = {
     "reduce_scatter": "psum_scatter",
     "hbm": "hbm_bandwidth",
 }
-
-
-def save_output(results: List[base.BenchmarkResult], output_dir: str):
-  """Save results in both digestible CSV and detailed JSON formats."""
-  if not os.path.exists(output_dir):
-    os.makedirs(output_dir, exist_ok=True)
-
-  flat_results = []
-  for res in results:
-    entry = {
-        **res.metadata.params,
-        **res.metrics,
-        **res.metadata.device_info,
-        "benchmark": res.metadata.benchmark_name,
-        "test_name": res.metadata.test_name,
-        "KET_ms": res.metrics.get(
-            "avg_ms", 0.0
-        ),  # Kernel Execution Time as requested
-        "throughput": res.metrics.get(
-            "tflops_per_sec", res.metrics.get("bandwidth_gb_s", 0.0)
-        ),
-        "start": res.metadata.start_time,
-    }
-    flat_results.append(entry)
-
-  # 1. Summary CSV (Digestible)
-  df = pd.DataFrame(flat_results)
-  csv_path = os.path.join(output_dir, "summary.csv")
-  df.to_csv(csv_path, index=False)
-  print(f"Summary saved to: {csv_path}")
-
-  # 2. Detailed JSON (Complete)
-  json_path = os.path.join(output_dir, "detailed.json")
-  with open(json_path, "w") as f:
-    json.dump([dataclasses.asdict(r) for r in results], f, indent=2)
 
 
 def set_xla_flags(
@@ -127,6 +91,7 @@ def run_benchmarks(
     hw: Optional[str] = None,
     xprof_dir: str = "/tmp/tensorboard",
     config_path: Optional[str] = None,
+    print_table: bool = True,
 ) -> List[base.BenchmarkResult]:
   """Core execution engine for typed benchmark task configurations."""
   benchmark_loader.load_all_benchmarks()
@@ -142,6 +107,8 @@ def run_benchmarks(
     print(f"\n>>> Running Benchmark: {task_name} with {config_obj}")
 
     try:
+      benchmark_cls = registry.benchmark_registry.get_benchmark(task_name)
+
       if not config_obj.xprof_dir or config_obj.xprof_dir == "/tmp/tensorboard":
         config_obj.xprof_dir = xprof_dir
 
@@ -159,8 +126,6 @@ def run_benchmarks(
           }
         except Exception as e:
           print(f"Warning: Could not load system config for {sys_name}: {e}")
-
-      benchmark_cls = registry.benchmark_registry.get_benchmark(task_name)
 
       test_case_configs = config_obj.expand_test_cases()
       total_cases = len(test_case_configs)
@@ -185,6 +150,10 @@ def run_benchmarks(
   )
 
   if all_results:
-    save_output(all_results, output_dir)
+    report.report_results(
+        all_results,
+        output_dir=output_dir,
+        print_table=print_table,
+    )
 
   return all_results

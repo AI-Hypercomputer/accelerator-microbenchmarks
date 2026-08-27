@@ -2,10 +2,12 @@
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import host_device
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import numpy as np
-
 
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
@@ -79,6 +81,58 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.390625)
     self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
 
+  def test_format_benchmark_table(self):
+    """Tests formatting of Host-to-Device benchmark tables."""
+    res = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="HostToDeviceBenchmark",
+            test_name="HostToDeviceBenchmark_test",
+            start_time="2026-08-18T10:00:00",
+            end_time="2026-08-18T10:01:00",
+            params={"dtype": "float32", "data_size_mib": 256},
+            device_info={"platform": "tpu"},
+        ),
+        metrics={
+            "bandwidth_gb_s": 18.25,
+            "p50_ms": 14.0274,
+            "xprof_p50_ms": 14.0100,
+        },
+        raw_times_ms=[1.0],
+    )
+    expected_cols = [
+        "dtype",
+        "data_size_mib",
+        "bandwidth_gb_s",
+        "p50_ms",
+        "xprof_p50_ms",
+    ]
+    schema_cols = [
+        col for col, _ in host_device.HostToDeviceBenchmark.REPORT_SCHEMA
+    ]
+    self.assertEqual(schema_cols, expected_cols)
+
+    df = report.results_to_dataframe([res])
+    table = report.format_benchmark_table(
+        df,
+        schema=host_device.HostToDeviceBenchmark.REPORT_SCHEMA,
+        title="HostToDeviceBenchmark",
+    )
+    self.assertIn("Benchmark Results (HostToDeviceBenchmark)", table)
+    for col in expected_cols:
+      self.assertIn(col, table)
+    self.assertIn("float32", table)
+    self.assertIn("256", table)
+    self.assertIn("18.25", table)
+    self.assertIn("14.0274", table)
+    self.assertIn("14.0100", table)
+
+  def test_schema_coverage(self):
+    """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
+    self._setup_benchmark()
+    test_report_utils.assert_schema_matches_output(
+        self, self.bm, ignored_keys={"total_bytes_mib"}
+    )
+
 
 class DeviceToHostBenchmarkTest(absltest.TestCase):
   """Unit tests for DeviceToHostBenchmark."""
@@ -145,6 +199,58 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
     self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.390625)
     self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
+
+  def test_format_benchmark_table(self):
+    """Tests formatting of Device-to-Host benchmark tables."""
+    res = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="DeviceToHostBenchmark",
+            test_name="DeviceToHostBenchmark_test",
+            start_time="2026-08-18T10:00:00",
+            end_time="2026-08-18T10:01:00",
+            params={"dtype": "float32", "data_size_mib": 512},
+            device_info={"platform": "tpu"},
+        ),
+        metrics={
+            "bandwidth_gb_s": 24.50,
+            "p50_ms": 20.9000,
+            "xprof_p50_ms": 20.8900,
+        },
+        raw_times_ms=[1.0],
+    )
+    expected_cols = [
+        "dtype",
+        "data_size_mib",
+        "bandwidth_gb_s",
+        "p50_ms",
+        "xprof_p50_ms",
+    ]
+    schema_cols = [
+        col for col, _ in host_device.DeviceToHostBenchmark.REPORT_SCHEMA
+    ]
+    self.assertEqual(schema_cols, expected_cols)
+
+    df = report.results_to_dataframe([res])
+    table = report.format_benchmark_table(
+        df,
+        schema=host_device.DeviceToHostBenchmark.REPORT_SCHEMA,
+        title="DeviceToHostBenchmark",
+    )
+    self.assertIn("Benchmark Results (DeviceToHostBenchmark)", table)
+    for col in expected_cols:
+      self.assertIn(col, table)
+    self.assertIn("float32", table)
+    self.assertIn("512", table)
+    self.assertIn("24.50", table)
+    self.assertIn("20.9000", table)
+    self.assertIn("20.8900", table)
+
+  def test_schema_coverage(self):
+    """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
+    self._setup_benchmark()
+    test_report_utils.assert_schema_matches_output(
+        self, self.bm, ignored_keys={"total_bytes_mib"}
+    )
 
 
 if __name__ == "__main__":

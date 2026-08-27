@@ -7,7 +7,10 @@ from absl.testing import parameterized
 
 # pylint: disable=g-import-not-at-top
 from accelerator_microbenchmarks.benchmarks import collectives
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,6 +26,11 @@ os.environ["XLA_FLAGS"] = (
 
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
+
+_COLLECTIVES_IGNORED_KEYS: frozenset[str] = frozenset({
+    "replica_group_type",
+    "replica_group_rank",
+})
 
 
 class CollectivesBenchmarkTest(parameterized.TestCase):
@@ -300,6 +308,162 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     metrics = ag_bm.calculate_metrics([1.0])
     self.assertEqual(metrics["replica_group_type"], "non-parallel")
     self.assertEqual(metrics["replica_group_rank"], 4)
+
+  def test_format_benchmark_table(self):
+    """Tests formatting of collective benchmark tables."""
+    res_base = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="AllReduceBenchmark",
+            test_name="AllReduceBenchmark_test",
+            start_time="2026-08-18T10:00:00",
+            end_time="2026-08-18T10:01:00",
+            params={
+                "matrix_dim": 4096,
+                "mesh_shape": "2x2x2",
+                "reduce_op": "sum",
+                "sharding_strategy": "2x2x1",
+                "dtype": "bfloat16",
+            },
+            device_info={"platform": "tpu"},
+        ),
+        metrics={
+            "shard_size_mb": 32.0,
+            "p50_ms": 0.05201,
+            "bandwidth_gb_s": 350.123,
+            "xprof_p50_ms": 0.04812,
+        },
+        raw_times_ms=[1.0],
+    )
+    expected_cols = [
+        "dtype",
+        "reduce_op",
+        "mesh_shape",
+        "sharding_strategy",
+        "matrix_dim",
+        "shard_size_mb",
+        "bandwidth_gb_s",
+        "p50_ms",
+        "xprof_p50_ms",
+    ]
+    schema_cols = [
+        col for col, _ in collectives.AllReduceBenchmark.REPORT_SCHEMA
+    ]
+    self.assertEqual(schema_cols, expected_cols)
+
+    df_ar = report.results_to_dataframe([res_base])
+    table_ar = report.format_benchmark_table(
+        df_ar,
+        schema=collectives.AllReduceBenchmark.REPORT_SCHEMA,
+        title="AllReduceBenchmark",
+    )
+    self.assertIn("Benchmark Results (AllReduceBenchmark)", table_ar)
+    for col in expected_cols:
+      self.assertIn(col, table_ar)
+    self.assertIn("bfloat16", table_ar)
+    self.assertIn("sum", table_ar)
+    self.assertIn("2x2x2", table_ar)
+    self.assertIn("2x2x1", table_ar)
+    self.assertIn("4096", table_ar)
+    self.assertIn("32.00", table_ar)
+    self.assertIn("350.12", table_ar)
+    self.assertIn("0.0520", table_ar)
+    self.assertIn("0.0481", table_ar)
+
+    res_a2a = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="AllToAllBenchmark",
+            test_name="AllToAllBenchmark_test",
+            start_time="2026-08-18T10:00:00",
+            end_time="2026-08-18T10:01:00",
+            params={
+                "matrix_dim": 4096,
+                "mesh_shape": "2x2x2",
+                "reduce_op": "sum",
+                "sharding_strategy": "2x2x1",
+                "dtype": "bfloat16",
+            },
+            device_info={"platform": "tpu"},
+        ),
+        metrics={
+            "local_size_mb": 64.0,
+            "p50_ms": 0.05201,
+            "bandwidth_gb_s": 350.123,
+            "xprof_p50_ms": 0.04812,
+        },
+        raw_times_ms=[1.0],
+    )
+    expected_a2a_cols = [
+        "dtype",
+        "mesh_shape",
+        "sharding_strategy",
+        "matrix_dim",
+        "local_size_mb",
+        "bandwidth_gb_s",
+        "p50_ms",
+        "xprof_p50_ms",
+    ]
+    schema_a2a_cols = [
+        col for col, _ in collectives.AllToAllBenchmark.REPORT_SCHEMA
+    ]
+    self.assertEqual(schema_a2a_cols, expected_a2a_cols)
+
+    df_a2a = report.results_to_dataframe([res_a2a])
+    table_a2a = report.format_benchmark_table(
+        df_a2a,
+        schema=collectives.AllToAllBenchmark.REPORT_SCHEMA,
+        title="AllToAllBenchmark",
+    )
+    self.assertIn("Benchmark Results (AllToAllBenchmark)", table_a2a)
+    for col in expected_a2a_cols:
+      self.assertIn(col, table_a2a)
+    self.assertIn("bfloat16", table_a2a)
+    self.assertIn("2x2x2", table_a2a)
+    self.assertIn("2x2x1", table_a2a)
+    self.assertIn("4096", table_a2a)
+    self.assertIn("64.00", table_a2a)
+    self.assertIn("350.12", table_a2a)
+    self.assertIn("0.0520", table_a2a)
+    self.assertIn("0.0481", table_a2a)
+
+  def test_all_reduce_schema_coverage(self):
+    """Verify AllReduceBenchmark REPORT_SCHEMA matches output keys."""
+    params = {"matrix_dim": 64, "dtype": "bfloat16"}
+    config = collectives.CollectivesParams(**params)
+    bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
+    bm.setup()
+    test_report_utils.assert_schema_matches_output(
+        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
+    )
+
+  def test_all_gather_schema_coverage(self):
+    """Verify AllGatherBenchmark REPORT_SCHEMA matches output keys."""
+    params = {"matrix_dim": 64, "dtype": "bfloat16"}
+    config = collectives.CollectivesParams(**params)
+    bm = collectives.AllGatherBenchmark(config=config, mesh=self.mock_mesh)
+    bm.setup()
+    test_report_utils.assert_schema_matches_output(
+        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS | {"reduce_op"}
+    )
+
+  def test_all_to_all_schema_coverage(self):
+    """Verify AllToAllBenchmark REPORT_SCHEMA matches output keys."""
+    params = {"matrix_dim": 64, "dtype": "bfloat16"}
+    config = collectives.CollectivesParams(**params)
+    bm = collectives.AllToAllBenchmark(config=config, mesh=self.mock_mesh)
+    bm.setup()
+    test_report_utils.assert_schema_matches_output(
+        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS | {"reduce_op"}
+    )
+
+  def test_reduce_scatter_schema_coverage(self):
+    """Verify ReduceScatterBenchmark REPORT_SCHEMA matches output keys."""
+    params = {"matrix_dim": 64, "dtype": "bfloat16"}
+    config = collectives.CollectivesParams(**params)
+    bm = collectives.ReduceScatterBenchmark(config=config, mesh=self.mock_mesh)
+    bm.setup()
+    test_report_utils.assert_schema_matches_output(
+        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS | {"reduce_op"}
+    )
 
 
 if __name__ == "__main__":

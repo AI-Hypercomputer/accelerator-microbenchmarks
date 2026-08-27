@@ -1,11 +1,12 @@
 """Host-to-Device and Device-to-Host transfer performance benchmarks."""
 
 import dataclasses
-from typing import Any
+from typing import Any, Callable, Sequence
 
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
 import jax
 import numpy as np
 
@@ -21,8 +22,16 @@ class HostDeviceParams(base.BaseBenchmarkParams):
 
 @registry.benchmark_registry.register("host_to_device")
 class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
-  Config = HostDeviceParams
   """Benchmarks Host-to-Device transfer bandwidth."""
+
+  Config = HostDeviceParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("data_size_mib", report.format_str),
+      ("bandwidth_gb_s", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
 
   def setup(self):
     pass
@@ -65,8 +74,16 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
 
 @registry.benchmark_registry.register("device_to_host")
 class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
-  Config = HostDeviceParams
   """Benchmarks Device-to-Host transfer bandwidth."""
+
+  Config = HostDeviceParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("data_size_mib", report.format_str),
+      ("bandwidth_gb_s", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
 
   host_data: np.ndarray
   device_array: jax.Array

@@ -6,7 +6,7 @@ import dataclasses
 import datetime
 import os
 import time
-from typing import Any, Generic, Optional, Sequence, TypeVar
+from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
 
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
@@ -62,6 +62,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   """Abstract base class for microbenchmarks."""
   Config = BaseBenchmarkParams
   DEFAULT_LOCAL_DEVICE_ID: int = 0
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = ()
 
   def __init__(self, config: TConfig, mesh: Optional[jax.sharding.Mesh] = None):
     if config is None:

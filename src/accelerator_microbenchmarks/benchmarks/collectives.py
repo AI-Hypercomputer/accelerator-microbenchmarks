@@ -4,10 +4,11 @@ import dataclasses
 import glob
 import os
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Sequence
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import utils
 import jax
 from jax import core
@@ -80,8 +81,19 @@ class CollectivesParams(base.BaseBenchmarkParams):
 
 
 class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
-  Config = CollectivesParams
   """Base class for all collective communication benchmarks."""
+
+  Config = CollectivesParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("mesh_shape", report.format_str),
+      ("sharding_strategy", report.format_str),
+      ("matrix_dim", report.format_str),
+      ("shard_size_mb", report.format_2f),
+      ("bandwidth_gb_s", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
 
   def __init__(
       self, config: CollectivesParams, mesh: Optional[jax.sharding.Mesh] = None
@@ -365,6 +377,18 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
 class AllReduceBenchmark(BaseCollectiveBenchmark):
   """Benchmarks latency and bandwidth of all-reduce collective ops across devices."""
 
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("reduce_op", report.format_str),
+      ("mesh_shape", report.format_str),
+      ("sharding_strategy", report.format_str),
+      ("matrix_dim", report.format_str),
+      ("shard_size_mb", report.format_2f),
+      ("bandwidth_gb_s", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
+
   def setup(self):
     op = self.config.reduce_op.lower()
     if op not in _REDUCE_OP_MAP:
@@ -481,6 +505,17 @@ class AllGatherBenchmark(BaseCollectiveBenchmark):
 @registry.benchmark_registry.register("all_to_all")
 class AllToAllBenchmark(BaseCollectiveBenchmark):
   """Benchmarks the latency and bandwidth of jax.lax.all_to_all across devices."""
+
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("mesh_shape", report.format_str),
+      ("sharding_strategy", report.format_str),
+      ("matrix_dim", report.format_str),
+      ("local_size_mb", report.format_2f),
+      ("bandwidth_gb_s", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()

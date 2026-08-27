@@ -5,11 +5,13 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import hbm
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import jax.numpy as jnp
 import numpy as np
-
 
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
@@ -202,6 +204,66 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self.assertEqual(metrics["op_type"], op_type)
     self.assertAlmostEqual(metrics["bandwidth_gb_s"], expected_bw_gb_s)
     self.assertAlmostEqual(metrics["total_bytes_mb"], expected_bytes / 1e6)
+
+  def test_format_benchmark_table(self):
+    """Tests formatting of HBM bandwidth benchmark tables."""
+    res = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="HBMBandwidthBenchmark",
+            test_name="HBMBandwidthBenchmark_test",
+            start_time="2026-08-18T10:00:00",
+            end_time="2026-08-18T10:01:00",
+            params={
+                "size": 134217728,
+                "dtype": "bfloat16",
+                "op_type": "copy",
+                "device_id": 63,
+            },
+            device_info={"platform": "tpu"},
+        ),
+        metrics={
+            "total_bytes_mb": 268.44,
+            "p50_ms": 0.07112,
+            "bandwidth_gb_s": 7538.214,
+            "xprof_p50_ms": 0.06543,
+        },
+        raw_times_ms=[1.0],
+    )
+    expected_cols = [
+        "dtype",
+        "op_type",
+        "device_id",
+        "size",
+        "total_bytes_mb",
+        "bandwidth_gb_s",
+        "p50_ms",
+        "xprof_p50_ms",
+    ]
+    schema_cols = [col for col, _ in hbm.HBMBandwidthBenchmark.REPORT_SCHEMA]
+    self.assertEqual(schema_cols, expected_cols)
+
+    df = report.results_to_dataframe([res])
+    table = report.format_benchmark_table(
+        df,
+        schema=hbm.HBMBandwidthBenchmark.REPORT_SCHEMA,
+        title="HBMBandwidthBenchmark",
+    )
+    self.assertIn("Benchmark Results (HBMBandwidthBenchmark)", table)
+    for col in expected_cols:
+      self.assertIn(col, table)
+    self.assertIn("bfloat16", table)
+    self.assertIn("copy", table)
+    self.assertIn("63", table)
+    self.assertIn("134217728", table)
+    self.assertIn("268.44", table)
+    self.assertIn("7538.21", table)
+    self.assertIn("0.0711", table)
+    self.assertIn("0.0654", table)
+
+  def test_schema_coverage(self):
+    """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
+    self._setup_benchmark("copy")
+    test_report_utils.assert_schema_matches_output(self, self.bm)
 
 
 if __name__ == "__main__":

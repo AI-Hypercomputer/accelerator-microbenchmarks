@@ -2,10 +2,11 @@
 
 import dataclasses
 import random
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
@@ -74,8 +75,19 @@ class HBMBandwidthParams(base.BaseBenchmarkParams):
 
 @registry.benchmark_registry.register("hbm", aliases=["hbm_bandwidth"])
 class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
-  Config = HBMBandwidthParams
   """HBM bandwidth microbenchmark supporting standard STREAM kernels."""
+
+  Config = HBMBandwidthParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("op_type", report.format_str),
+      ("device_id", report.format_str),
+      ("size", report.format_str),
+      ("total_bytes_mb", report.format_2f),
+      ("bandwidth_gb_s", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
 
   def __init__(
       self, config: HBMBandwidthParams, mesh: jax.sharding.Mesh | None = None

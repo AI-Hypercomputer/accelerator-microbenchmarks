@@ -2,11 +2,12 @@
 
 import dataclasses
 import enum
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import utils
 import jax
 from jax.experimental import mesh_utils
@@ -62,6 +63,16 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
   """Benchmarks Device-to-Device (D2D) transfer bandwidth using ppermute."""
 
   Config = DeviceToDeviceParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("direction", report.format_str),
+      ("src_device_index", report.format_str),
+      ("dst_device_index", report.format_str),
+      ("data_size_mib", report.format_str),
+      ("bandwidth_gb_s", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
 
   def __init__(
       self,

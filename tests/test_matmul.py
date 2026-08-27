@@ -3,7 +3,10 @@
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import matmul
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -297,9 +300,7 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
       ("no_scaling_factors_alpha_2", False, 2.0),
       ("scaling_factors_alpha_2", True, 2.0),
   )
-  def test_run_op_with_alpha_scaling_factor(
-      self, use_scaling_factors, alpha
-  ):
+  def test_run_op_with_alpha_scaling_factor(self, use_scaling_factors, alpha):
     """Test run op with scalar multiplier alpha and scaling factors."""
     m, k, n = 32, 64, 128
     params = {
@@ -398,9 +399,89 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.assertAlmostEqual(metrics["intensity"], 532480 / 32768)
     self.assertAlmostEqual(self.bm.get_arithmetic_intensity(), 532480 / 32768)
 
+  def test_format_benchmark_table(self):
+    """Tests formatting of GEMM benchmark tables."""
+    res = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="GeneralizedGemmBenchmark",
+            test_name="GeneralizedGemmBenchmark_test",
+            start_time="2026-08-18T10:00:00",
+            end_time="2026-08-18T10:01:00",
+            params={
+                "in_dtype": "bfloat16",
+                "out_dtype": "float32",
+                "m": 4096,
+                "k": 2048,
+                "n": 8192,
+                "transpose_a": True,
+                "transpose_b": False,
+                "alpha": 1.5,
+                "beta": 0.5,
+                "use_scaling_factors": True,
+            },
+            device_info={"platform": "tpu"},
+        ),
+        metrics={
+            "total_flops": 137438953472.0,
+            "tflops_per_sec": 331.25,
+            "p50_ms": 0.4200,
+            "xprof_p50_ms": 0.4100,
+        },
+        raw_times_ms=[1.0],
+    )
+    expected_cols = [
+        "in_dtype",
+        "out_dtype",
+        "m",
+        "k",
+        "n",
+        "transpose_a",
+        "transpose_b",
+        "alpha",
+        "beta",
+        "use_scaling_factors",
+        "total_flops",
+        "tflops_per_sec",
+        "p50_ms",
+        "xprof_p50_ms",
+    ]
+    schema_cols = [
+        col for col, _ in matmul.GeneralizedGemmBenchmark.REPORT_SCHEMA
+    ]
+    self.assertEqual(schema_cols, expected_cols)
+
+    df = report.results_to_dataframe([res])
+    table = report.format_benchmark_table(
+        df,
+        schema=matmul.GeneralizedGemmBenchmark.REPORT_SCHEMA,
+        title="GeneralizedGemmBenchmark",
+    )
+    self.assertIn("Benchmark Results (GeneralizedGemmBenchmark)", table)
+    for col in expected_cols:
+      self.assertIn(col, table)
+    self.assertIn("bfloat16", table)
+    self.assertIn("float32", table)
+    self.assertIn("4096", table)
+    self.assertIn("2048", table)
+    self.assertIn("8192", table)
+    self.assertIn("True", table)
+    self.assertIn("False", table)
+    self.assertIn("1.5", table)
+    self.assertIn("0.5", table)
+    self.assertIn("137438953472.00", table)
+    self.assertIn("331.25", table)
+    self.assertIn("0.4200", table)
+    self.assertIn("0.4100", table)
+
+  def test_schema_coverage(self):
+    """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
+    self._setup_benchmark()
+    test_report_utils.assert_schema_matches_output(
+        self,
+        self.bm,
+        ignored_keys={"dtype"},  # Matmul uses in_dtype and out_dtype
+    )
 
 
 if __name__ == "__main__":
   absltest.main()
-
-
