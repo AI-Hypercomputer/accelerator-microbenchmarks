@@ -467,6 +467,15 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
 class AllGatherBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
   """Benchmarks the latency and bandwidth of jax.lax.all_gather across devices."""
 
+  def match_xprof_op_fallback(self, event: dict[str, Any]) -> bool:
+    args = event.get("args", {})
+    hlo_category = args.get("hlo_category", "")
+    offload_type = args.get("offload_type", "")
+    return (
+        hlo_category == "async-done"
+        and offload_type == "OFFLOAD_COLLECTIVE"
+    )
+
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
 
