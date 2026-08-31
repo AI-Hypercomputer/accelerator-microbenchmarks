@@ -1,5 +1,6 @@
 """Test for collective benchmarks."""
 
+import dataclasses
 import os
 
 from absl.testing import absltest
@@ -47,6 +48,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     """Verify that all_reduce is correctly registered."""
     bm_class = registry.benchmark_registry.get_benchmark("all_reduce")
     self.assertEqual(bm_class, collectives.AllReduceBenchmark)
+    self.assertEqual(bm_class.Config, collectives.AllReduceParams)
 
   def test_all_reduce_invalid_op_raises_error(self):
     """Verify that invalid reduce_op raises ValueError in setup()."""
@@ -55,7 +57,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "dtype": "bfloat16",
         "reduce_op": "invalid_op",
     }
-    config = collectives.CollectivesParams(**params)
+    config = collectives.AllReduceParams(**params)
     bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
     with self.assertRaises(ValueError):
       bm.setup()
@@ -66,7 +68,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "matrix_dim": 1024,
         "reduce_op": "max",
     }
-    config = collectives.CollectivesParams(**params)
+    config = collectives.AllReduceParams(**params)
     bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
     self.assertEqual(bm.get_run_identifier(), "dim_1024_op_max")
 
@@ -91,7 +93,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "matrix_dim": 64,
         "dtype": "bfloat16",
     }
-    config = collectives.CollectivesParams(**params)
+    config = collectives.AllReduceParams(**params)
     bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
     bm.setup()
     (data,) = bm.generate_inputs()
@@ -124,7 +126,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "dtype": "float32",
         "reduce_op": op,
     }
-    config = collectives.CollectivesParams(**params)
+    config = collectives.AllReduceParams(**params)
     bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
     bm.setup()
     (data,) = bm.generate_inputs()
@@ -235,7 +237,14 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertAlmostEqual(ag_metrics["bandwidth_gb_s"], 8.388608, places=4)
 
     # AllReduce
-    ar_bm = collectives.AllReduceBenchmark(config=config, mesh=mesh)
+    ar_config = collectives.AllReduceParams(
+        matrix_dim=1024,
+        dtype="float32",
+        mesh_shape="2x2",
+        sharding_strategy="2x2",
+        reduce_op="sum",
+    )
+    ar_bm = collectives.AllReduceBenchmark(config=ar_config, mesh=mesh)
     ar_bm.setup()
     ar_metrics = ar_bm.calculate_metrics([1.0])
     # local_size = 4194304 bytes
@@ -378,7 +387,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
             params={
                 "matrix_dim": 4096,
                 "mesh_shape": "2x2x2",
-                "reduce_op": "sum",
                 "sharding_strategy": "2x2x1",
                 "dtype": "bfloat16",
             },
@@ -428,7 +436,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
   def test_all_reduce_schema_coverage(self):
     """Verify AllReduceBenchmark REPORT_SCHEMA matches output keys."""
     params = {"matrix_dim": 64, "dtype": "bfloat16"}
-    config = collectives.CollectivesParams(**params)
+    config = collectives.AllReduceParams(**params)
     bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
     bm.setup()
     test_report_utils.assert_schema_matches_output(
@@ -442,7 +450,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm = collectives.AllGatherBenchmark(config=config, mesh=self.mock_mesh)
     bm.setup()
     test_report_utils.assert_schema_matches_output(
-        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS | {"reduce_op"}
+        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
     )
 
   def test_all_to_all_schema_coverage(self):
@@ -452,7 +460,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm = collectives.AllToAllBenchmark(config=config, mesh=self.mock_mesh)
     bm.setup()
     test_report_utils.assert_schema_matches_output(
-        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS | {"reduce_op"}
+        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
     )
 
   def test_reduce_scatter_schema_coverage(self):
@@ -462,8 +470,22 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm = collectives.ReduceScatterBenchmark(config=config, mesh=self.mock_mesh)
     bm.setup()
     test_report_utils.assert_schema_matches_output(
-        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS | {"reduce_op"}
+        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
     )
+
+  def test_collectives_params_hierarchy(self):
+    """Verify inheritance and field segregation between CollectivesParams and AllReduceParams."""
+    self.assertTrue(
+        issubclass(collectives.AllReduceParams, collectives.CollectivesParams)
+    )
+    self.assertTrue(
+        issubclass(collectives.CollectivesParams, base.BaseBenchmarkParams)
+    )
+
+    all_reduce_fields = {
+        f.name for f in dataclasses.fields(collectives.AllReduceParams)
+    }
+    self.assertIn("reduce_op", all_reduce_fields)
 
 
 if __name__ == "__main__":

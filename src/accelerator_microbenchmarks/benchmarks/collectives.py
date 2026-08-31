@@ -4,7 +4,7 @@ import dataclasses
 import glob
 import os
 import re
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
@@ -72,6 +72,10 @@ class CollectivesParams(base.BaseBenchmarkParams):
   dtype: str = "bfloat16"
   seed: int = 0
   xla_dump_dir: Optional[str] = "/tmp/xla_dump"
+
+
+@dataclasses.dataclass
+class AllReduceParams(CollectivesParams):
   reduce_op: str = dataclasses.field(
       default="sum",
       metadata={
@@ -80,7 +84,12 @@ class CollectivesParams(base.BaseBenchmarkParams):
   )
 
 
-class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
+TCollectiveConfig = TypeVar("TCollectiveConfig", bound=CollectivesParams)
+
+
+class BaseCollectiveBenchmark(
+    base.BaseBenchmark[TCollectiveConfig], Generic[TCollectiveConfig]
+):
   """Base class for all collective communication benchmarks."""
 
   Config = CollectivesParams
@@ -96,7 +105,9 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
   )
 
   def __init__(
-      self, config: CollectivesParams, mesh: Optional[jax.sharding.Mesh] = None
+      self,
+      config: TCollectiveConfig,
+      mesh: Optional[jax.sharding.Mesh] = None,
   ):
     super().__init__(config, mesh)
     self.sharding_strategy = None
@@ -105,7 +116,6 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
     mesh_shape_str = self.config.mesh_shape
     if mesh_shape_str is not None:
       try:
-
         mesh_shape = [int(i) for i in mesh_shape_str.split("x")]
         axis_names = tuple(f"d_{i}" for i in range(len(mesh_shape)))
         mesh_devices = mesh_utils.create_device_mesh(
@@ -374,9 +384,10 @@ class BaseCollectiveBenchmark(base.BaseBenchmark[CollectivesParams]):
 
 
 @registry.benchmark_registry.register("all_reduce")
-class AllReduceBenchmark(BaseCollectiveBenchmark):
+class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
   """Benchmarks latency and bandwidth of all-reduce collective ops across devices."""
 
+  Config = AllReduceParams
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("reduce_op", report.format_str),
@@ -453,7 +464,7 @@ class AllReduceBenchmark(BaseCollectiveBenchmark):
 
 
 @registry.benchmark_registry.register("all_gather")
-class AllGatherBenchmark(BaseCollectiveBenchmark):
+class AllGatherBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
   """Benchmarks the latency and bandwidth of jax.lax.all_gather across devices."""
 
   def _setup_jit_fn(self):
@@ -503,7 +514,7 @@ class AllGatherBenchmark(BaseCollectiveBenchmark):
 
 
 @registry.benchmark_registry.register("all_to_all")
-class AllToAllBenchmark(BaseCollectiveBenchmark):
+class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
   """Benchmarks the latency and bandwidth of jax.lax.all_to_all across devices."""
 
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
@@ -568,7 +579,7 @@ class AllToAllBenchmark(BaseCollectiveBenchmark):
 
 
 @registry.benchmark_registry.register("reduce_scatter")
-class ReduceScatterBenchmark(BaseCollectiveBenchmark):
+class ReduceScatterBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
   """Benchmarks the latency and bandwidth of jax.lax.psum_scatter across devices."""
 
   def _setup_jit_fn(self):

@@ -41,7 +41,7 @@ class AllReduceTpuTest(parameterized.TestCase):
         "num_runs": 2,
         "xprof_timing": True,
     }
-    config = collectives.CollectivesParams(**params)
+    config = collectives.AllReduceParams(**params)
     bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
     bm.setup()
     (data,) = bm.generate_inputs()
