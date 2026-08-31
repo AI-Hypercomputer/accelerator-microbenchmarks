@@ -1,0 +1,9 @@
+benchmark:
+  name: gemm_generalized
+  min_duration_s: 2.0 # Test the sustained run logic
+  warmup_tries: 2
+  num_runs: 2
+  m: 1024
+  k: 1024
+  n: 1024
+  in_dtype: "float8_e4m3fn"

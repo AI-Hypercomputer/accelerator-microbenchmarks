@@ -1,0 +1,12 @@
+# Trace-Based Roofline Verification Config
+hardware:
+  peak_tflops: 459.0
+  hbm_bw: 1200.0
+
+benchmark:
+  name: simple_add
+  warmup_tries: 2
+  num_runs: 5
+  dtype: "bfloat16"
+  use_trace_roofline: true
+  size: 1048576

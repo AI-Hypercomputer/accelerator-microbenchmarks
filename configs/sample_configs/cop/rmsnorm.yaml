@@ -1,0 +1,11 @@
+benchmark:
+  name: rmsnorm
+  warmup_tries: 2
+  num_runs: 10
+  dtype: "bfloat16"
+  xprof_timing: true
+  min_duration_s: 0.1
+  sweep:
+    mode: ["fwd", "bwd"]
+    batch: [1024, 2048]
+    dim: [4096, 8192]

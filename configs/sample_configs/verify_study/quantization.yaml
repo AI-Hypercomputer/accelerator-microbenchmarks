@@ -1,0 +1,7 @@
+benchmark:
+  name: quantization
+  min_duration_s: 2.0
+  warmup_tries: 2
+  num_runs: 2
+  m: 2048
+  n: 2048

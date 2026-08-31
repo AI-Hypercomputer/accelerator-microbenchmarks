@@ -1,0 +1,17 @@
+# Roofline Verification Config
+hardware:
+  peak_tflops: 459.0 # TPU v4 peak BF16 TFLOPS (approx)
+  hbm_bw: 
+    1048576: 1200.0 # 1GB/s at 1MB transfer
+    1073741824: 1600.0 # 1.6TB/s at 1GB transfer
+
+benchmark:
+  name: gemm_generalized
+  warmup_tries: 2
+  num_runs: 5
+  dtype: "bfloat16"
+  m: 4096
+  k: 4096
+  n: 4096
+  in_dtype: "float8_e4m3fn"
+  out_dtype: "bfloat16"

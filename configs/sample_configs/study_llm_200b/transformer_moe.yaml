@@ -1,0 +1,15 @@
+# High-Fidelity Study Configuration: LLM-200B
+benchmark:
+  # Component Benchmarks (Section 3.4)
+  # Configuration C1 from Table
+  name: transformer_layer_moe
+  min_duration_s: 5.0
+  warmup_tries: 10
+  num_runs: 5
+  dtype: "bfloat16"
+  model: "LLM-200B"
+  tp: 4
+  etp: 1
+  cp: 2
+  ep: 16
+  mslen: 8192 # seq_len / cp

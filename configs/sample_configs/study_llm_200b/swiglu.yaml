@@ -1,0 +1,9 @@
+# High-Fidelity Study Configuration: LLM-200B
+benchmark:
+  name: swiglu
+  min_duration_s: 5.0
+  warmup_tries: 10
+  num_runs: 5
+  dtype: "bfloat16"
+  model: "LLM-200B"
+  dim: 16384 # model_dim

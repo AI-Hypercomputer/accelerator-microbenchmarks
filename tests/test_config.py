@@ -81,55 +81,98 @@ class ConfigTest(absltest.TestCase):
   @mock.patch(
       "accelerator_microbenchmarks.core.csv_loader.load_shapes_from_csv"
   )
-  def test_load_config(self, mock_load_csv):
-    """Test loading a hierarchical config."""
+  def test_load_config_with_sweeps(self, mock_load_csv):
+    """Test loading a single-benchmark config with sweeps and hardware."""
+    del mock_load_csv
     yaml_content = """
-global:
-  param1: 100
+system: ironwood
 hardware:
   tflops: 50.0
-benchmarks:
-  - name: bm1
-    sweep:
-      param2: [1, 2]
-  - name: bm2
-    model: LLM-36B
-  - name: bm3
-    csv_shapes: shapes.csv
+
+benchmark:
+  name: all_reduce
+  param1: 100
+  sweep:
+    param2: [1, 2]
 """
-    config_path = os.path.join(self.test_dir.name, "config.yaml")
+    config_path = os.path.join(self.test_dir.name, "config_sweep.yaml")
     with open(config_path, "w", encoding="utf-8") as f:
       f.write(yaml_content)
 
-    # Mock CSV loader to return one row
-    mock_load_csv.return_value = [{"csv_param": "value"}]
-
     expanded = config.load_config(config_path)
 
-    # bm1: 2 combinations (sweep)
-    # bm2: 1 combination (model LLM-36B)
-    # bm3: 1 combination (from mocked CSV)
-    # Total = 2 + 1 + 1 = 4
-    self.assertLen(expanded, 4)
-
-    # Check bm1 expansion
-    self.assertEqual(expanded[0]["name"], "bm1")
+    self.assertLen(expanded, 2)
+    self.assertEqual(expanded[0]["name"], "all_reduce")
+    self.assertEqual(expanded[0]["system"], "ironwood")
     self.assertEqual(expanded[0]["param1"], 100)
     self.assertEqual(expanded[0]["hardware_stats"], {"tflops": 50.0})
     self.assertEqual(expanded[0]["param2"], 1)
 
-    self.assertEqual(expanded[1]["name"], "bm1")
+    self.assertEqual(expanded[1]["name"], "all_reduce")
     self.assertEqual(expanded[1]["param2"], 2)
 
-    # Check bm2 expansion (model presets)
-    self.assertEqual(expanded[2]["name"], "bm2")
-    self.assertEqual(expanded[2]["layers"], 60)
-    self.assertEqual(expanded[2]["model_dim"], 7168)
+  def test_load_config_with_model(self):
+    """Test loading a config with model presets."""
+    yaml_content = """
+benchmark:
+  name: swiglu
+  model: LLM-36B
+"""
+    config_path = os.path.join(self.test_dir.name, "config_model.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
 
-    # Check bm3 expansion (CSV shapes)
-    self.assertEqual(expanded[3]["name"], "bm3")
-    self.assertEqual(expanded[3]["csv_param"], "value")
+    expanded = config.load_config(config_path)
+
+    self.assertLen(expanded, 1)
+    self.assertEqual(expanded[0]["name"], "swiglu")
+    self.assertEqual(expanded[0]["layers"], 60)
+    self.assertEqual(expanded[0]["model_dim"], 7168)
+
+  @mock.patch(
+      "accelerator_microbenchmarks.core.csv_loader.load_shapes_from_csv"
+  )
+  def test_load_config_with_csv_shapes(self, mock_load_csv):
+    """Test loading a config with CSV shapes."""
+    mock_load_csv.return_value = [
+        {"m": 128, "n": 128, "k": 128},
+        {"m": 256, "n": 256, "k": 256},
+    ]
+    yaml_content = """
+benchmark:
+  name: gemm_generalized
+  in_dtype: float32
+  csv_shapes: shapes.csv
+"""
+    config_path = os.path.join(self.test_dir.name, "config_csv.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    expanded = config.load_config(config_path)
+
+    self.assertLen(expanded, 2)
+    self.assertEqual(expanded[0]["name"], "gemm_generalized")
+    self.assertEqual(expanded[0]["in_dtype"], "float32")
+    self.assertEqual(expanded[0]["m"], 128)
+    self.assertEqual(expanded[1]["name"], "gemm_generalized")
+    self.assertEqual(expanded[1]["m"], 256)
+
+  def test_load_config_missing_benchmark_raises_error(self):
+    """Verifies that missing benchmark task name raises ValueError."""
+    yaml_content = """
+warmup_tries: 2
+num_runs: 10
+"""
+    config_path = os.path.join(self.test_dir.name, "config_missing.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    with self.assertRaises(ValueError) as ctx:
+      config.load_config(config_path)
+    self.assertIn("must define a 'benchmark:' mapping", str(ctx.exception))
 
 
 if __name__ == "__main__":
   absltest.main()
+
+

@@ -1,13 +1,13 @@
-global:
-  system: ironwood
+system: ironwood
+
+benchmark:
+  name: all_reduce
   warmup_tries: 2
   num_runs: 5
   dtype: bfloat16
   xprof_timing: true
-benchmarks:
-- mesh_shape: 16x4x2
-  name: all_reduce
   reduce_op: sum
+  mesh_shape: 16x4x2
+  sharding_strategy: 16x4x2
   sweep:
     matrix_dim: [512, 1024, 2048]
-  sharding_strategy: 16x4x2

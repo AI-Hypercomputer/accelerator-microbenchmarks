@@ -3,6 +3,8 @@
 import dataclasses
 import itertools
 from typing import Any
+
+
 from accelerator_microbenchmarks.core import csv_loader
 from accelerator_microbenchmarks.core import model_configs
 import yaml
@@ -66,43 +68,65 @@ def resolve_params(
 
 
 def load_config(path: str) -> list[dict[str, Any]]:
-  """Load and expand hierarchical benchmark configuration."""
+  """Load and expand a single-benchmark YAML configuration.
 
-  with open(path, "r") as f:
+  Args:
+    path: Path to the YAML configuration file.
+
+  Returns:
+    A list of resolved parameter dictionaries, each containing 'name': <benchmark_name>.
+
+  Raises:
+    ValueError: If the file is not a dictionary, lacks 'benchmark:', or lacks
+      a benchmark name.
+  """
+  with open(path, "r", encoding="utf-8") as f:
     data = yaml.safe_load(f)
 
-  global_params = data.get("global", {})
-  hardware_stats = data.get("hardware", {})
-  if hardware_stats:
-    global_params["hardware_stats"] = hardware_stats
+  if not isinstance(data, dict):
+    raise ValueError(f"Config file at {path} must define a YAML dictionary.")
 
-  benchmarks_data = data.get("benchmarks", [])
+  if "benchmark" not in data or not isinstance(data["benchmark"], dict):
+    raise ValueError(
+        f"Config file at '{path}' must define a 'benchmark:' mapping."
+    )
 
-  fully_expanded = []
-  for b_entry in benchmarks_data:
-    # 1. Handle Model Presets
-    if "model" in b_entry:
-      model_name = b_entry.pop("model")
-      if model_name in model_configs.MODELS:
+  # 1. Separate Top-Level Metadata from Benchmark Spec
+  top_level = data.copy()
+  benchmark_spec = top_level.pop("benchmark").copy()
 
-        model_params = dataclasses.asdict(model_configs.MODELS[model_name])
-        for k, v in model_params.items():
-          if k not in b_entry:
-            b_entry[k] = v
+  benchmark_name = benchmark_spec.pop("name", None)
+  if not benchmark_name:
+    raise ValueError(
+        f"Config file at '{path}' must specify 'name:' inside the 'benchmark:' mapping."
+    )
 
-    # 2. Handle CSV Shapes
-    if "csv_shapes" in b_entry:
-      csv_path = b_entry.pop("csv_shapes")
-      # If path is relative, it should be relative to the config file or CWD
-      # For simplicity, assuming relative to CWD or absolute
-      csv_entries = csv_loader.load_shapes_from_csv(csv_path)
+  # 2. Extract top-level hardware stats if present
+  hardware = top_level.pop("hardware", None)
+  global_params = top_level
+  if hardware:
+    global_params["hardware_stats"] = hardware
 
-      for row_params in csv_entries:
-        # Create a specific entry for this CSV row
-        specific_entry = b_entry.copy()
-        specific_entry.update(row_params)
-        fully_expanded.extend(resolve_params(global_params, specific_entry))
-    else:
-      fully_expanded.extend(resolve_params(global_params, b_entry))
+  # 3. Expand Model Presets
+  if "model" in benchmark_spec:
+    model_name = benchmark_spec.pop("model")
+    if model_name in model_configs.MODELS:
+      model_params = dataclasses.asdict(model_configs.MODELS[model_name])
+      for k, v in model_params.items():
+        if k not in benchmark_spec:
+          benchmark_spec[k] = v
 
-  return fully_expanded
+  # 4. Expand CSV Shapes & Parameter Sweeps
+  benchmark_spec["name"] = benchmark_name
+  if "csv_shapes" in benchmark_spec:
+    csv_path = benchmark_spec.pop("csv_shapes")
+    csv_entries = csv_loader.load_shapes_from_csv(csv_path)
+    fully_expanded = []
+    for row_params in csv_entries:
+      entry = benchmark_spec.copy()
+      entry.update(row_params)
+      fully_expanded.extend(resolve_params(global_params, entry))
+    return fully_expanded
+
+  return resolve_params(global_params, benchmark_spec)
+

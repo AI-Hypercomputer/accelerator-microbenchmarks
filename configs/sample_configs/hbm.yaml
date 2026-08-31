@@ -1,0 +1,18 @@
+# HBM Bandwidth Sweep
+system: "ironwood"
+
+benchmark:
+  name: hbm_bandwidth
+  warmup_tries: 5
+  num_runs: 20
+  dtype: "bfloat16"
+  xprof_timing: true
+  sweep:
+    # Sweep from 1MB to 4GB
+    # size is number of elements, so for bfloat16 (2 bytes):
+    # 512K elements = 1MB (total 2MB moved)
+    # 512M elements = 1GB (total 2GB moved)
+    size:
+      start: 1048576 # 1M elements
+      end: 536870912 # 512M elements
+      multiplier: 2

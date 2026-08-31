@@ -1,0 +1,13 @@
+# Collective communication demonstration
+system: "ironwood"
+
+benchmark:
+  name: all_reduce
+  warmup_tries: 2
+  num_runs: 5
+  dtype: "bfloat16"
+  xprof_timing: true
+  reduce_op: "sum"
+  mesh_shape: "8x4x4" # Example mesh_shape, can be updated based on available devices
+  sweep:
+    matrix_dim: [512, 1024, 2048]

@@ -1,17 +1,16 @@
-global:
-  system: "ironwood"
+system: "ironwood"
+
+benchmark:
+  name: attention_flashed
   warmup_tries: 2
   num_runs: 5
   dtype: "bfloat16"
   xprof_timing: true
-
-benchmarks:
-  - name: attention_flashed
-    batch: 1
-    num_q_heads: 128
-    num_kv_heads: 8
-    head_dim: 256
-    sweep:
-      seq_len: [4096, 8192, 16384, 32768]
-      causal: [true, false]
-      mode: ["fwd", "bwd"]
+  batch: 1
+  num_q_heads: 128
+  num_kv_heads: 8
+  head_dim: 256
+  sweep:
+    seq_len: [4096, 8192, 16384, 32768]
+    causal: [true, false]
+    mode: ["fwd", "bwd"]
