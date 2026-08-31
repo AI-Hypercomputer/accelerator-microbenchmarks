@@ -34,6 +34,10 @@ COLLECTIVE_BENCHMARK_MAP = {
     "all_to_all": "benchmark_collectives.all_to_all_benchmark",
     "ppermute": "benchmark_collectives.ppermute_benchmark",
     "send_recv": "benchmark_send_recv.send_recv_benchmark",
+    "all_gather_pmap": "benchmark_collectives_pmap.all_gather_benchmark_pmap",
+    "psum_pmap": "benchmark_collectives_pmap.psum_benchmark_pmap",
+    "psum_scatter_pmap": "benchmark_collectives_pmap.psum_scatter_benchmark_pmap",
+    "all_to_all_pmap": "benchmark_collectives_pmap.all_to_all_benchmark_pmap",
 }
 
 MATMUL_BENCHMARK_MAP = {
@@ -403,17 +407,23 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
             benchmark_results = benchmark_func(**benchmark_param)
         except Exception as e:  # pylint: disable=broad-except
             print(f"Benchmark func failed: {e}")
+            import traceback
+            traceback.print_exc()
             continue
         test_end_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )
         xla_output = None
         if xla_dump_dir:
+            anchor_func_name = (
+                "jit__fun" if benchmark_name.endswith("_pmap") else "jit_f"
+            )
             xla_output = rename_xla_dump(
                 tmp_xla_dump_dir=TMP_XLA_DUMP_DIR,
                 dest_xla_dump_dir=xla_dump_dir,
                 benchmark_name=benchmark_name,
                 benchmark_param=original_benchmark_param,
+                anchor_func_name=anchor_func_name,
             )
         benchmark_results["xla_output"] = xla_output
         # Filter benchmark_results to include only keys present in
