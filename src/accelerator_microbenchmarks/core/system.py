@@ -1,7 +1,9 @@
 """Hardware system specifications for roofline analysis."""
 
 import dataclasses
+import importlib.metadata
 from typing import Any
+import jax
 
 
 @dataclasses.dataclass
@@ -66,21 +68,46 @@ IRONWOOD = SystemConfig(
     ),
 )
 
-# TPU v6e (Trillium)
-V6E = SystemConfig(
-    name="v6e",
+# TPU v6e (Trillium / Ghostlite / GLC)
+TRILLIUM = SystemConfig(
+    name="trillium",
     topology_dimension=2,
+    tflops=TflopsConfig(
+        peak_tflops_per_dtype={
+            "bfloat16": 918.0,
+            "float32": 459.0,
+            "float8_e5m2": 918.0,
+            "float8_e4m3fn": 918.0,
+            "int8": 1836.0,
+            "int4": 3672.0,
+        }
+    ),
+    ici=IciConfig(
+        peak_bw_gbps=800.0,
+        bidirectional=True,
+    ),
+    hbm=HbmConfig(
+        curve_gbps=[
+            (1024, 50.0),
+            (1048576, 800.0),
+            (104857600, 1400.0),
+            (1073741824, 1638.4),
+        ]
+    ),
 )
 
 SYSTEMS: dict[str, SystemConfig] = {
-    # TPU v7x
     "ironwood": IRONWOOD,
-    "gfc": IRONWOOD,
-    "tpu7x": IRONWOOD,
+    "gfc": IRONWOOD,  # Alias for Ghostfish/Ironwood
+    "v7": IRONWOOD,  # Alias for Ghostfish/Ironwood
     "tpu v7x": IRONWOOD,
-    # TPU v6e
-    "v6e": V6E,
-    "tpu v6 lite": V6E,
+    "tpu7x": IRONWOOD,
+    "ghostlite": TRILLIUM,
+    "v6e": TRILLIUM,  # Alias for Ghostlite/Trillium
+    "trillium": TRILLIUM,  # Alias for Ghostlite/Trillium
+    "glc": TRILLIUM,  # Alias for Ghostlite Core/Trillium
+    "tpu v6 lite": TRILLIUM,
+    "tpu v6": TRILLIUM,
 }
 
 
@@ -94,8 +121,6 @@ def get_system(name: str) -> SystemConfig:
 
 def get_runtime_device_info() -> dict[str, Any]:
   """Extracts runtime environment details including JAX and LibTPU versions."""
-  import jax
-  import importlib.metadata
 
   info = {
       "platform": str(jax.default_backend()),

@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from typing import List, Optional, Sequence
+from typing import Sequence
 
 import simple_parsing
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
@@ -31,7 +31,10 @@ def _add_common_execution_args(parser) -> None:
       "--hw",
       type=str,
       default=None,
-      help="Hardware target environment (e.g. ironwood, gfc).",
+      help=(
+          "Hardware target environment (e.g. v6e, ghostlite, trillium,"
+          " ironwood, gfc)."
+      ),
   )
 
 
@@ -99,7 +102,8 @@ def create_parser() -> simple_parsing.ArgumentParser:
       dest="task", required=True, title="Supported Tasks"
   )
 
-  # Dynamically register all non-experimental benchmark tasks and their Config dataclasses
+  # Dynamically register all non-experimental benchmark tasks and their Config
+  # dataclasses
   benchmark_loader.load_all_benchmarks()
   for task_name in registry.benchmark_registry.list_benchmark_names(
       include_experimental=False, include_aliases=False
