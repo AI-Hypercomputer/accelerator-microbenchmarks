@@ -580,7 +580,7 @@ class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
       participating_ranks: int = 1,
       tf_multiplier: int = 1,
   ):
-    local_size_bytes = dim * num_devices * _BASE_N * _BASE_K * itemsize
+    local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
     data_transferred = (
         local_size_bytes * (participating_ranks / max(rank, 1)) * tf_multiplier
     )
