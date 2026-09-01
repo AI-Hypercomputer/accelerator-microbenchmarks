@@ -24,10 +24,113 @@ class TestCli(absltest.TestCase):
       self.assertIn("platform", output)
       self.assertIn("benchmark", output)
 
-  def test_platform_describe_not_implemented(self):
-    """Verifies that `tpums platform describe` raises NotImplementedError."""
-    with self.assertRaises(NotImplementedError):
+  def test_platform_describe(self):
+    """Verifies that `tpums platform describe` outputs valid platform JSON."""
+    with mock.patch("sys.stdout", new=io.StringIO()) as fake_out:
       cli.run(["platform", "describe"])
+      output = fake_out.getvalue()
+      data = json.loads(output)
+      self.assertIsInstance(data, dict)
+      expected_keys = {
+          "tpu_type",
+          "topology",
+          "total_devices",
+          "local_devices",
+          "process_count",
+          "process_index",
+          "python_version",
+          "jax_version",
+          "jaxlib_version",
+          "libtpu_version",
+      }
+      self.assertEqual(set(data.keys()), expected_keys)
+      self.assertIsInstance(data["tpu_type"], str)
+      self.assertIsInstance(data["topology"], str)
+      self.assertIsInstance(data["total_devices"], int)
+      self.assertIsInstance(data["local_devices"], int)
+      self.assertIsInstance(data["process_count"], int)
+      self.assertIsInstance(data["process_index"], int)
+      self.assertIsInstance(data["python_version"], str)
+      self.assertIsInstance(data["jax_version"], str)
+      self.assertIsInstance(data["jaxlib_version"], str)
+      self.assertIsInstance(data["libtpu_version"], str)
+
+  def test_platform_describe_mocked(self):
+    """Verifies that `tpums platform describe` outputs mock return value."""
+    mock_desc = {
+        "tpu_type": "TPU v7x",
+        "topology": "2x2x1",
+        "total_devices": 4,
+        "local_devices": 4,
+        "process_count": 1,
+        "process_index": 0,
+        "python_version": "3.11.0",
+        "jax_version": "0.4.30",
+        "jaxlib_version": "0.4.30",
+        "libtpu_version": "0.1.dev20240101",
+    }
+    with mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_description",
+        return_value=mock_desc,
+    ):
+      with mock.patch("sys.stdout", new=io.StringIO()) as fake_out, mock.patch(
+          "sys.stderr", new=io.StringIO()
+      ) as fake_err:
+        cli.run(["platform", "describe"])
+        output = fake_out.getvalue()
+        err_output = fake_err.getvalue()
+        data = json.loads(output)
+        self.assertEqual(data, mock_desc)
+        self.assertNotIn("WARNING: Running in non-TPU", err_output)
+
+  def test_platform_describe_cpu_warning(self):
+    """Verifies that `tpums platform describe` prints warning on CPU environment."""
+    mock_desc = {
+        "tpu_type": "none",
+        "topology": "none",
+        "total_devices": 1,
+        "local_devices": 1,
+        "process_count": 1,
+        "process_index": 0,
+        "python_version": "3.11.0",
+        "jax_version": "0.4.30",
+        "jaxlib_version": "0.4.30",
+        "libtpu_version": "unknown",
+    }
+    with mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_description",
+        return_value=mock_desc,
+    ):
+      with mock.patch("sys.stdout", new=io.StringIO()) as fake_out, mock.patch(
+          "sys.stderr", new=io.StringIO()
+      ) as fake_err:
+        cli.run(["platform", "describe"])
+        output = fake_out.getvalue()
+        err_output = fake_err.getvalue()
+        data = json.loads(output)
+        self.assertEqual(data, mock_desc)
+        self.assertIn(
+            "WARNING: Running in non-TPU (CPU) environment. No TPU devices"
+            " detected.",
+            err_output,
+        )
+
+  def test_platform_describe_runtime_error_exits(self):
+    """Verifies that `tpums platform describe` outputs to stderr and exits on RuntimeError."""
+    with mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_description",
+        side_effect=RuntimeError(
+            "TPU runtime environment is not properly initialized"
+        ),
+    ):
+      with mock.patch("sys.stderr", new=io.StringIO()) as fake_err:
+        with self.assertRaises(SystemExit) as cm:
+          cli.run(["platform", "describe"])
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn(
+            "Error: TPU runtime environment is not properly initialized",
+            fake_err.getvalue(),
+        )
 
   def test_benchmark_list(self):
     """Verifies that `tpums benchmark list` outputs JSON list of tasks."""

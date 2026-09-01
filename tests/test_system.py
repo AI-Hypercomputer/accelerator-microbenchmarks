@@ -15,15 +15,27 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(sys_config.name, "ironwood")
     self.assertIsInstance(sys_config, system.SystemConfig)
 
-    # Test alias
-    sys_config_alias = system.get_system("gfc")
-    self.assertEqual(sys_config_alias.name, "ironwood")
-    self.assertEqual(sys_config_alias, sys_config)
+    # Test aliases
+    for alias in ("gfc", "tpu v7x", "tpu7x", "TPU7x", "ironwood"):
+      sys_config_alias = system.get_system(alias)
+      self.assertEqual(sys_config_alias.name, "ironwood")
+      self.assertEqual(sys_config_alias, sys_config)
+
+    # Test v6e and aliases
+    v6e_config = system.get_system("v6e")
+    self.assertEqual(v6e_config.name, "v6e")
+    self.assertIsInstance(v6e_config, system.SystemConfig)
+    for alias in ("tpu v6 lite",):
+      v6e_config_alias = system.get_system(alias)
+      self.assertEqual(v6e_config_alias.name, "v6e")
+      self.assertEqual(v6e_config_alias, v6e_config)
 
   def test_get_system_case_insensitive(self):
     """Verify that get_system is case insensitive."""
     sys_config = system.get_system("IRONWOOD")
     self.assertEqual(sys_config.name, "ironwood")
+    sys_config_v6e = system.get_system("V6E")
+    self.assertEqual(sys_config_v6e.name, "v6e")
 
   def test_get_system_invalid(self):
     """Verify that get_system raises ValueError for invalid names."""
@@ -34,6 +46,7 @@ class SystemTest(absltest.TestCase):
     """Verify that the IRONWOOD preset has correct values."""
     sys_config = system.IRONWOOD
     self.assertEqual(sys_config.name, "ironwood")
+    self.assertEqual(sys_config.topology_dimension, 3)
 
     # Test compute stats
     self.assertEqual(
@@ -57,6 +70,15 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(sys_config.hbm.curve_gbps[1], (1048576, 2000.0))
     self.assertEqual(sys_config.hbm.curve_gbps[2], (104857600, 5000.0))
     self.assertEqual(sys_config.hbm.curve_gbps[3], (1073741824, 7380.0))
+
+  def test_system_config_v6e_presets(self):
+    """Verify that the V6E preset has correct values."""
+    sys_config = system.V6E
+    self.assertEqual(sys_config.name, "v6e")
+    self.assertEqual(sys_config.topology_dimension, 2)
+    self.assertIsNone(sys_config.tflops)
+    self.assertIsNone(sys_config.ici)
+    self.assertIsNone(sys_config.hbm)
 
   def test_get_runtime_device_info_success(self):
     with mock.patch("jax.default_backend", return_value="cpu"):
@@ -96,7 +118,9 @@ class SystemTest(absltest.TestCase):
                 "jax.devices", side_effect=Exception("no generic context")
             ):
               info = system.get_runtime_device_info()
-
+              self.assertEqual(info["platform"], "cpu")
+              self.assertEqual(info["device_count"], 1)
+              self.assertEqual(info["local_device_count"], 1)
               self.assertNotIn("libtpu_version", info)
               self.assertNotIn("chip_version", info)
 

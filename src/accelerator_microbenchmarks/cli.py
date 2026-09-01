@@ -8,6 +8,7 @@ from typing import List, Optional, Sequence
 import simple_parsing
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import config
+from accelerator_microbenchmarks.core import platform as core_platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
 
@@ -128,8 +129,19 @@ def run(argv: Sequence[str]) -> None:
 
   # 1. Handle `tpums platform describe`
   if args.resource == "platform" and args.action == "describe":
-    # TODO: Implement platform describe.
-    raise NotImplementedError("Platform describe is not yet implemented.")
+    try:
+      desc = core_platform.get_platform_description()
+      if desc.get("tpu_type") == "none":
+        print(
+            "WARNING: Running in non-TPU (CPU) environment. No TPU devices"
+            " detected.",
+            file=sys.stderr,
+        )
+      print(json.dumps(desc, indent=2))
+      return
+    except RuntimeError as e:
+      print(f"Error: {e}", file=sys.stderr)
+      sys.exit(1)
 
   # 2. Handle `tpums benchmark list`
   if args.resource == "benchmark" and args.action == "list":

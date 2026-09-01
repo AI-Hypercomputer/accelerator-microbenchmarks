@@ -116,14 +116,18 @@ def run_benchmarks(
       if sys_name and not config_obj.hardware_stats:
         try:
           sys_config = system.get_system(sys_name)
-          config_obj.hardware_stats = {
-              "tflops": sys_config.tflops.peak_tflops_per_dtype,
-              "hbm_bw": sys_config.hbm.curve_gbps,
-              "ici": {
-                  "peak_bw_gbps": sys_config.ici.peak_bw_gbps,
-                  "bidirectional": sys_config.ici.bidirectional,
-              },
-          }
+          hardware_stats = {}
+          if sys_config.tflops:
+            hardware_stats["tflops"] = sys_config.tflops.peak_tflops_per_dtype
+          if sys_config.hbm:
+            hardware_stats["hbm_bw"] = sys_config.hbm.curve_gbps
+          if sys_config.ici:
+            hardware_stats["ici"] = {
+                "peak_bw_gbps": sys_config.ici.peak_bw_gbps,
+                "bidirectional": sys_config.ici.bidirectional,
+            }
+          if hardware_stats:
+            config_obj.hardware_stats = hardware_stats
         except Exception as e:
           print(f"Warning: Could not load system config for {sys_name}: {e}")
 

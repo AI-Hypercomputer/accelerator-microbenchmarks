@@ -3,6 +3,7 @@
 import dataclasses
 from typing import Any
 
+
 @dataclasses.dataclass
 class TflopsConfig:
   """Compute throughput specifications per datatype."""
@@ -32,14 +33,16 @@ class SystemConfig:
   """System hardware specifications."""
 
   name: str
-  tflops: TflopsConfig
-  ici: IciConfig
-  hbm: HbmConfig
+  topology_dimension: int = 3
+  tflops: TflopsConfig | None = None
+  ici: IciConfig | None = None
+  hbm: HbmConfig | None = None
 
 
 # TPU v7x (Ironwood / Ghostfish / GFC)
 IRONWOOD = SystemConfig(
     name="ironwood",
+    topology_dimension=3,
     tflops=TflopsConfig(
         peak_tflops_per_dtype={
             "bfloat16": 2307.0,
@@ -63,9 +66,21 @@ IRONWOOD = SystemConfig(
     ),
 )
 
-SYSTEMS = {
+# TPU v6e (Trillium)
+V6E = SystemConfig(
+    name="v6e",
+    topology_dimension=2,
+)
+
+SYSTEMS: dict[str, SystemConfig] = {
+    # TPU v7x
     "ironwood": IRONWOOD,
-    "gfc": IRONWOOD,  # Alias for Ghostfish/Ironwood
+    "gfc": IRONWOOD,
+    "tpu7x": IRONWOOD,
+    "tpu v7x": IRONWOOD,
+    # TPU v6e
+    "v6e": V6E,
+    "tpu v6 lite": V6E,
 }
 
 
@@ -103,3 +118,4 @@ def get_runtime_device_info() -> dict[str, Any]:
     pass
 
   return info
+  # pylint: enable=g-import-not-at-top,broad-exception-caught
