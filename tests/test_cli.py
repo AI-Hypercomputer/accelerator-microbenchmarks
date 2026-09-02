@@ -2,10 +2,13 @@
 
 import io
 import json
+import sys
 from unittest import mock
 
 from absl.testing import absltest
 from accelerator_microbenchmarks import cli
+from accelerator_microbenchmarks.core import platform
+from accelerator_microbenchmarks.core import runner
 
 
 class TestCli(absltest.TestCase):
@@ -17,7 +20,7 @@ class TestCli(absltest.TestCase):
 
   def test_help_menu(self):
     """Verifies that top-level help menu renders correctly."""
-    with mock.patch("sys.stdout", new=io.StringIO()) as fake_out:
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
       cli.run([])
       output = fake_out.getvalue()
       self.assertIn("usage: tpums", output)
@@ -26,7 +29,7 @@ class TestCli(absltest.TestCase):
 
   def test_platform_describe(self):
     """Verifies that `tpums platform describe` outputs valid platform JSON."""
-    with mock.patch("sys.stdout", new=io.StringIO()) as fake_out:
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
       cli.run(["platform", "describe"])
       output = fake_out.getvalue()
       data = json.loads(output)
@@ -69,12 +72,15 @@ class TestCli(absltest.TestCase):
         "jaxlib_version": "0.4.30",
         "libtpu_version": "0.1.dev20240101",
     }
-    with mock.patch(
-        "accelerator_microbenchmarks.core.platform.get_platform_description",
+    with mock.patch.object(
+        platform,
+        "get_platform_description",
         return_value=mock_desc,
     ):
-      with mock.patch("sys.stdout", new=io.StringIO()) as fake_out, mock.patch(
-          "sys.stderr", new=io.StringIO()
+      with mock.patch.object(
+          sys, "stdout", new=io.StringIO()
+      ) as fake_out, mock.patch.object(
+          sys, "stderr", new=io.StringIO()
       ) as fake_err:
         cli.run(["platform", "describe"])
         output = fake_out.getvalue()
@@ -97,12 +103,15 @@ class TestCli(absltest.TestCase):
         "jaxlib_version": "0.4.30",
         "libtpu_version": "unknown",
     }
-    with mock.patch(
-        "accelerator_microbenchmarks.core.platform.get_platform_description",
+    with mock.patch.object(
+        platform,
+        "get_platform_description",
         return_value=mock_desc,
     ):
-      with mock.patch("sys.stdout", new=io.StringIO()) as fake_out, mock.patch(
-          "sys.stderr", new=io.StringIO()
+      with mock.patch.object(
+          sys, "stdout", new=io.StringIO()
+      ) as fake_out, mock.patch.object(
+          sys, "stderr", new=io.StringIO()
       ) as fake_err:
         cli.run(["platform", "describe"])
         output = fake_out.getvalue()
@@ -117,13 +126,14 @@ class TestCli(absltest.TestCase):
 
   def test_platform_describe_runtime_error_exits(self):
     """Verifies that `tpums platform describe` outputs to stderr and exits on RuntimeError."""
-    with mock.patch(
-        "accelerator_microbenchmarks.core.platform.get_platform_description",
+    with mock.patch.object(
+        platform,
+        "get_platform_description",
         side_effect=RuntimeError(
             "TPU runtime environment is not properly initialized"
         ),
     ):
-      with mock.patch("sys.stderr", new=io.StringIO()) as fake_err:
+      with mock.patch.object(sys, "stderr", new=io.StringIO()) as fake_err:
         with self.assertRaises(SystemExit) as cm:
           cli.run(["platform", "describe"])
         self.assertEqual(cm.exception.code, 1)
@@ -134,7 +144,7 @@ class TestCli(absltest.TestCase):
 
   def test_benchmark_list(self):
     """Verifies that `tpums benchmark list` outputs JSON list of tasks."""
-    with mock.patch("sys.stdout", new=io.StringIO()) as fake_out:
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
       cli.run(["benchmark", "list"])
       output = fake_out.getvalue()
       data = json.loads(output)
@@ -145,7 +155,7 @@ class TestCli(absltest.TestCase):
       self.assertIn("all_reduce", tasks)
       self.assertIn("device_to_device", tasks)
 
-  @mock.patch("accelerator_microbenchmarks.core.runner.run_benchmarks")
+  @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_hbm(self, mock_run_benchmarks):
     """Verifies that `tpums benchmark run hbm` parses args and calls runner."""
     cli.run(["benchmark", "run", "hbm", "--size", "134217728", "--dtype", "bfloat16"])
@@ -158,7 +168,7 @@ class TestCli(absltest.TestCase):
     self.assertEqual(task_config.size, 134217728)
     self.assertEqual(task_config.dtype, "bfloat16")
 
-  @mock.patch("accelerator_microbenchmarks.core.runner.run_benchmarks")
+  @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_gemm(self, mock_run_benchmarks):
     """Verifies that `tpums benchmark run gemm` parses args and calls runner."""
     cli.run(["benchmark", "run", "gemm", "-m", "1024", "-n", "512", "-k", "256"])
@@ -172,7 +182,7 @@ class TestCli(absltest.TestCase):
     self.assertEqual(task_config.n, 512)
     self.assertEqual(task_config.k, 256)
 
-  @mock.patch("accelerator_microbenchmarks.core.runner.run_benchmarks")
+  @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_config(self, mock_run_benchmarks):
     """Verifies that `tpums benchmark run-config` calls runner.run_benchmarks."""
     config_path = (
@@ -187,7 +197,7 @@ class TestCli(absltest.TestCase):
     self.assertEqual(kwargs["config_path"], config_path)
     self.assertNotEmpty(kwargs["tasks"])
 
-  @mock.patch("accelerator_microbenchmarks.core.runner.run_benchmarks")
+  @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_config_with_unknown_flags(self, mock_run_benchmarks):
     """Verifies that unknown flags (e.g. Borg infrastructure flags) are ignored."""
     config_path = (
@@ -205,7 +215,28 @@ class TestCli(absltest.TestCase):
     ])
     mock_run_benchmarks.assert_called_once()
 
-  @mock.patch("accelerator_microbenchmarks.core.runner.run_benchmarks")
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_config_with_xla_flags_file_path(
+      self, mock_run_benchmarks
+  ):
+    """Verifies that `benchmark run-config` passes xla_flags_file_path to runner."""
+    config_path = (
+        "third_party/py/accelerator_microbenchmarks/configs/7x/2x2x1/hbm_bandwidth.yaml"
+    )
+    cli.run([
+        "benchmark",
+        "run-config",
+        config_path,
+        "--xla_flags_file_path",
+        "/tmp/custom_op_flags.yaml",
+    ])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertEqual(
+        kwargs["xla_flags_file_path"], "/tmp/custom_op_flags.yaml"
+    )
+
+  @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_with_common_flags(self, mock_run_benchmarks):
     """Verifies that `benchmark run` passes output_dir, profile_dir, and hw to runner."""
     cli.run([
@@ -265,7 +296,7 @@ class TestCli(absltest.TestCase):
         ["benchmark", "run-config", "some_config.yaml", "--hw=gfl_2x2x1"],
     )
 
-  @mock.patch("accelerator_microbenchmarks.cli.app.run")
+  @mock.patch.object(cli.app, "run")
   def test_main_invokes_app_run(self, mock_app_run):
     """Verifies that main delegates to absl.app.run with _google_flags_parser."""
     cli.main()

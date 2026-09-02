@@ -36,6 +36,12 @@ def _add_common_execution_args(parser) -> None:
           " ironwood, gfc)."
       ),
   )
+  parser.add_argument(
+      "--xla_flags_file_path",
+      type=str,
+      default=None,
+      help="Optional path to custom op_flags YAML file.",
+  )
 
 
 def create_parser() -> simple_parsing.ArgumentParser:
@@ -175,6 +181,7 @@ def run(argv: Sequence[str]) -> None:
         hw=args.hw,
         xprof_dir=args.profile_dir,
         config_path=args.config_path,
+        xla_flags_file_path=args.xla_flags_file_path,
     )
     return
 
@@ -185,6 +192,7 @@ def run(argv: Sequence[str]) -> None:
         output_dir=args.output_dir,
         hw=args.hw,
         xprof_dir=args.profile_dir,
+        xla_flags_file_path=args.xla_flags_file_path,
     )
     return
 

@@ -122,7 +122,7 @@ class TestRunner(absltest.TestCase):
     self.assertIn("--xla_jf_debug_level=3", init_args)
 
   def test_init_jax_distributed(self):
-    with mock.patch("jax.distributed.initialize") as mock_init:
+    with mock.patch.object(runner.jax.distributed, "initialize") as mock_init:
       runner.init_jax_distributed()
       mock_init.assert_called_once()
 
@@ -130,14 +130,14 @@ class TestRunner(absltest.TestCase):
     """Verifies that run_benchmarks executes typed benchmark tasks."""
     dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
     with tempfile.TemporaryDirectory() as tmpdir:
-      with mock.patch(
-          "accelerator_microbenchmarks.benchmarks.benchmark_loader.load_all_benchmarks"
+      with mock.patch.object(
+          runner.benchmark_loader, "load_all_benchmarks"
       ) as mock_load_all:
         with mock.patch.object(runner, "set_xla_flags") as mock_set_xla:
           with mock.patch.object(runner, "init_jax_distributed") as mock_init_jax:
             with mock.patch.object(runner, "export_to_mlcompass"):
-              with mock.patch(
-                  "accelerator_microbenchmarks.core.registry.benchmark_registry.get_benchmark"
+              with mock.patch.object(
+                  runner.registry.benchmark_registry, "get_benchmark"
               ) as mock_get_benchmark:
                 mock_bench_instance = mock.MagicMock()
                 mock_metadata = base.BenchmarkMetadata(
@@ -172,9 +172,48 @@ class TestRunner(absltest.TestCase):
                     os.path.exists(os.path.join(tmpdir, "detailed.json"))
                 )
                 mock_load_all.assert_called_once()
-                mock_set_xla.assert_called_once()
+                mock_set_xla.assert_called_once_with(
+                    [{"name": "dummy"}], xla_flags_file_path=None
+                )
                 mock_init_jax.assert_called_once()
                 mock_bench_instance.run.assert_called_once()
+
+  def test_run_benchmarks_with_xla_flags_file_path(self):
+    """Verifies that run_benchmarks passes xla_flags_file_path to set_xla_flags."""
+    dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with mock.patch.object(runner, "set_xla_flags") as mock_set_xla:
+        with mock.patch.object(runner, "init_jax_distributed"):
+          with mock.patch.object(runner, "export_to_mlcompass"):
+            with mock.patch.object(
+                runner.registry.benchmark_registry, "get_benchmark"
+            ) as mock_get_benchmark:
+              mock_bench_instance = mock.MagicMock()
+              mock_metadata = base.BenchmarkMetadata(
+                  benchmark_name="dummy",
+                  test_name="dummy_test",
+                  start_time="now",
+                  end_time="then",
+                  params={},
+                  device_info={},
+              )
+              mock_bench_instance.run.return_value = base.BenchmarkResult(
+                  metadata=mock_metadata,
+                  metrics={"avg_ms": 1.0},
+                  raw_times_ms=[1.0],
+              )
+              mock_bench_cls = mock.MagicMock(return_value=mock_bench_instance)
+              mock_get_benchmark.return_value = mock_bench_cls
+
+              runner.run_benchmarks(
+                  tasks=[("dummy", dummy_params)],
+                  output_dir=tmpdir,
+                  xla_flags_file_path="/tmp/custom_op_flags.yaml",
+              )
+              mock_set_xla.assert_called_once_with(
+                  [{"name": "dummy"}],
+                  xla_flags_file_path="/tmp/custom_op_flags.yaml",
+              )
 
   def test_run_benchmarks_with_system_and_xprof(self):
     dummy_params = base.BaseBenchmarkParams(

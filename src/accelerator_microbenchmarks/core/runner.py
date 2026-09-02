@@ -26,7 +26,8 @@ _BENCHMARK_NAME_MAPPING = {
 
 
 def set_xla_flags(
-    benchmark_configs: List[dict[str, Any]], flags_file_path: str | None = None
+    benchmark_configs: List[dict[str, Any]],
+    xla_flags_file_path: str | None = None,
 ):
   """Set env vars based on first benchmark in config and op_flags.yaml."""
   benchmark_sets = set([conf["name"] for conf in benchmark_configs])
@@ -40,13 +41,13 @@ def set_xla_flags(
 
   op_key = _BENCHMARK_NAME_MAPPING.get(benchmark_name, benchmark_name)
   try:
-    if flags_file_path is None:
-      flags_file_path = os.path.join(
+    if xla_flags_file_path is None:
+      xla_flags_file_path = os.path.join(
           os.path.dirname(__file__), "..", "op_flags.yaml"
       )
 
-    if flags_file_path and os.path.exists(flags_file_path):
-      with open(flags_file_path, "r") as f:
+    if xla_flags_file_path and os.path.exists(xla_flags_file_path):
+      with open(xla_flags_file_path, "r") as f:
         op_flags = yaml.safe_load(f)
 
       if op_key in op_flags:
@@ -91,13 +92,17 @@ def run_benchmarks(
     hw: Optional[str] = None,
     xprof_dir: str = "/tmp/tensorboard",
     config_path: Optional[str] = None,
+    xla_flags_file_path: Optional[str] = None,
     print_table: bool = True,
 ) -> List[base.BenchmarkResult]:
   """Core execution engine for typed benchmark task configurations."""
   benchmark_loader.load_all_benchmarks()
 
   # 1. Set Env Vars from op_flags.yaml
-  set_xla_flags([{"name": task_name} for task_name, _ in tasks])
+  set_xla_flags(
+      [{"name": task_name} for task_name, _ in tasks],
+      xla_flags_file_path=xla_flags_file_path,
+  )
 
   # 2. Ensure JAX is initialized
   init_jax_distributed()
