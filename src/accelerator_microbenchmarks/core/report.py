@@ -11,6 +11,10 @@ from accelerator_microbenchmarks.core import registry
 import numpy as np
 import pandas as pd
 
+DEFAULT_BANNER_MIN_WIDTH: int = 88
+DEFAULT_BANNER_PADDING: int = 4
+DEFAULT_DIAGONAL_MARKER: str = "X"
+
 # ==============================================================================
 # Value Formatters
 # ==============================================================================
@@ -70,6 +74,31 @@ def format_str(val: Any) -> str:
 # ==============================================================================
 
 
+def _render_banner_box(
+    title: str,
+    body: str,
+    min_width: int = DEFAULT_BANNER_MIN_WIDTH,
+    padding: int = DEFAULT_BANNER_PADDING,
+) -> str:
+  """Renders a text box wrapped in '=' banners.
+
+  Args:
+    title: The title text to display in the header banner.
+    body: The multi-line body string.
+    min_width: The minimum character width of the banner box.
+    padding: Additional horizontal padding added to the title length when
+      calculating width.
+
+  Returns:
+    The formatted ASCII banner string.
+  """
+  body_lines = body.splitlines() if body else []
+  max_body_line = max((len(line) for line in body_lines), default=0)
+  width = max(max_body_line, len(title) + padding, min_width)
+  bar = "=" * width
+  return f"{bar}\n{title}\n{bar}\n{body}\n{bar}"
+
+
 def format_benchmark_table(
     df: pd.DataFrame,
     schema: Sequence[tuple[str, Callable[[Any], str]]],
@@ -85,15 +114,106 @@ def format_benchmark_table(
   sub_df = df.reindex(columns=cols)
   table_body = sub_df.to_string(index=False, formatters=formatters, na_rep="-")
 
-  table_lines = table_body.splitlines()
-  width = max(len(line) for line in table_lines) if table_lines else 88
-  width = max(width, len(title) + 24, 88)
-  top_bar = "=" * width
   banner_title = (
       f"Benchmark Results ({title})" if title else "Benchmark Results"
   )
+  return _render_banner_box(title=banner_title, body=table_body)
 
-  return f"{top_bar}\n{banner_title}\n{top_bar}\n{table_body}\n{top_bar}"
+
+def format_standard_table(
+    df: pd.DataFrame,
+    bench_cls: type[base.BaseBenchmark],
+) -> str:
+  """Renders standard flat ASCII summary table using bench_cls.REPORT_SCHEMA."""
+  if df is None or df.empty or bench_cls is None:
+    return ""
+
+  schema = getattr(bench_cls, "REPORT_SCHEMA", ())
+  if not schema:
+    return ""
+
+  return format_benchmark_table(df=df, schema=schema, title=bench_cls.__name__)
+
+
+def format_device_matrix(
+    df: pd.DataFrame,
+    bench_cls: Optional[type[base.BaseBenchmark]] = None,
+    diagonal_marker: str = DEFAULT_DIAGONAL_MARKER,
+) -> str:
+  """Renders aligned N x N pairwise bandwidth matrix ASCII grids for device_to_device."""
+  del bench_cls
+  if df is None or df.empty:
+    return ""
+  if (
+      "src_device_index" not in df.columns
+      or "dst_device_index" not in df.columns
+  ):
+    return ""
+
+  src_col = "src_device_index"
+  dst_col = "dst_device_index"
+  metric_col = "bandwidth_gb_s"
+  title_prefix = "Device-to-Device Bandwidth Matrix (GB/s)"
+
+  sweep_candidates = ["dtype", "direction", "data_size_mib"]
+  effective_sweeps = [c for c in sweep_candidates if c in df.columns]
+
+  matrices = []
+  groups = (
+      df.groupby(effective_sweeps, sort=False, dropna=False)
+      if effective_sweeps
+      else [(None, df)]
+  )
+
+  for sweep_key, sub_df in groups:
+    src_devs = sub_df[src_col].dropna().unique()
+    dst_devs = sub_df[dst_col].dropna().unique()
+    unique_devs = set(src_devs) | set(dst_devs)
+    if not unique_devs:
+      continue
+
+    sorted_devs = sorted(int(d) for d in unique_devs)
+    clean_sub_df = sub_df.dropna(subset=[src_col, dst_col]).copy()
+    clean_sub_df[src_col] = clean_sub_df[src_col].astype(int)
+    clean_sub_df[dst_col] = clean_sub_df[dst_col].astype(int)
+    if metric_col not in clean_sub_df.columns:
+      clean_sub_df[metric_col] = np.nan
+    clean_sub_df = clean_sub_df.drop_duplicates(
+        subset=[src_col, dst_col], keep="last"
+    )
+
+    # 1. Pivot into N x N matrix and reindex to full symmetric grid
+    matrix = clean_sub_df.pivot(
+        index=src_col, columns=dst_col, values=metric_col
+    )
+    matrix = matrix.reindex(index=sorted_devs, columns=sorted_devs)
+
+    # 2. Format values using format_2f (maps numeric to .2f and NaN to '-')
+    formatted_matrix = matrix.map(format_2f)
+
+    # 3. Format row and column headers to D0, D1, etc.
+    formatted_matrix.index = pd.Index([f"D{d}" for d in sorted_devs])
+    formatted_matrix.columns = pd.Index([f"D{d}" for d in sorted_devs])
+
+    # 4. Replace diagonal with diagonal marker
+    for d in sorted_devs:
+      formatted_matrix.loc[f"D{d}", f"D{d}"] = diagonal_marker
+
+    body = formatted_matrix.to_string()
+
+    config_parts = []
+    if sweep_key is not None and effective_sweeps:
+      if isinstance(sweep_key, tuple):
+        for k, v in zip(effective_sweeps, sweep_key):
+          config_parts.append(f"{k}={v}")
+      else:
+        config_parts.append(f"{effective_sweeps[0]}={sweep_key}")
+    config_str = ", ".join(config_parts)
+    title = f"{title_prefix} [{config_str}]" if config_str else title_prefix
+
+    matrices.append(_render_banner_box(title=title, body=body))
+
+  return "\n\n".join(matrices)
 
 
 # ==============================================================================
@@ -149,20 +269,21 @@ def generate_benchmark_report(
   tables = []
   for name, group_df in df.groupby("benchmark", sort=False):
     bench_name = str(name)
-    if bench_name not in class_map:
+    bench_cls = class_map.get(bench_name)
+    if bench_cls is None:
       continue
 
-    bench_cls = class_map[bench_name]
-    bench_schema = getattr(bench_cls, "REPORT_SCHEMA", ())
-
-    if bench_schema:
-      table_str = format_benchmark_table(
-          df=group_df,
-          schema=bench_schema,
-          title=bench_name,
+    formatters = getattr(bench_cls, "REPORT_FORMATTERS", None)
+    if formatters is None:
+      formatters = (
+          (format_standard_table,)
+          if getattr(bench_cls, "REPORT_SCHEMA", ())
+          else ()
       )
-      if table_str:
-        tables.append(table_str)
+    for formatter in formatters:
+      section = formatter(group_df, bench_cls)
+      if section:
+        tables.append(section)
 
   return "\n\n".join(tables)
 

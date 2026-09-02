@@ -73,6 +73,10 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
   )
+  REPORT_FORMATTERS = (
+      report.format_standard_table,
+      report.format_device_matrix,
+  )
 
   def __init__(
       self,

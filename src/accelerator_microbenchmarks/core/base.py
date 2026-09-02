@@ -15,6 +15,7 @@ import jax
 from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 
 
 @dataclasses.dataclass
@@ -60,9 +61,15 @@ TConfig = TypeVar("TConfig", bound=BaseBenchmarkParams)
 
 class BaseBenchmark(Generic[TConfig], abc.ABC):
   """Abstract base class for microbenchmarks."""
+
   Config = BaseBenchmarkParams
   DEFAULT_LOCAL_DEVICE_ID: int = 0
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = ()
+  # TODO(b/555967269): Redesign and decouple circular dependency between
+  # BaseBenchmark and report formatters.
+  REPORT_FORMATTERS: Optional[
+      Sequence[Callable[[pd.DataFrame, type["BaseBenchmark"]], str]]
+  ] = None
 
   def __init__(self, config: TConfig, mesh: Optional[jax.sharding.Mesh] = None):
     if config is None:
@@ -418,9 +425,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       cns_xprof_dir = os.path.join(
           xprof_base_dir, f"{benchmark_name}{dir_suffix}_{timestamp}"
       )
-      local_xprof_dir = (
-          f"/tmp/microbenchmarks_tmptrace/{benchmark_name}{dir_suffix}_{timestamp}"
-      )
+      local_xprof_dir = f"/tmp/microbenchmarks_tmptrace/{benchmark_name}{dir_suffix}_{timestamp}"
 
       if not (
           cns_xprof_dir.startswith("/cns/")

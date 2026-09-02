@@ -254,6 +254,76 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
         self, self.bm, ignored_keys={"total_bytes_mib"}
     )
 
+  def test_report_formatters_declaration(self):
+    """Verifies that DeviceToDeviceBenchmark declares both standard table and matrix formatters."""
+    self.assertEqual(
+        device_to_device.DeviceToDeviceBenchmark.REPORT_FORMATTERS,
+        (
+            report.format_standard_table,
+            report.format_device_matrix,
+        ),
+    )
+
+  def test_generate_benchmark_report_dual_representation(self):
+    """Verifies that generate_benchmark_report produces both standard table and pairwise matrix."""
+    res1 = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="DeviceToDeviceBenchmark",
+            test_name="DeviceToDeviceBenchmark_0_1",
+            start_time="2026-08-18T10:00:00",
+            end_time="2026-08-18T10:01:00",
+            params={
+                "dtype": "bfloat16",
+                "direction": "uni",
+                "src_device_index": 0,
+                "dst_device_index": 1,
+                "data_size_mib": 1024,
+            },
+            device_info={"platform": "tpu"},
+        ),
+        metrics={
+            "bandwidth_gb_s": 85.50,
+            "p50_ms": 12.3456,
+            "xprof_p50_ms": 12.3400,
+        },
+        raw_times_ms=[12.3456],
+    )
+    res2 = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="DeviceToDeviceBenchmark",
+            test_name="DeviceToDeviceBenchmark_1_0",
+            start_time="2026-08-18T10:00:00",
+            end_time="2026-08-18T10:01:00",
+            params={
+                "dtype": "bfloat16",
+                "direction": "uni",
+                "src_device_index": 1,
+                "dst_device_index": 0,
+                "data_size_mib": 1024,
+            },
+            device_info={"platform": "tpu"},
+        ),
+        metrics={
+            "bandwidth_gb_s": 86.20,
+            "p50_ms": 12.1000,
+            "xprof_p50_ms": 12.0000,
+        },
+        raw_times_ms=[12.1000],
+    )
+    df = report.results_to_dataframe([res1, res2])
+    rep = report.generate_benchmark_report(df)
+
+    # 1. Verify standard flat table is present
+    self.assertIn("Benchmark Results (DeviceToDeviceBenchmark)", rep)
+    self.assertIn("85.50", rep)
+    self.assertIn("86.20", rep)
+
+    # 2. Verify pairwise matrix is present
+    self.assertIn("Device-to-Device Bandwidth Matrix (GB/s)", rep)
+    self.assertIn("D0", rep)
+    self.assertIn("D1", rep)
+    self.assertIn("X", rep)
+
 
 if __name__ == "__main__":
   absltest.main()
