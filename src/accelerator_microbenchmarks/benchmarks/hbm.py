@@ -83,7 +83,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
       ("op_type", report.format_str),
       ("device_id", report.format_str),
       ("size", report.format_str),
-      ("total_bytes_mb", report.format_2f),
+      ("total_bytes_mib", report.format_2f),
       ("bandwidth_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
@@ -189,7 +189,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
       bandwidth_gb_s = (total_bytes / avg_latency_s) / 1e9
 
     metrics["bandwidth_gb_s"] = bandwidth_gb_s
-    metrics["total_bytes_mb"] = total_bytes / 1e6
+    metrics["total_bytes_mib"] = total_bytes / (1024 * 1024)
     metrics["intensity"] = self.get_arithmetic_intensity()
     metrics["op_type"] = self.spec.name
     return metrics

@@ -192,7 +192,7 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
       bandwidth_gb_s = total_bytes / (avg_latency_s * 1e9)
 
     metrics["bandwidth_gb_s"] = bandwidth_gb_s
-    metrics["total_bytes_mb"] = total_bytes / 1e6
+    metrics["total_bytes_mib"] = total_bytes / (1024 * 1024)
     metrics["src_device_index"] = self.config.src_device_index
     metrics["dst_device_index"] = self.config.dst_device_index
     metrics["direction"] = self.config.direction

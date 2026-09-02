@@ -98,7 +98,7 @@ class BaseCollectiveBenchmark(
       ("mesh_shape", report.format_str),
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
-      ("shard_size_mb", report.format_2f),
+      ("shard_size_mib", report.format_2f),
       ("bandwidth_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
@@ -394,7 +394,7 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
       ("mesh_shape", report.format_str),
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
-      ("shard_size_mb", report.format_2f),
+      ("shard_size_mib", report.format_2f),
       ("bandwidth_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
@@ -460,7 +460,7 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
         * (participating_ranks / max(rank, 1))
         * tf_multiplier
     )
-    return data_transferred, {"shard_size_mb": local_size_bytes / 1e6}
+    return data_transferred, {"shard_size_mib": local_size_bytes / (1024 * 1024)}
 
 
 @registry.benchmark_registry.register("all_gather")
@@ -519,7 +519,7 @@ class AllGatherBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
   ):
     local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
     data_transferred = local_size_bytes * participating_ranks * tf_multiplier
-    return data_transferred, {"shard_size_mb": local_size_bytes / 1e6}
+    return data_transferred, {"shard_size_mib": local_size_bytes / (1024 * 1024)}
 
 
 @registry.benchmark_registry.register("all_to_all")
@@ -531,7 +531,7 @@ class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
       ("mesh_shape", report.format_str),
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
-      ("local_size_mb", report.format_2f),
+      ("local_size_mib", report.format_2f),
       ("bandwidth_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
@@ -584,7 +584,7 @@ class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
     data_transferred = (
         local_size_bytes * (participating_ranks / max(rank, 1)) * tf_multiplier
     )
-    return data_transferred, {"local_size_mb": local_size_bytes / 1e6}
+    return data_transferred, {"local_size_mib": local_size_bytes / (1024 * 1024)}
 
 
 @registry.benchmark_registry.register("reduce_scatter")
@@ -636,4 +636,4 @@ class ReduceScatterBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
     data_transferred = (
         chunk_size_bytes * (participating_ranks / max(rank, 1)) * tf_multiplier
     )
-    return data_transferred, {"shard_size_mb": chunk_size_bytes / 1e6}
+    return data_transferred, {"shard_size_mib": chunk_size_bytes / (1024 * 1024)}

@@ -251,7 +251,7 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
     """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
     self.bm.setup()
     test_report_utils.assert_schema_matches_output(
-        self, self.bm, ignored_keys={"total_bytes_mb"}
+        self, self.bm, ignored_keys={"total_bytes_mib"}
     )
 
 

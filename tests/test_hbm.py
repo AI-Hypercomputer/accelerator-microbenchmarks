@@ -203,7 +203,9 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
     self.assertEqual(metrics["op_type"], op_type)
     self.assertAlmostEqual(metrics["bandwidth_gb_s"], expected_bw_gb_s)
-    self.assertAlmostEqual(metrics["total_bytes_mb"], expected_bytes / 1e6)
+    self.assertAlmostEqual(
+        metrics["total_bytes_mib"], expected_bytes / (1024 * 1024)
+    )
 
   def test_format_benchmark_table(self):
     """Tests formatting of HBM bandwidth benchmark tables."""
@@ -222,7 +224,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
             device_info={"platform": "tpu"},
         ),
         metrics={
-            "total_bytes_mb": 268.44,
+            "total_bytes_mib": 256.00,
             "p50_ms": 0.07112,
             "bandwidth_gb_s": 7538.214,
             "xprof_p50_ms": 0.06543,
@@ -234,7 +236,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         "op_type",
         "device_id",
         "size",
-        "total_bytes_mb",
+        "total_bytes_mib",
         "bandwidth_gb_s",
         "p50_ms",
         "xprof_p50_ms",
@@ -255,7 +257,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self.assertIn("copy", table)
     self.assertIn("63", table)
     self.assertIn("134217728", table)
-    self.assertIn("268.44", table)
+    self.assertIn("256.00", table)
     self.assertIn("7538.21", table)
     self.assertIn("0.0711", table)
     self.assertIn("0.0654", table)

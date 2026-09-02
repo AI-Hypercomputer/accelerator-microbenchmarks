@@ -61,12 +61,12 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
 
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     metrics = super().calculate_metrics(times_ms)
+    total_bytes = self.get_total_bytes()
     avg_latency_s = metrics["avg_ms"] / 1000.0
     if avg_latency_s == 0:
       bandwidth_gb_s = float("inf")
     else:
-      # Bandwidth in GiB/s
-      bandwidth_gb_s = (self.config.data_size_mib / 1024.0) / avg_latency_s
+      bandwidth_gb_s = total_bytes / (avg_latency_s * 1e9)
     metrics["bandwidth_gb_s"] = bandwidth_gb_s
     metrics["total_bytes_mib"] = float(self.config.data_size_mib)
     return metrics
@@ -121,11 +121,12 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
 
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     metrics = super().calculate_metrics(times_ms)
+    total_bytes = self.get_total_bytes()
     avg_latency_s = metrics["avg_ms"] / 1000.0
     if avg_latency_s == 0:
       bandwidth_gb_s = float("inf")
     else:
-      bandwidth_gb_s = (self.config.data_size_mib / 1024.0) / avg_latency_s
+      bandwidth_gb_s = total_bytes / (avg_latency_s * 1e9)
     metrics["bandwidth_gb_s"] = bandwidth_gb_s
     metrics["total_bytes_mib"] = float(self.config.data_size_mib)
     return metrics

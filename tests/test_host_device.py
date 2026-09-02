@@ -75,10 +75,10 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     self._setup_benchmark()
     metrics = self.bm.calculate_metrics(times_ms)
     # avg_ms = 10.0 -> avg_latency_s = 0.01s
-    # data_size_mib = 4 -> 4 / 1024 = 0.00390625 GiB
-    # bandwidth_gb_s = 0.00390625 / 0.01 = 0.390625 GiB/s
+    # total_bytes = 4 * 1024 * 1024 = 4194304 bytes
+    # bandwidth_gb_s = 4194304 / (0.01 * 1e9) = 0.4194304 GB/s
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
-    self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.390625)
+    self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.4194304)
     self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
 
   def test_format_benchmark_table(self):
@@ -197,7 +197,7 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     self._setup_benchmark()
     metrics = self.bm.calculate_metrics(times_ms)
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
-    self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.390625)
+    self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.4194304)
     self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
 
   def test_format_benchmark_table(self):
