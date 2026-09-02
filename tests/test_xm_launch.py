@@ -44,6 +44,14 @@ class TestXmLaunchSelectTests(parameterized.TestCase):
           "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x2/ReduceScatterBenchmark",
           {"reduce_scatter"},
       ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x1/HostToDeviceBenchmark",
+          {"host_to_device"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x1/DeviceToHostBenchmark",
+          {"device_to_host"},
+      ),
   )
   def test_single_full_target(self, select_tests_str, expected):
     self.assertEqual(
@@ -74,6 +82,14 @@ class TestXmLaunchSelectTests(parameterized.TestCase):
       (
           "tpums_gfl_2x2x2_ReduceScatterBenchmark",
           {"reduce_scatter"},
+      ),
+      (
+          "tpums_gfl_2x2x1_HostToDeviceBenchmark",
+          {"host_to_device"},
+      ),
+      (
+          "tpums_gfl_2x2x1_DeviceToHostBenchmark",
+          {"device_to_host"},
       ),
   )
   def test_shortened_target(self, select_tests_str, expected):
@@ -107,6 +123,8 @@ class TestXmLaunchSelectTests(parameterized.TestCase):
       ("AllReduceBenchmark", {"all_reduce"}),
       ("AllToAllBenchmark", {"all_to_all"}),
       ("ReduceScatterBenchmark", {"reduce_scatter"}),
+      ("HostToDeviceBenchmark", {"host_to_device"}),
+      ("DeviceToHostBenchmark", {"device_to_host"}),
   )
   def test_direct_class_name(self, select_tests_str, expected):
     self.assertEqual(
@@ -122,6 +140,8 @@ class TestXmLaunchSelectTests(parameterized.TestCase):
       ("all_reduce", {"all_reduce"}),
       ("all_to_all", {"all_to_all"}),
       ("reduce_scatter", {"reduce_scatter"}),
+      ("host_to_device", {"host_to_device"}),
+      ("device_to_host", {"device_to_host"}),
   )
   def test_direct_op_or_alias_name(self, select_tests_str, expected):
     self.assertEqual(

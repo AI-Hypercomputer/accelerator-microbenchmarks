@@ -7,4 +7,5 @@ benchmark:
   dtype: "float32"
   xprof_timing: true
   sweep:
-    data_size_mib: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+    data_size_mib: [4096, 8192, 16384]
+
