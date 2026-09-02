@@ -1,0 +1,15 @@
+system: ghostlite
+
+benchmark:
+  name: all_to_all
+  warmup_tries: 2
+  num_runs: 5
+  dtype: bfloat16
+  xprof_timing: true
+  mesh_shape: 2x2
+  sharding_strategy: 2x2
+  sweep:
+    matrix_dim:
+      start: 8
+      end: 524288
+      multiplier: 2

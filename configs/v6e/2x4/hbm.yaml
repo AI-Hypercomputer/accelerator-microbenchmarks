@@ -1,0 +1,13 @@
+system: ghostlite
+
+benchmark:
+  name: hbm_bandwidth
+  warmup_tries: 2
+  num_runs: 5
+  dtype: bfloat16
+  xprof_timing: true
+  sweep:
+    size:
+      start: 32768
+      end: 17179869184
+      multiplier: 2

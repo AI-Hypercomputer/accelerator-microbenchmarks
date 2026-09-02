@@ -1,0 +1,11 @@
+system: ghostlite
+benchmark:
+  name: gemm_generalized
+  warmup_tries: 2
+  num_runs: 5
+  dtype: bfloat16
+  csv_shapes: "configs/shapes/gemm_square_stability.csv"
+  out_dtype: "bfloat16"
+  xprof_timing: true
+  sweep:
+    in_dtype: ["bfloat16", "float32", "float16", "float8_e4m3fn", "float4", "int8"]
