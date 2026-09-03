@@ -3,6 +3,7 @@
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import components
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import system
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -35,7 +36,9 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "mslen": 64,
     }
     config = components.TransformerLayerParams(**params)
-    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
+    self.bm = components.TransformerLayerMoE(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     x, w_attn, b_attn, w_ffn, b_ffn = self.bm.generate_inputs()
 
@@ -58,7 +61,9 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "mslen": 64,
     }
     config = components.TransformerLayerParams(**params)
-    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
+    self.bm = components.TransformerLayerMoE(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     inputs = self.bm.generate_inputs()
     out = self.bm.run_op(*inputs)
@@ -73,7 +78,9 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "mslen": 64,
     }
     config = components.TransformerLayerParams(**params)
-    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
+    self.bm = components.TransformerLayerMoE(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # model_dim = 256
     # seq_len = 64
     # itemsize = 2 (bfloat16)
@@ -90,7 +97,9 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "mslen": 64,
     }
     config = components.TransformerLayerParams(**params)
-    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
+    self.bm = components.TransformerLayerMoE(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # flops = 24 * 64 * (256^2) = 1536 * 65536 = 100663296
     # bytes = 1638400
     # intensity = 100663296 / 1638400 = 61.44
@@ -106,7 +115,9 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         "mslen": 64,
     }
     config = components.TransformerLayerParams(**params)
-    self.bm = components.TransformerLayerMoE(config=config, mesh=self.mock_mesh)
+    self.bm = components.TransformerLayerMoE(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # avg_ms = 10.0ms -> avg_latency_s = 0.01s
     # flops = 100663296 (from above)
     # tflops_per_sec = (100663296 / 0.01) / 1e12 = 10066329600 / 1e12 = 0.010066

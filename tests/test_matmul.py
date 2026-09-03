@@ -4,8 +4,10 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import matmul
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import jax.numpy as jnp
@@ -35,7 +37,7 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     params.update(kwargs)
     config = matmul.GemmParams(**params)
     self.bm = matmul.GeneralizedGemmBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     self.bm.setup()
 
@@ -120,7 +122,7 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     """Test that is_xprof_op correctly identifies convolution fusion events."""
     config = matmul.GemmParams(m=128, n=128, k=128)
     self.bm = matmul.GeneralizedGemmBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     self.assertTrue(
         self.bm.match_xprof_op_fallback(
@@ -419,7 +421,8 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
                 "beta": 0.5,
                 "use_scaling_factors": True,
             },
-            device_info={"platform": "tpu"},
+            platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+            hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
             "total_flops": 137438953472.0,

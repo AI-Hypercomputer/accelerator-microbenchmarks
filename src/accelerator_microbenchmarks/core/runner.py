@@ -1,5 +1,6 @@
 """Execution runner engine for accelerator microbenchmarks."""
 
+import dataclasses
 import gc
 import json
 import os
@@ -9,6 +10,7 @@ from typing import Any, List, Optional
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -89,7 +91,6 @@ def init_jax_distributed():
 def run_benchmarks(
     tasks: List[tuple[str, base.BaseBenchmarkParams]],
     output_dir: str = "results",
-    hw: Optional[str] = None,
     xprof_dir: str = "/tmp/tensorboard",
     config_path: Optional[str] = None,
     xla_flags_file_path: Optional[str] = None,
@@ -107,6 +108,10 @@ def run_benchmarks(
   # 2. Ensure JAX is initialized
   init_jax_distributed()
 
+  # 3. Detect Platform and Resolve HardwareSpec
+  platform_info = platform.get_platform_info()
+  resolved_hardware_spec = system.get_hardware_spec(platform_info.tpu_type)
+
   all_results: List[base.BenchmarkResult] = []
   for task_name, config_obj in tasks:
     print(f"\n>>> Running Benchmark: {task_name} with {config_obj}")
@@ -117,29 +122,13 @@ def run_benchmarks(
       if not config_obj.xprof_dir or config_obj.xprof_dir == "/tmp/tensorboard":
         config_obj.xprof_dir = xprof_dir
 
-      sys_name = config_obj.system or hw
-      if sys_name and not config_obj.hardware_stats:
-        try:
-          sys_config = system.get_system(sys_name)
-          hardware_stats = {}
-          if sys_config.tflops:
-            hardware_stats["tflops"] = sys_config.tflops.peak_tflops_per_device
-          if sys_config.hbm:
-            hardware_stats["hbm_bw"] = sys_config.hbm.curve_gbps
-          if sys_config.ici:
-            hardware_stats["ici"] = {
-                "peak_bw_gbps": sys_config.ici.peak_bw_gbps,
-                "bidirectional": sys_config.ici.bidirectional,
-            }
-          if hardware_stats:
-            config_obj.hardware_stats = hardware_stats
-        except Exception as e:
-          print(f"Warning: Could not load system config for {sys_name}: {e}")
-
       test_case_configs = config_obj.expand_test_cases()
       total_cases = len(test_case_configs)
       for idx, test_case_config in enumerate(test_case_configs, 1):
-        benchmark_instance = benchmark_cls(test_case_config)
+        benchmark_instance = benchmark_cls(
+            config=test_case_config,
+            hardware_spec=resolved_hardware_spec,
+        )
         run_id = benchmark_instance.get_run_identifier()
         print(f"\nRunning [{idx}/{total_cases}] {task_name} ({run_id})...")
         result = benchmark_instance.run()

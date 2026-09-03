@@ -7,6 +7,7 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import collectives
+from accelerator_microbenchmarks.core import system
 import jax
 import numpy as np
 
@@ -44,7 +45,9 @@ class AllReduceTpuTest(parameterized.TestCase):
         "xprof_timing": True,
     }
     config = collectives.AllReduceParams(**params)
-    bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllReduceBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     bm.setup()
     (data,) = bm.generate_inputs()
     out = bm.run_op(data)
@@ -56,6 +59,7 @@ class AllReduceTpuTest(parameterized.TestCase):
     self.assertEqual(result.metadata.benchmark_name, "AllReduceBenchmark")
     self.assertIn("xprof_p50_ms", result.metrics)
     self.assertGreater(result.metrics["xprof_p50_ms"], 0.0)
+
 
 class AllGatherTpuTest(parameterized.TestCase):
   """Unit tests for AllGatherBenchmark on TPU hardware, including fallback."""
@@ -99,7 +103,9 @@ class AllGatherTpuTest(parameterized.TestCase):
     with mock.patch.object(
         jax, "named_scope", side_effect=lambda name: contextlib.nullcontext()
     ):
-      bm = collectives.AllGatherBenchmark(config=config, mesh=self.mock_mesh)
+      bm = collectives.AllGatherBenchmark(
+          config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+      )
       bm.setup()
       (data,) = bm.generate_inputs()
       out = bm.run_op(data)

@@ -7,6 +7,7 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
@@ -90,9 +91,12 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
   )
 
   def __init__(
-      self, config: HBMBandwidthParams, mesh: jax.sharding.Mesh | None = None
+      self,
+      config: HBMBandwidthParams,
+      hardware_spec: system.HardwareSpec,
+      mesh: jax.sharding.Mesh | None = None,
   ):
-    super().__init__(config=config, mesh=mesh)
+    super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
     self.spec: HBMKernelSpec | None = None
     self.scalar: Any | None = None
 

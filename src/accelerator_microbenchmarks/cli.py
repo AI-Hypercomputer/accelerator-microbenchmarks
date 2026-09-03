@@ -1,5 +1,6 @@
 """Canonical CLI entry point for the TPU Microbenchmark Suite (TPUMS)."""
 
+import dataclasses
 import json
 import os
 import sys
@@ -14,7 +15,7 @@ from accelerator_microbenchmarks.core import runner
 
 
 def _add_common_execution_args(parser) -> None:
-  """Adds common output, profiling, and hardware flags to a subparser."""
+  """Adds common output and profiling flags to a subparser."""
   parser.add_argument(
       "--output_dir",
       type=str,
@@ -26,15 +27,6 @@ def _add_common_execution_args(parser) -> None:
       type=str,
       default="/tmp/tensorboard",
       help="Directory to collect and save profiling trace files.",
-  )
-  parser.add_argument(
-      "--hw",
-      type=str,
-      default=None,
-      help=(
-          "Hardware target environment (e.g. v6e, ghostlite, trillium,"
-          " ironwood, gfc)."
-      ),
   )
   parser.add_argument(
       "--xla_flags_file_path",
@@ -140,14 +132,8 @@ def run(argv: Sequence[str]) -> None:
   # 1. Handle `tpums platform describe`
   if args.resource == "platform" and args.action == "describe":
     try:
-      desc = core_platform.get_platform_description()
-      if desc.get("tpu_type") == "none":
-        print(
-            "WARNING: Running in non-TPU (CPU) environment. No TPU devices"
-            " detected.",
-            file=sys.stderr,
-        )
-      print(json.dumps(desc, indent=2))
+      desc = core_platform.get_platform_info()
+      print(json.dumps(dataclasses.asdict(desc), indent=2))
       return
     except RuntimeError as e:
       print(f"Error: {e}", file=sys.stderr)
@@ -178,7 +164,6 @@ def run(argv: Sequence[str]) -> None:
     runner.run_benchmarks(
         tasks=tasks,
         output_dir=args.output_dir,
-        hw=args.hw,
         xprof_dir=args.profile_dir,
         config_path=args.config_path,
         xla_flags_file_path=args.xla_flags_file_path,
@@ -190,7 +175,6 @@ def run(argv: Sequence[str]) -> None:
     runner.run_benchmarks(
         tasks=[(args.task, args.task_config)],
         output_dir=args.output_dir,
-        hw=args.hw,
         xprof_dir=args.profile_dir,
         xla_flags_file_path=args.xla_flags_file_path,
     )

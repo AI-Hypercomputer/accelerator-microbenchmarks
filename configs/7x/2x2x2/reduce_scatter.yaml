@@ -1,5 +1,3 @@
-system: ironwood
-
 benchmark:
   name: reduce_scatter
   warmup_tries: 2

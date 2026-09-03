@@ -1,5 +1,3 @@
-system: ironwood
-
 benchmark:
   name: gemm_generalized
   warmup_tries: 2

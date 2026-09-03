@@ -6,8 +6,10 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import hbm
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import jax.numpy as jnp
@@ -36,7 +38,9 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     params["op_type"] = op_type
     params.update(kwargs)
     config = hbm.HBMBandwidthParams(**params)
-    self.bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = hbm.HBMBandwidthBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
 
   def test_benchmark_registered(self):
@@ -59,7 +63,9 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     config = hbm.HBMBandwidthParams(
         op_type=op_type, size=size, device_id=device_id
     )
-    self.bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = hbm.HBMBandwidthBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     self.assertEqual(self.bm.get_run_identifier(), expected_identifier)
 
@@ -69,13 +75,17 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
 
     # Invalid negative device_id
     config = hbm.HBMBandwidthParams(device_id=-1)
-    bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
+    bm = hbm.HBMBandwidthBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     with self.assertRaisesRegex(ValueError, "Invalid device_id: -1"):
       bm.setup()
 
     # Invalid out of range device_id
     config = hbm.HBMBandwidthParams(device_id=num_devices)
-    bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
+    bm = hbm.HBMBandwidthBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     with self.assertRaisesRegex(
         ValueError, f"Invalid device_id: {num_devices}"
     ):
@@ -86,7 +96,9 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     mock_devices = [mock.MagicMock() for _ in range(8)]
     with mock.patch.object(jax, "devices", return_value=mock_devices):
       config = hbm.HBMBandwidthParams(device_id=7)
-      bm = hbm.HBMBandwidthBenchmark(config=config, mesh=self.mock_mesh)
+      bm = hbm.HBMBandwidthBenchmark(
+          config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+      )
       bm.setup()
       self.assertEqual(bm.get_device_to_measure(), mock_devices[7])
 
@@ -139,17 +151,12 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     ):
       self._setup_benchmark("invalid_kernel")
 
-  def test_unconfigured_benchmark_access(self):
-    """Verify accessing properties on an unconfigured benchmark raises ValueError."""
-    with self.assertRaisesRegex(
-        ValueError, "A configuration object must be explicitly provided."
-    ):
-      hbm.HBMBandwidthBenchmark(config=None)
-
   def test_run_op_uninitialized(self):
     """Verify calling run_op before setup raises a ValueError."""
     config = hbm.HBMBandwidthParams()
-    uninitialized_bm = hbm.HBMBandwidthBenchmark(config)
+    uninitialized_bm = hbm.HBMBandwidthBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+    )
     with self.assertRaisesRegex(ValueError, "JIT function not initialized."):
       uninitialized_bm.run_op(jnp.ones((1024,)))
 
@@ -221,7 +228,8 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
                 "op_type": "copy",
                 "device_id": 63,
             },
-            device_info={"platform": "tpu"},
+            platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+            hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
             "total_bytes_mib": 256.00,

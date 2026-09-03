@@ -5,8 +5,10 @@ import os
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import device_to_device
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 
@@ -76,7 +78,8 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
         device_to_device.DeviceToDeviceTestCaseParams(
             data_size_mib=1,
             direction="uni",
-        )
+        ),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
     )
 
   def test_benchmark_registered(self):
@@ -142,7 +145,8 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
   def test_get_device_to_measure_uninitialized(self):
     """Verify get_device_to_measure before setup raises ValueError."""
     uninitialized_bm = self.bm_class(
-        device_to_device.DeviceToDeviceTestCaseParams()
+        device_to_device.DeviceToDeviceTestCaseParams(),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
     )
     with self.assertRaisesRegex(ValueError, "Mesh not initialized."):
       uninitialized_bm.get_device_to_measure()
@@ -165,7 +169,8 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
   def test_run_op_uninitialized(self):
     """Verify run_op before setup raises ValueError."""
     uninitialized_bm = self.bm_class(
-        device_to_device.DeviceToDeviceTestCaseParams()
+        device_to_device.DeviceToDeviceTestCaseParams(),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
     )
     with self.assertRaisesRegex(ValueError, "JIT function not initialized."):
       uninitialized_bm.run_op(None)
@@ -173,7 +178,8 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
   def test_generate_inputs_uninitialized(self):
     """Verify generate_inputs before setup raises ValueError."""
     uninitialized_bm = self.bm_class(
-        device_to_device.DeviceToDeviceTestCaseParams()
+        device_to_device.DeviceToDeviceTestCaseParams(),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
     )
     with self.assertRaisesRegex(ValueError, "Mesh not initialized."):
       uninitialized_bm.generate_inputs()
@@ -205,7 +211,8 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
                 "data_size_mib": 1024,
                 "dst_device_index": 153,
             },
-            device_info={"platform": "tpu"},
+            platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+            hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
             "bandwidth_gb_s": 85.50,
@@ -279,7 +286,8 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
                 "dst_device_index": 1,
                 "data_size_mib": 1024,
             },
-            device_info={"platform": "tpu"},
+            platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+            hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
             "bandwidth_gb_s": 85.50,
@@ -301,7 +309,8 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
                 "dst_device_index": 0,
                 "data_size_mib": 1024,
             },
-            device_info={"platform": "tpu"},
+            platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+            hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
             "bandwidth_gb_s": 86.20,

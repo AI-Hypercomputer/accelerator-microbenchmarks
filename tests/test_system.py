@@ -1,7 +1,5 @@
 """Unit tests for system.py."""
 
-from unittest import mock
-
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import system
 
@@ -9,143 +7,161 @@ from accelerator_microbenchmarks.core import system
 class SystemTest(absltest.TestCase):
   """Unit tests for system.py."""
 
-  def test_get_system_valid(self):
-    """Verify that get_system returns the correct SystemConfig."""
-    sys_config = system.get_system("ironwood")
-    self.assertEqual(sys_config.name, "ironwood")
-    self.assertIsInstance(sys_config, system.SystemConfig)
+  def test_tpu_version_from_str_valid(self):
+    """Verify that TpuVersion.from_str correctly normalizes aliases."""
+    for alias in (
+        "tpu v7x",
+        "tpu7x",
+        "TPU7x",
+        "ironwood",
+        "tpu v7",
+        "tpu7",
+        "TPU7",
+        "v7",
+    ):
+      self.assertEqual(system.TpuVersion.from_str(alias), system.TpuVersion.TPU7X)
 
-    # Test aliases for v6e / ghostlite / trillium / glc
-    sys_config_v6e = system.get_system("v6e")
-    self.assertEqual(sys_config_v6e.name, "trillium")
-    self.assertEqual(system.get_system("ghostlite"), sys_config_v6e)
-    self.assertEqual(system.get_system("trillium"), sys_config_v6e)
-    self.assertEqual(system.get_system("glc"), sys_config_v6e)
+    for alias in ("v6e", "tpu v6 lite", "trillium", "6e"):
+      self.assertEqual(system.TpuVersion.from_str(alias), system.TpuVersion.V6E)
 
-  def test_ghostlite_system_config_presets(self):
-    """Verify that the TRILLIUM (v6e / Trillium) preset has correct values."""
-    sys_config = system.TRILLIUM
-    self.assertEqual(sys_config.name, "trillium")
-
-    # Test compute stats
+    # Idempotent on enum instance
     self.assertEqual(
-        sys_config.tflops.peak_tflops_per_device["bfloat16"], 918.0
+        system.TpuVersion.from_str(system.TpuVersion.TPU7X), system.TpuVersion.TPU7X
     )
-    self.assertEqual(sys_config.tflops.peak_tflops_per_device["float32"], 459.0)
-    self.assertEqual(
-        sys_config.tflops.peak_tflops_per_device["float8_e5m2"], 918.0
-    )
-    self.assertEqual(
-        sys_config.tflops.peak_tflops_per_device["float8_e4m3fn"], 918.0
-    )
-    self.assertEqual(sys_config.tflops.peak_tflops_per_device["int8"], 1836.0)
-    self.assertEqual(sys_config.tflops.peak_tflops_per_device["int4"], 3672.0)
 
-    # Test ICI stats
-    self.assertEqual(sys_config.ici.peak_bw_gbps, 800.0)
-    self.assertTrue(sys_config.ici.bidirectional)
+  def test_tpu_version_str_behavior(self):
+    """Verify that TpuVersion inherits from str and stringifies to its value."""
+    self.assertIsInstance(system.TpuVersion.TPU7X, str)
+    self.assertIsInstance(system.TpuVersion.V6E, str)
+    self.assertEqual(str(system.TpuVersion.TPU7X), "tpu7x")
+    self.assertEqual(str(system.TpuVersion.V6E), "v6e")
+    self.assertEqual(f"{system.TpuVersion.TPU7X}", "tpu7x")
+    self.assertEqual(f"{system.TpuVersion.V6E}", "v6e")
 
-    # Test HBM stats
-    self.assertEqual(sys_config.hbm.curve_gbps[0], (1024, 50.0))
-    self.assertEqual(sys_config.hbm.curve_gbps[1], (1048576, 800.0))
-    self.assertEqual(sys_config.hbm.curve_gbps[2], (104857600, 1400.0))
-    self.assertEqual(sys_config.hbm.curve_gbps[3], (1073741824, 1638.4))
+  def test_default_fallback_dtype(self):
+    """Verify default fallback compute dtype is bfloat16 and present in all specs."""
+    self.assertEqual(system.DEFAULT_FALLBACK_DTYPE, "bfloat16")
+    for tpu_ver, hw_spec in system.HARDWARE_SPECS.items():
+      self.assertIsNotNone(hw_spec.tflops)
+      self.assertIn(
+          system.DEFAULT_FALLBACK_DTYPE,
+          hw_spec.tflops.peak_tflops_per_device,
+          f"HardwareSpec for {tpu_ver} is missing peak TFLOPS for"
+          f" {system.DEFAULT_FALLBACK_DTYPE}",
+      )
+    self.assertEqual(system.TpuVersion.TPU7X, "tpu7x")
+    self.assertEqual(system.TpuVersion.V6E, "v6e")
 
-    # Test v6e and aliases
-    v6e_config = system.get_system("v6e")
-    self.assertEqual(v6e_config.name, "trillium")
-    self.assertIsInstance(v6e_config, system.SystemConfig)
-    for alias in ("ghostlite", "v6e", "glc", "tpu v6 lite"):
-      v6e_config_alias = system.get_system(alias)
-      self.assertEqual(v6e_config_alias.name, "trillium")
-      self.assertEqual(v6e_config_alias, v6e_config)
-
-  def test_get_system_case_insensitive(self):
-    """Verify that get_system is case insensitive."""
-    sys_config = system.get_system("IRONWOOD")
-    self.assertEqual(sys_config.name, "ironwood")
-    sys_config_v6e = system.get_system("TRILLIUM")
-    self.assertEqual(sys_config_v6e.name, "trillium")
-
-  def test_get_system_invalid(self):
-    """Verify that get_system raises ValueError for invalid names."""
+  def test_tpu_version_from_str_invalid(self):
+    """Verify that TpuVersion.from_str raises ValueError for unsupported hardware."""
     with self.assertRaises(ValueError):
-      system.get_system("nonexistent")
+      system.TpuVersion.from_str("unsupported_chip")
 
-  def test_system_config_presets(self):
-    """Verify that the IRONWOOD preset has correct values."""
-    sys_config = system.IRONWOOD
-    self.assertEqual(sys_config.name, "ironwood")
-    self.assertEqual(sys_config.topology_dimension, 3)
+    with self.assertRaises(ValueError):
+      system.TpuVersion.from_str("")
+
+  def test_get_hardware_spec_valid(self):
+    """Verify that get_hardware_spec returns the correct HardwareSpec."""
+    v7x_spec = system.get_hardware_spec(system.TpuVersion.TPU7X)
+    self.assertEqual(v7x_spec.name, system.TpuVersion.TPU7X)
+    self.assertEqual(v7x_spec, system.TPU7X_HARDWARE_SPEC)
+    self.assertIsInstance(v7x_spec, system.HardwareSpec)
+
+    v6e_spec = system.get_hardware_spec(system.TpuVersion.V6E)
+    self.assertEqual(v6e_spec.name, system.TpuVersion.V6E)
+    self.assertEqual(v6e_spec, system.V6E_HARDWARE_SPEC)
+
+    # Test string aliases
+    self.assertEqual(
+        system.get_hardware_spec("ironwood"), system.TPU7X_HARDWARE_SPEC
+    )
+    self.assertEqual(
+        system.get_hardware_spec("tpu v7"), system.TPU7X_HARDWARE_SPEC
+    )
+    self.assertEqual(
+        system.get_hardware_spec("tpu7"), system.TPU7X_HARDWARE_SPEC
+    )
+    self.assertEqual(
+        system.get_hardware_spec("v7"), system.TPU7X_HARDWARE_SPEC
+    )
+    self.assertEqual(
+        system.get_hardware_spec("trillium"), system.V6E_HARDWARE_SPEC
+    )
+    self.assertEqual(
+        system.get_hardware_spec("v6e"), system.V6E_HARDWARE_SPEC
+    )
+
+  def test_get_hardware_spec_case_insensitive(self):
+    """Verify that get_hardware_spec is case insensitive."""
+    hw_spec = system.get_hardware_spec("IRONWOOD")
+    self.assertEqual(hw_spec.name, system.TpuVersion.TPU7X)
+    hw_spec_v6e = system.get_hardware_spec("V6E")
+    self.assertEqual(hw_spec_v6e.name, system.TpuVersion.V6E)
+
+  def test_get_hardware_spec_invalid(self):
+    """Verify that get_hardware_spec raises ValueError for invalid names."""
+    with self.assertRaises(ValueError):
+      system.get_hardware_spec("nonexistent")
+
+  def test_hardware_spec_presets(self):
+    """Verify that the TPU7X_HARDWARE_SPEC preset has correct values."""
+    hw_spec = system.TPU7X_HARDWARE_SPEC
+    self.assertEqual(hw_spec.name, system.TpuVersion.TPU7X)
+    self.assertEqual(hw_spec.topology_dimension, 3)
 
     # Test compute stats
     self.assertEqual(
-        sys_config.tflops.peak_tflops_per_device["bfloat16"], 1153.5
+        hw_spec.tflops.peak_tflops_per_device["bfloat16"], 1153.5
+    )
+    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["float32"], 576.75)
+    self.assertEqual(
+        hw_spec.tflops.peak_tflops_per_device["float8_e5m2"], 2307.0
     )
     self.assertEqual(
-        sys_config.tflops.peak_tflops_per_device["float32"], 576.75
+        hw_spec.tflops.peak_tflops_per_device["float8_e4m3fn"], 2307.0
     )
-    self.assertEqual(
-        sys_config.tflops.peak_tflops_per_device["float8_e5m2"], 2307.0
-    )
-    self.assertEqual(
-        sys_config.tflops.peak_tflops_per_device["float8_e4m3fn"], 2307.0
-    )
-    self.assertEqual(sys_config.tflops.peak_tflops_per_device["int8"], 2307.0)
+    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["int8"], 2307.0)
 
     # Test ICI stats
-    self.assertEqual(sys_config.ici.peak_bw_gbps, 1200.0)
-    self.assertTrue(sys_config.ici.bidirectional)
+    self.assertEqual(hw_spec.ici.peak_bw_gbps, 1200.0)
+    self.assertTrue(hw_spec.ici.bidirectional)
 
     # Test HBM stats
-    self.assertEqual(sys_config.hbm.curve_gbps[0], (1024, 100.0))
-    self.assertEqual(sys_config.hbm.curve_gbps[1], (1048576, 2000.0))
-    self.assertEqual(sys_config.hbm.curve_gbps[2], (104857600, 5000.0))
-    self.assertEqual(sys_config.hbm.curve_gbps[3], (1073741824, 7380.0))
+    self.assertEqual(hw_spec.hbm.curve_gbps[0], (1024, 100.0))
+    self.assertEqual(hw_spec.hbm.curve_gbps[1], (1048576, 2000.0))
+    self.assertEqual(hw_spec.hbm.curve_gbps[2], (104857600, 5000.0))
+    self.assertEqual(hw_spec.hbm.curve_gbps[3], (1073741824, 7380.0))
 
-  def test_get_runtime_device_info_success(self):
-    with mock.patch("jax.default_backend", return_value="cpu"):
-      with mock.patch("jax.device_count", return_value=1):
-        with mock.patch("jax.local_device_count", return_value=1):
-          with mock.patch("jax.__version__", "0.4.1"):
-            with mock.patch("importlib.metadata.version") as mock_version:
-              mock_version.side_effect = (
-                  lambda pkg: "1.0" if pkg == "libtpu" else None
-              )
-              with mock.patch("jax.devices") as mock_devices:
-                mock_device = mock.MagicMock()
-                mock_device.device_kind = "CPU"
-                mock_devices.return_value = [mock_device]
 
-                info = system.get_runtime_device_info()
+  def test_hardware_spec_v6e_presets(self):
+    """Verify that the V6E_HARDWARE_SPEC preset has correct values."""
+    hw_spec = system.V6E_HARDWARE_SPEC
+    self.assertEqual(hw_spec.name, system.TpuVersion.V6E)
+    self.assertEqual(hw_spec.topology_dimension, 2)
 
-                self.assertEqual(info["platform"], "cpu")
-                self.assertEqual(info["device_count"], 1)
-                self.assertEqual(info["local_device_count"], 1)
-                self.assertEqual(info["jax_version"], "0.4.1")
-                self.assertEqual(info["libtpu_version"], "1.0")
-                self.assertEqual(info["chip_version"], "CPU")
+    # Test compute stats
+    self.assertEqual(
+        hw_spec.tflops.peak_tflops_per_device["bfloat16"], 918.0
+    )
+    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["float32"], 459.0)
+    self.assertEqual(
+        hw_spec.tflops.peak_tflops_per_device["float8_e5m2"], 918.0
+    )
+    self.assertEqual(
+        hw_spec.tflops.peak_tflops_per_device["float8_e4m3fn"], 918.0
+    )
+    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["int8"], 1836.0)
+    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["int4"], 3672.0)
 
-  def test_get_runtime_device_info_fallback(self):
-    with mock.patch("jax.default_backend", side_effect=Exception("mock err")):
-      # If default_backend fails, does it crash?
-      pass
+    # Test ICI stats
+    self.assertEqual(hw_spec.ici.peak_bw_gbps, 800.0)
+    self.assertTrue(hw_spec.ici.bidirectional)
 
-    with mock.patch("jax.default_backend", return_value="cpu"):
-      with mock.patch("jax.device_count", return_value=1):
-        with mock.patch("jax.local_device_count", return_value=1):
-          with mock.patch(
-              "importlib.metadata.version", side_effect=Exception("no package")
-          ):
-            with mock.patch(
-                "jax.devices", side_effect=Exception("no generic context")
-            ):
-              info = system.get_runtime_device_info()
-              self.assertEqual(info["platform"], "cpu")
-              self.assertEqual(info["device_count"], 1)
-              self.assertEqual(info["local_device_count"], 1)
-              self.assertNotIn("libtpu_version", info)
-              self.assertNotIn("chip_version", info)
+    # Test HBM stats
+    self.assertEqual(hw_spec.hbm.curve_gbps[0], (1024, 50.0))
+    self.assertEqual(hw_spec.hbm.curve_gbps[1], (1048576, 800.0))
+    self.assertEqual(hw_spec.hbm.curve_gbps[2], (104857600, 1400.0))
+    self.assertEqual(hw_spec.hbm.curve_gbps[3], (1073741824, 1638.4))
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import host_device
+from accelerator_microbenchmarks.core import system
 import jax
 import numpy as np
 
@@ -53,7 +54,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     }
     config = host_device.HostDeviceParams(**d2h_params)
     self.bm = host_device.DeviceToHostBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     self.bm.setup()
     self.bm.inputs = list(self.bm.generate_inputs())
@@ -87,7 +88,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     }
     config = host_device.HostDeviceParams(**d2h_params)
     self.bm = host_device.DeviceToHostBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     original_generate_inputs = self.bm.generate_inputs
     generated_arrays = []
@@ -117,7 +118,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     devices = jax.devices()
     if devices[0].device_kind != "TPU7x" or jax.devices()[0].platform != "tpu":
       print("Skipping test for non-TPU7x devices.")
-      self.skipTest("This test is a corner case for Ghostfish.")
+      self.skipTest("This test is a corner case for TPU v7x.")
 
     params = {"data_size_mib": size_mib, "num_runs": 20, "warmup_tries": 2}
     d2h_params = {
@@ -125,7 +126,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     }
     config = host_device.HostDeviceParams(**d2h_params)
     self.bm = host_device.DeviceToHostBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     self.bm.setup()
     inputs = self.bm.generate_inputs()

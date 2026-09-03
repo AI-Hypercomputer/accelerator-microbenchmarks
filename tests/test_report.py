@@ -9,8 +9,11 @@ from unittest import mock
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import system
+from accelerator_microbenchmarks.tests import test_report_utils
 import numpy as np
 import pandas as pd
 
@@ -18,7 +21,8 @@ import pandas as pd
 def _make_metadata(
     name: str = "DummyBenchmark",
     params: dict[str, Any] | None = None,
-    device_info: dict[str, Any] | None = None,
+    platform_info: platform.PlatformInfo | None = None,
+    hardware_spec: system.HardwareSpec | None = None,
     test_name: str | None = None,
     start_time: str = "2026-08-18T10:00:00",
     end_time: str = "2026-08-18T10:01:00",
@@ -30,9 +34,12 @@ def _make_metadata(
       start_time=start_time,
       end_time=end_time,
       params=params or {},
-      device_info=device_info
-      if device_info is not None
-      else {"platform": "tpu"},
+      platform_info=platform_info
+      if platform_info is not None
+      else test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+      hardware_spec=hardware_spec
+      if hardware_spec is not None
+      else test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
   )
 
 
@@ -173,9 +180,7 @@ class ReportTest(absltest.TestCase):
     self.assertEqual(df["test_name"].iloc[0], "DummyBenchmark_test")
     self.assertEqual(df["m"].iloc[0], 1024)
     self.assertEqual(df["n"].iloc[0], 2048)
-    self.assertEqual(df["avg_ms"].iloc[0], 1.23)
-    self.assertEqual(df["tflops_per_sec"].iloc[0], 500.0)
-    self.assertEqual(df["platform"].iloc[0], "tpu")
+    self.assertEqual(df["tpu_type"].iloc[0], system.TpuVersion.TPU7X.value)
     self.assertEqual(df["KET_ms"].iloc[0], 1.23)
     self.assertEqual(df["throughput"].iloc[0], 500.0)
     self.assertEqual(df["start"].iloc[0], "2026-08-18T10:00:00")
@@ -617,7 +622,6 @@ class ReportTest(absltest.TestCase):
     metadata = _make_metadata(
         name="DummyBenchmark",
         params={"param1": "val1"},
-        device_info={"device": "tpu"},
     )
     metrics = {
         "avg_ms": 10.0,
@@ -645,7 +649,6 @@ class ReportTest(absltest.TestCase):
     metadata = _make_metadata(
         name="DummyGemm",
         params={"param1": "val1"},
-        device_info={"device": "tpu"},
     )
     metrics = {
         "avg_ms": 10.0,

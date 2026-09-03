@@ -6,6 +6,22 @@ from typing import Optional
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import platform
+from accelerator_microbenchmarks.core import system
+
+DEFAULT_TEST_PLATFORM_INFO: platform.PlatformInfo = platform.PlatformInfo(
+    tpu_type=system.TpuVersion.TPU7X,
+    topology="2x2x1",
+    total_devices=4,
+    local_devices=4,
+    process_count=1,
+    process_index=0,
+    python_version="3.11.0",
+    jax_version="0.4.30",
+    jaxlib_version="0.4.30",
+    libtpu_version="0.1.dev20240101",
+)
+DEFAULT_TEST_HARDWARE_SPEC: system.HardwareSpec = system.TPU7X_HARDWARE_SPEC
 
 # Default keys produced by base classes or execution runners that are not
 # intended to be displayed in concise ASCII summary tables.
@@ -18,9 +34,7 @@ DEFAULT_IGNORED_KEYS: frozenset[str] = frozenset({
     "xprof_timing",
     "xprof_dir",
     "xla_dump_dir",
-    "system",
     "use_trace_roofline",
-    "hardware_stats",
     "seed",
     # Intermediate or redundant metrics
     "avg_ms",

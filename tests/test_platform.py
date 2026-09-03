@@ -4,6 +4,7 @@ from unittest import mock
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import platform
+from accelerator_microbenchmarks.core import system
 
 
 class PlatformTest(absltest.TestCase):
@@ -80,8 +81,8 @@ class PlatformTest(absltest.TestCase):
       version = platform._get_package_version("faulty_pkg")
       self.assertEqual(version, "unknown")
 
-  def test_get_platform_description_success(self):
-    """Verify get_platform_description returns complete metadata dictionary."""
+  def test_get_platform_info_success(self):
+    """Verify get_platform_info returns complete metadata PlatformInfo dataclass."""
     mock_device = mock.MagicMock()
     mock_device.platform = "tpu"
     mock_device.device_kind = "TPU v7x"
@@ -108,35 +109,24 @@ class PlatformTest(absltest.TestCase):
           "libtpu": "0.1.dev20240101",
       }.get(mod, "unknown")
 
-      desc = platform.get_platform_description()
+      desc = platform.get_platform_info()
 
       mock_dist_init.assert_called_once()
-      expected_keys = {
-          "tpu_type",
-          "topology",
-          "total_devices",
-          "local_devices",
-          "process_count",
-          "process_index",
-          "python_version",
-          "jax_version",
-          "jaxlib_version",
-          "libtpu_version",
-      }
-      self.assertEqual(set(desc.keys()), expected_keys)
-      self.assertEqual(desc["tpu_type"], "TPU v7x")
-      self.assertEqual(desc["topology"], "1x1x1")
-      self.assertEqual(desc["total_devices"], 4)
-      self.assertEqual(desc["local_devices"], 4)
-      self.assertEqual(desc["process_count"], 1)
-      self.assertEqual(desc["process_index"], 0)
-      self.assertEqual(desc["python_version"], "3.11.0")
-      self.assertEqual(desc["jax_version"], "0.4.30")
-      self.assertEqual(desc["jaxlib_version"], "0.4.30")
-      self.assertEqual(desc["libtpu_version"], "0.1.dev20240101")
+      self.assertIsInstance(desc, platform.PlatformInfo)
+      self.assertEqual(desc.tpu_type, system.TpuVersion.TPU7X)
+      self.assertEqual(desc.topology, "1x1x1")
+      self.assertEqual(desc.total_devices, 4)
+      self.assertEqual(desc.local_devices, 4)
+      self.assertEqual(desc.process_count, 1)
+      self.assertEqual(desc.process_index, 0)
+      self.assertEqual(desc.python_version, "3.11.0")
+      self.assertEqual(desc.jax_version, "0.4.30")
+      self.assertEqual(desc.jaxlib_version, "0.4.30")
+      self.assertEqual(desc.libtpu_version, "0.1.dev20240101")
 
-  def test_get_platform_description_distributed_init_failure_ignored(self):
-    """Verify get_platform_description proceeds if distributed.initialize fails."""
+
+  def test_get_platform_info_distributed_init_failure_ignored(self):
+    """Verify get_platform_info proceeds if distributed.initialize fails."""
     mock_device = mock.MagicMock()
     mock_device.platform = "tpu"
     mock_device.device_kind = "TPU v6e"
@@ -156,34 +146,26 @@ class PlatformTest(absltest.TestCase):
     ), mock.patch(
         "jax.process_index", return_value=0
     ):
-      desc = platform.get_platform_description()
-      self.assertEqual(desc["tpu_type"], "TPU v6e")
-      self.assertEqual(desc["total_devices"], 1)
+      desc = platform.get_platform_info()
+      self.assertIsInstance(desc, platform.PlatformInfo)
+      self.assertEqual(desc.tpu_type, system.TpuVersion.V6E)
+      self.assertEqual(desc.total_devices, 1)
 
-  def test_get_platform_description_cpu_fallback(self):
-    """Verify get_platform_description returns none for tpu_type and topology on CPU."""
+  def test_get_platform_info_cpu_raises(self):
+    """Verify get_platform_info raises RuntimeError on non-TPU backend."""
     mock_device = mock.MagicMock()
     mock_device.platform = "cpu"
     mock_device.device_kind = "cpu"
 
     with mock.patch("jax.distributed.initialize"), mock.patch(
         "jax.default_backend", return_value="cpu"
-    ), mock.patch("jax.devices", return_value=[mock_device]), mock.patch(
-        "jax.device_count", return_value=8
-    ), mock.patch(
-        "jax.local_device_count", return_value=8
-    ), mock.patch(
-        "jax.process_count", return_value=1
-    ), mock.patch(
-        "jax.process_index", return_value=0
-    ):
-      desc = platform.get_platform_description()
-      self.assertEqual(desc["tpu_type"], "none")
-      self.assertEqual(desc["topology"], "none")
-      self.assertEqual(desc["total_devices"], 8)
-      self.assertEqual(desc["local_devices"], 8)
+    ), mock.patch("jax.devices", return_value=[mock_device]):
+      with self.assertRaisesRegex(
+          RuntimeError, "TPUMS requires TPU accelerator"
+      ):
+        platform.get_platform_info()
 
-  def test_get_platform_description_error_not_masked(self):
+  def test_get_platform_info_error_not_masked(self):
     """Verify unexpected exceptions outside jax.devices() are not masked."""
     mock_device = mock.MagicMock()
     mock_device.platform = "tpu"
@@ -196,127 +178,140 @@ class PlatformTest(absltest.TestCase):
         "jax.device_count", side_effect=ValueError("Simulated device failure")
     ):
       with self.assertRaises(ValueError) as cm:
-        platform.get_platform_description()
+        platform.get_platform_info()
       self.assertIn("Simulated device failure", str(cm.exception))
 
-  def test_get_platform_description_device_exception_raises_runtime_error(self):
-    """Verify get_platform_description wraps general exceptions in RuntimeError."""
+  def test_get_platform_info_device_exception_raises_runtime_error(self):
+    """Verify get_platform_info wraps general exceptions in RuntimeError."""
     with mock.patch("jax.distributed.initialize"), mock.patch(
         "jax.default_backend", return_value="tpu"
     ), mock.patch(
         "jax.devices", side_effect=Exception("PJRT initialization error")
     ):
       with self.assertRaises(RuntimeError) as cm:
-        platform.get_platform_description()
+        platform.get_platform_info()
       self.assertIn(
           "TPU runtime environment is not properly initialized",
           str(cm.exception),
       )
 
-  def test_get_platform_description_backend_exception_raises_runtime_error(
+  def test_get_platform_info_backend_exception_raises_runtime_error(
       self,
   ):
-    """Verify get_platform_description wraps default_backend exceptions in RuntimeError."""
+    """Verify get_platform_info wraps default_backend exceptions in RuntimeError."""
     with mock.patch("jax.distributed.initialize"), mock.patch(
         "jax.default_backend",
         side_effect=Exception("PJRT initialization error"),
     ):
       with self.assertRaises(RuntimeError) as cm:
-        platform.get_platform_description()
+        platform.get_platform_info()
       self.assertIn(
           "TPU runtime environment is not properly initialized",
           str(cm.exception),
       )
 
-  def test_get_topology_with_explicit_device_kind(self):
-    """Verify _get_topology respects explicit device_kind parameter."""
+  def test_get_platform_info_no_devices_raises(self):
+    """Verify get_platform_info raises RuntimeError when devices list is empty."""
+    with mock.patch("jax.distributed.initialize"), mock.patch(
+        "jax.default_backend", return_value="tpu"
+    ), mock.patch("jax.devices", return_value=[]):
+      with self.assertRaisesRegex(
+          RuntimeError, "no TPU devices were discovered"
+      ):
+        platform.get_platform_info()
+
+  def test_get_platform_info_missing_device_kind_raises(self):
+    """Verify get_platform_info raises RuntimeError when device_kind is missing."""
+    mock_dev = mock.MagicMock(spec=[])  # no device_kind attribute
+    with mock.patch("jax.distributed.initialize"), mock.patch(
+        "jax.default_backend", return_value="tpu"
+    ), mock.patch("jax.devices", return_value=[mock_dev]):
+      with self.assertRaisesRegex(
+          RuntimeError, "missing a valid 'device_kind'"
+      ):
+        platform.get_platform_info()
+
+  def test_get_topology_v6e(self):
+    """Verify _get_topology strips trivial 3rd dimension for 2D mesh."""
     devices = []
     for x in range(2):
       for y in range(4):
         dev = mock.MagicMock()
         dev.coords = (x, y, 0)
         devices.append(dev)
-    topology = platform._get_topology(devices, device_kind="TPU v6 lite")
-    self.assertEqual(topology, "2x4")
-
-  def test_get_topology_v6e(self):
-    """Verify _get_topology strips trivial 3rd dimension for TPU v6."""
-    for kind in ("TPU v6 lite", "v6e"):
-      devices = []
-      for x in range(2):
-        for y in range(4):
-          dev = mock.MagicMock()
-          dev.device_kind = kind
-          dev.coords = (x, y, 0)
-          devices.append(dev)
-      self.assertEqual(platform._get_topology(devices), "2x4")
+    self.assertEqual(
+        platform._get_topology(devices, topology_dimension=2), "2x4"
+    )
 
   def test_get_topology_v6e_large_simulated(self):
-    """Verify _get_topology handles simulated 16x16 v6e mesh."""
+    """Verify _get_topology handles simulated 16x16 2D mesh."""
     devices = []
     for x in range(16):
       for y in range(16):
         dev = mock.MagicMock()
-        dev.device_kind = "v6e"
         dev.coords = (x, y, 0)
         devices.append(dev)
-    self.assertEqual(platform._get_topology(devices), "16x16")
+    self.assertEqual(
+        platform._get_topology(devices, topology_dimension=2), "16x16"
+    )
 
   def test_get_topology_v7x(self):
-    """Verify _get_topology preserves 3D format for TPU v7x and Ironwood."""
-    for kind in ("TPU7x", "tpu7x", "TPU v7x", "tpu v7x", "ironwood", "gfc"):
-      devices = []
-      for x in range(2):
-        for y in range(2):
-          for _ in range(2):
-            dev = mock.MagicMock()
-            dev.device_kind = kind
-            dev.coords = (x, y, 0)
-            devices.append(dev)
-      self.assertEqual(platform._get_topology(devices), "2x2x1")
+    """Verify _get_topology preserves 3D format for 3D topology."""
+    devices = []
+    for x in range(2):
+      for y in range(2):
+        for _ in range(2):
+          dev = mock.MagicMock()
+          dev.coords = (x, y, 0)
+          devices.append(dev)
+    self.assertEqual(
+        platform._get_topology(devices, topology_dimension=3), "2x2x1"
+    )
 
   def test_get_topology_v7x_large_simulated(self):
-    """Verify _get_topology handles simulated 4x4x4 v7x mesh."""
+    """Verify _get_topology handles simulated 4x4x4 3D mesh."""
     devices = []
     for x in range(4):
       for y in range(4):
         for z in range(4):
           dev = mock.MagicMock()
-          dev.device_kind = "ironwood"
           dev.coords = (x, y, z)
           devices.append(dev)
-    self.assertEqual(platform._get_topology(devices), "4x4x4")
-
-  def test_get_topology_unconfigured_platform_graceful(self):
-    """Verify _get_topology formats coordinates even if platform is unconfigured in SYSTEMS."""
-    for kind in ["CPU", "GPU", "TPU v4", "", None]:
-      dev = mock.MagicMock()
-      dev.coords = (0, 0, 0)
-      dev.device_kind = kind
-      self.assertEqual(platform._get_topology([dev]), "1x1x1")
+    self.assertEqual(
+        platform._get_topology(devices, topology_dimension=3), "4x4x4"
+    )
 
   def test_get_topology_fallback_unknown(self):
     """Verify _get_topology returns unknown for invalid/missing coordinates."""
     # Empty devices list
-    self.assertEqual(platform._get_topology([]), "unknown")
+    self.assertEqual(
+        platform._get_topology([], topology_dimension=2), "unknown"
+    )
 
     # Missing coords attribute
     dev_no_coords = mock.MagicMock(spec=[])
-    self.assertEqual(platform._get_topology([dev_no_coords]), "unknown")
+    self.assertEqual(
+        platform._get_topology([dev_no_coords], topology_dimension=2),
+        "unknown",
+    )
 
     # None coords
     dev_none_coords = mock.MagicMock()
     dev_none_coords.coords = None
-    self.assertEqual(platform._get_topology([dev_none_coords]), "unknown")
+    self.assertEqual(
+        platform._get_topology([dev_none_coords], topology_dimension=2),
+        "unknown",
+    )
 
     # Mismatched dimension lengths
     dev_2d = mock.MagicMock()
-    dev_2d.device_kind = "tpu v7x"
     dev_2d.coords = (0, 0)
     dev_3d = mock.MagicMock()
-    dev_3d.device_kind = "tpu v7x"
     dev_3d.coords = (0, 0, 0)
-    self.assertEqual(platform._get_topology([dev_2d, dev_3d]), "unknown")
+    self.assertEqual(
+        platform._get_topology([dev_2d, dev_3d], topology_dimension=3),
+        "unknown",
+    )
 
 
 if __name__ == "__main__":

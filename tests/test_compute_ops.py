@@ -3,6 +3,7 @@
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import compute_ops
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import system
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -27,7 +28,9 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
   def test_generate_inputs(self):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
-    self.bm = compute_ops.SwiGLUBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.SwiGLUBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     (x,) = self.bm.generate_inputs()
     self.assertEqual(x.shape, (32, 128 * 2))
@@ -36,7 +39,9 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
   def test_run_op(self):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
-    self.bm = compute_ops.SwiGLUBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.SwiGLUBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     (x,) = self.bm.generate_inputs()
     out = self.bm.run_op(x)
@@ -46,7 +51,9 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
   def test_get_total_bytes(self):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
-    self.bm = compute_ops.SwiGLUBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.SwiGLUBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # Read X (32 * 128 * 2 * 2) + Write Out (32 * 128 * 2)
     # 16384 + 8192 = 24576
     expected_bytes = 24576.0
@@ -55,7 +62,9 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
   def test_get_arithmetic_intensity(self):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
-    self.bm = compute_ops.SwiGLUBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.SwiGLUBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # flops = 32 * 128 * 10 = 40960
     # intensity = 40960 / 24576 = 1.6666666666666667
     expected_intensity = 40960 / 24576
@@ -80,7 +89,9 @@ class RMSNormBenchmarkTest(absltest.TestCase):
   def test_generate_inputs(self):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
-    self.bm = compute_ops.RMSNormBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.RMSNormBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     x, w = self.bm.generate_inputs()
     self.assertEqual(x.shape, (32, 128))
@@ -91,7 +102,9 @@ class RMSNormBenchmarkTest(absltest.TestCase):
   def test_run_op(self):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
-    self.bm = compute_ops.RMSNormBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.RMSNormBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     x, w = self.bm.generate_inputs()
     out = self.bm.run_op(x, w)
@@ -101,7 +114,9 @@ class RMSNormBenchmarkTest(absltest.TestCase):
   def test_get_total_bytes(self):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
-    self.bm = compute_ops.RMSNormBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.RMSNormBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # Read X (32 * 128 * 2), Read W (128 * 2), Write Out (32 * 128 * 2)
     # 8192 + 256 + 8192 = 16640
     expected_bytes = 16640.0
@@ -124,7 +139,9 @@ class RoPEBenchmarkTest(absltest.TestCase):
   def test_generate_inputs(self):
     params = {"seq_len": 64, "head_dim": 64, "batch": 8, "heads": 16}
     config = compute_ops.RoPEParams(**params)
-    self.bm = compute_ops.RoPEBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.RoPEBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     x, freq_cis = self.bm.generate_inputs()
     self.assertEqual(x.shape, (8, 16, 64, 32))
@@ -135,7 +152,9 @@ class RoPEBenchmarkTest(absltest.TestCase):
   def test_run_op(self):
     params = {"seq_len": 64, "head_dim": 64, "batch": 8, "heads": 16}
     config = compute_ops.RoPEParams(**params)
-    self.bm = compute_ops.RoPEBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.RoPEBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     x, freq_cis = self.bm.generate_inputs()
     out = self.bm.run_op(x, freq_cis)
@@ -145,7 +164,9 @@ class RoPEBenchmarkTest(absltest.TestCase):
   def test_get_total_bytes(self):
     params = {"seq_len": 64, "head_dim": 64, "batch": 8, "heads": 16}
     config = compute_ops.RoPEParams(**params)
-    self.bm = compute_ops.RoPEBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.RoPEBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # batch * heads * seq_len * head_dim//2 * 8 * 2
     # 8 * 16 * 64 * 32 * 8 * 2 = 4194304
     expected_bytes = 4194304.0
@@ -169,7 +190,7 @@ class QuantizationBenchmarkTest(absltest.TestCase):
     params = {"m": 64, "n": 128}
     config = compute_ops.QuantParams(**params)
     self.bm = compute_ops.QuantizationBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     self.bm.setup()
     (x,) = self.bm.generate_inputs()
@@ -180,7 +201,7 @@ class QuantizationBenchmarkTest(absltest.TestCase):
     params = {"m": 64, "n": 128}
     config = compute_ops.QuantParams(**params)
     self.bm = compute_ops.QuantizationBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     self.bm.setup()
     (x,) = self.bm.generate_inputs()
@@ -194,7 +215,7 @@ class QuantizationBenchmarkTest(absltest.TestCase):
     params = {"m": 64, "n": 128}
     config = compute_ops.QuantParams(**params)
     self.bm = compute_ops.QuantizationBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     # Read X (64 * 128 * 2), Write Out (64 * 128 * 1), Write SF (64 * 4)
     # 16384 + 8192 + 256 = 24832
@@ -218,7 +239,9 @@ class AddBenchmarkTest(absltest.TestCase):
   def test_generate_inputs(self):
     params = {"size": 1024}
     config = compute_ops.AddParams(**params)
-    self.bm = compute_ops.AddBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.AddBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     x, y = self.bm.generate_inputs()
     self.assertEqual(x.shape, (1024,))
@@ -229,7 +252,9 @@ class AddBenchmarkTest(absltest.TestCase):
   def test_run_op(self):
     params = {"size": 1024}
     config = compute_ops.AddParams(**params)
-    self.bm = compute_ops.AddBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.AddBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     x, y = self.bm.generate_inputs()
     out = self.bm.run_op(x, y)
@@ -239,7 +264,9 @@ class AddBenchmarkTest(absltest.TestCase):
   def test_get_total_bytes(self):
     params = {"size": 1024}
     config = compute_ops.AddParams(**params)
-    self.bm = compute_ops.AddBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = compute_ops.AddBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # Read X, Read Y, Write Z
     # 1024 * 2 * 3 = 6144
     expected_bytes = 6144.0

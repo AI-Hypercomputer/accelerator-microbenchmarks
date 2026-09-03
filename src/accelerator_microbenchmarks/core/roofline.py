@@ -1,6 +1,8 @@
 """Roofline analysis for benchmark metrics."""
 
+import logging
 from typing import Any
+from accelerator_microbenchmarks.core import system
 
 
 def apply_roofline_analysis(
@@ -23,27 +25,35 @@ def apply_roofline_analysis(
             metrics["trace_flops"] / metrics["trace_hbm_bytes"]
         )
 
-  hardware_stats = config.hardware_stats
-  if hardware_stats:
-    hw = hardware_stats
-    if isinstance(hw, dict):
-      dtype = benchmark_instance.get_compute_dtype()
-      tflops_dict = hw.get("tflops", {})
-      if isinstance(tflops_dict, dict):
-        peak_tflops = tflops_dict.get(dtype, tflops_dict.get("bfloat16", 0.0))
-      else:
-        peak_tflops = float(tflops_dict) if tflops_dict else 0.0
-      hbm_bw_data = hw.get("hbm_bw", 0.0)
+  hw_spec = getattr(benchmark_instance, "hardware_spec", None)
+  if hw_spec and hw_spec.tflops and hw_spec.hbm:
+    dtype = benchmark_instance.get_compute_dtype()
+    if dtype in hw_spec.tflops.peak_tflops_per_device:
+      peak_tflops = hw_spec.tflops.peak_tflops_per_device[dtype]
     else:
-      peak_tflops = 0.0
-      hbm_bw_data = 0.0
+      fallback_dtype = system.DEFAULT_FALLBACK_DTYPE
+      if fallback_dtype not in hw_spec.tflops.peak_tflops_per_device:
+        raise KeyError(
+            f"HardwareSpec for '{hw_spec.name}' is invalid: missing peak TFLOPS"
+            f" for canonical fallback dtype '{fallback_dtype}'."
+        )
+      peak_tflops = hw_spec.tflops.peak_tflops_per_device[fallback_dtype]
+      logging.warning(
+          "Peak TFLOPS setup is missing for dtype '%s' on %s. "
+          "Falling back to canonical '%s' peak TFLOPS (%.1f TFLOPS).",
+          dtype,
+          hw_spec.name,
+          fallback_dtype,
+          peak_tflops,
+      )
+    hbm_bw_data = hw_spec.hbm.curve_gbps
 
     intensity = benchmark_instance.get_arithmetic_intensity()
     total_bytes = benchmark_instance.get_total_bytes()
 
     # 1. Resolve BW for this transfer size
     if isinstance(hbm_bw_data, (int, float)):
-      bw = hbm_bw_data
+      bw = float(hbm_bw_data)
     elif isinstance(hbm_bw_data, list):
       sorted_data = sorted(hbm_bw_data, key=lambda x: x[0])
       if not sorted_data:
@@ -99,18 +109,18 @@ def apply_roofline_analysis(
       bw = 0.0
 
     # 2. Compute Roofline
-    roofline_tflops = min(peak_tflops, (intensity * bw) / 1000.0)  # pyrefly: ignore[bad-specialization]
+    roofline_tflops = min(peak_tflops, (intensity * bw) / 1000.0)
     metrics["roofline_tflops_limit"] = roofline_tflops
     metrics["peak_bw_at_size_gb_s"] = bw
 
     # 3. Efficiency
-    actual_tflops = metrics.get("tflops_per_sec", 0.0)
-    if actual_tflops > 0 and roofline_tflops > 0:  # pyrefly: ignore[unsupported-operation]
+    actual_tflops = metrics.get("tflops_per_sec")
+    if actual_tflops is not None and actual_tflops > 0 and roofline_tflops > 0:
       metrics["roofline_efficiency"] = (actual_tflops / roofline_tflops) * 100.0
 
     # 4. Bandwidth Efficiency (for memory bound ops)
-    actual_bw = metrics.get("bandwidth_gb_s", 0.0)
-    if actual_bw > 0 and bw > 0:
+    actual_bw = metrics.get("bandwidth_gb_s")
+    if actual_bw is not None and actual_bw > 0 and bw > 0:
       metrics["bw_efficiency"] = (actual_bw / bw) * 100.0
 
   return metrics

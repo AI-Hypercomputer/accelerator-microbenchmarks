@@ -101,13 +101,9 @@ def load_config(path: str) -> list[dict[str, Any]]:
         f"Config file at '{path}' must specify 'name:' inside the 'benchmark:' mapping."
     )
 
-  # 2. Extract top-level hardware stats if present
-  hardware = top_level.pop("hardware", None)
   global_params = top_level
-  if hardware:
-    global_params["hardware_stats"] = hardware
 
-  # 3. Expand Model Presets
+  # 2. Expand Model Presets
   if "model" in benchmark_spec:
     model_name = benchmark_spec.pop("model")
     if model_name in model_configs.MODELS:
@@ -116,7 +112,7 @@ def load_config(path: str) -> list[dict[str, Any]]:
         if k not in benchmark_spec:
           benchmark_spec[k] = v
 
-  # 4. Expand Cases, CSV Shapes & Parameter Sweeps
+  # 3. Expand Cases, CSV Shapes & Parameter Sweeps
   benchmark_spec["name"] = benchmark_name
   if "cases" in benchmark_spec:
     cases_list = benchmark_spec.pop("cases")

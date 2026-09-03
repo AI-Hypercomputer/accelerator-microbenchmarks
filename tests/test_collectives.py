@@ -9,8 +9,10 @@ from absl.testing import parameterized
 # pylint: disable=g-import-not-at-top
 from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import jax.numpy as jnp
@@ -58,7 +60,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "reduce_op": "invalid_op",
     }
     config = collectives.AllReduceParams(**params)
-    bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllReduceBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     with self.assertRaises(ValueError):
       bm.setup()
 
@@ -69,7 +73,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "reduce_op": "max",
     }
     config = collectives.AllReduceParams(**params)
-    bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllReduceBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.assertEqual(bm.get_run_identifier(), "dim_1024_op_max")
 
   def test_all_gather_registered(self):
@@ -80,7 +86,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
   def test_all_gather_match_xprof_op_fallback(self):
     """Test that match_xprof_op_fallback correctly identifies async-done events."""
     config = collectives.CollectivesParams(matrix_dim=64)
-    bm = collectives.AllGatherBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllGatherBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.assertTrue(
         bm.match_xprof_op_fallback({
             "args": {
@@ -107,7 +115,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "dtype": "bfloat16",
     }
     config = collectives.AllReduceParams(**params)
-    bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllReduceBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     bm.setup()
     (data,) = bm.generate_inputs()
     self.assertEqual(data.shape, (64, 8, 128))
@@ -120,7 +130,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "dtype": "bfloat16",
     }
     config = collectives.CollectivesParams(**params)
-    bm = collectives.AllGatherBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllGatherBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     bm.setup()
     (data,) = bm.generate_inputs()
     self.assertEqual(data.shape, (64, 8, 128))
@@ -140,7 +152,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "reduce_op": op,
     }
     config = collectives.AllReduceParams(**params)
-    bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllReduceBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     bm.setup()
     (data,) = bm.generate_inputs()
     out = bm.run_op(data)
@@ -159,7 +173,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "sharding_strategy": "2x1",
     }
     config_2x1 = collectives.CollectivesParams(**params_2x1)
-    bm = collectives.AllGatherBenchmark(config=config_2x1, mesh=mesh)
+    bm = collectives.AllGatherBenchmark(
+        config=config_2x1, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+    )
     bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x1")
     self.assertEqual(bm._get_sharding_axes(), ("d_0",))
@@ -178,7 +194,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "sharding_strategy": "2x2",
     }
     config_2x2 = collectives.CollectivesParams(**params_2x2)
-    bm = collectives.AllGatherBenchmark(config=config_2x2, mesh=mesh)
+    bm = collectives.AllGatherBenchmark(
+        config=config_2x2, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+    )
     bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x2")
     self.assertEqual(bm._get_sharding_axes(), ("d_0", "d_1"))
@@ -200,7 +218,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "sharding_strategy": "2x1",
     }
     config_2x1 = collectives.CollectivesParams(**params_2x1)
-    bm = collectives.ReduceScatterBenchmark(config=config_2x1, mesh=mesh)
+    bm = collectives.ReduceScatterBenchmark(
+        config=config_2x1, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+    )
     bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x1")
     self.assertEqual(bm._get_sharding_axes(), ("d_0",))
@@ -219,7 +239,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "sharding_strategy": "2x2",
     }
     config_2x2 = collectives.CollectivesParams(**params_2x2)
-    bm = collectives.ReduceScatterBenchmark(config=config_2x2, mesh=mesh)
+    bm = collectives.ReduceScatterBenchmark(
+        config=config_2x2, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+    )
     bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x2")
     self.assertEqual(bm._get_sharding_axes(), ("d_0", "d_1"))
@@ -240,7 +262,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         sharding_strategy="2x2",
     )
     # AllGather
-    ag_bm = collectives.AllGatherBenchmark(config=config, mesh=mesh)
+    ag_bm = collectives.AllGatherBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+    )
     ag_bm.setup()
     ag_metrics = ag_bm.calculate_metrics([1.0])  # 1.0 ms latency
     # local_size = 1024 * 8 * 128 * 4 = 4194304 bytes
@@ -257,7 +281,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         sharding_strategy="2x2",
         reduce_op="sum",
     )
-    ar_bm = collectives.AllReduceBenchmark(config=ar_config, mesh=mesh)
+    ar_bm = collectives.AllReduceBenchmark(
+        config=ar_config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+    )
     ar_bm.setup()
     ar_metrics = ar_bm.calculate_metrics([1.0])
     # local_size = 4194304 bytes
@@ -282,7 +308,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         xla_dump_dir=dump_dir_p,
     )
     ag_parallel = collectives.AllGatherBenchmark(
-        config=config_parallel, mesh=mesh
+        config=config_parallel, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
     )
     ag_parallel.setup()
     metrics_p = ag_parallel.calculate_metrics([1.0])
@@ -302,7 +328,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         xla_dump_dir=dump_dir_np,
     )
     ag_non_parallel = collectives.AllGatherBenchmark(
-        config=config_non_parallel, mesh=mesh
+        config=config_non_parallel, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
     )
     ag_non_parallel.setup()
     metrics_np = ag_non_parallel.calculate_metrics([1.0])
@@ -319,7 +345,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         mesh_shape="2x2",
         sharding_strategy="2x2",
     )
-    ag_bm = collectives.AllGatherBenchmark(config=config, mesh=mesh)
+    ag_bm = collectives.AllGatherBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+    )
     ag_bm.setup()
 
     def mock_extract_raises():
@@ -346,7 +374,8 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
                 "sharding_strategy": "2x2x1",
                 "dtype": "bfloat16",
             },
-            device_info={"platform": "tpu"},
+            platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+            hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
             "shard_size_mib": 32.0,
@@ -403,7 +432,8 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
                 "sharding_strategy": "2x2x1",
                 "dtype": "bfloat16",
             },
-            device_info={"platform": "tpu"},
+            platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+            hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
             "local_size_mib": 64.0,
@@ -450,7 +480,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     """Verify AllReduceBenchmark REPORT_SCHEMA matches output keys."""
     params = {"matrix_dim": 64, "dtype": "bfloat16"}
     config = collectives.AllReduceParams(**params)
-    bm = collectives.AllReduceBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllReduceBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     bm.setup()
     test_report_utils.assert_schema_matches_output(
         self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
@@ -460,7 +492,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     """Verify AllGatherBenchmark REPORT_SCHEMA matches output keys."""
     params = {"matrix_dim": 64, "dtype": "bfloat16"}
     config = collectives.CollectivesParams(**params)
-    bm = collectives.AllGatherBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllGatherBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     bm.setup()
     test_report_utils.assert_schema_matches_output(
         self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
@@ -470,7 +504,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     """Verify AllToAllBenchmark REPORT_SCHEMA matches output keys."""
     params = {"matrix_dim": 64, "dtype": "bfloat16"}
     config = collectives.CollectivesParams(**params)
-    bm = collectives.AllToAllBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.AllToAllBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     bm.setup()
     test_report_utils.assert_schema_matches_output(
         self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
@@ -480,7 +516,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     """Verify ReduceScatterBenchmark REPORT_SCHEMA matches output keys."""
     params = {"matrix_dim": 64, "dtype": "bfloat16"}
     config = collectives.CollectivesParams(**params)
-    bm = collectives.ReduceScatterBenchmark(config=config, mesh=self.mock_mesh)
+    bm = collectives.ReduceScatterBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     bm.setup()
     test_report_utils.assert_schema_matches_output(
         self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS

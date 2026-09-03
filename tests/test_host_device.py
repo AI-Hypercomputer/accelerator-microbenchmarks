@@ -3,8 +3,10 @@
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import host_device
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import numpy as np
@@ -34,7 +36,7 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     config_params.update(kwargs)
     config = host_device.HostDeviceParams(**config_params)
     self.bm = host_device.HostToDeviceBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     self.bm.setup()
 
@@ -90,7 +92,8 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
             start_time="2026-08-18T10:00:00",
             end_time="2026-08-18T10:01:00",
             params={"dtype": "float32", "data_size_mib": 256},
-            device_info={"platform": "tpu"},
+            platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+            hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
             "bandwidth_gb_s": 18.25,
@@ -158,7 +161,7 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     config_params.update(kwargs)
     config = host_device.HostDeviceParams(**config_params)
     self.bm = host_device.DeviceToHostBenchmark(
-        config=config, mesh=self.mock_mesh
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     self.bm.setup()
 
@@ -209,7 +212,8 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
             start_time="2026-08-18T10:00:00",
             end_time="2026-08-18T10:01:00",
             params={"dtype": "float32", "data_size_mib": 512},
-            device_info={"platform": "tpu"},
+            platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+            hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
             "bandwidth_gb_s": 24.50,

@@ -8,6 +8,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import matmul
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import system
 import jax
 import numpy as np
 
@@ -107,7 +108,9 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     }
 
     config = matmul.GemmParams(**params)
-    bm = matmul.GeneralizedGemmBenchmark(config=config, mesh=None)
+    bm = matmul.GeneralizedGemmBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=None
+    )
     bm.setup()
     result = bm.run()
     self.assertIsNotNone(result)

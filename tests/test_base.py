@@ -6,6 +6,8 @@ import unittest
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import system
+from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -18,10 +20,12 @@ jax.config.update("jax_platform_name", "cpu")
 class DummyBenchmark(base.BaseBenchmark):
   """A dummy benchmark for testing the BaseBenchmark class."""
 
-  def __init__(self, config=None, mesh=None):
+  def __init__(self, config=None, hardware_spec=None, mesh=None):
     if config is None:
       config = base.BaseBenchmarkParams()
-    super().__init__(config=config, mesh=mesh)
+    if hardware_spec is None:
+      hardware_spec = system.get_hardware_spec(system.TpuVersion.TPU7X)
+    super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
 
   def run_op(self, x):
     return x * 2.0
@@ -64,6 +68,18 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
 
 class BaseBenchmarkTest(absltest.TestCase):
   """Tests for the BaseBenchmark class."""
+
+  def setUp(self):
+    super().setUp()
+    self._platform_patcher = unittest.mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self._platform_patcher.start()
+
+  def tearDown(self):
+    self._platform_patcher.stop()
+    super().tearDown()
 
   def test_calculate_metrics_iqr(self):
     bm = DummyBenchmark()
@@ -142,28 +158,26 @@ class BaseBenchmarkTest(absltest.TestCase):
     params = {
         "warmup_tries": 2,
         "num_runs": 5,
-        "hardware_stats": {
-            "tflops": {"float32": 100.0},
-            "hbm_bw": [(1024, 100.0), (1048576, 200.0)],
-            "ici": {"peak_bw_gbps": 50.0, "bidirectional": True},
-        },
         "dtype": "float32",
         "xprof_timing": False,
     }
 
     config = base.BaseBenchmarkParams(**params)
-    bm = DummyBenchmark(config=config)
+    hw_spec = system.get_hardware_spec(system.TpuVersion.TPU7X)
+    bm = DummyBenchmark(config=config, hardware_spec=hw_spec)
     result = bm.run()
 
     self.assertEqual(result.metadata.benchmark_name, "DummyBenchmark")
     self.assertEqual(result.metrics["actual_runs"], 5)
+    self.assertIsNotNone(result.metadata.platform_info)
+    self.assertEqual(result.metadata.hardware_spec, hw_spec)
 
     # Validate Roofline values computed correctly
     self.assertIn("roofline_tflops_limit", result.metrics)
     self.assertIn("peak_bw_at_size_gb_s", result.metrics)
     self.assertEqual(
         result.metrics["peak_bw_at_size_gb_s"], 100.0
-    )  # size is 400 bytes, < 1024
+    )  # size is 400 bytes, <= 1024
 
   @unittest.mock.patch("jax.profiler.trace")
   def test_xprof_naming_with_identifier(self, mock_trace):

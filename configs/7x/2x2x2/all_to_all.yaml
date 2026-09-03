@@ -1,5 +1,3 @@
-system: ironwood
-
 benchmark:
   name: all_to_all
   warmup_tries: 2

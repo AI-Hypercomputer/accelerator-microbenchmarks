@@ -6,7 +6,9 @@ from unittest import mock
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import runner
+from accelerator_microbenchmarks.core import system
 import yaml
 
 
@@ -129,13 +131,98 @@ class TestRunner(absltest.TestCase):
   def test_run_benchmarks(self):
     """Verifies that run_benchmarks executes typed benchmark tasks."""
     dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    mock_platform = platform.PlatformInfo(
+        tpu_type=system.TpuVersion.TPU7X,
+        topology="2x2x1",
+        total_devices=4,
+        local_devices=4,
+        process_count=1,
+        process_index=0,
+        python_version="3.11.0",
+        jax_version="0.4.30",
+        jaxlib_version="0.4.30",
+        libtpu_version="0.1.dev20240101",
+    )
     with tempfile.TemporaryDirectory() as tmpdir:
       with mock.patch.object(
           runner.benchmark_loader, "load_all_benchmarks"
       ) as mock_load_all:
         with mock.patch.object(runner, "set_xla_flags") as mock_set_xla:
-          with mock.patch.object(runner, "init_jax_distributed") as mock_init_jax:
-            with mock.patch.object(runner, "export_to_mlcompass"):
+          with mock.patch.object(
+              runner, "init_jax_distributed"
+          ) as mock_init_jax:
+            with mock.patch.object(
+                runner.platform, "get_platform_info", return_value=mock_platform
+            ):
+              with mock.patch.object(runner, "export_to_mlcompass"):
+                with mock.patch.object(
+                    runner.registry.benchmark_registry, "get_benchmark"
+                ) as mock_get_benchmark:
+                  mock_bench_instance = mock.MagicMock()
+                  mock_metadata = base.BenchmarkMetadata(
+                      benchmark_name="dummy",
+                      test_name="dummy_test",
+                      start_time="now",
+                      end_time="then",
+                      params={},
+                      platform_info=mock_platform,
+                      hardware_spec=system.TPU7X_HARDWARE_SPEC,
+                  )
+                  mock_bench_instance.run.return_value = base.BenchmarkResult(
+                      metadata=mock_metadata,
+                      metrics={"avg_ms": 1.0},
+                      raw_times_ms=[1.0],
+                  )
+                  mock_bench_instance.get_run_identifier.return_value = "run_1"
+                  mock_bench_cls = mock.MagicMock(
+                      return_value=mock_bench_instance,
+                      __name__="MockBenchmark",
+                  )
+                  mock_get_benchmark.return_value = mock_bench_cls
+
+                  results = runner.run_benchmarks(
+                      tasks=[("dummy", dummy_params)],
+                      output_dir=tmpdir,
+                  )
+                  self.assertEqual(len(results), 1)
+                  self.assertTrue(
+                      os.path.exists(os.path.join(tmpdir, "summary.csv"))
+                  )
+                  self.assertTrue(
+                      os.path.exists(os.path.join(tmpdir, "detailed.json"))
+                  )
+                  mock_load_all.assert_called_once()
+                  mock_set_xla.assert_called_once_with(
+                      [{"name": "dummy"}], xla_flags_file_path=None
+                  )
+                  mock_init_jax.assert_called_once()
+                  mock_bench_instance.run.assert_called_once()
+
+  def test_run_benchmarks_with_xprof(self):
+    dummy_params = base.BaseBenchmarkParams(
+        warmup_tries=1,
+        num_runs=1,
+        xprof_dir="/tmp/custom_xprof",
+    )
+    mock_platform = platform.PlatformInfo(
+        tpu_type=system.TpuVersion.V6E,
+        topology="2x4",
+        total_devices=8,
+        local_devices=8,
+        process_count=1,
+        process_index=0,
+        python_version="3.11.0",
+        jax_version="0.4.30",
+        jaxlib_version="0.4.30",
+        libtpu_version="0.1.dev20240101",
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with mock.patch.object(runner, "set_xla_flags"):
+        with mock.patch.object(runner, "init_jax_distributed"):
+          with mock.patch.object(
+              runner.platform, "get_platform_info", return_value=mock_platform
+          ):
+            with mock.patch.object(runner, "export_to_mlcompass") as mock_export:
               with mock.patch.object(
                   runner.registry.benchmark_registry, "get_benchmark"
               ) as mock_get_benchmark:
@@ -146,7 +233,8 @@ class TestRunner(absltest.TestCase):
                     start_time="now",
                     end_time="then",
                     params={},
-                    device_info={},
+                    platform_info=mock_platform,
+                    hardware_spec=system.V6E_HARDWARE_SPEC,
                 )
                 mock_bench_instance.run.return_value = base.BenchmarkResult(
                     metadata=mock_metadata,
@@ -163,87 +251,88 @@ class TestRunner(absltest.TestCase):
                 results = runner.run_benchmarks(
                     tasks=[("dummy", dummy_params)],
                     output_dir=tmpdir,
+                    xprof_dir="/tmp/fallback_xprof",
                 )
-                self.assertEqual(len(results), 1)
-                self.assertTrue(
-                    os.path.exists(os.path.join(tmpdir, "summary.csv"))
-                )
-                self.assertTrue(
-                    os.path.exists(os.path.join(tmpdir, "detailed.json"))
-                )
-                mock_load_all.assert_called_once()
-                mock_set_xla.assert_called_once_with(
-                    [{"name": "dummy"}], xla_flags_file_path=None
-                )
-                mock_init_jax.assert_called_once()
-                mock_bench_instance.run.assert_called_once()
+                self.assertEqual(dummy_params.xprof_dir, "/tmp/custom_xprof")
+                mock_export.assert_called_once()
 
   def test_run_benchmarks_with_xla_flags_file_path(self):
     """Verifies that run_benchmarks passes xla_flags_file_path to set_xla_flags."""
     dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    mock_platform = platform.PlatformInfo(
+        tpu_type=system.TpuVersion.TPU7X,
+        topology="2x2x1",
+        total_devices=4,
+        local_devices=4,
+        process_count=1,
+        process_index=0,
+        python_version="3.11.0",
+        jax_version="0.4.30",
+        jaxlib_version="0.4.30",
+        libtpu_version="0.1.dev20240101",
+    )
     with tempfile.TemporaryDirectory() as tmpdir:
       with mock.patch.object(runner, "set_xla_flags") as mock_set_xla:
         with mock.patch.object(runner, "init_jax_distributed"):
           with mock.patch.object(runner, "export_to_mlcompass"):
             with mock.patch.object(
-                runner.registry.benchmark_registry, "get_benchmark"
-            ) as mock_get_benchmark:
-              mock_bench_instance = mock.MagicMock()
-              mock_metadata = base.BenchmarkMetadata(
-                  benchmark_name="dummy",
-                  test_name="dummy_test",
-                  start_time="now",
-                  end_time="then",
-                  params={},
-                  device_info={},
-              )
-              mock_bench_instance.run.return_value = base.BenchmarkResult(
-                  metadata=mock_metadata,
-                  metrics={"avg_ms": 1.0},
-                  raw_times_ms=[1.0],
-              )
-              mock_bench_cls = mock.MagicMock(return_value=mock_bench_instance)
-              mock_get_benchmark.return_value = mock_bench_cls
+                runner.platform, "get_platform_info", return_value=mock_platform
+            ):
+              with mock.patch.object(
+                  runner.registry.benchmark_registry, "get_benchmark"
+              ) as mock_get_benchmark:
+                mock_bench_instance = mock.MagicMock()
+                mock_metadata = base.BenchmarkMetadata(
+                    benchmark_name="dummy",
+                    test_name="dummy_test",
+                    start_time="now",
+                    end_time="then",
+                    params={},
+                    platform_info=mock_platform,
+                    hardware_spec=system.TPU7X_HARDWARE_SPEC,
+                )
+                mock_bench_instance.run.return_value = base.BenchmarkResult(
+                    metadata=mock_metadata,
+                    metrics={"avg_ms": 1.0},
+                    raw_times_ms=[1.0],
+                )
+                mock_bench_cls = mock.MagicMock(return_value=mock_bench_instance)
+                mock_get_benchmark.return_value = mock_bench_cls
 
-              runner.run_benchmarks(
-                  tasks=[("dummy", dummy_params)],
-                  output_dir=tmpdir,
-                  xla_flags_file_path="/tmp/custom_op_flags.yaml",
-              )
-              mock_set_xla.assert_called_once_with(
-                  [{"name": "dummy"}],
-                  xla_flags_file_path="/tmp/custom_op_flags.yaml",
-              )
-
-  def test_run_benchmarks_with_system_and_xprof(self):
-    dummy_params = base.BaseBenchmarkParams(
-        warmup_tries=1,
-        num_runs=1,
-        system="ironwood",
-        xprof_dir="/tmp/custom_xprof",
+                runner.run_benchmarks(
+                    tasks=[("dummy", dummy_params)],
+                    output_dir=tmpdir,
+                    xla_flags_file_path="/tmp/custom_op_flags.yaml",
+                )
+                mock_set_xla.assert_called_once_with(
+                    [{"name": "dummy"}],
+                    xla_flags_file_path="/tmp/custom_op_flags.yaml",
+                )
+  def test_run_benchmarks_handles_exception(self):
+    dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    mock_platform = platform.PlatformInfo(
+        tpu_type=system.TpuVersion.TPU7X,
+        topology="2x2x1",
+        total_devices=4,
+        local_devices=4,
+        process_count=1,
+        process_index=0,
+        python_version="3.11.0",
+        jax_version="0.4.30",
+        jaxlib_version="0.4.30",
+        libtpu_version="0.1.dev20240101",
     )
     with tempfile.TemporaryDirectory() as tmpdir:
       with mock.patch.object(runner, "set_xla_flags"):
         with mock.patch.object(runner, "init_jax_distributed"):
-          with mock.patch.object(runner, "export_to_mlcompass") as mock_export:
-            with mock.patch(
-                "accelerator_microbenchmarks.core.registry.benchmark_registry.get_benchmark"
+          with mock.patch.object(
+              runner.platform, "get_platform_info", return_value=mock_platform
+          ):
+            with mock.patch.object(
+                runner.registry.benchmark_registry, "get_benchmark"
             ) as mock_get_benchmark:
               mock_bench_instance = mock.MagicMock()
-              mock_metadata = base.BenchmarkMetadata(
-                  benchmark_name="dummy",
-                  test_name="dummy_test",
-                  start_time="now",
-                  end_time="then",
-                  params={},
-                  device_info={},
-              )
-              mock_bench_instance.run.return_value = base.BenchmarkResult(
-                  metadata=mock_metadata,
-                  metrics={"avg_ms": 1.0},
-                  raw_times_ms=[1.0],
-              )
-              mock_bench_instance.get_run_identifier.return_value = "run_1"
+              mock_bench_instance.run.side_effect = RuntimeError("Kernel failed")
               mock_bench_cls = mock.MagicMock(
                   return_value=mock_bench_instance,
                   __name__="MockBenchmark",
@@ -253,99 +342,85 @@ class TestRunner(absltest.TestCase):
               results = runner.run_benchmarks(
                   tasks=[("dummy", dummy_params)],
                   output_dir=tmpdir,
-                  xprof_dir="/tmp/fallback_xprof",
               )
-              self.assertEqual(len(results), 1)
-              self.assertIsNotNone(dummy_params.hardware_stats)
-              self.assertIn("tflops", dummy_params.hardware_stats)
-              self.assertEqual(
-                  dummy_params.hardware_stats["tflops"]["bfloat16"], 1153.5
-              )
-              self.assertEqual(dummy_params.xprof_dir, "/tmp/custom_xprof")
-              mock_export.assert_called_once()
-
-  def test_run_benchmarks_handles_exception(self):
-    dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
-    with tempfile.TemporaryDirectory() as tmpdir:
-      with mock.patch.object(runner, "set_xla_flags"):
-        with mock.patch.object(runner, "init_jax_distributed"):
-          with mock.patch(
-              "accelerator_microbenchmarks.core.registry.benchmark_registry.get_benchmark"
-          ) as mock_get_benchmark:
-            mock_bench_instance = mock.MagicMock()
-            mock_bench_instance.run.side_effect = RuntimeError("Kernel failed")
-            mock_bench_cls = mock.MagicMock(
-                return_value=mock_bench_instance,
-                __name__="MockBenchmark",
-            )
-            mock_get_benchmark.return_value = mock_bench_cls
-
-            results = runner.run_benchmarks(
-                tasks=[("dummy", dummy_params)],
-                output_dir=tmpdir,
-            )
-            self.assertEqual(results, [])
+              self.assertEqual(results, [])
 
   def test_run_benchmarks_print_table(self):
     """Verifies that run_benchmarks passes print_table to report.report_results."""
     dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    mock_platform = platform.PlatformInfo(
+        tpu_type=system.TpuVersion.TPU7X,
+        topology="2x2x1",
+        total_devices=4,
+        local_devices=4,
+        process_count=1,
+        process_index=0,
+        python_version="3.11.0",
+        jax_version="0.4.30",
+        jaxlib_version="0.4.30",
+        libtpu_version="0.1.dev20240101",
+    )
     with tempfile.TemporaryDirectory() as tmpdir:
       with mock.patch.object(runner, "set_xla_flags"):
         with mock.patch.object(runner, "init_jax_distributed"):
-          with mock.patch.object(runner, "export_to_mlcompass"):
-            with mock.patch(
-                "accelerator_microbenchmarks.core.registry.benchmark_registry.get_benchmark"
+          with mock.patch.object(
+              runner.platform, "get_platform_info", return_value=mock_platform
+          ):
+            with mock.patch.object(runner, "export_to_mlcompass"):
+              with mock.patch(
+                  "accelerator_microbenchmarks.core.registry.benchmark_registry.get_benchmark"
             ) as mock_get_benchmark:
-              with mock.patch.object(
-                  runner.report, "report_results"
-              ) as mock_report_results:
-                mock_bench_instance = mock.MagicMock()
-                mock_metadata = base.BenchmarkMetadata(
-                    benchmark_name="dummy",
-                    test_name="dummy_test",
-                    start_time="now",
-                    end_time="then",
-                    params={},
-                    device_info={},
-                )
-                mock_result = base.BenchmarkResult(
-                    metadata=mock_metadata,
-                    metrics={"avg_ms": 1.0},
-                    raw_times_ms=[1.0],
-                )
-                mock_bench_instance.run.return_value = mock_result
-                mock_bench_instance.get_run_identifier.return_value = "run_1"
-                mock_bench_cls = mock.MagicMock(
-                    return_value=mock_bench_instance,
-                    __name__="MockBenchmark",
-                )
-                mock_get_benchmark.return_value = mock_bench_cls
+                with mock.patch.object(
+                    runner.report, "report_results"
+                ) as mock_report_results:
+                  mock_bench_instance = mock.MagicMock()
+                  mock_metadata = base.BenchmarkMetadata(
+                      benchmark_name="dummy",
+                      test_name="dummy_test",
+                      start_time="now",
+                      end_time="then",
+                      params={},
+                      platform_info=mock_platform,
+                      hardware_spec=system.TPU7X_HARDWARE_SPEC,
+                  )
+                  mock_result = base.BenchmarkResult(
+                      metadata=mock_metadata,
+                      metrics={"avg_ms": 1.0},
+                      raw_times_ms=[1.0],
+                  )
+                  mock_bench_instance.run.return_value = mock_result
+                  mock_bench_instance.get_run_identifier.return_value = "run_1"
+                  mock_bench_cls = mock.MagicMock(
+                      return_value=mock_bench_instance,
+                      __name__="MockBenchmark",
+                  )
+                  mock_get_benchmark.return_value = mock_bench_cls
 
-                # Test print_table=True
-                runner.run_benchmarks(
-                    tasks=[("dummy", dummy_params)],
-                    output_dir=tmpdir,
-                    print_table=True,
-                )
-                mock_report_results.assert_called_once_with(
-                    [mock_result],
-                    output_dir=tmpdir,
-                    print_table=True,
-                )
+                  # Test print_table=True
+                  runner.run_benchmarks(
+                      tasks=[("dummy", dummy_params)],
+                      output_dir=tmpdir,
+                      print_table=True,
+                  )
+                  mock_report_results.assert_called_once_with(
+                      [mock_result],
+                      output_dir=tmpdir,
+                      print_table=True,
+                  )
 
-                mock_report_results.reset_mock()
+                  mock_report_results.reset_mock()
 
-                # Test print_table=False
-                runner.run_benchmarks(
-                    tasks=[("dummy", dummy_params)],
-                    output_dir=tmpdir,
-                    print_table=False,
-                )
-                mock_report_results.assert_called_once_with(
-                    [mock_result],
-                    output_dir=tmpdir,
-                    print_table=False,
-                )
+                  # Test print_table=False
+                  runner.run_benchmarks(
+                      tasks=[("dummy", dummy_params)],
+                      output_dir=tmpdir,
+                      print_table=False,
+                  )
+                  mock_report_results.assert_called_once_with(
+                      [mock_result],
+                      output_dir=tmpdir,
+                      print_table=False,
+                  )
 
 
 if __name__ == "__main__":

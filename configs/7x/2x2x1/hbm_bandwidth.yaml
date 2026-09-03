@@ -1,5 +1,3 @@
-system: ironwood
-
 benchmark:
   name: hbm_bandwidth
   warmup_tries: 2

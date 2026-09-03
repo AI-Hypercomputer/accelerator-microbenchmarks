@@ -1,5 +1,3 @@
-system: ironwood
-
 benchmark:
   name: all_gather
   warmup_tries: 2

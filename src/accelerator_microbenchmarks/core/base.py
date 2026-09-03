@@ -8,6 +8,7 @@ import os
 import time
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
 
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
 from accelerator_microbenchmarks.core import system
@@ -25,9 +26,7 @@ class BaseBenchmarkParams:
   min_duration_s: float = 0.0
   xprof_timing: bool = False
   xprof_dir: str = "/tmp/tensorboard"
-  system: str = ""
   use_trace_roofline: bool = False
-  hardware_stats: dict[str, Any] = dataclasses.field(default_factory=dict)
   dtype: str = "bfloat16"
 
   def expand_test_cases(self) -> Sequence["BaseBenchmarkParams"]:
@@ -44,7 +43,8 @@ class BenchmarkMetadata:
   start_time: str
   end_time: str
   params: dict[str, Any]
-  device_info: dict[str, Any]
+  platform_info: platform.PlatformInfo
+  hardware_spec: system.HardwareSpec
 
 
 @dataclasses.dataclass
@@ -71,10 +71,14 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       Sequence[Callable[[pd.DataFrame, type["BaseBenchmark"]], str]]
   ] = None
 
-  def __init__(self, config: TConfig, mesh: Optional[jax.sharding.Mesh] = None):
-    if config is None:
-      raise ValueError("A configuration object must be explicitly provided.")
+  def __init__(
+      self,
+      config: TConfig,
+      hardware_spec: system.HardwareSpec,
+      mesh: Optional[jax.sharding.Mesh] = None,
+  ):
     self.config: TConfig = config
+    self.hardware_spec: system.HardwareSpec = hardware_spec
     self.mesh: Optional[jax.sharding.Mesh] = mesh
     self._jit_fn = None
     self._xprof_dir_actual: str = self.config.xprof_dir
@@ -488,7 +492,11 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         params=dataclasses.asdict(self.config)
         if dataclasses.is_dataclass(self.config)
         else {},
-        device_info=system.get_runtime_device_info(),
+        # TODO(simonleesyuan): Platform description is independent of benchmark
+        # execution logic; move platform_info capture out of BaseBenchmark into
+        # the runner orchestrator.
+        platform_info=platform.get_platform_info(),
+        hardware_spec=self.hardware_spec,
     )
 
     return BenchmarkResult(

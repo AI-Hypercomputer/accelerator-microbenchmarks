@@ -1,5 +1,3 @@
-system: "ironwood"
-
 benchmark:
   name: host_to_device
   warmup_tries: 2

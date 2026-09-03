@@ -3,6 +3,7 @@
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import attention
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import system
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -37,7 +38,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "head_dim": 64,
     }
     config = attention.AttentionParams(**params)
-    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     q, k, v = self.bm.generate_inputs()
 
@@ -60,7 +63,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "causal": True,
     }
     config = attention.AttentionParams(**params)
-    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     q, k, v = self.bm.generate_inputs()
     out = self.bm.run_op(q, k, v)
@@ -78,7 +83,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "head_dim": 64,
     }
     config = attention.AttentionParams(**params)
-    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # q_len = kv_len = 128
     # itemsize = 2 (bfloat16)
     # Q: 2 * 4 * 128 * 64 * 2 = 131072
@@ -99,7 +106,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "head_dim": 64,
     }
     config = attention.AttentionParams(**params)
-    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # q_len = kv_len = 128
     # flops: (4 * 128 * 128 - 2 * 128 * 128) * 4 * 64 = (65536 - 32768) * 256 = 32768 * 256 = 8388608
     # bytes: 1 * ((4*128*64*2) + (4*128*64*2) + (4*128*64*2) + (4*128*64*2)) = 262144
@@ -119,7 +128,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "head_dim": 64,
     }
     config = attention.AttentionParams(**params)
-    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     # total_flops = 8388608 (from above)
     # avg_ms = 10.0ms -> avg_latency_s = 0.01s
     # tflops_per_sec = (8388608 / 0.01) / 1e12 = 8.388608e8 / 1e12 = 0.0008388608
@@ -143,7 +154,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "mode": "bwd",
     }
     config = attention.AttentionParams(**params)
-    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     self.bm.setup()
     q, k, v = self.bm.generate_inputs()
     dq, dk, dv = self.bm.run_op(q, k, v)
@@ -166,7 +179,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "mode": "bwd",
     }
     config = attention.AttentionParams(**params)
-    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     expected_bytes = 786432.0
     self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
 
@@ -181,7 +196,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "mode": "bwd",
     }
     config = attention.AttentionParams(**params)
-    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     expected_intensity = 32.0
     self.assertAlmostEqual(
         self.bm.get_arithmetic_intensity(), expected_intensity
@@ -198,7 +215,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
         "causal": False,
     }
     config = attention.AttentionParams(**params)
-    self.bm = attention.AttentionBenchmark(config=config, mesh=self.mock_mesh)
+    self.bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
     expected_intensity = 64.0
     self.assertAlmostEqual(
         self.bm.get_arithmetic_intensity(), expected_intensity

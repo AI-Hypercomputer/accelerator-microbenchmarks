@@ -1,5 +1,3 @@
-system: "ironwood"
-
 benchmark:
   # Sweep over different sizes for gemm_generalized
   name: gemm_generalized

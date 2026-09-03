@@ -82,13 +82,9 @@ class ConfigTest(absltest.TestCase):
       "accelerator_microbenchmarks.core.csv_loader.load_shapes_from_csv"
   )
   def test_load_config_with_sweeps(self, mock_load_csv):
-    """Test loading a single-benchmark config with sweeps and hardware."""
+    """Test loading a single-benchmark config with sweeps."""
     del mock_load_csv
     yaml_content = """
-system: ironwood
-hardware:
-  tflops: 50.0
-
 benchmark:
   name: all_reduce
   param1: 100
@@ -103,9 +99,7 @@ benchmark:
 
     self.assertLen(expanded, 2)
     self.assertEqual(expanded[0]["name"], "all_reduce")
-    self.assertEqual(expanded[0]["system"], "ironwood")
     self.assertEqual(expanded[0]["param1"], 100)
-    self.assertEqual(expanded[0]["hardware_stats"], {"tflops": 50.0})
     self.assertEqual(expanded[0]["param2"], 1)
 
     self.assertEqual(expanded[1]["name"], "all_reduce")

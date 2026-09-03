@@ -1,5 +1,3 @@
-system: ironwood
-
 benchmark:
   name: all_reduce
   warmup_tries: 2

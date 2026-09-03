@@ -8,6 +8,7 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.core import utils
 import jax
 from jax.experimental import mesh_utils
@@ -81,9 +82,10 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
   def __init__(
       self,
       config: DeviceToDeviceTestCaseParams,
+      hardware_spec: system.HardwareSpec,
       mesh: Optional[jax.sharding.Mesh] = None,
   ):
-    super().__init__(config, mesh)
+    super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
     self._jit_fn = None
 
   def get_device_to_measure(self) -> jax.Device:

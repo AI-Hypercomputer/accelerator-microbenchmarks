@@ -6,6 +6,7 @@ from typing import Any
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
@@ -24,8 +25,15 @@ class ComponentBenchmark(base.BaseBenchmark[TransformerLayerParams]):
   """
   Config = TransformerLayerParams
 
-  def __init__(self, config: TransformerLayerParams, **parallelism_cfg):
-    super().__init__(config=config, mesh=parallelism_cfg.pop("mesh", None))
+  def __init__(
+      self,
+      config: TransformerLayerParams,
+      hardware_spec: system.HardwareSpec,
+      mesh: jax.sharding.Mesh | None = None,
+      **parallelism_cfg,
+  ):
+    mesh = mesh or parallelism_cfg.pop("mesh", None)
+    super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
     self._fprop = None
     # Parallelism settings from Table C1-C18
     self.tp = parallelism_cfg.get("tp", 1)

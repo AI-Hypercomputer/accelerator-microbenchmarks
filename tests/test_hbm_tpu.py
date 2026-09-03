@@ -1,4 +1,4 @@
-"""Tests for HBM bandwidth utilizing TPU Ghostfish."""
+"""Tests for HBM bandwidth utilizing TPU v7x."""
 
 import os
 from unittest import mock
@@ -33,13 +33,13 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
     jax.clear_caches()
 
   def _get_peak_bandwidth_per_core(self):
-    # We only need ghostfish (v7x)
-    gfc = system.get_system("gfc")
+    # We only need v7x (Ironwood)
+    v7x_system = system.get_hardware_spec(system.TpuVersion.TPU7X)
     # Peak BW is the highest value in the curve.
     # The curve specifies the peak bandwidth for an entire chip (2 TensorCores).
     # Since this microbenchmark forces execution on a single local device,
     # the theoretical peak for our test is half of the chip's peak.
-    chip_peak_bw = gfc.hbm.curve_gbps[-1][1]
+    chip_peak_bw = v7x_system.hbm.curve_gbps[-1][1]
     return chip_peak_bw / 2.0
 
   @parameterized.parameters(
@@ -55,7 +55,9 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
 
     params = dict(self.params, op_type=op_type)
     config = hbm.HBMBandwidthParams(**params)
-    self.bm = hbm.HBMBandwidthBenchmark(config=config)
+    self.bm = hbm.HBMBandwidthBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+    )
     self.bm.setup()
     result = self.bm.run()
 
@@ -107,7 +109,9 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
         xprof_dir=temp_dir,
     )
     config = hbm.HBMBandwidthParams(**params)
-    self.bm = hbm.HBMBandwidthBenchmark(config=config)
+    self.bm = hbm.HBMBandwidthBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+    )
     self.bm.setup()
 
     # 1. Verify configured target device on benchmark instance

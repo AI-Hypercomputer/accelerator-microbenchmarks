@@ -232,7 +232,7 @@ def results_to_dataframe(
   for res in results:
     metadata = res.metadata
     params = metadata.params or {}
-    device_info = metadata.device_info or {}
+    platform_info = dataclasses.asdict(metadata.platform_info)
     metrics = res.metrics or {}
     benchmark_name = metadata.benchmark_name or ""
     test_name = metadata.test_name or ""
@@ -241,7 +241,7 @@ def results_to_dataframe(
     entry = {
         **params,
         **metrics,
-        **device_info,
+        **platform_info,
         "benchmark": benchmark_name,
         "test_name": test_name,
         "KET_ms": metrics.get("avg_ms", 0.0),

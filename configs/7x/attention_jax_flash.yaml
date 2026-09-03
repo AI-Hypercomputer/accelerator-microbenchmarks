@@ -1,5 +1,3 @@
-system: "ironwood"
-
 benchmark:
   name: attention_flashed
   warmup_tries: 2

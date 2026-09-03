@@ -9,6 +9,7 @@ from absl.testing import absltest
 from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import runner
+from accelerator_microbenchmarks.tests import test_report_utils
 
 
 class TestCli(absltest.TestCase):
@@ -27,7 +28,11 @@ class TestCli(absltest.TestCase):
       self.assertIn("platform", output)
       self.assertIn("benchmark", output)
 
-  def test_platform_describe(self):
+  @mock.patch(
+      "accelerator_microbenchmarks.core.platform.get_platform_info",
+      return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+  )
+  def test_platform_describe(self, mock_platform_desc):
     """Verifies that `tpums platform describe` outputs valid platform JSON."""
     with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
       cli.run(["platform", "describe"])
@@ -47,8 +52,8 @@ class TestCli(absltest.TestCase):
           "libtpu_version",
       }
       self.assertEqual(set(data.keys()), expected_keys)
-      self.assertIsInstance(data["tpu_type"], str)
-      self.assertIsInstance(data["topology"], str)
+      self.assertEqual(data["tpu_type"], "tpu7x")
+      self.assertEqual(data["topology"], "2x2x1")
       self.assertIsInstance(data["total_devices"], int)
       self.assertIsInstance(data["local_devices"], int)
       self.assertIsInstance(data["process_count"], int)
@@ -58,77 +63,11 @@ class TestCli(absltest.TestCase):
       self.assertIsInstance(data["jaxlib_version"], str)
       self.assertIsInstance(data["libtpu_version"], str)
 
-  def test_platform_describe_mocked(self):
-    """Verifies that `tpums platform describe` outputs mock return value."""
-    mock_desc = {
-        "tpu_type": "TPU v7x",
-        "topology": "2x2x1",
-        "total_devices": 4,
-        "local_devices": 4,
-        "process_count": 1,
-        "process_index": 0,
-        "python_version": "3.11.0",
-        "jax_version": "0.4.30",
-        "jaxlib_version": "0.4.30",
-        "libtpu_version": "0.1.dev20240101",
-    }
-    with mock.patch.object(
-        platform,
-        "get_platform_description",
-        return_value=mock_desc,
-    ):
-      with mock.patch.object(
-          sys, "stdout", new=io.StringIO()
-      ) as fake_out, mock.patch.object(
-          sys, "stderr", new=io.StringIO()
-      ) as fake_err:
-        cli.run(["platform", "describe"])
-        output = fake_out.getvalue()
-        err_output = fake_err.getvalue()
-        data = json.loads(output)
-        self.assertEqual(data, mock_desc)
-        self.assertNotIn("WARNING: Running in non-TPU", err_output)
-
-  def test_platform_describe_cpu_warning(self):
-    """Verifies that `tpums platform describe` prints warning on CPU environment."""
-    mock_desc = {
-        "tpu_type": "none",
-        "topology": "none",
-        "total_devices": 1,
-        "local_devices": 1,
-        "process_count": 1,
-        "process_index": 0,
-        "python_version": "3.11.0",
-        "jax_version": "0.4.30",
-        "jaxlib_version": "0.4.30",
-        "libtpu_version": "unknown",
-    }
-    with mock.patch.object(
-        platform,
-        "get_platform_description",
-        return_value=mock_desc,
-    ):
-      with mock.patch.object(
-          sys, "stdout", new=io.StringIO()
-      ) as fake_out, mock.patch.object(
-          sys, "stderr", new=io.StringIO()
-      ) as fake_err:
-        cli.run(["platform", "describe"])
-        output = fake_out.getvalue()
-        err_output = fake_err.getvalue()
-        data = json.loads(output)
-        self.assertEqual(data, mock_desc)
-        self.assertIn(
-            "WARNING: Running in non-TPU (CPU) environment. No TPU devices"
-            " detected.",
-            err_output,
-        )
-
   def test_platform_describe_runtime_error_exits(self):
     """Verifies that `tpums platform describe` outputs to stderr and exits on RuntimeError."""
     with mock.patch.object(
         platform,
-        "get_platform_description",
+        "get_platform_info",
         side_effect=RuntimeError(
             "TPU runtime environment is not properly initialized"
         ),
@@ -238,7 +177,7 @@ class TestCli(absltest.TestCase):
 
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_with_common_flags(self, mock_run_benchmarks):
-    """Verifies that `benchmark run` passes output_dir, profile_dir, and hw to runner."""
+    """Verifies that `benchmark run` passes output_dir and profile_dir to runner."""
     cli.run([
         "benchmark",
         "run",
@@ -247,8 +186,6 @@ class TestCli(absltest.TestCase):
         "/tmp/custom_results",
         "--profile_dir",
         "/tmp/custom_profile",
-        "--hw",
-        "ironwood",
         "-m",
         "128",
         "-n",
@@ -260,7 +197,6 @@ class TestCli(absltest.TestCase):
     _, kwargs = mock_run_benchmarks.call_args
     self.assertEqual(kwargs["output_dir"], "/tmp/custom_results")
     self.assertEqual(kwargs["xprof_dir"], "/tmp/custom_profile")
-    self.assertEqual(kwargs["hw"], "ironwood")
 
   def test_google_flags_parser(self):
     """Verifies that _google_flags_parser strips Abseil flags and returns domain argv."""
