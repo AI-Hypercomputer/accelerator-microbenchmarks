@@ -13,17 +13,25 @@ import jax.numpy as jnp
 
 @dataclasses.dataclass
 class GemmParams(base.BaseBenchmarkParams):
+  """Configuration parameters for GEMM benchmark."""
+
   m: int = 1024
   k: int = 1024
   n: int = 1024
-  in_dtype: str = "float8_e4m3fn"
-  out_dtype: str = "bfloat16"
+  in_dtype: str = ""
+  out_dtype: str = ""
   seed: int = 0
   use_scaling_factors: bool = False
   transpose_a: bool = False
   transpose_b: bool = False
   alpha: float = 1.0
   beta: float = 0.0
+
+  def __post_init__(self):
+    if not self.in_dtype:
+      self.in_dtype = self.dtype
+    if not self.out_dtype:
+      self.out_dtype = self.dtype
 
 
 @registry.benchmark_registry.register("gemm", aliases=["gemm_generalized"])

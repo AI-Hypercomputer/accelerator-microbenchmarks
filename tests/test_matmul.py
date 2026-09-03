@@ -482,6 +482,36 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         ignored_keys={"dtype"},  # Matmul uses in_dtype and out_dtype
     )
 
+  def test_gemm_params_default_dtypes(self):
+    """Test GemmParams defaults in_dtype and out_dtype to dtype."""
+    # 1. Default instance without explicit dtypes
+    params = matmul.GemmParams()
+    self.assertEqual(params.dtype, "bfloat16")
+    self.assertEqual(params.in_dtype, "bfloat16")
+    self.assertEqual(params.out_dtype, "bfloat16")
+
+    # 2. Specifying dtype propagates to in_dtype and out_dtype when omitted
+    params_f32 = matmul.GemmParams(dtype="float32")
+    self.assertEqual(params_f32.dtype, "float32")
+    self.assertEqual(params_f32.in_dtype, "float32")
+    self.assertEqual(params_f32.out_dtype, "float32")
+
+    # 3. Explicit in_dtype and out_dtype are preserved
+    params_custom = matmul.GemmParams(
+        dtype="bfloat16", in_dtype="float8_e4m3fn", out_dtype="bfloat16"
+    )
+    self.assertEqual(params_custom.dtype, "bfloat16")
+    self.assertEqual(params_custom.in_dtype, "float8_e4m3fn")
+    self.assertEqual(params_custom.out_dtype, "bfloat16")
+
+    # 4. Explicit in_dtype only propagates dtype to out_dtype
+    params_in_only = matmul.GemmParams(
+        dtype="float16", in_dtype="float8_e4m3fn"
+    )
+    self.assertEqual(params_in_only.dtype, "float16")
+    self.assertEqual(params_in_only.in_dtype, "float8_e4m3fn")
+    self.assertEqual(params_in_only.out_dtype, "float16")
+
 
 if __name__ == "__main__":
   absltest.main()

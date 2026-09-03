@@ -28,16 +28,18 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(sys_config.name, "trillium")
 
     # Test compute stats
-    self.assertEqual(sys_config.tflops.peak_tflops_per_dtype["bfloat16"], 918.0)
-    self.assertEqual(sys_config.tflops.peak_tflops_per_dtype["float32"], 459.0)
     self.assertEqual(
-        sys_config.tflops.peak_tflops_per_dtype["float8_e5m2"], 918.0
+        sys_config.tflops.peak_tflops_per_device["bfloat16"], 918.0
+    )
+    self.assertEqual(sys_config.tflops.peak_tflops_per_device["float32"], 459.0)
+    self.assertEqual(
+        sys_config.tflops.peak_tflops_per_device["float8_e5m2"], 918.0
     )
     self.assertEqual(
-        sys_config.tflops.peak_tflops_per_dtype["float8_e4m3fn"], 918.0
+        sys_config.tflops.peak_tflops_per_device["float8_e4m3fn"], 918.0
     )
-    self.assertEqual(sys_config.tflops.peak_tflops_per_dtype["int8"], 1836.0)
-    self.assertEqual(sys_config.tflops.peak_tflops_per_dtype["int4"], 3672.0)
+    self.assertEqual(sys_config.tflops.peak_tflops_per_device["int8"], 1836.0)
+    self.assertEqual(sys_config.tflops.peak_tflops_per_device["int4"], 3672.0)
 
     # Test ICI stats
     self.assertEqual(sys_config.ici.peak_bw_gbps, 800.0)
@@ -78,16 +80,18 @@ class SystemTest(absltest.TestCase):
 
     # Test compute stats
     self.assertEqual(
-        sys_config.tflops.peak_tflops_per_dtype["bfloat16"], 2307.0
-    )
-    self.assertEqual(sys_config.tflops.peak_tflops_per_dtype["float32"], 1153.5)
-    self.assertEqual(
-        sys_config.tflops.peak_tflops_per_dtype["float8_e5m2"], 4614.0
+        sys_config.tflops.peak_tflops_per_device["bfloat16"], 1153.5
     )
     self.assertEqual(
-        sys_config.tflops.peak_tflops_per_dtype["float8_e4m3fn"], 4614.0
+        sys_config.tflops.peak_tflops_per_device["float32"], 576.75
     )
-    self.assertEqual(sys_config.tflops.peak_tflops_per_dtype["int8"], 4614.0)
+    self.assertEqual(
+        sys_config.tflops.peak_tflops_per_device["float8_e5m2"], 2307.0
+    )
+    self.assertEqual(
+        sys_config.tflops.peak_tflops_per_device["float8_e4m3fn"], 2307.0
+    )
+    self.assertEqual(sys_config.tflops.peak_tflops_per_device["int8"], 2307.0)
 
     # Test ICI stats
     self.assertEqual(sys_config.ici.peak_bw_gbps, 1200.0)

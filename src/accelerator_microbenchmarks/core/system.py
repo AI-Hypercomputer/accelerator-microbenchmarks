@@ -10,8 +10,9 @@ import jax
 class TflopsConfig:
   """Compute throughput specifications per datatype."""
 
-  # Maps dtype string (e.g., 'bfloat16', 'float32', 'int8') to peak TFLOPS/TOPS
-  peak_tflops_per_dtype: dict[str, float]
+  # Maps dtype string (e.g., 'bfloat16', 'float32', 'int8') to peak TFLOPS
+  # per device (TensorCore).
+  peak_tflops_per_device: dict[str, float]
 
 
 @dataclasses.dataclass
@@ -46,12 +47,12 @@ IRONWOOD = SystemConfig(
     name="ironwood",
     topology_dimension=3,
     tflops=TflopsConfig(
-        peak_tflops_per_dtype={
-            "bfloat16": 2307.0,
-            "float32": 1153.5,  # Estimated based on VPU capability
-            "float8_e5m2": 4614.0,
-            "float8_e4m3fn": 4614.0,
-            "int8": 4614.0,
+        peak_tflops_per_device={
+            "bfloat16": 1153.5,
+            "float32": 576.75,  # Estimated based on VPU capability
+            "float8_e5m2": 2307.0,
+            "float8_e4m3fn": 2307.0,
+            "int8": 2307.0,
         }
     ),
     ici=IciConfig(
@@ -73,7 +74,7 @@ TRILLIUM = SystemConfig(
     name="trillium",
     topology_dimension=2,
     tflops=TflopsConfig(
-        peak_tflops_per_dtype={
+        peak_tflops_per_device={
             "bfloat16": 918.0,
             "float32": 459.0,
             "float8_e5m2": 918.0,

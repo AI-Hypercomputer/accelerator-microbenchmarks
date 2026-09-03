@@ -219,7 +219,7 @@ class TestRunner(absltest.TestCase):
     dummy_params = base.BaseBenchmarkParams(
         warmup_tries=1,
         num_runs=1,
-        system="v6e_4x4",
+        system="ironwood",
         xprof_dir="/tmp/custom_xprof",
     )
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -257,6 +257,10 @@ class TestRunner(absltest.TestCase):
               )
               self.assertEqual(len(results), 1)
               self.assertIsNotNone(dummy_params.hardware_stats)
+              self.assertIn("tflops", dummy_params.hardware_stats)
+              self.assertEqual(
+                  dummy_params.hardware_stats["tflops"]["bfloat16"], 1153.5
+              )
               self.assertEqual(dummy_params.xprof_dir, "/tmp/custom_xprof")
               mock_export.assert_called_once()
 

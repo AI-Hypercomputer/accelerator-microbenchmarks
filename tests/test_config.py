@@ -171,8 +171,78 @@ num_runs: 10
       config.load_config(config_path)
     self.assertIn("must define a 'benchmark:' mapping", str(ctx.exception))
 
+  def test_load_config_with_cases(self):
+    """Test loading a config with explicit cases list."""
+    yaml_content = """
+system: ironwood
+benchmark:
+  name: gemm_generalized
+  warmup_tries: 2
+  dtype: bfloat16
+  cases:
+    - m: 4096
+      n: 4096
+      k: 4096
+    - m: 8192
+      n: 8192
+      k: 8192
+"""
+    config_path = os.path.join(self.test_dir.name, "config_cases.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    expanded = config.load_config(config_path)
+
+    self.assertLen(expanded, 2)
+    self.assertEqual(expanded[0]["name"], "gemm_generalized")
+    self.assertEqual(expanded[0]["system"], "ironwood")
+    self.assertEqual(expanded[0]["warmup_tries"], 2)
+    self.assertEqual(expanded[0]["dtype"], "bfloat16")
+    self.assertEqual(expanded[0]["m"], 4096)
+    self.assertEqual(expanded[0]["n"], 4096)
+    self.assertEqual(expanded[0]["k"], 4096)
+
+    self.assertEqual(expanded[1]["name"], "gemm_generalized")
+    self.assertEqual(expanded[1]["system"], "ironwood")
+    self.assertEqual(expanded[1]["warmup_tries"], 2)
+    self.assertEqual(expanded[1]["dtype"], "bfloat16")
+    self.assertEqual(expanded[1]["m"], 8192)
+    self.assertEqual(expanded[1]["n"], 8192)
+    self.assertEqual(expanded[1]["k"], 8192)
+
+  def test_load_config_cases_not_a_list_raises_error(self):
+    """Verifies that non-list cases raises ValueError."""
+    yaml_content = """
+benchmark:
+  name: gemm_generalized
+  cases: "not_a_list"
+"""
+    config_path = os.path.join(self.test_dir.name, "config_cases_invalid.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    with self.assertRaises(ValueError) as ctx:
+      config.load_config(config_path)
+    self.assertIn("to be a list", str(ctx.exception))
+
+  def test_load_config_cases_item_not_a_dict_raises_error(self):
+    """Verifies that non-dict items in cases raise ValueError."""
+    yaml_content = """
+benchmark:
+  name: gemm_generalized
+  cases:
+    - "not_a_dict"
+"""
+    config_path = os.path.join(
+        self.test_dir.name, "config_cases_item_invalid.yaml"
+    )
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    with self.assertRaises(ValueError) as ctx:
+      config.load_config(config_path)
+    self.assertIn("to be a dict", str(ctx.exception))
+
 
 if __name__ == "__main__":
   absltest.main()
-
-

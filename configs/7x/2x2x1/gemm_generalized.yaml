@@ -6,10 +6,10 @@ benchmark:
   num_runs: 5
   dtype: bfloat16
   xprof_timing: true
-  k: 2048
-  n: 2048
-  sweep:
-    m:
-      start: 1024
-      end: 4096
-      multiplier: 2
+  cases:
+    - m: 4096
+      k: 4096
+      n: 4096
+    - m: 8192
+      k: 8192
+      n: 8192

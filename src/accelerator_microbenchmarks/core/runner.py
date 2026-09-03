@@ -123,7 +123,7 @@ def run_benchmarks(
           sys_config = system.get_system(sys_name)
           hardware_stats = {}
           if sys_config.tflops:
-            hardware_stats["tflops"] = sys_config.tflops.peak_tflops_per_dtype
+            hardware_stats["tflops"] = sys_config.tflops.peak_tflops_per_device
           if sys_config.hbm:
             hardware_stats["hbm_bw"] = sys_config.hbm.curve_gbps
           if sys_config.ici:

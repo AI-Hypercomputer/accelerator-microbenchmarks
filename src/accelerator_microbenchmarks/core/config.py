@@ -116,8 +116,27 @@ def load_config(path: str) -> list[dict[str, Any]]:
         if k not in benchmark_spec:
           benchmark_spec[k] = v
 
-  # 4. Expand CSV Shapes & Parameter Sweeps
+  # 4. Expand Cases, CSV Shapes & Parameter Sweeps
   benchmark_spec["name"] = benchmark_name
+  if "cases" in benchmark_spec:
+    cases_list = benchmark_spec.pop("cases")
+    if not isinstance(cases_list, list):
+      raise ValueError(
+          f"Expected 'cases' in benchmark '{benchmark_name}' to be a list, but"
+          f" got {type(cases_list).__name__}."
+      )
+    fully_expanded = []
+    for case_params in cases_list:
+      if not isinstance(case_params, dict):
+        raise ValueError(
+            f"Expected each item in 'cases' of benchmark '{benchmark_name}' to"
+            f" be a dict, but got {type(case_params).__name__}."
+        )
+      entry = benchmark_spec.copy()
+      entry.update(case_params)
+      fully_expanded.extend(resolve_params(global_params, entry))
+    return fully_expanded
+
   if "csv_shapes" in benchmark_spec:
     csv_path = benchmark_spec.pop("csv_shapes")
     csv_entries = csv_loader.load_shapes_from_csv(csv_path)
@@ -129,4 +148,3 @@ def load_config(path: str) -> list[dict[str, Any]]:
     return fully_expanded
 
   return resolve_params(global_params, benchmark_spec)
-
