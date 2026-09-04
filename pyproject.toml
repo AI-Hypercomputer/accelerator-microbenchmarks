@@ -24,3 +24,6 @@ tpums = "accelerator_microbenchmarks.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["accelerator_microbenchmarks*"]
+
+[tool.setuptools.package-data]
+accelerator_microbenchmarks = ["*.yaml"]

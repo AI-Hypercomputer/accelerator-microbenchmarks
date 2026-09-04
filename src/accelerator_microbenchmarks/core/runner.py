@@ -44,8 +44,8 @@ def set_xla_flags(
   op_key = _BENCHMARK_NAME_MAPPING.get(benchmark_name, benchmark_name)
   try:
     if xla_flags_file_path is None:
-      xla_flags_file_path = os.path.join(
-          os.path.dirname(__file__), "..", "op_flags.yaml"
+      xla_flags_file_path = os.path.normpath(
+          os.path.join(os.path.dirname(__file__), "..", "op_flags.yaml")
       )
 
     if xla_flags_file_path and os.path.exists(xla_flags_file_path):
@@ -65,6 +65,11 @@ def set_xla_flags(
             for k, v in flags_config["env"].items():
               os.environ[k] = str(v)
               print(f"Set env {k}: {v}")
+    else:
+      print(
+          f"Warning: op_flags.yaml not found at '{xla_flags_file_path}'. "
+          "Default LIBTPU_INIT_ARGS will not be loaded."
+      )
   except Exception as e:
     print(f"Warning: Failed to load op_flags.yaml: {e}")
 
