@@ -28,6 +28,8 @@ class BaseBenchmarkParams:
   xprof_dir: str = "/tmp/tensorboard"
   use_trace_roofline: bool = False
   dtype: str = "bfloat16"
+  batch_size: int = 1
+  sync_between_runs: bool = False
 
   def expand_test_cases(self) -> Sequence["BaseBenchmarkParams"]:
     """Default 1-to-1 mapping: returns [self]."""
@@ -405,6 +407,9 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
     # 2. Warmup & JIT Compilation
     # Run for at least warmup_tries OR a small duration if specified
+    sync_between_runs = getattr(self.config, "sync_between_runs", False)
+    if sync_between_runs:
+      multihost_utils.sync_global_devices("warmup_start")
     warmup_start = time.perf_counter()
     i = 0
     while i < self.config.warmup_tries or (
@@ -415,6 +420,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       outputs = self.run_op(*inputs)
       jax.block_until_ready(outputs)
       i += 1
+    if sync_between_runs:
+      multihost_utils.sync_global_devices("warmup_done")
 
     if self.config.xprof_timing:
       try:
@@ -454,20 +461,28 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     raw_times = []
     actual_runs = 0
     loop_start = time.perf_counter()
+    batch_size = max(1, getattr(self.config, "batch_size", 1))
 
     # Ensure we run at least num_runs AND meet the min_duration_s requirement
     with ctx:
       while actual_runs < self.config.num_runs or (
           time.perf_counter() - loop_start < self.config.min_duration_s
       ):
+        if sync_between_runs:
+          multihost_utils.sync_global_devices(f"rep_{actual_runs}_start")
         inputs = self.reset_data(*inputs)
         t0 = time.perf_counter()
-        outputs = self.run_op(*inputs)
-        jax.block_until_ready(outputs)
+        outputs = None
+        for _ in range(batch_size):
+          outputs = self.run_op(*inputs)
+        if outputs is not None:
+          jax.block_until_ready(outputs)
+        if sync_between_runs:
+          multihost_utils.sync_global_devices(f"rep_{actual_runs}_end")
         t1 = time.perf_counter()
         actual_runs += 1
         if actual_runs < 1000:
-          raw_times.append((t1 - t0) * 1000.0)
+          raw_times.append(((t1 - t0) * 1000.0) / batch_size)
 
     if self.config.xprof_timing:
       print("Xprof trace collected.")

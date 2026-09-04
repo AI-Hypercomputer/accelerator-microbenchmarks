@@ -73,6 +73,17 @@ send_recv:
   - "--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1"
   - "--xla_tpu_dvfs_p_state=7"
 
+ppermute: &dcn_transport_flags
+  - "--xla_tpu_use_enhanced_launch_barrier=true"
+  - "--xla_tpu_prefer_async_allgather_to_allreduce=true"
+  - "--xla_tpu_data_parallel_opt_different_sized_ops=true"
+  - "--xla_tpu_enable_data_parallel_all_reduce_opt=true"
+  - "--xla_tpu_dvfs_p_state=7"
+
+ppermute_uni: *dcn_transport_flags
+ppermute_bidi: *dcn_transport_flags
+all_reduce_dcn: *dcn_transport_flags
+
 host_device: &host_device
   flags:
     - "--xla_tpu_dvfs_p_state=7"

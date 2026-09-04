@@ -1,0 +1,13 @@
+benchmark:
+  name: ppermute_bidi
+  direction: "bidi"
+  dtype: "bfloat16"
+  input_layout: "dcn_1d"
+  mesh_shape: "2x8"
+  mesh_axes: "dcn,ici"
+  warmup_tries: 5
+  num_runs: 5
+  batch_size: 10
+  sync_between_runs: true
+  sweep:
+    matrix_dim: [8192, 16384, 24576, 32768]

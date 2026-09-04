@@ -83,7 +83,25 @@ def init_jax_distributed():
   """Ensures JAX distributed coordinator is initialized."""
   print("Initializing JAX distributed system...")
   try:
-    jax.distributed.initialize()
+    coordinator_address = os.environ.get("DCN_COORDINATOR_ADDRESS")
+    num_processes = os.environ.get("DCN_PROCESS_COUNT")
+    process_id = os.environ.get("DCN_PROCESS_ID")
+    if (
+        coordinator_address
+        and num_processes is not None
+        and process_id is not None
+    ):
+      print(
+          f"Initializing jax.distributed with coordinator={coordinator_address},"
+          f" num_processes={num_processes}, process_id={process_id}"
+      )
+      jax.distributed.initialize(
+          coordinator_address=coordinator_address,
+          num_processes=int(num_processes),
+          process_id=int(process_id),
+      )
+    else:
+      jax.distributed.initialize()
   except Exception as e:
     print(f"Note: jax.distributed.initialize() failed or not needed: {e}")
   try:

@@ -68,11 +68,14 @@ _REDUCE_OP_MAP = {
 @dataclasses.dataclass
 class CollectivesParams(base.BaseBenchmarkParams):
   mesh_shape: Optional[str] = None
+  mesh_axes: Optional[str] = None
   sharding_strategy: Optional[str] = None
   matrix_dim: int = 1024
   dtype: str = "bfloat16"
   seed: int = 0
   xla_dump_dir: Optional[str] = "/tmp/xla_dump"
+  input_layout: str = "default"
+  ring_factor: Optional[float] = None
 
 
 @dataclasses.dataclass
@@ -116,14 +119,24 @@ class BaseCollectiveBenchmark(
 
   def setup(self):
     mesh_shape_str = self.config.mesh_shape
+    mesh_axes_str = self.config.mesh_axes
     if mesh_shape_str is not None:
       try:
         mesh_shape = [int(i) for i in mesh_shape_str.split("x")]
-        axis_names = tuple(f"d_{i}" for i in range(len(mesh_shape)))
-        mesh_devices = mesh_utils.create_device_mesh(
-            mesh_shape, devices=jax.devices()
-        )
-        self.mesh = jax.sharding.Mesh(mesh_devices, axis_names)
+        if mesh_axes_str is not None:
+          axis_names = tuple(mesh_axes_str.split(","))
+        else:
+          axis_names = tuple(f"d_{i}" for i in range(len(mesh_shape)))
+
+        if "dcn" in axis_names and len(mesh_shape) == 2:
+          self.mesh, _ = utils.build_multislice_mesh(
+              mesh_shape[0], mesh_shape[1], axis_names=axis_names
+          )
+        else:
+          mesh_devices = mesh_utils.create_device_mesh(
+              mesh_shape, devices=jax.devices()
+          )
+          self.mesh = jax.sharding.Mesh(mesh_devices, axis_names)
       except (ValueError, RuntimeError) as e:
         print(
             f"Warning: Invalid mesh_shape '{mesh_shape_str}'. Falling back to"
@@ -179,6 +192,14 @@ class BaseCollectiveBenchmark(
       self, num_devices: int, dim: int, sharding_axes
   ) -> tuple[tuple[int, ...], jax.sharding.NamedSharding]:
     # TODO(vvashishth): Verify shapes and sharding match before returning.
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    if getattr(self.config, "input_layout", "default") == "dcn_1d":
+      shape = (dim, dim)
+      sharding = jax.sharding.NamedSharding(
+          self.mesh, jax.sharding.PartitionSpec("dcn", None)  # pyrefly: ignore[bad-argument-type]
+      )
+      return shape, sharding
     shape = (num_devices, dim, dim)
     sharding = jax.sharding.NamedSharding(
         self.mesh, jax.sharding.PartitionSpec(sharding_axes, None, None)  # pyrefly: ignore[bad-argument-type]
@@ -328,6 +349,22 @@ class BaseCollectiveBenchmark(
     metrics["replica_group_type"] = replica_group_type
     metrics["replica_group_rank"] = rank
     metrics.update(extra_metrics)
+
+    if getattr(self.config, "input_layout", "default") == "dcn_1d":
+      shard_bytes = extra_metrics.get(
+          "algorithm_bytes", extra_metrics.get("shard_size_bytes", 0.0)
+      )
+      ring_factor = extra_metrics.get("ring_factor", 1.0)
+      participants = extra_metrics.get("participants_per_slice", 1)
+      if avg_latency_s > 0 and shard_bytes > 0:
+        per_device_algo_gbps = (shard_bytes * 8.0) / (avg_latency_s * 1e9)
+        host_algo_gbps = per_device_algo_gbps * participants
+        host_bus_gbps = host_algo_gbps * ring_factor
+        metrics["per_device_algo_gbps"] = per_device_algo_gbps
+        metrics["host_algo_gbps"] = host_algo_gbps
+        metrics["host_bus_gbps"] = host_bus_gbps
+        # Dual-NIC line rate on TPU7x / v6e: 400 Gbps TX + 400 Gbps RX = 800 Gbps duplex
+        metrics["duplex_utilization_pct"] = (host_bus_gbps / 800.0) * 100.0
     return metrics
 
   def get_total_bytes(self) -> float:
@@ -419,6 +456,14 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
   def _get_input_shape_and_sharding(
       self, num_devices: int, dim: int, sharding_axes
   ) -> tuple[tuple[int, ...], jax.sharding.NamedSharding]:
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    if getattr(self.config, "input_layout", "default") == "dcn_1d":
+      shape = (dim, dim)
+      sharding = jax.sharding.NamedSharding(
+          self.mesh, jax.sharding.PartitionSpec("dcn", None)  # pyrefly: ignore[bad-argument-type]
+      )
+      return shape, sharding
     shape = (dim, _BASE_N, _BASE_K)
     sharding = jax.sharding.NamedSharding(
         self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
@@ -426,25 +471,48 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
     return shape, sharding
 
   def _setup_jit_fn(self):
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
     sharding_axes = self._get_sharding_axes()
     op_fn = _REDUCE_OP_MAP[self.config.reduce_op.lower()]
+    is_dcn_1d = getattr(self.config, "input_layout", "default") == "dcn_1d"
 
-    @jax.jit
-    def all_reduce_sharded(x):
-      def f(a):
-        with jax.named_scope(constants.MARKER):
-          # Insert the custom call to prevent result from being a live out buffer
-          return zero_crop(op_fn(a, axis_name=sharding_axes))
+    if is_dcn_1d:
+      target_axis = "dcn" if "dcn" in self.mesh.axis_names else sharding_axes
 
-      return jax.shard_map(
-          f,
-          mesh=self.mesh,
-          in_specs=jax.sharding.PartitionSpec(None, None, None),
-          out_specs=jax.sharding.PartitionSpec(None, None, None),
-          check_vma=False,
-      )(x)
+      @jax.jit
+      def all_reduce_dcn(x):
+        def f(a):
+          with jax.named_scope(constants.MARKER):
+            return zero_crop(op_fn(a, axis_name=target_axis))
 
-    self._jit_fn = all_reduce_sharded
+        return jax.shard_map(
+            f,
+            mesh=self.mesh,
+            in_specs=jax.sharding.PartitionSpec("dcn", None),
+            out_specs=jax.sharding.PartitionSpec("dcn", None),
+            check_vma=False,
+        )(x)
+
+      self._jit_fn = all_reduce_dcn
+    else:
+
+      @jax.jit
+      def all_reduce_sharded(x):
+        def f(a):
+          with jax.named_scope(constants.MARKER):
+            # Insert the custom call to prevent result from being a live out buffer
+            return zero_crop(op_fn(a, axis_name=sharding_axes))
+
+        return jax.shard_map(
+            f,
+            mesh=self.mesh,
+            in_specs=jax.sharding.PartitionSpec(None, None, None),
+            out_specs=jax.sharding.PartitionSpec(None, None, None),
+            check_vma=False,
+        )(x)
+
+      self._jit_fn = all_reduce_sharded
 
   def _get_transfer_metrics(
       self,
@@ -455,6 +523,31 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
       participating_ranks: int = 1,
       tf_multiplier: int = 1,
   ):
+    if getattr(self.config, "input_layout", "default") == "dcn_1d":
+      num_slices = 2
+      participants_per_slice = max(1, num_devices // 2)
+      if self.mesh is not None:
+        axis_names = tuple(self.mesh.axis_names)
+        devices_shape = self.mesh.devices.shape
+        if "dcn" in axis_names:
+          num_slices = devices_shape[axis_names.index("dcn")]
+        if "ici" in axis_names:
+          participants_per_slice = devices_shape[axis_names.index("ici")]
+        else:
+          participants_per_slice = max(1, num_devices // num_slices)
+      shard_bytes = dim * dim * itemsize / num_slices
+      ring_factor = (
+          self.config.ring_factor
+          if self.config.ring_factor is not None
+          else (2.0 * (num_slices - 1) / num_slices)
+      )
+      data_transferred = shard_bytes * ring_factor * participants_per_slice
+      return data_transferred, {
+          "shard_size_mib": shard_bytes / (1024 * 1024),
+          "algorithm_bytes": shard_bytes,
+          "ring_factor": ring_factor,
+          "participants_per_slice": participants_per_slice,
+      }
     local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
     data_transferred = (
         2
@@ -470,6 +563,10 @@ class AllGatherBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
   """Benchmarks the latency and bandwidth of jax.lax.all_gather across devices."""
 
   def match_xprof_op_fallback(self, event: dict[str, Any]) -> bool:
+    # copybara:strip_begin(b/553842170: temporary fallback until XLA compiler bug is fixed)
+    # TODO(b/553842170): Remove this fallback once the underlying compiler issue
+    # (MARKER failing to attach to operation in 2x4x4 all gather) is resolved.
+    # copybara:strip_end
     args = event.get("args", {})
     hlo_category = args.get("hlo_category", "")
     offload_type = args.get("offload_type", "")
@@ -639,3 +736,140 @@ class ReduceScatterBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
         chunk_size_bytes * (participating_ranks / max(rank, 1)) * tf_multiplier
     )
     return data_transferred, {"shard_size_mib": chunk_size_bytes / (1024 * 1024)}
+
+
+@dataclasses.dataclass
+class PPermuteParams(CollectivesParams):
+  direction: str = dataclasses.field(
+      default="uni",
+      metadata={
+          "help": (
+              "Permutation direction: uni (unidirectional [(0, 1)]) or bidi"
+              " (bidirectional [(0, 1), (1, 0)])"
+          ),
+      },
+  )
+
+
+@registry.benchmark_registry.register("ppermute")
+@registry.benchmark_registry.register("ppermute_uni")
+@registry.benchmark_registry.register("ppermute_bidi")
+class PPermuteBenchmark(BaseCollectiveBenchmark[PPermuteParams]):
+  """Benchmarks latency and bandwidth of ppermute peer-to-peer collective ops across devices."""
+
+  Config = PPermuteParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("direction", report.format_str),
+      ("mesh_shape", report.format_str),
+      ("sharding_strategy", report.format_str),
+      ("matrix_dim", report.format_str),
+      ("shard_size_mib", report.format_2f),
+      ("bandwidth_gb_s", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
+
+  def setup(self):
+    super().setup()
+    direction = self.config.direction.lower()
+    if direction not in ("uni", "bidi"):
+      raise ValueError(
+          f"Invalid direction '{self.config.direction}'. Must be 'uni' or"
+          " 'bidi'."
+      )
+
+  def get_run_identifier(self) -> str:
+    dim = self.config.matrix_dim
+    direction = self.config.direction.lower()
+    return f"dim_{dim}_dir_{direction}"
+
+  def _get_input_shape_and_sharding(
+      self, num_devices: int, dim: int, sharding_axes
+  ) -> tuple[tuple[int, ...], jax.sharding.NamedSharding]:
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    if getattr(self.config, "input_layout", "default") == "dcn_1d":
+      shape = (dim, dim)
+      sharding = jax.sharding.NamedSharding(
+          self.mesh, jax.sharding.PartitionSpec("dcn", None)  # pyrefly: ignore[bad-argument-type]
+      )
+      return shape, sharding
+    shape = (dim, _BASE_N, _BASE_K)
+    sharding = jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
+    )
+    return shape, sharding
+
+  def _setup_jit_fn(self):
+    direction = self.config.direction.lower()
+    perm = [(0, 1), (1, 0)] if direction == "bidi" else [(0, 1)]
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    target_axis = (
+        "dcn" if "dcn" in self.mesh.axis_names else self._get_sharding_axes()
+    )
+    if isinstance(target_axis, (tuple, list)):
+      target_axis = target_axis[0]
+    is_dcn_1d = getattr(self.config, "input_layout", "default") == "dcn_1d"
+
+    in_specs = (
+        jax.sharding.PartitionSpec("dcn", None)
+        if is_dcn_1d
+        else jax.sharding.PartitionSpec(None, None, None)
+    )
+
+    @jax.jit
+    def ppermute_sharded(x):
+      def f(a):
+        with jax.named_scope(constants.MARKER):
+          return zero_crop(
+              jax.lax.ppermute(a, axis_name=target_axis, perm=perm)
+          )
+
+      return jax.shard_map(
+          f,
+          mesh=self.mesh,
+          in_specs=in_specs,
+          out_specs=in_specs,
+          check_vma=False,
+      )(x)
+
+    self._jit_fn = ppermute_sharded
+
+  def _get_transfer_metrics(
+      self,
+      dim: int,
+      itemsize: int,
+      num_devices: int,
+      rank: int = 1,
+      participating_ranks: int = 1,
+      tf_multiplier: int = 1,
+  ):
+    if getattr(self.config, "input_layout", "default") == "dcn_1d":
+      num_slices = 2
+      participants_per_slice = max(1, num_devices // 2)
+      if self.mesh is not None:
+        axis_names = tuple(self.mesh.axis_names)
+        devices_shape = self.mesh.devices.shape
+        if "dcn" in axis_names:
+          num_slices = devices_shape[axis_names.index("dcn")]
+        if "ici" in axis_names:
+          participants_per_slice = devices_shape[axis_names.index("ici")]
+        else:
+          participants_per_slice = max(1, num_devices // num_slices)
+      shard_bytes = dim * dim * itemsize / num_slices
+      mult = 2 if self.config.direction.lower() == "bidi" else 1
+      data_transferred = shard_bytes * mult * participants_per_slice
+      return data_transferred, {
+          "shard_size_mib": shard_bytes / (1024 * 1024),
+          "algorithm_bytes": shard_bytes,
+          "ring_factor": float(mult),
+          "participants_per_slice": participants_per_slice,
+      }
+    local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
+    mult = 2 if self.config.direction.lower() == "bidi" else 1
+    data_transferred = local_size_bytes * mult
+    return data_transferred, {
+        "shard_size_mib": local_size_bytes / (1024 * 1024)
+    }
