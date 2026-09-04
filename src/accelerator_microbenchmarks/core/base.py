@@ -45,6 +45,8 @@ class BenchmarkMetadata:
   params: dict[str, Any]
   platform_info: platform.PlatformInfo
   hardware_spec: system.HardwareSpec
+  xla_flags: str = ""
+  libtpu_init_args: str = ""
 
 
 @dataclasses.dataclass
@@ -497,6 +499,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         # the runner orchestrator.
         platform_info=platform.get_platform_info(),
         hardware_spec=self.hardware_spec,
+        xla_flags=os.environ.get("XLA_FLAGS", ""),
+        libtpu_init_args=os.environ.get("LIBTPU_INIT_ARGS", ""),
     )
 
     return BenchmarkResult(

@@ -2,6 +2,7 @@
 
 import contextlib
 import dataclasses
+import os
 import unittest
 
 from absl.testing import absltest
@@ -407,6 +408,28 @@ class BaseBenchmarkTest(absltest.TestCase):
     # XProf trace for its local device without invoking cross-host metric broadcast.
     mock_parse_durations.assert_called_once()
     self.assertEqual(result.metrics["xprof_avg_ms"], 3.5)
+
+  def test_run_metadata_env_flags(self):
+    """Tests BaseBenchmark.run() captures runtime flags or defaults to empty."""
+    # When flags are populated in os.environ
+    env_vars = {
+        "XLA_FLAGS": "--xla_test_flag=1",
+        "LIBTPU_INIT_ARGS": "--tpu_test_arg=2",
+    }
+    with unittest.mock.patch.dict(os.environ, env_vars, clear=False):
+      bm = DummyBenchmark()
+      result = bm.run()
+      self.assertEqual(result.metadata.xla_flags, "--xla_test_flag=1")
+      self.assertEqual(result.metadata.libtpu_init_args, "--tpu_test_arg=2")
+
+    # When flags are unset in os.environ
+    with unittest.mock.patch.dict(os.environ):
+      os.environ.pop("XLA_FLAGS", None)
+      os.environ.pop("LIBTPU_INIT_ARGS", None)
+      bm = DummyBenchmark()
+      result = bm.run()
+      self.assertEqual(result.metadata.xla_flags, "")
+      self.assertEqual(result.metadata.libtpu_init_args, "")
 
 
 if __name__ == "__main__":

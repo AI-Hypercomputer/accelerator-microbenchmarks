@@ -242,6 +242,8 @@ def results_to_dataframe(
         **params,
         **metrics,
         **platform_info,
+        "xla_flags": metadata.xla_flags,
+        "libtpu_init_args": metadata.libtpu_init_args,
         "benchmark": benchmark_name,
         "test_name": test_name,
         "KET_ms": metrics.get("avg_ms", 0.0),

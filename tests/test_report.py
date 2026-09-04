@@ -26,6 +26,8 @@ def _make_metadata(
     test_name: str | None = None,
     start_time: str = "2026-08-18T10:00:00",
     end_time: str = "2026-08-18T10:01:00",
+    xla_flags: str = "",
+    libtpu_init_args: str = "",
 ) -> base.BenchmarkMetadata:
   """Creates a dummy BenchmarkMetadata for testing."""
   return base.BenchmarkMetadata(
@@ -40,6 +42,8 @@ def _make_metadata(
       hardware_spec=hardware_spec
       if hardware_spec is not None
       else test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
+      xla_flags=xla_flags,
+      libtpu_init_args=libtpu_init_args,
   )
 
 
@@ -173,6 +177,12 @@ class ReportTest(absltest.TestCase):
         "DummyBenchmark",
         params={"m": 1024, "n": 2048},
         metrics={"avg_ms": 1.23, "tflops_per_sec": 500.0},
+        metadata=_make_metadata(
+            "DummyBenchmark",
+            params={"m": 1024, "n": 2048},
+            xla_flags="--xla_test_flag=1",
+            libtpu_init_args="--tpu_arg=2",
+        ),
     )
     df = report.results_to_dataframe([res])
     self.assertLen(df, 1)
@@ -181,6 +191,8 @@ class ReportTest(absltest.TestCase):
     self.assertEqual(df["m"].iloc[0], 1024)
     self.assertEqual(df["n"].iloc[0], 2048)
     self.assertEqual(df["tpu_type"].iloc[0], system.TpuVersion.TPU7X.value)
+    self.assertEqual(df["xla_flags"].iloc[0], "--xla_test_flag=1")
+    self.assertEqual(df["libtpu_init_args"].iloc[0], "--tpu_arg=2")
     self.assertEqual(df["KET_ms"].iloc[0], 1.23)
     self.assertEqual(df["throughput"].iloc[0], 500.0)
     self.assertEqual(df["start"].iloc[0], "2026-08-18T10:00:00")
@@ -209,6 +221,8 @@ class ReportTest(absltest.TestCase):
     df_none = report.results_to_dataframe([res_empty])
     self.assertLen(df_none, 1)
     self.assertEqual(df_none["benchmark"].iloc[0], "")
+    self.assertEqual(df_none["xla_flags"].iloc[0], "")
+    self.assertEqual(df_none["libtpu_init_args"].iloc[0], "")
     self.assertEqual(df_none["KET_ms"].iloc[0], 1.0)
     self.assertEqual(df_none["throughput"].iloc[0], 0.0)
 
@@ -576,6 +590,12 @@ class ReportTest(absltest.TestCase):
         "DummyBenchmark",
         params={"param_col": "val1"},
         metrics={"metric_val": 123.45, "avg_ms": 5.0, "tflops_per_sec": 200.0},
+        metadata=_make_metadata(
+            "DummyBenchmark",
+            params={"param_col": "val1"},
+            xla_flags="--xla_test_flag=1",
+            libtpu_init_args="--tpu_arg=2",
+        ),
     )
     with tempfile.TemporaryDirectory() as tmpdir:
       report.save_output([dummy_res], tmpdir)
@@ -593,11 +613,15 @@ class ReportTest(absltest.TestCase):
       self.assertEqual(df["KET_ms"].iloc[0], 5.0)
       self.assertEqual(df["throughput"].iloc[0], 200.0)
       self.assertEqual(df["start"].iloc[0], "2026-08-18T10:00:00")
+      self.assertEqual(df["xla_flags"].iloc[0], "--xla_test_flag=1")
+      self.assertEqual(df["libtpu_init_args"].iloc[0], "--tpu_arg=2")
 
       with open(json_path, "r") as f:
         data = json.load(f)
       self.assertLen(data, 1)
       self.assertEqual(data[0]["metadata"]["benchmark_name"], "DummyBenchmark")
+      self.assertEqual(data[0]["metadata"]["xla_flags"], "--xla_test_flag=1")
+      self.assertEqual(data[0]["metadata"]["libtpu_init_args"], "--tpu_arg=2")
 
     # Non-standard objects in BenchmarkResult serialize with default=str
     class CustomObj:
