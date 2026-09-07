@@ -52,6 +52,18 @@ class TestXmLaunchSelectTests(parameterized.TestCase):
           "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x1/DeviceToHostBenchmark",
           {"device_to_host"},
       ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x1/AllGatherBenchmark",
+          {"all_gather"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x1/AllReduceBenchmark",
+          {"all_reduce"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x1/AllToAllBenchmark",
+          {"all_to_all"},
+      ),
   )
   def test_single_full_target(self, select_tests_str, expected):
     self.assertEqual(
@@ -90,6 +102,18 @@ class TestXmLaunchSelectTests(parameterized.TestCase):
       (
           "tpums_gfl_2x2x1_DeviceToHostBenchmark",
           {"device_to_host"},
+      ),
+      (
+          "tpums_gfl_2x2x1_AllGatherBenchmark",
+          {"all_gather"},
+      ),
+      (
+          "tpums_gfl_2x2x1_AllReduceBenchmark",
+          {"all_reduce"},
+      ),
+      (
+          "tpums_gfl_2x2x1_AllToAllBenchmark",
+          {"all_to_all"},
       ),
   )
   def test_shortened_target(self, select_tests_str, expected):

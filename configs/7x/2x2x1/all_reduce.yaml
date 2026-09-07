@@ -5,7 +5,7 @@ benchmark:
   dtype: bfloat16
   xprof_timing: true
   reduce_op: sum
-  mesh_shape: 4x2x2
+  mesh_shape: 2x2x2
   sweep:
-    sharding_strategy: ["4x2x1", "4x2x2"]
+    sharding_strategy: ["2x2x1", "2x2x2"]
     matrix_dim: [512, 1024, 2048]

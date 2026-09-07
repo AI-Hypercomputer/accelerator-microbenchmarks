@@ -5,6 +5,6 @@ benchmark:
   dtype: bfloat16
   xprof_timing: true
   mesh_shape: 8x4x2
-  sharding_strategy: 8x4x2
   sweep:
+    sharding_strategy: ["8x4x1", "8x4x2"]
     matrix_dim: [512, 1024, 2048]

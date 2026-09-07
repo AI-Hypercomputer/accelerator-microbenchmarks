@@ -45,7 +45,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
     )
 
   def test_primary_stable_tasks(self):
-    """Verify that the 9 primary stable tasks are returned by default."""
+    """Verify that the 8 primary stable tasks are returned by default."""
     primary_tasks = registry.benchmark_registry.list_benchmark_names(
         include_experimental=False, include_aliases=False
     )
@@ -56,7 +56,6 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "hbm",
             "all_reduce",
             "all_gather",
-            "reduce_scatter",
             "all_to_all",
             "device_to_device",
             "host_to_device",
@@ -66,6 +65,12 @@ class BenchmarkLoaderTest(absltest.TestCase):
     for task_name in primary_tasks:
       bench_cls = registry.benchmark_registry.get_benchmark(task_name)
       self.assertIsNotNone(bench_cls)
+
+  def test_experimental_benchmarks(self):
+    """Verify that experimental benchmarks are marked as experimental."""
+    self.assertTrue(
+        registry.benchmark_registry.is_experimental("reduce_scatter")
+    )
 
   def test_all_benchmarks_have_valid_config(self):
     """Verify that every registered benchmark defines a Config dataclass."""

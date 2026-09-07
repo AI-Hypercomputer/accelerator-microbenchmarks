@@ -589,9 +589,9 @@ class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
     return data_transferred, {"local_size_mib": local_size_bytes / (1024 * 1024)}
 
 
-@registry.benchmark_registry.register("reduce_scatter")
+@registry.benchmark_registry.register("reduce_scatter", is_experimental=True)
 class ReduceScatterBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
-  """Benchmarks the latency and bandwidth of jax.lax.psum_scatter across devices."""
+  """[EXPERIMENTAL] Benchmarks the latency and bandwidth of jax.lax.psum_scatter across devices."""
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
