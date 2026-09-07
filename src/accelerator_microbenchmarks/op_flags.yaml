@@ -1,6 +1,5 @@
 gemm_flags: &gemm_flags
-  - "--xla_tpu_enable_async_collective_fusion=true"
-  - "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true"
+  - "--xla_tpu_enable_async_collective_fusion=false"
   - "--xla_tpu_enable_async_collective_fusion_multiple_steps=true"
   - "--xla_tpu_overlap_compute_collective_tc=true"
   - "--xla_enable_async_all_gather=true"
@@ -12,8 +11,7 @@ gemm_flags: &gemm_flags
   - "--xla_tpu_dvfs_p_state=7"
 
 gemm_numerics_flags: &gemm_numerics_flags
-  - "--xla_tpu_enable_async_collective_fusion=true"
-  - "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true"
+  - "--xla_tpu_enable_async_collective_fusion=false"
   - "--xla_tpu_enable_async_collective_fusion_multiple_steps=true"
   - "--xla_tpu_overlap_compute_collective_tc=true"
   - "--xla_enable_async_all_gather=true"
