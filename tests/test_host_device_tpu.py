@@ -1,5 +1,7 @@
 """Unit tests for host_device.py that requires TPU devices."""
 
+from unittest import mock
+
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import host_device
@@ -33,11 +35,11 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
 
     for device in device_set:
       # Check for TPU using various attributes
-      if hasattr(device, 'platform') and 'tpu' in device.platform.lower():
+      if hasattr(device, "platform") and "tpu" in device.platform.lower():
         return True
       if "Tpu" in type(device).__name__:
         return True
-      if hasattr(device, 'device_kind') and 'tpu' in device.device_kind.lower():
+      if hasattr(device, "device_kind") and "tpu" in device.device_kind.lower():
         return True
 
     return False
@@ -138,6 +140,69 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     out = self.bm.run_op(*inputs)
     self.assertIsInstance(out, np.ndarray)
     self.assertEqual(out.shape, expected_shape)
+
+
+class HostToDeviceBenchmarkTest(parameterized.TestCase):
+  """Unit tests for HostToDeviceBenchmark on physical TPU hardware."""
+
+  def setUp(self):
+    super().setUp()
+    self.mock_mesh = jax.sharding.Mesh(
+        np.array(jax.devices()), axis_names=("device",)
+    )
+    self.patcher = mock.patch(
+        "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
+        return_value="http://mock_xprof_url",
+    )
+    self.patcher.start()
+    self.addCleanup(self.patcher.stop)
+
+  def tearDown(self):
+    super().tearDown()
+    jax.clear_caches()
+
+  def test_h2d_bandwidth_below_theoretical_max_v7x(self):
+    """Verify H2D bandwidth from XProf timing on TPU v7x is < 60 GB/s."""
+    devices = jax.devices()
+    if (
+        not devices
+        or jax.devices()[0].platform != "tpu"
+        or devices[0].device_kind != "TPU7x"
+    ):
+      self.skipTest("This test requires TPU v7x hardware.")
+
+    params = {
+        "data_size_mib": 8192,
+        "num_runs": 10,
+        "warmup_tries": 2,
+        "xprof_timing": True,
+        "dtype": "float32",
+    }
+    config = host_device.HostDeviceParams(**params)
+    bm = host_device.HostToDeviceBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
+    bm.setup()
+    result = bm.run()
+
+    self.assertIn("bandwidth_gb_s", result.metrics)
+    print(f"result: {result}")
+    bandwidth_gb_s = result.metrics["bandwidth_gb_s"]
+    print(f"bandwidth_gb_s: {bandwidth_gb_s}")
+    self.assertGreater(bandwidth_gb_s, 0.0)
+    # Theoretical maximum PCIe Gen5 bandwidth for v7x is 60 GB/s
+    self.assertLess(
+        bandwidth_gb_s,
+        60.0,
+        f"Measured H2D bandwidth {bandwidth_gb_s:.2f} GB/s exceeds theoretical"
+        " max 60 GB/s.",
+    )
+    self.assertGreater(
+        bandwidth_gb_s,
+        0.0,
+        f"Measured H2D bandwidth {bandwidth_gb_s:.2f} GB/s is below"
+        " min 0.0 GB/s.",
+    )
 
 
 if __name__ == "__main__":

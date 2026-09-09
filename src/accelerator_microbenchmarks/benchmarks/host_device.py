@@ -33,6 +33,10 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
       ("xprof_p50_ms", report.format_4f),
   )
 
+  @property
+  def xprof_target_host_cpu(self) -> bool:
+    return True
+
   def setup(self):
     pass
 
@@ -50,7 +54,14 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
   def run_op(self, *args, **kwargs) -> jax.Array:
     # args[0] is host_data
     with jax.profiler.TraceAnnotation(constants.MARKER):
-      return jax.device_put(args[0])
+      # jax.device_put is asynchronous and returns immediately upon dispatch.
+      # Calling block_until_ready() inside the TraceAnnotation context manager
+      # forces the host thread to wait until the DMA transfer completes before
+      # the profiler marker exits. Without this, the MARKER annotation only
+      # measures the microsecond dispatch time rather than the transfer,
+      # causing xprof_timing to calculate an artificially inflated bandwidth.
+      arr = jax.device_put(args[0])
+      return arr.block_until_ready()
 
   def get_total_bytes(self) -> float:
     return float(self.config.data_size_bytes)
