@@ -567,7 +567,7 @@ class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
   def _get_input_shape_and_sharding(
       self, num_devices: int, dim: int, sharding_axes
   ):
-    shape = (dim * num_devices, _BASE_N, _BASE_K)
+    shape = (dim, _BASE_N, _BASE_K)
     sharding = jax.sharding.NamedSharding(
         self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
     )

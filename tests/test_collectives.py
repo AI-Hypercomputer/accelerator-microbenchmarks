@@ -138,6 +138,21 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(data.shape, (64, 8, 128))
     self.assertEqual(data.dtype, jnp.bfloat16)
 
+  def test_all_to_all_generate_inputs(self):
+    """Verify input generation for all_to_all."""
+    params = {
+        "matrix_dim": 64,
+        "dtype": "bfloat16",
+    }
+    config = collectives.CollectivesParams(**params)
+    bm = collectives.AllToAllBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
+    bm.setup()
+    (data,) = bm.generate_inputs()
+    self.assertEqual(data.shape, (64, 8, 128))
+    self.assertEqual(data.dtype, jnp.bfloat16)
+
   @parameterized.named_parameters(
       ("sum", "sum", 4.0),
       ("mean", "mean", 1.0),
@@ -252,6 +267,119 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     out_2x2 = bm.run_op(data_2x2)
     self.assertEqual(out_2x2.shape, (4, 64, 256))
 
+  def test_all_to_all_with_sharding_strategy(self):
+    # Case 1: 2D mesh (V6E_HARDWARE_SPEC)
+    devices_2d = np.array(jax.devices()).reshape((2, 2))
+    mesh_2d = jax.sharding.Mesh(devices_2d, axis_names=("d_0", "d_1"))
+    for sharding_strategy, expected_axes in [
+        ("2x1", ("d_0",)),
+        ("2x2", ("d_0", "d_1")),
+    ]:
+      config_2d = collectives.CollectivesParams(
+          matrix_dim=64,
+          dtype="bfloat16",
+          mesh_shape="2x2",
+          sharding_strategy=sharding_strategy,
+      )
+      bm_2d = collectives.AllToAllBenchmark(
+          config=config_2d,
+          hardware_spec=system.V6E_HARDWARE_SPEC,
+          mesh=mesh_2d,
+      )
+      bm_2d.setup()
+      self.assertEqual(bm_2d.sharding_strategy, sharding_strategy)
+      self.assertEqual(bm_2d._get_sharding_axes(), expected_axes)
+      (data_2d,) = bm_2d.generate_inputs()
+      self.assertEqual(data_2d.shape, (64, 8, 128))
+      out_2d = bm_2d.run_op(data_2d)
+      self.assertEqual(out_2d.shape, (64, 8, 128))
+
+    # Case 2: 3D mesh (TPU7X_HARDWARE_SPEC)
+    devices_3d = np.array(jax.devices()).reshape((2, 2, 1))
+    mesh_3d = jax.sharding.Mesh(devices_3d, axis_names=("d_0", "d_1", "d_2"))
+    for sharding_strategy, expected_axes in [
+        ("2x1x1", ("d_0",)),
+        ("2x2x1", ("d_0", "d_1")),
+    ]:
+      config_3d = collectives.CollectivesParams(
+          matrix_dim=64,
+          dtype="bfloat16",
+          mesh_shape="2x2x1",
+          sharding_strategy=sharding_strategy,
+      )
+      bm_3d = collectives.AllToAllBenchmark(
+          config=config_3d,
+          hardware_spec=system.TPU7X_HARDWARE_SPEC,
+          mesh=mesh_3d,
+      )
+      bm_3d.setup()
+      self.assertEqual(bm_3d.sharding_strategy, sharding_strategy)
+      self.assertEqual(bm_3d._get_sharding_axes(), expected_axes)
+      (data_3d,) = bm_3d.generate_inputs()
+      self.assertEqual(data_3d.shape, (64, 8, 128))
+      out_3d = bm_3d.run_op(data_3d)
+      self.assertEqual(out_3d.shape, (64, 8, 128))
+
+  @parameterized.named_parameters(
+      (
+          "all_gather",
+          collectives.AllGatherBenchmark,
+          collectives.CollectivesParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2x1",
+              sharding_strategy="2x2x1",
+          ),
+          "shard_size_mib",
+      ),
+      (
+          "all_reduce",
+          collectives.AllReduceBenchmark,
+          collectives.AllReduceParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2x1",
+              sharding_strategy="2x2x1",
+              reduce_op="sum",
+          ),
+          "shard_size_mib",
+      ),
+      (
+          "all_to_all",
+          collectives.AllToAllBenchmark,
+          collectives.CollectivesParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2x1",
+              sharding_strategy="2x2x1",
+          ),
+          "local_size_mib",
+      ),
+  )
+  def test_input_shape_and_transfer_metrics_invariant(
+      self, benchmark_cls, config, size_metric_key
+  ):
+    """Guardrail ensuring generated input tensor bytes strictly equal local_size_bytes in transfer metrics."""
+    devices_3d = np.array(jax.devices()).reshape((2, 2, 1))
+    mesh_3d = jax.sharding.Mesh(devices_3d, axis_names=("d_0", "d_1", "d_2"))
+    bm = benchmark_cls(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh_3d
+    )
+    bm.setup()
+    (data,) = bm.generate_inputs()
+    metrics = bm.calculate_metrics([1.0])
+
+    actual_input_bytes = data.size * data.dtype.itemsize
+    metrics_local_bytes = int(round(metrics[size_metric_key] * 1024 * 1024))
+    self.assertEqual(
+        actual_input_bytes,
+        metrics_local_bytes,
+        f"For {benchmark_cls.__name__}, generated input tensor bytes"
+        f" ({actual_input_bytes}) must strictly equal {size_metric_key} in"
+        f" transfer metrics ({metrics_local_bytes}) to prevent shape/metric"
+        " disconnects.",
+    )
+
   def test_transfer_metrics_calculation(self):
     devices = np.array(jax.devices()).reshape((2, 2))
     mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
@@ -263,7 +391,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     )
     # AllGather
     ag_bm = collectives.AllGatherBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+        config=config, hardware_spec=system.V6E_HARDWARE_SPEC, mesh=mesh
     )
     ag_bm.setup()
     ag_metrics = ag_bm.calculate_metrics([1.0])  # 1.0 ms latency
@@ -282,7 +410,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         reduce_op="sum",
     )
     ar_bm = collectives.AllReduceBenchmark(
-        config=ar_config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+        config=ar_config, hardware_spec=system.V6E_HARDWARE_SPEC, mesh=mesh
     )
     ar_bm.setup()
     ar_metrics = ar_bm.calculate_metrics([1.0])
@@ -290,6 +418,17 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     # data_transferred = 2 * 4194304 * (2 / 4) = 4194304 bytes
     # avg_latency = 0.001 s -> bandwidth = 4.194304 GB/s
     self.assertAlmostEqual(ar_metrics["bandwidth_gb_s"], 4.194304, places=4)
+
+    # AllToAll
+    ata_bm = collectives.AllToAllBenchmark(
+        config=config, hardware_spec=system.V6E_HARDWARE_SPEC, mesh=mesh
+    )
+    ata_bm.setup()
+    ata_metrics = ata_bm.calculate_metrics([1.0])
+    # local_size = 4194304 bytes
+    # data_transferred = 4194304 * (2 / 4) = 2097152 bytes
+    # avg_latency = 0.001 s -> bandwidth = 2.097152 GB/s
+    self.assertAlmostEqual(ata_metrics["bandwidth_gb_s"], 2.097152, places=4)
 
   def test_replica_groups_hlo_parsing(self):
     devices = np.array(jax.devices()).reshape((2, 2))
