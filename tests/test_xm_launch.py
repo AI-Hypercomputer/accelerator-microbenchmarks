@@ -64,6 +64,58 @@ class TestXmLaunchSelectTests(parameterized.TestCase):
           "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x1/AllToAllBenchmark",
           {"all_to_all"},
       ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x1/ReduceScatterBenchmark",
+          {"reduce_scatter"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x4/AllGatherBenchmark",
+          {"all_gather"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x4/AllReduceBenchmark",
+          {"all_reduce"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x4/AllToAllBenchmark",
+          {"all_to_all"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x2x4/ReduceScatterBenchmark",
+          {"reduce_scatter"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x4x4/AllGatherBenchmark",
+          {"all_gather"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x4x4/AllReduceBenchmark",
+          {"all_reduce"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x4x4/AllToAllBenchmark",
+          {"all_to_all"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_2x4x4/ReduceScatterBenchmark",
+          {"reduce_scatter"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_4x4x4/AllGatherBenchmark",
+          {"all_gather"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_4x4x4/AllReduceBenchmark",
+          {"all_reduce"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_4x4x4/AllToAllBenchmark",
+          {"all_to_all"},
+      ),
+      (
+          "//third_party/py/accelerator_microbenchmarks/src/accelerator_microbenchmarks:main/gfl_4x4x4/ReduceScatterBenchmark",
+          {"reduce_scatter"},
+      ),
   )
   def test_single_full_target(self, select_tests_str, expected):
     self.assertEqual(
@@ -114,6 +166,58 @@ class TestXmLaunchSelectTests(parameterized.TestCase):
       (
           "tpums_gfl_2x2x1_AllToAllBenchmark",
           {"all_to_all"},
+      ),
+      (
+          "tpums_gfl_2x2x1_ReduceScatterBenchmark",
+          {"reduce_scatter"},
+      ),
+      (
+          "tpums_gfl_2x2x4_AllGatherBenchmark",
+          {"all_gather"},
+      ),
+      (
+          "tpums_gfl_2x2x4_AllReduceBenchmark",
+          {"all_reduce"},
+      ),
+      (
+          "tpums_gfl_2x2x4_AllToAllBenchmark",
+          {"all_to_all"},
+      ),
+      (
+          "tpums_gfl_2x2x4_ReduceScatterBenchmark",
+          {"reduce_scatter"},
+      ),
+      (
+          "tpums_gfl_2x4x4_AllGatherBenchmark",
+          {"all_gather"},
+      ),
+      (
+          "tpums_gfl_2x4x4_AllReduceBenchmark",
+          {"all_reduce"},
+      ),
+      (
+          "tpums_gfl_2x4x4_AllToAllBenchmark",
+          {"all_to_all"},
+      ),
+      (
+          "tpums_gfl_2x4x4_ReduceScatterBenchmark",
+          {"reduce_scatter"},
+      ),
+      (
+          "tpums_gfl_4x4x4_AllGatherBenchmark",
+          {"all_gather"},
+      ),
+      (
+          "tpums_gfl_4x4x4_AllReduceBenchmark",
+          {"all_reduce"},
+      ),
+      (
+          "tpums_gfl_4x4x4_AllToAllBenchmark",
+          {"all_to_all"},
+      ),
+      (
+          "tpums_gfl_4x4x4_ReduceScatterBenchmark",
+          {"reduce_scatter"},
       ),
   )
   def test_shortened_target(self, select_tests_str, expected):
