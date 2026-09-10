@@ -1,4 +1,4 @@
-"""HBM bandwidth microbenchmarks supporting STREAM kernels (Copy, Scale, Add, Triad)."""
+"""HBM bandwidth microbenchmarks supporting memory bandwidth kernels (Copy, Scale, Add, Triad)."""
 
 import dataclasses
 import random
@@ -15,7 +15,7 @@ import jax.numpy as jnp
 
 @dataclasses.dataclass(frozen=True)
 class HBMKernelSpec:
-  """Specification for an HBM STREAM benchmark kernel.
+  """Specification for an HBM benchmark kernel.
 
   Attributes:
     name: Name of the kernel operation (e.g. copy, scale, add, triad).
@@ -68,15 +68,24 @@ HBM_KERNELS: dict[str, HBMKernelSpec] = {
 
 @dataclasses.dataclass
 class HBMBandwidthParams(base.BaseBenchmarkParams):
-  op_type: str = "copy"
-  size: int = 134217728  # default ~256MB for bfloat16 (128M elements * 2 bytes)
-  dtype: str = "bfloat16"
-  device_id: int = 0
+  op_type: str = dataclasses.field(
+      default="copy",
+      metadata={"help": "HBM kernel operation type"
+                        " (copy, scale, add, triad)."},
+  )
+  size: int = dataclasses.field(
+      default=134217728,
+      metadata={"help": "Number of elements for HBM input arrays."},
+  )
+  device_id: int = dataclasses.field(
+      default=0,
+      metadata={"help": "Target local accelerator device ID."},
+  )
 
 
 @registry.benchmark_registry.register("hbm", aliases=["hbm_bandwidth"])
 class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
-  """HBM bandwidth microbenchmark supporting standard STREAM kernels."""
+  """HBM bandwidth microbenchmark supporting standard memory kernels."""
 
   Config = HBMBandwidthParams
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (

@@ -12,27 +12,54 @@ import jax.numpy as jnp
 
 @dataclasses.dataclass
 class ComputeParams(base.BaseBenchmarkParams):
-  dim: int = 4096
-  batch: int = 1024
+  dim: int = dataclasses.field(
+      default=4096,
+      metadata={"help": "Hidden dimension size."},
+  )
+  batch: int = dataclasses.field(
+      default=1024,
+      metadata={"help": "Batch size dimension."},
+  )
 
 
 @dataclasses.dataclass
 class RoPEParams(base.BaseBenchmarkParams):
-  seq_len: int = 1024
-  head_dim: int = 128
-  batch: int = 32
-  heads: int = 32
+  seq_len: int = dataclasses.field(
+      default=1024,
+      metadata={"help": "Sequence length dimension."},
+  )
+  head_dim: int = dataclasses.field(
+      default=128,
+      metadata={"help": "Dimension size per attention head."},
+  )
+  batch: int = dataclasses.field(
+      default=32,
+      metadata={"help": "Batch size dimension."},
+  )
+  heads: int = dataclasses.field(
+      default=32,
+      metadata={"help": "Number of attention heads."},
+  )
 
 
 @dataclasses.dataclass
 class QuantParams(base.BaseBenchmarkParams):
-  m: int = 4096
-  n: int = 4096
+  m: int = dataclasses.field(
+      default=4096,
+      metadata={"help": "Matrix dimension M (rows)."},
+  )
+  n: int = dataclasses.field(
+      default=4096,
+      metadata={"help": "Matrix dimension N (columns)."},
+  )
 
 
 @dataclasses.dataclass
 class AddParams(base.BaseBenchmarkParams):
-  size: int = 1024 * 1024
+  size: int = dataclasses.field(
+      default=1024 * 1024,
+      metadata={"help": "Number of elements in the array."},
+  )
 
 
 @registry.benchmark_registry.register("swiglu", is_experimental=True)

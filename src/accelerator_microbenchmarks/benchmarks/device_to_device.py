@@ -24,9 +24,19 @@ class TransferDirection(str, enum.Enum):
 class DeviceToDeviceParams(base.BaseBenchmarkParams):
   """YAML / CLI configuration specification (NO src/dst fields)."""
 
-  data_size_mib: int = 1024
-  direction: TransferDirection = TransferDirection.UNI
-  seed: int = 0
+  data_size_mib: int = dataclasses.field(
+      default=1024,
+      metadata={"help": "Transfer payload size in Mebibytes (MiB)."},
+  )
+  direction: TransferDirection = dataclasses.field(
+      default=TransferDirection.UNI,
+      metadata={"help": "Transfer direction mode"
+                        " ('uni' for unidirectional, 'bi' for bidirectional)."},
+  )
+  seed: int = dataclasses.field(
+      default=0,
+      metadata={"help": "Random seed for tensor initialization."},
+  )
 
   @property
   def data_size_bytes(self) -> int:

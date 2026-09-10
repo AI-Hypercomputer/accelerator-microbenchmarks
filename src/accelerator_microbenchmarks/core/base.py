@@ -21,13 +21,39 @@ import pandas as pd
 
 @dataclasses.dataclass
 class BaseBenchmarkParams:
-  warmup_tries: int = 10
-  num_runs: int = 10
-  min_duration_s: float = 0.0
-  xprof_timing: bool = False
-  xprof_dir: str = "/tmp/tensorboard"
-  use_trace_roofline: bool = False
-  dtype: str = "bfloat16"
+  warmup_tries: int = dataclasses.field(
+      default=10,
+      metadata={"help": "Number of warmup iterations before measurement."},
+  )
+  num_runs: int = dataclasses.field(
+      default=10,
+      metadata={"help": "Number of measurement iterations."},
+  )
+  min_duration_s: float = dataclasses.field(
+      default=0.0,
+      metadata={"help": "Minimum measurement duration in seconds."
+                        " Also runs warmup for at least min_duration_s / 5"
+                        " (capped at 1.0s)."},
+  )
+  xprof_timing: bool = dataclasses.field(
+      default=False,
+      metadata={"help": "Enable XProf trace collection"
+                        " and device timing analysis."},
+  )
+  xprof_dir: str = dataclasses.field(
+      default="/tmp/tensorboard",
+      metadata={"help": "Directory to save raw XProf trace outputs."},
+  )
+  use_trace_roofline: bool = dataclasses.field(
+      default=False,
+      metadata={"help": "Extract bottom-up metrics using"
+                        " jax.experimental.roofline."},
+  )
+  dtype: str = dataclasses.field(
+      default="bfloat16",
+      metadata={"help": "Data type for tensor operations"
+                        " (e.g. bfloat16, float32)."},
+  )
 
   def expand_test_cases(self) -> Sequence["BaseBenchmarkParams"]:
     """Default 1-to-1 mapping: returns [self]."""

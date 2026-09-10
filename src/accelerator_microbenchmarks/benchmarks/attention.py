@@ -12,13 +12,34 @@ import jax.numpy as jnp
 
 @dataclasses.dataclass
 class AttentionParams(base.BaseBenchmarkParams):
-  mode: str = "fwd"
-  causal: bool = True
-  batch: int = 1
-  seq_len: int = 8192
-  num_q_heads: int = 56
-  num_kv_heads: int = 56
-  head_dim: int = 128
+  mode: str = dataclasses.field(
+      default="fwd",
+      metadata={"help": "Attention execution pass ('fwd' or 'bwd')."},
+  )
+  causal: bool = dataclasses.field(
+      default=True,
+      metadata={"help": "Whether to apply causal attention masking."},
+  )
+  batch: int = dataclasses.field(
+      default=1,
+      metadata={"help": "Batch size dimension."},
+  )
+  seq_len: int = dataclasses.field(
+      default=8192,
+      metadata={"help": "Sequence length dimension."},
+  )
+  num_q_heads: int = dataclasses.field(
+      default=56,
+      metadata={"help": "Number of query attention heads."},
+  )
+  num_kv_heads: int = dataclasses.field(
+      default=56,
+      metadata={"help": "Number of key/value attention heads (GQA/MHA)."},
+  )
+  head_dim: int = dataclasses.field(
+      default=128,
+      metadata={"help": "Dimension size per attention head."},
+  )
 
 
 @registry.benchmark_registry.register(

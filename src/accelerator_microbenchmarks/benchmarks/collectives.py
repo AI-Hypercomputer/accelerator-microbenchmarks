@@ -67,12 +67,30 @@ _REDUCE_OP_MAP = {
 
 @dataclasses.dataclass
 class CollectivesParams(base.BaseBenchmarkParams):
-  mesh_shape: Optional[str] = None
-  sharding_strategy: Optional[str] = None
-  matrix_dim: int = 1024
-  dtype: str = "bfloat16"
-  seed: int = 0
-  xla_dump_dir: Optional[str] = "/tmp/xla_dump"
+  mesh_shape: Optional[str] = dataclasses.field(
+      default=None,
+      metadata={"help": "Logical TPU mesh shape string"
+                        " (e.g. '2x4x4', '2x2x1')."},
+  )
+  sharding_strategy: Optional[str] = dataclasses.field(
+      default=None,
+      metadata={"help": "Device axis sharding strategy string"
+                        " (e.g. '2x2x2', '2x2x1')."},
+  )
+  matrix_dim: int = dataclasses.field(
+      default=1024,
+      metadata={"help": "Dimension size for sharded collective matrices."
+                        " Actual matrix size will be (matrix_dim, 8, 128)."},
+  )
+  seed: int = dataclasses.field(
+      default=0,
+      metadata={"help": "Random seed for tensor initialization."},
+  )
+  xla_dump_dir: Optional[str] = dataclasses.field(
+      default="/tmp/xla_dump",
+      metadata={"help": "Directory containing disk-based"
+                        " XLA/HLO compilation dumps."},
+  )
 
 
 @dataclasses.dataclass
@@ -80,7 +98,7 @@ class AllReduceParams(CollectivesParams):
   reduce_op: str = dataclasses.field(
       default="sum",
       metadata={
-          "help": "Reduction operation: sum, mean, max, min",
+          "help": "Reduction operation ('sum', 'mean', 'max', 'min').",
       },
   )
 

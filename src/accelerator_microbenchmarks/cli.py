@@ -108,7 +108,8 @@ def create_parser() -> simple_parsing.ArgumentParser:
   ):
     bench_cls = registry.benchmark_registry.get_benchmark(task_name)
     task_parser = task_subparsers.add_parser(
-        task_name, help=f"Run {task_name} benchmark."
+        task_name,
+        help=f"Run {task_name} benchmark.",
     )
     _add_common_execution_args(task_parser)
     task_parser.add_arguments(bench_cls.Config, dest="task_config")

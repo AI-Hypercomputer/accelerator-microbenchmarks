@@ -1,5 +1,6 @@
 """Unit tests for the TPUMS CLI (cli.py)."""
 
+import dataclasses
 import io
 import json
 import sys
@@ -8,6 +9,7 @@ from unittest import mock
 from absl.testing import absltest
 from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.core import platform
+from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
 from accelerator_microbenchmarks.tests import test_report_utils
 
@@ -239,6 +241,54 @@ class TestCli(absltest.TestCase):
     mock_app_run.assert_called_once_with(
         cli.run, flags_parser=cli._google_flags_parser
     )
+
+  def test_benchmark_run_help_lists_tasks(self):
+    """Verifies that `tpums benchmark run --help` lists supported benchmark tasks."""
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
+      with self.assertRaises(SystemExit) as cm:
+        cli.run(["benchmark", "run", "--help"])
+      self.assertEqual(cm.exception.code, 0)
+      output = fake_out.getvalue()
+      self.assertIn("Supported Tasks", output)
+      self.assertIn("gemm", output)
+      self.assertIn("all_reduce", output)
+      self.assertIn("hbm", output)
+
+  def test_benchmark_run_help_all_registered_tasks(self):
+    """Verifies that `tpums benchmark run <task> --help` outputs parameter help for all tasks."""
+    tasks = registry.benchmark_registry.list_benchmark_names(
+        include_experimental=False, include_aliases=False
+    )
+    for task_name in tasks:
+      with self.subTest(task=task_name):
+        bench_cls = registry.benchmark_registry.get_benchmark(task_name)
+        with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
+          with self.assertRaises(SystemExit) as cm:
+            cli.run(["benchmark", "run", task_name, "--help"])
+          self.assertEqual(cm.exception.code, 0)
+          output = fake_out.getvalue()
+          self.assertIn(f"usage: tpums benchmark run {task_name}", output)
+          self.assertIn(f"{bench_cls.Config.__name__} ['task_config']:", output)
+          for field in dataclasses.fields(bench_cls.Config):
+            self.assertIn(f"--{field.name}", output)
+            self.assertIn(
+                "help",
+                field.metadata,
+                f"Field '{field.name}' in benchmark '{task_name}' is missing"
+                " 'help' metadata.",
+            )
+            self.assertNotEmpty(
+                field.metadata["help"],
+                f"Field '{field.name}' in benchmark '{task_name}' has empty"
+                " 'help' metadata.",
+            )
+            first_words = " ".join(field.metadata["help"].split()[:2])
+            self.assertIn(
+                first_words,
+                output,
+                f"Help text for parameter '{field.name}' in benchmark"
+                f" '{task_name}' missing from help output.",
+            )
 
   def test_invalid_command_exits(self):
     """Verifies that invalid subcommands raise SystemExit."""

@@ -15,17 +15,61 @@ import jax.numpy as jnp
 class GemmParams(base.BaseBenchmarkParams):
   """Configuration parameters for GEMM benchmark."""
 
-  m: int = 1024
-  k: int = 1024
-  n: int = 1024
-  in_dtype: str = ""
-  out_dtype: str = ""
-  seed: int = 0
-  use_scaling_factors: bool = False
-  transpose_a: bool = False
-  transpose_b: bool = False
-  alpha: float = 1.0
-  beta: float = 0.0
+  m: int = dataclasses.field(
+      default=1024,
+      metadata={"help": "Matrix dimension M (rows of operand A / output C)."},
+  )
+  k: int = dataclasses.field(
+      default=1024,
+      metadata={"help": "Contracting dimension K (columns of A / rows of B)."},
+  )
+  n: int = dataclasses.field(
+      default=1024,
+      metadata={
+          "help": "Matrix dimension N (columns of operand B /"
+                  " output C)."
+      },
+  )
+  in_dtype: str = dataclasses.field(
+      default="",
+      metadata={
+          "help": "Input operand data type"
+                  " (e.g. float8_e4m3fn, bfloat16)."
+      },
+  )
+  out_dtype: str = dataclasses.field(
+      default="",
+      metadata={
+          "help": "Output accumulation/result data type"
+                  " (e.g. bfloat16)."
+      },
+  )
+
+  seed: int = dataclasses.field(
+      default=0,
+      metadata={"help": "Random seed for tensor initialization."},
+  )
+  use_scaling_factors: bool = dataclasses.field(
+      default=False,
+      metadata={"help": "Apply row-wise/column-wise FP8 scaling factors."},
+  )
+  transpose_a: bool = dataclasses.field(
+      default=False,
+      metadata={"help": "Whether to transpose operand matrix A."},
+  )
+  transpose_b: bool = dataclasses.field(
+      default=False,
+      metadata={"help": "Whether to transpose operand matrix B."},
+  )
+  alpha: float = dataclasses.field(
+      default=1.0,
+      metadata={"help": "Scalar multiplier for GEMM product (alpha * A @ B)."},
+  )
+  beta: float = dataclasses.field(
+      default=0.0,
+      metadata={"help": "Scalar multiplier"
+                        " for accumulator matrix C (beta * C)."},
+  )
 
   def __post_init__(self):
     if not self.in_dtype:

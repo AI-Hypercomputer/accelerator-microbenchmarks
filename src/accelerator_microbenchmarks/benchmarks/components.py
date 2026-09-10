@@ -14,8 +14,14 @@ import jax.numpy as jnp
 
 @dataclasses.dataclass
 class TransformerLayerParams(base.BaseBenchmarkParams):
-  model_dim: int = 7168
-  mslen: int = 1024
+  model_dim: int = dataclasses.field(
+      default=7168,
+      metadata={"help": "Model dimension size for Transformer layer."},
+  )
+  mslen: int = dataclasses.field(
+      default=1024,
+      metadata={"help": "Micro-sequence length after Context Parallelism."},
+  )
 
 
 class ComponentBenchmark(base.BaseBenchmark[TransformerLayerParams]):
