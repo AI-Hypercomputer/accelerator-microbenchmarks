@@ -126,7 +126,9 @@ class ComponentsBenchmarkTest(absltest.TestCase):
 
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
     self.assertAlmostEqual(metrics["intensity"], 61.44)
-    self.assertAlmostEqual(metrics["tflops_per_sec"], 0.0100663296)
+    self.assertAlmostEqual(
+        metrics["tflops_per_device"], 0.0100663296
+    )
 
 
 if __name__ == "__main__":

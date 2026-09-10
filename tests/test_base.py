@@ -138,7 +138,6 @@ class BaseBenchmarkTest(absltest.TestCase):
     bm = DummyBenchmark()
     metrics = bm.calculate_metrics([])
     self.assertEqual(metrics["avg_ms"], 0.0)
-    self.assertEqual(metrics["throughput"], 0.0)
 
   @unittest.mock.patch("jax.experimental.roofline.roofline")
   def test_get_trace_metrics(self, mock_roofline):
@@ -177,8 +176,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIn("roofline_tflops_limit", result.metrics)
     self.assertIn("peak_bw_at_size_gb_s", result.metrics)
     self.assertEqual(
-        result.metrics["peak_bw_at_size_gb_s"], 100.0
-    )  # size is 400 bytes, <= 1024
+        result.metrics["peak_bw_at_size_gb_s"], 50.0
+    )  # size is 400 bytes, <= 1024 (100.0 / 2 devices_per_chip)
 
   @unittest.mock.patch("jax.profiler.trace")
   def test_xprof_naming_with_identifier(self, mock_trace):
@@ -430,6 +429,101 @@ class BaseBenchmarkTest(absltest.TestCase):
       result = bm.run()
       self.assertEqual(result.metadata.xla_flags, "")
       self.assertEqual(result.metadata.libtpu_init_args, "")
+
+  def test_derive_chip_metrics_with_chip_bandwidth_enabled(self):
+    """Tests derive_chip_metrics derives chip bandwidth when derive_chip_bandwidth=True."""
+    hw_spec = system.HardwareSpec(
+        name=system.TpuVersion.TPU7X,
+        devices_per_chip=2,
+    )
+    bm = DummyBenchmark(hardware_spec=hw_spec)
+    self.assertTrue(bm.derive_chip_bandwidth)
+
+    metrics = {"bandwidth_per_device_gb_s": 100.0}
+    derived = bm.derive_chip_metrics(metrics)
+    self.assertIn("bandwidth_per_device_gb_s", derived)
+    self.assertIn("bandwidth_per_chip_gb_s", derived)
+    self.assertEqual(derived["bandwidth_per_chip_gb_s"], 200.0)
+
+    # If bandwidth_per_device_gb_s is None, bandwidth_per_chip_gb_s is also None
+    metrics_none = {"bandwidth_per_device_gb_s": None}
+    derived_none = bm.derive_chip_metrics(metrics_none)
+    self.assertIn("bandwidth_per_device_gb_s", derived_none)
+    self.assertIn("bandwidth_per_chip_gb_s", derived_none)
+    self.assertIsNone(derived_none["bandwidth_per_chip_gb_s"])
+
+    # If bandwidth_per_chip_gb_s is already present, it is not overwritten
+    metrics_existing = {
+        "bandwidth_per_device_gb_s": 100.0,
+        "bandwidth_per_chip_gb_s": 300.0,
+    }
+    derived_existing = bm.derive_chip_metrics(metrics_existing)
+    self.assertEqual(derived_existing["bandwidth_per_chip_gb_s"], 300.0)
+
+  def test_derive_chip_metrics_with_chip_bandwidth_disabled(self):
+    """Tests derive_chip_metrics does NOT derive chip bandwidth when derive_chip_bandwidth=False."""
+
+    class NoChipBwBenchmark(DummyBenchmark):
+      derive_chip_bandwidth = False
+
+    hw_spec = system.HardwareSpec(
+        name=system.TpuVersion.TPU7X,
+        devices_per_chip=2,
+    )
+    bm = NoChipBwBenchmark(hardware_spec=hw_spec)
+    self.assertFalse(bm.derive_chip_bandwidth)
+
+    metrics = {"bandwidth_per_device_gb_s": 100.0}
+    derived = bm.derive_chip_metrics(metrics)
+    self.assertIn("bandwidth_per_device_gb_s", derived)
+    self.assertNotIn("bandwidth_per_chip_gb_s", derived)
+
+  def test_derive_chip_metrics_tflops(self):
+    """Tests derive_chip_metrics derives tflops_per_chip from tflops_per_device."""
+    hw_spec = system.HardwareSpec(
+        name=system.TpuVersion.TPU7X,
+        devices_per_chip=2,
+    )
+    bm = DummyBenchmark(hardware_spec=hw_spec)
+
+    metrics = {"tflops_per_device": 150.0}
+    derived = bm.derive_chip_metrics(metrics)
+    self.assertIn("tflops_per_device", derived)
+    self.assertIn("tflops_per_chip", derived)
+    self.assertEqual(derived["tflops_per_chip"], 300.0)
+
+    # If tflops_per_device is None, tflops_per_chip is also None
+    metrics_none = {"tflops_per_device": None}
+    derived_none = bm.derive_chip_metrics(metrics_none)
+    self.assertIn("tflops_per_device", derived_none)
+    self.assertIn("tflops_per_chip", derived_none)
+    self.assertIsNone(derived_none["tflops_per_chip"])
+
+    # If tflops_per_chip is already present, it is not overwritten
+    metrics_existing = {"tflops_per_device": 150.0, "tflops_per_chip": 400.0}
+    derived_existing = bm.derive_chip_metrics(metrics_existing)
+    self.assertEqual(derived_existing["tflops_per_chip"], 400.0)
+
+  def test_apply_xprof_timing_and_sync_fallback_schema_cleanliness(self):
+    """Tests that xprof timing fallback to None does not pollute unrelated benchmark metrics."""
+
+    class BenchmarkWithNoChipBw(DummyBenchmark):
+      derive_chip_bandwidth = False
+
+      @property
+      def requires_multihost_sync(self) -> bool:
+        return False
+
+    bm = BenchmarkWithNoChipBw()
+    metrics = {"bandwidth_per_device_gb_s": 50.0}
+    # pylint: disable=protected-access
+    # Simulate empty duration fallback (synced_avg = 0.0)
+    result_metrics = bm._apply_xprof_timing_and_sync(metrics)
+
+    self.assertIn("bandwidth_per_device_gb_s", result_metrics)
+    self.assertIsNone(result_metrics["bandwidth_per_device_gb_s"])
+    self.assertNotIn("bandwidth_per_chip_gb_s", result_metrics)
+    self.assertNotIn("tflops_per_device", result_metrics)
 
 
 if __name__ == "__main__":

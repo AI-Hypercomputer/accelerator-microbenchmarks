@@ -28,10 +28,11 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
   """Benchmarks Host-to-Device transfer bandwidth."""
 
   Config = HostDeviceParams
+  derive_chip_bandwidth: bool = False
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("data_size_mib", report.format_str),
-      ("bandwidth_gb_s", report.format_2f),
+      ("bandwidth_per_device_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
   )
@@ -81,7 +82,7 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
       bandwidth_gb_s = float("inf")
     else:
       bandwidth_gb_s = total_bytes / (avg_latency_s * 1e9)
-    metrics["bandwidth_gb_s"] = bandwidth_gb_s
+    metrics["bandwidth_per_device_gb_s"] = bandwidth_gb_s
     metrics["total_bytes_mib"] = float(self.config.data_size_mib)
     return metrics
 
@@ -91,10 +92,11 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
   """Benchmarks Device-to-Host transfer bandwidth."""
 
   Config = HostDeviceParams
+  derive_chip_bandwidth: bool = False
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("data_size_mib", report.format_str),
-      ("bandwidth_gb_s", report.format_2f),
+      ("bandwidth_per_device_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
   )
@@ -141,6 +143,6 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
       bandwidth_gb_s = float("inf")
     else:
       bandwidth_gb_s = total_bytes / (avg_latency_s * 1e9)
-    metrics["bandwidth_gb_s"] = bandwidth_gb_s
+    metrics["bandwidth_per_device_gb_s"] = bandwidth_gb_s
     metrics["total_bytes_mib"] = float(self.config.data_size_mib)
     return metrics

@@ -35,12 +35,7 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
   def _get_peak_bandwidth_per_core(self):
     # We only need v7x (Ironwood)
     v7x_system = system.get_hardware_spec(system.TpuVersion.TPU7X)
-    # Peak BW is the highest value in the curve.
-    # The curve specifies the peak bandwidth for an entire chip (2 TensorCores).
-    # Since this microbenchmark forces execution on a single local device,
-    # the theoretical peak for our test is half of the chip's peak.
-    chip_peak_bw = v7x_system.hbm.curve_gbps[-1][1]
-    return chip_peak_bw / 2.0
+    return v7x_system.peak_hbm_bandwidth_per_device
 
   @parameterized.parameters(
       ("copy",),
@@ -67,7 +62,7 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
       total_bytes = self.bm.get_total_bytes()
       bw_gb_s = (total_bytes / (xprof_avg_ms / 1000.0)) / 1e9
     else:
-      bw_gb_s = result.metrics.get("bandwidth_gb_s", 0)
+      bw_gb_s = result.metrics.get("bandwidth_per_device_gb_s", 0)
 
     peak_bw = self._get_peak_bandwidth_per_core()
     utilization = bw_gb_s / peak_bw
@@ -123,7 +118,8 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
       self.assertIn(target_device, inp.devices())
 
     result = self.bm.run()
-    self.assertIn("bandwidth_gb_s", result.metrics)
+    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
+    self.assertIn("bandwidth_per_chip_gb_s", result.metrics)
     self.assertEqual(result.metadata.params.get("device_id"), target_dev_id)
 
     # 3. Verify target device execution through XProf trace analysis channel

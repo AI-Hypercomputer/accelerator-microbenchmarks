@@ -139,7 +139,9 @@ class AttentionBenchmarkTest(absltest.TestCase):
 
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
     self.assertAlmostEqual(metrics["total_flops"], 8388608)
-    self.assertAlmostEqual(metrics["tflops_per_sec"], 0.0008388608)
+    self.assertAlmostEqual(
+        metrics["tflops_per_device"], 0.0008388608
+    )
     self.assertAlmostEqual(metrics["intensity"], 32.0)
 
   def test_run_op_bwd(self):

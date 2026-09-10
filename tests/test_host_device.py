@@ -1,5 +1,7 @@
 """Unit tests for host_device.py."""
 
+from unittest import mock
+
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import host_device
 from accelerator_microbenchmarks.core import base
@@ -20,6 +22,12 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
+    self.patcher = mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self.patcher.start()
+    self.addCleanup(self.patcher.stop)
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
@@ -80,8 +88,28 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     # total_bytes = 4 * 1024 * 1024 = 4194304 bytes
     # bandwidth_gb_s = 4194304 / (0.01 * 1e9) = 0.4194304 GB/s
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
-    self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.4194304)
+    self.assertIn("bandwidth_per_device_gb_s", metrics)
+    self.assertAlmostEqual(metrics["bandwidth_per_device_gb_s"], 0.4194304)
+    self.assertNotIn("bandwidth_per_chip_gb_s", metrics)
     self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
+
+  def test_derive_chip_metrics_no_chip_bandwidth(self):
+    """Verify derive_chip_metrics does not derive bandwidth_per_chip_gb_s."""
+    self._setup_benchmark()
+    metrics = {"bandwidth_per_device_gb_s": 10.0}
+    derived = self.bm.derive_chip_metrics(metrics)
+    self.assertIn("bandwidth_per_device_gb_s", derived)
+    self.assertNotIn("bandwidth_per_chip_gb_s", derived)
+
+  def test_run_e2e(self):
+    """Verify run() produces valid bandwidth_per_device_gb_s without per_chip bandwidth."""
+    self._setup_benchmark(num_runs=2, warmup_tries=1)
+    result = self.bm.run()
+    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
+    self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
+    self.assertIn("avg_ms", result.metrics)
+    self.assertGreater(result.metrics["avg_ms"], 0.0)
 
   def test_format_benchmark_table(self):
     """Tests formatting of Host-to-Device benchmark tables."""
@@ -96,7 +124,7 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
-            "bandwidth_gb_s": 18.25,
+            "bandwidth_per_device_gb_s": 18.25,
             "p50_ms": 14.0274,
             "xprof_p50_ms": 14.0100,
         },
@@ -105,7 +133,7 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     expected_cols = [
         "dtype",
         "data_size_mib",
-        "bandwidth_gb_s",
+        "bandwidth_per_device_gb_s",
         "p50_ms",
         "xprof_p50_ms",
     ]
@@ -142,6 +170,12 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
+    self.patcher = mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self.patcher.start()
+    self.addCleanup(self.patcher.stop)
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
@@ -200,8 +234,28 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     self._setup_benchmark()
     metrics = self.bm.calculate_metrics(times_ms)
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
-    self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.4194304)
+    self.assertIn("bandwidth_per_device_gb_s", metrics)
+    self.assertAlmostEqual(metrics["bandwidth_per_device_gb_s"], 0.4194304)
+    self.assertNotIn("bandwidth_per_chip_gb_s", metrics)
     self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
+
+  def test_derive_chip_metrics_no_chip_bandwidth(self):
+    """Verify derive_chip_metrics does not derive bandwidth_per_chip_gb_s."""
+    self._setup_benchmark()
+    metrics = {"bandwidth_per_device_gb_s": 10.0}
+    derived = self.bm.derive_chip_metrics(metrics)
+    self.assertIn("bandwidth_per_device_gb_s", derived)
+    self.assertNotIn("bandwidth_per_chip_gb_s", derived)
+
+  def test_run_e2e(self):
+    """Verify run() produces valid bandwidth_per_device_gb_s without per_chip bandwidth."""
+    self._setup_benchmark(num_runs=2, warmup_tries=1)
+    result = self.bm.run()
+    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
+    self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
+    self.assertIn("avg_ms", result.metrics)
+    self.assertGreater(result.metrics["avg_ms"], 0.0)
 
   def test_format_benchmark_table(self):
     """Tests formatting of Device-to-Host benchmark tables."""
@@ -216,7 +270,7 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
-            "bandwidth_gb_s": 24.50,
+            "bandwidth_per_device_gb_s": 24.50,
             "p50_ms": 20.9000,
             "xprof_p50_ms": 20.8900,
         },
@@ -225,7 +279,7 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     expected_cols = [
         "dtype",
         "data_size_mib",
-        "bandwidth_gb_s",
+        "bandwidth_per_device_gb_s",
         "p50_ms",
         "xprof_p50_ms",
     ]

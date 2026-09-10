@@ -48,8 +48,9 @@ class DeviceToDeviceTPUTest(parameterized.TestCase):
     bm.setup()
     result = bm.run()
 
-    self.assertIn("bandwidth_gb_s", result.metrics)
-    self.assertGreater(result.metrics["bandwidth_gb_s"], 0.0)
+    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
+    self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
     self.assertIn("avg_ms", result.metrics)
     self.assertGreater(result.metrics["avg_ms"], 0.0)
     self.assertEqual(result.metrics["direction"], direction)
@@ -72,8 +73,9 @@ class DeviceToDeviceTPUTest(parameterized.TestCase):
     bm.setup()
     result = bm.run()
 
-    self.assertIn("bandwidth_gb_s", result.metrics)
-    self.assertGreater(result.metrics["bandwidth_gb_s"], 0.0)
+    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
+    self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
     self.assertIn("xprof_url", result.metrics)
 
 

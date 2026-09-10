@@ -1,10 +1,11 @@
 """Attention benchmarks."""
 
 import dataclasses
-from typing import Any
+from typing import Any, Callable, Sequence
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
@@ -45,8 +46,6 @@ class AttentionParams(base.BaseBenchmarkParams):
 @registry.benchmark_registry.register(
     "attention_flashed", is_experimental=True
 )
-
-
 class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
   Config = AttentionParams
   """Attention benchmark simulating FlashAttention behavior.
@@ -56,6 +55,22 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
   - BF16 compute
   - Causal masking
   """
+
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("mode", report.format_str),
+      ("causal", report.format_str),
+      ("batch", report.format_str),
+      ("seq_len", report.format_str),
+      ("num_q_heads", report.format_str),
+      ("num_kv_heads", report.format_str),
+      ("head_dim", report.format_str),
+      ("total_flops", report.format_2f),
+      ("tflops_per_device", report.format_2f),
+      ("tflops_per_chip", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
 
   def setup(self):
     mode = self.config.mode
@@ -225,7 +240,7 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
     avg_latency_s = metrics["avg_ms"] / 1000.0
     tflops_per_sec = (total_flops / avg_latency_s) / 1e12
 
-    metrics["tflops_per_sec"] = tflops_per_sec
+    metrics["tflops_per_device"] = tflops_per_sec
     metrics["total_flops"] = total_flops
     metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics

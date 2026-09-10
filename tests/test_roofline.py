@@ -28,12 +28,15 @@ class RooflineTest(absltest.TestCase):
 
   def test_apply_roofline_analysis_scalar_bw(self):
     """Test roofline analysis with scalar bandwidth."""
-    metrics = {"tflops_per_sec": 50.0}
-    self.mock_benchmark.hardware_spec = system.HardwareSpec(
-        name=system.TpuVersion.TPU7X,
-        tflops=system.TflopsSpec(peak_tflops_per_device={"bfloat16": 100.0}),
-        hbm=system.HbmSpec(curve_gbps=200.0),  # pyrefly: ignore[bad-argument-type]
+    metrics = {"tflops_per_device": 50.0}
+    mock_hw = mock.MagicMock(spec=system.HardwareSpec)
+    mock_hw.name = system.TpuVersion.TPU7X
+    mock_hw.tflops = system.TflopsSpec(
+        peak_tflops_per_device={"bfloat16": 100.0}
     )
+    mock_hw.get_hbm_curve_per_device.return_value = 200.0
+    mock_hw.peak_hbm_bandwidth_per_device = 200.0
+    self.mock_benchmark.hardware_spec = mock_hw
     result = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
 
     # intensity = 1.0, bw = 200.0
@@ -42,6 +45,41 @@ class RooflineTest(absltest.TestCase):
     self.assertEqual(result["peak_bw_at_size_gb_s"], 200.0)
     # efficiency = (50.0 / 0.2) * 100 = 25000%
     self.assertAlmostEqual(result["roofline_efficiency"], 25000.0)
+
+  def test_apply_roofline_analysis_chip_tflops_no_roofline_efficiency(self):
+    """Test that chip-level tflops does not trigger device-level roofline efficiency."""
+    metrics = {"tflops_per_chip": 100.0}
+    self.mock_benchmark.hardware_spec = system.HardwareSpec(
+        name=system.TpuVersion.TPU7X,
+        tflops=system.TflopsSpec(peak_tflops_per_device={"bfloat16": 100.0}),
+        hbm=system.HbmSpec(curve_gbps=[(1000, 200.0)]),
+    )
+    result = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+    self.assertNotIn("roofline_efficiency", result)
+
+  def test_apply_roofline_analysis_bw_efficiency(self):
+    """Test roofline analysis calculates bandwidth efficiency strictly at device level."""
+    self.mock_benchmark.hardware_spec = system.HardwareSpec(
+        name=system.TpuVersion.TPU7X,
+        devices_per_chip=2,
+        tflops=system.TflopsSpec(peak_tflops_per_device={"bfloat16": 100.0}),
+        hbm=system.HbmSpec(curve_gbps=[(1000, 200.0)]),
+    )
+    # Per-device peak HBM is 200.0 / 2 = 100.0 GB/s.
+    # 1. Using bandwidth_per_device_gb_s: 80.0 / 100.0 = 80.0%
+    metrics_dev = {"bandwidth_per_device_gb_s": 80.0}
+    res_dev = roofline.apply_roofline_analysis(
+        self.mock_benchmark, metrics_dev
+    )
+    self.assertAlmostEqual(res_dev["bw_efficiency"], 80.0)
+
+    # 2. Chip-only metric (e.g. from collectives) does NOT compute HBM
+    # bw_efficiency.
+    metrics_chip = {"bandwidth_per_chip_gb_s": 100.0}
+    res_chip = roofline.apply_roofline_analysis(
+        self.mock_benchmark, metrics_chip
+    )
+    self.assertNotIn("bw_efficiency", res_chip)
 
   def test_apply_roofline_analysis_list_bw_interpolation(self):
     """Test roofline analysis with list-based bandwidth interpolation."""
@@ -63,11 +101,14 @@ class RooflineTest(absltest.TestCase):
     """Test roofline analysis with dict-based bandwidth interpolation."""
     self.mock_benchmark.get_total_bytes.return_value = 300.0
     metrics = {}
-    self.mock_benchmark.hardware_spec = system.HardwareSpec(
-        name=system.TpuVersion.TPU7X,
-        tflops=system.TflopsSpec(peak_tflops_per_device={"bfloat16": 100.0}),
-        hbm=system.HbmSpec(curve_gbps={"100": 50.0, "500": 250.0}),  # pyrefly: ignore[bad-argument-type]
+    mock_hw = mock.MagicMock(spec=system.HardwareSpec)
+    mock_hw.name = system.TpuVersion.TPU7X
+    mock_hw.tflops = system.TflopsSpec(
+        peak_tflops_per_device={"bfloat16": 100.0}
     )
+    mock_hw.get_hbm_curve_per_device.return_value = {"100": 50.0, "500": 250.0}
+    mock_hw.peak_hbm_bandwidth_per_device = 250.0
+    self.mock_benchmark.hardware_spec = mock_hw
     result = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
 
     self.assertAlmostEqual(result["peak_bw_at_size_gb_s"], 150.0)
@@ -92,7 +133,7 @@ class RooflineTest(absltest.TestCase):
     self.mock_benchmark.hardware_spec = system.HardwareSpec(
         name=system.TpuVersion.TPU7X,
         tflops=system.TflopsSpec(peak_tflops_per_device={"bfloat16": 100.0}),
-        hbm=system.HbmSpec(curve_gbps=200.0),  # pyrefly: ignore[bad-argument-type]
+        hbm=system.HbmSpec(curve_gbps=[(1000, 200.0)]),
     )
     with self.assertLogs(level="WARNING") as log_cm:
       result = roofline.apply_roofline_analysis(self.mock_benchmark, {})

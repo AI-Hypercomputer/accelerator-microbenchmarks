@@ -152,7 +152,7 @@ def format_device_matrix(
 
   src_col = "src_device_index"
   dst_col = "dst_device_index"
-  metric_col = "bandwidth_gb_s"
+  metric_col = "bandwidth_per_device_gb_s"
   title_prefix = "Device-to-Device Bandwidth Matrix (GB/s)"
 
   sweep_candidates = ["dtype", "direction", "data_size_mib"]
@@ -247,10 +247,6 @@ def results_to_dataframe(
         "benchmark": benchmark_name,
         "test_name": test_name,
         "KET_ms": metrics.get("avg_ms", 0.0),
-        "throughput": metrics.get(
-            "tflops_per_sec",
-            metrics.get("bandwidth_gb_s", metrics.get("throughput", 0.0)),
-        ),
         "start": start_time,
     }
     flat_results.append(entry)

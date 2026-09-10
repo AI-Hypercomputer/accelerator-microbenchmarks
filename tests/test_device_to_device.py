@@ -1,6 +1,7 @@
 """Unit tests for device_to_device.py."""
 
 import os
+from unittest import mock
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import device_to_device
@@ -71,6 +72,12 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
+    self.patcher = mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self.patcher.start()
+    self.addCleanup(self.patcher.stop)
     self.bm_class = registry.benchmark_registry.get_benchmark(
         "device_to_device"
     )
@@ -113,11 +120,34 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
     # total_bytes = 1048576 bytes
     # avg_latency_s = 0.01 s
-    # bandwidth_gb_s = 1048576 / (0.01 * 1e9) = 0.1048576 GB/s
-    self.assertAlmostEqual(metrics["bandwidth_gb_s"], 0.1048576)
+    # bandwidth_per_device_gb_s = 1048576 / (0.01 * 1e9) = 0.1048576 GB/s
+    self.assertIn("bandwidth_per_device_gb_s", metrics)
+    self.assertAlmostEqual(metrics["bandwidth_per_device_gb_s"], 0.1048576)
+    self.assertNotIn("bandwidth_per_chip_gb_s", metrics)
     self.assertEqual(metrics["src_device_index"], 0)
     self.assertEqual(metrics["dst_device_index"], 1)
     self.assertEqual(metrics["direction"], "uni")
+
+  def test_derive_chip_metrics_no_chip_bandwidth(self):
+    """Verify derive_chip_metrics does not derive bandwidth_per_chip_gb_s."""
+    metrics = {"bandwidth_per_device_gb_s": 10.0}
+    derived = self.bm.derive_chip_metrics(metrics)
+    self.assertIn("bandwidth_per_device_gb_s", derived)
+    self.assertNotIn("bandwidth_per_chip_gb_s", derived)
+
+  def test_run_e2e(self):
+    """Verify run() produces valid bandwidth_per_device_gb_s without per_chip bandwidth."""
+    self.bm.config.src_device_index = 0
+    self.bm.config.dst_device_index = 1
+    self.bm.config.data_size_mib = 1
+    self.bm.config.warmup_tries = 1
+    self.bm.config.num_runs = 2
+    result = self.bm.run()
+    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
+    self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
+    self.assertEqual(result.metrics["src_device_index"], 0)
+    self.assertEqual(result.metrics["dst_device_index"], 1)
 
   def test_get_arithmetic_intensity(self):
     """Verify arithmetic intensity for pure memory transfer is 0.0."""
@@ -126,7 +156,7 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
   def test_calculate_metrics_zero_latency(self):
     """Verify bandwidth calculation handles zero latency cleanly (inf)."""
     metrics = self.bm.calculate_metrics([0.0, 0.0])
-    self.assertEqual(metrics["bandwidth_gb_s"], float("inf"))
+    self.assertEqual(metrics["bandwidth_per_device_gb_s"], float("inf"))
 
   def test_get_run_identifier(self):
     """Verify run identifier string generation."""
@@ -215,7 +245,7 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
-            "bandwidth_gb_s": 85.50,
+            "bandwidth_per_device_gb_s": 85.50,
             "p50_ms": 12.3456,
             "xprof_p50_ms": 12.3400,
         },
@@ -227,7 +257,7 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
         "src_device_index",
         "dst_device_index",
         "data_size_mib",
-        "bandwidth_gb_s",
+        "bandwidth_per_device_gb_s",
         "p50_ms",
         "xprof_p50_ms",
     ]
@@ -290,7 +320,7 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
-            "bandwidth_gb_s": 85.50,
+            "bandwidth_per_device_gb_s": 85.50,
             "p50_ms": 12.3456,
             "xprof_p50_ms": 12.3400,
         },
@@ -313,7 +343,7 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
-            "bandwidth_gb_s": 86.20,
+            "bandwidth_per_device_gb_s": 86.20,
             "p50_ms": 12.1000,
             "xprof_p50_ms": 12.0000,
         },

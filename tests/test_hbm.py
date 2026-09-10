@@ -209,7 +209,9 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
 
     self.assertAlmostEqual(metrics["avg_ms"], 10.0)
     self.assertEqual(metrics["op_type"], op_type)
-    self.assertAlmostEqual(metrics["bandwidth_gb_s"], expected_bw_gb_s)
+    self.assertAlmostEqual(
+        metrics["bandwidth_per_device_gb_s"], expected_bw_gb_s
+    )
     self.assertAlmostEqual(
         metrics["total_bytes_mib"], expected_bytes / (1024 * 1024)
     )
@@ -234,7 +236,8 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         metrics={
             "total_bytes_mib": 256.00,
             "p50_ms": 0.07112,
-            "bandwidth_gb_s": 7538.214,
+            "bandwidth_per_device_gb_s": 3769.107,
+            "bandwidth_per_chip_gb_s": 7538.214,
             "xprof_p50_ms": 0.06543,
         },
         raw_times_ms=[1.0],
@@ -245,7 +248,8 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         "device_id",
         "size",
         "total_bytes_mib",
-        "bandwidth_gb_s",
+        "bandwidth_per_device_gb_s",
+        "bandwidth_per_chip_gb_s",
         "p50_ms",
         "xprof_p50_ms",
     ]
@@ -266,6 +270,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self.assertIn("63", table)
     self.assertIn("134217728", table)
     self.assertIn("256.00", table)
+    self.assertIn("3769.11", table)
     self.assertIn("7538.21", table)
     self.assertIn("0.0711", table)
     self.assertIn("0.0654", table)

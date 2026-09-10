@@ -1,11 +1,12 @@
 """Component benchmarks for full Transformer layers."""
 
 import dataclasses
-from typing import Any
+from typing import Any, Callable, Sequence
 
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.core import utils
 import jax
@@ -61,6 +62,15 @@ class TransformerLayerMoE(ComponentBenchmark):
   - Residual connections
   """
   Config = TransformerLayerParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("model_dim", report.format_str),
+      ("mslen", report.format_str),
+      ("tflops_per_device", report.format_2f),
+      ("tflops_per_chip", report.format_2f),
+      ("p50_ms", report.format_4f),
+      ("xprof_p50_ms", report.format_4f),
+  )
 
   def setup(self):
     # In a real study, we would compose these or implement a single large JIT
@@ -161,6 +171,6 @@ class TransformerLayerMoE(ComponentBenchmark):
     flops = 24 * seq_len * (model_dim**2)
 
     avg_latency_s = metrics["avg_ms"] / 1000.0
-    metrics["tflops_per_sec"] = (flops / avg_latency_s) / 1e12
+    metrics["tflops_per_device"] = (flops / avg_latency_s) / 1e12
     metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics

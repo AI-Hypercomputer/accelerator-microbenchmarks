@@ -118,7 +118,7 @@ class BaseCollectiveBenchmark(
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
       ("shard_size_mib", report.format_2f),
-      ("bandwidth_gb_s", report.format_2f),
+      ("bandwidth_per_chip_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
   )
@@ -131,6 +131,20 @@ class BaseCollectiveBenchmark(
   ):
     super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
     self.sharding_strategy = None
+
+  def apply_roofline_analysis(self, metrics: dict[str, Any]) -> dict[str, Any]:
+    """Skips HBM roofline analysis for collective communication benchmarks.
+
+    Collectives operate on Inter-Chip Interconnect (ICI) at chip level; HBM
+    roofline analysis does not apply.
+
+    Args:
+      metrics: Dictionary of benchmark metrics.
+
+    Returns:
+      Original metrics dictionary unchanged.
+    """
+    return metrics
 
   def setup(self):
     mesh_shape_str = self.config.mesh_shape
@@ -308,10 +322,15 @@ class BaseCollectiveBenchmark(
       first_replica_group = self._extract_first_replica_group_from_hlo_dump()
       rank = len(first_replica_group)
 
-      if first_replica_group and all(i % 2 == 0 for i in first_replica_group):
+      devices_per_chip = self.hardware_spec.devices_per_chip
+      if (
+          devices_per_chip > 1
+          and first_replica_group
+          and all(i % devices_per_chip == 0 for i in first_replica_group)
+      ):
         replica_group_type = "parallel"
         participating_ranks = max(rank - 1, 1)
-        tf_multiplier = 2
+        tf_multiplier = devices_per_chip
       else:
         replica_group_type = "non-parallel"
         participating_ranks = max(rank - 2, 1)
@@ -342,7 +361,7 @@ class BaseCollectiveBenchmark(
     else:
       bandwidth_gb_s = 0.0
 
-    metrics["bandwidth_gb_s"] = bandwidth_gb_s
+    metrics["bandwidth_per_chip_gb_s"] = bandwidth_gb_s
     metrics["replica_group_type"] = replica_group_type
     metrics["replica_group_rank"] = rank
     metrics.update(extra_metrics)
@@ -367,9 +386,14 @@ class BaseCollectiveBenchmark(
     try:
       first_replica_group = self._extract_first_replica_group_from_hlo_dump()
       rank = len(first_replica_group)
-      if first_replica_group and all(i % 2 == 0 for i in first_replica_group):
+      devices_per_chip = self.hardware_spec.devices_per_chip
+      if (
+          devices_per_chip > 1
+          and first_replica_group
+          and all(i % devices_per_chip == 0 for i in first_replica_group)
+      ):
         participating_ranks = max(rank - 1, 1)
-        tf_multiplier = 2
+        tf_multiplier = devices_per_chip
       else:
         participating_ranks = max(rank - 2, 1)
         tf_multiplier = 1
@@ -415,7 +439,7 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
       ("shard_size_mib", report.format_2f),
-      ("bandwidth_gb_s", report.format_2f),
+      ("bandwidth_per_chip_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
   )
@@ -552,7 +576,7 @@ class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
       ("local_size_mib", report.format_2f),
-      ("bandwidth_gb_s", report.format_2f),
+      ("bandwidth_per_chip_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
   )

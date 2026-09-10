@@ -98,7 +98,8 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
       ("beta", report.format_str),
       ("use_scaling_factors", report.format_str),
       ("total_flops", report.format_2f),
-      ("tflops_per_sec", report.format_2f),
+      ("tflops_per_device", report.format_2f),
+      ("tflops_per_chip", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
   )
@@ -273,7 +274,7 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     else:
       tflops_per_sec = (total_flops / avg_latency_s) / 1e12
 
-    metrics["tflops_per_sec"] = tflops_per_sec
+    metrics["tflops_per_device"] = tflops_per_sec
     metrics["total_flops"] = total_flops
     metrics["intensity"] = self.get_arithmetic_intensity()
     return metrics

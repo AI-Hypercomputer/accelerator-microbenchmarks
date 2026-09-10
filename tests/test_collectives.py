@@ -399,7 +399,12 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     # non-parallel: participating_ranks = 4 - 2 = 2
     # data_transferred = 4194304 * 2 = 8388608 bytes
     # avg_latency = 0.001 s -> bandwidth = 8.388608 GB/s
-    self.assertAlmostEqual(ag_metrics["bandwidth_gb_s"], 8.388608, places=4)
+    self.assertAlmostEqual(
+        ag_metrics["bandwidth_per_chip_gb_s"], 8.388608, places=4
+    )
+    self.assertNotIn("bandwidth_per_device_gb_s", ag_metrics)
+    ag_derived = ag_bm.derive_chip_metrics(dict(ag_metrics))
+    self.assertNotIn("bandwidth_per_device_gb_s", ag_derived)
 
     # AllReduce
     ar_config = collectives.AllReduceParams(
@@ -417,7 +422,12 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     # local_size = 4194304 bytes
     # data_transferred = 2 * 4194304 * (2 / 4) = 4194304 bytes
     # avg_latency = 0.001 s -> bandwidth = 4.194304 GB/s
-    self.assertAlmostEqual(ar_metrics["bandwidth_gb_s"], 4.194304, places=4)
+    self.assertAlmostEqual(
+        ar_metrics["bandwidth_per_chip_gb_s"], 4.194304, places=4
+    )
+    self.assertNotIn("bandwidth_per_device_gb_s", ar_metrics)
+    ar_derived = ar_bm.derive_chip_metrics(dict(ar_metrics))
+    self.assertNotIn("bandwidth_per_device_gb_s", ar_derived)
 
     # AllToAll
     ata_bm = collectives.AllToAllBenchmark(
@@ -428,7 +438,12 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     # local_size = 4194304 bytes
     # data_transferred = 4194304 * (2 / 4) = 2097152 bytes
     # avg_latency = 0.001 s -> bandwidth = 2.097152 GB/s
-    self.assertAlmostEqual(ata_metrics["bandwidth_gb_s"], 2.097152, places=4)
+    self.assertAlmostEqual(
+        ata_metrics["bandwidth_per_chip_gb_s"], 2.097152, places=4
+    )
+    self.assertNotIn("bandwidth_per_device_gb_s", ata_metrics)
+    ata_derived = ata_bm.derive_chip_metrics(dict(ata_metrics))
+    self.assertNotIn("bandwidth_per_device_gb_s", ata_derived)
 
   def test_replica_groups_hlo_parsing(self):
     devices = np.array(jax.devices()).reshape((2, 2))
@@ -519,7 +534,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         metrics={
             "shard_size_mib": 32.0,
             "p50_ms": 0.05201,
-            "bandwidth_gb_s": 350.123,
+            "bandwidth_per_chip_gb_s": 350.123,
             "xprof_p50_ms": 0.04812,
         },
         raw_times_ms=[1.0],
@@ -531,7 +546,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "sharding_strategy",
         "matrix_dim",
         "shard_size_mib",
-        "bandwidth_gb_s",
+        "bandwidth_per_chip_gb_s",
         "p50_ms",
         "xprof_p50_ms",
     ]
@@ -577,7 +592,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         metrics={
             "local_size_mib": 64.0,
             "p50_ms": 0.05201,
-            "bandwidth_gb_s": 350.123,
+            "bandwidth_per_chip_gb_s": 350.123,
             "xprof_p50_ms": 0.04812,
         },
         raw_times_ms=[1.0],
@@ -588,7 +603,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "sharding_strategy",
         "matrix_dim",
         "local_size_mib",
-        "bandwidth_gb_s",
+        "bandwidth_per_chip_gb_s",
         "p50_ms",
         "xprof_p50_ms",
     ]
@@ -676,6 +691,25 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         f.name for f in dataclasses.fields(collectives.AllReduceParams)
     }
     self.assertIn("reduce_op", all_reduce_fields)
+
+  def test_collectives_skips_hbm_roofline_analysis(self):
+    """Verify that collectives skip HBM roofline analysis to avoid miscomparing ICI with HBM."""
+    params = {"matrix_dim": 64, "dtype": "bfloat16"}
+    config = collectives.AllReduceParams(**params)
+    bm = collectives.AllReduceBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    initial_metrics = {
+        "bandwidth_per_chip_gb_s": 95.0,
+        "avg_ms": 1.0,
+    }
+    result_metrics = bm.apply_roofline_analysis(initial_metrics.copy())
+    self.assertEqual(result_metrics, initial_metrics)
+    self.assertNotIn("bw_efficiency", result_metrics)
+    self.assertNotIn("roofline_efficiency", result_metrics)
+    self.assertNotIn("roofline_tflops_limit", result_metrics)
 
 
 if __name__ == "__main__":

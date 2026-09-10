@@ -42,7 +42,6 @@ DEFAULT_IGNORED_KEYS: frozenset[str] = frozenset({
     "std_ms",
     "raw_times_ms",
     "intensity",
-    "throughput",
     # Base metadata and flat columns
     "benchmark",
     "test_name",
@@ -59,6 +58,8 @@ DEFAULT_EXTRA_AVAILABLE_KEYS: frozenset[str] = frozenset({
     "xprof_p50_ms",
     "xprof_avg_ms",
     "xprof_p90_ms",
+    "tflops_per_chip",
+    "bandwidth_per_chip_gb_s",
 })
 
 
@@ -92,6 +93,8 @@ def assert_schema_matches_output(
   # Calculate metrics using synthetic times (CPU safe)
   raw_times = dummy_times_ms or [1.0, 1.0, 1.0]
   metrics = benchmark.calculate_metrics(raw_times)
+  if hasattr(benchmark, "derive_chip_metrics"):
+    metrics = benchmark.derive_chip_metrics(metrics)
 
   output_keys = set(params.keys()) | set(metrics.keys())
   effective_extra = DEFAULT_EXTRA_AVAILABLE_KEYS | set(

@@ -98,6 +98,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   REPORT_FORMATTERS: Optional[
       Sequence[Callable[[pd.DataFrame, type["BaseBenchmark"]], str]]
   ] = None
+  derive_chip_bandwidth: bool = True
 
   def __init__(
       self,
@@ -230,7 +231,6 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
           "p50_ms": 0.0,
           "p90_ms": 0.0,
           "std_ms": 0.0,
-          "throughput": 0.0,
       }
 
     # Filter outliers using Interquartile Range (IQR) if we have enough data
@@ -254,7 +254,6 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         "p90_ms": float(np.percentile(filtered_times, 90)),
         "avg_ms": float(np.mean(filtered_times)),
         "std_ms": float(np.std(filtered_times)),
-        "throughput": 0.0,  # To be overridden by subclasses
     }
 
   def match_xprof_op_fallback(self, event: dict[str, Any]) -> bool:
@@ -414,8 +413,39 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
           "xprof_avg_ms": None,
           "xprof_p50_ms": None,
           "xprof_p90_ms": None,
-          "bandwidth_gb_s": None,
       })
+      for metric_key in (
+          "bandwidth_per_device_gb_s",
+          "bandwidth_per_chip_gb_s",
+          "tflops_per_device",
+          "tflops_per_chip",
+      ):
+        if metric_key in metrics:
+          metrics[metric_key] = None
+    return metrics
+
+  def derive_chip_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
+    """Derives per-chip metrics from per-device metrics if present."""
+    devices_per_chip = self.hardware_spec.devices_per_chip
+    if (
+        "tflops_per_device" in metrics
+        and "tflops_per_chip" not in metrics
+    ):
+      metrics["tflops_per_chip"] = (
+          metrics["tflops_per_device"] * devices_per_chip
+          if metrics["tflops_per_device"] is not None
+          else None
+      )
+    if (
+        self.derive_chip_bandwidth
+        and "bandwidth_per_device_gb_s" in metrics
+        and "bandwidth_per_chip_gb_s" not in metrics
+    ):
+      metrics["bandwidth_per_chip_gb_s"] = (
+          metrics["bandwidth_per_device_gb_s"] * devices_per_chip
+          if metrics["bandwidth_per_device_gb_s"] is not None
+          else None
+      )
     return metrics
 
   def run(self) -> BenchmarkResult:
@@ -506,6 +536,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
     if self.config.xprof_timing:
       metrics = self._apply_xprof_timing_and_sync(metrics)
+
+    metrics = self.derive_chip_metrics(metrics)
 
     metrics = self.apply_roofline_analysis(metrics)
 

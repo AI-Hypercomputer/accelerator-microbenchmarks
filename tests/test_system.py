@@ -108,6 +108,7 @@ class SystemTest(absltest.TestCase):
     hw_spec = system.TPU7X_HARDWARE_SPEC
     self.assertEqual(hw_spec.name, system.TpuVersion.TPU7X)
     self.assertEqual(hw_spec.topology_dimension, 3)
+    self.assertEqual(hw_spec.devices_per_chip, 2)
 
     # Test compute stats
     self.assertEqual(
@@ -124,6 +125,7 @@ class SystemTest(absltest.TestCase):
 
     # Test ICI stats
     self.assertEqual(hw_spec.ici.peak_bw_gbps, 1200.0)
+    self.assertEqual(hw_spec.ici.peak_bw_gbps_per_chip, 1200.0)
     self.assertTrue(hw_spec.ici.bidirectional)
 
     # Test HBM stats
@@ -131,6 +133,13 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(hw_spec.hbm.curve_gbps[1], (1048576, 2000.0))
     self.assertEqual(hw_spec.hbm.curve_gbps[2], (104857600, 5000.0))
     self.assertEqual(hw_spec.hbm.curve_gbps[3], (1073741824, 7380.0))
+    self.assertEqual(hw_spec.hbm.curve_gbps_per_chip, hw_spec.hbm.curve_gbps)
+    self.assertEqual(hw_spec.hbm.peak_bandwidth_per_chip, 7380.0)
+    self.assertEqual(hw_spec.peak_hbm_bandwidth_per_device, 3690.0)
+    # Per-device HBM curve scaled by devices_per_chip (2)
+    device_curve = hw_spec.get_hbm_curve_per_device()
+    self.assertEqual(device_curve[0], (1024, 50.0))
+    self.assertEqual(device_curve[3], (1073741824, 3690.0))
 
 
   def test_hardware_spec_v6e_presets(self):
@@ -138,6 +147,7 @@ class SystemTest(absltest.TestCase):
     hw_spec = system.V6E_HARDWARE_SPEC
     self.assertEqual(hw_spec.name, system.TpuVersion.V6E)
     self.assertEqual(hw_spec.topology_dimension, 2)
+    self.assertEqual(hw_spec.devices_per_chip, 1)
 
     # Test compute stats
     self.assertEqual(
@@ -155,6 +165,7 @@ class SystemTest(absltest.TestCase):
 
     # Test ICI stats
     self.assertEqual(hw_spec.ici.peak_bw_gbps, 800.0)
+    self.assertEqual(hw_spec.ici.peak_bw_gbps_per_chip, 800.0)
     self.assertTrue(hw_spec.ici.bidirectional)
 
     # Test HBM stats
@@ -162,6 +173,13 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(hw_spec.hbm.curve_gbps[1], (1048576, 800.0))
     self.assertEqual(hw_spec.hbm.curve_gbps[2], (104857600, 1400.0))
     self.assertEqual(hw_spec.hbm.curve_gbps[3], (1073741824, 1638.4))
+    self.assertEqual(hw_spec.hbm.curve_gbps_per_chip, hw_spec.hbm.curve_gbps)
+    self.assertEqual(hw_spec.hbm.peak_bandwidth_per_chip, 1638.4)
+    self.assertEqual(hw_spec.peak_hbm_bandwidth_per_device, 1638.4)
+    # Per-device HBM curve scaled by devices_per_chip (1)
+    device_curve_v6e = hw_spec.get_hbm_curve_per_device()
+    self.assertEqual(device_curve_v6e[0], (1024, 50.0))
+    self.assertEqual(device_curve_v6e[3], (1073741824, 1638.4))
 
 
 if __name__ == "__main__":

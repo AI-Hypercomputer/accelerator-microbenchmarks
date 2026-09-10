@@ -74,13 +74,14 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
   """Benchmarks Device-to-Device (D2D) transfer bandwidth using ppermute."""
 
   Config = DeviceToDeviceParams
+  derive_chip_bandwidth: bool = False
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("direction", report.format_str),
       ("src_device_index", report.format_str),
       ("dst_device_index", report.format_str),
       ("data_size_mib", report.format_str),
-      ("bandwidth_gb_s", report.format_2f),
+      ("bandwidth_per_device_gb_s", report.format_2f),
       ("p50_ms", report.format_4f),
       ("xprof_p50_ms", report.format_4f),
   )
@@ -207,7 +208,7 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
     else:
       bandwidth_gb_s = total_bytes / (avg_latency_s * 1e9)
 
-    metrics["bandwidth_gb_s"] = bandwidth_gb_s
+    metrics["bandwidth_per_device_gb_s"] = bandwidth_gb_s
     metrics["total_bytes_mib"] = total_bytes / (1024 * 1024)
     metrics["src_device_index"] = self.config.src_device_index
     metrics["dst_device_index"] = self.config.dst_device_index

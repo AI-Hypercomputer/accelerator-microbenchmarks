@@ -45,18 +45,40 @@ class TflopsSpec:
 
 @dataclasses.dataclass(frozen=True)
 class IciSpec:
-  """Inter-Chip Interconnect specifications."""
+  """Inter-Chip Interconnect specifications (per-chip)."""
 
   peak_bw_gbps: float
   bidirectional: bool
 
+  @property
+  def peak_bw_gbps_per_chip(self) -> float:
+    return self.peak_bw_gbps
+
 
 @dataclasses.dataclass(frozen=True)
 class HbmSpec:
-  """High Bandwidth Memory specifications."""
+  """High Bandwidth Memory specifications (per-chip)."""
 
-  # List of tuples: (transfer_size_bytes, bandwidth_gb_s)
+  # List of tuples: (transfer_size_bytes, bandwidth_per_chip_gb_s) representing
+  # the total per-chip HBM bandwidth.
   curve_gbps: list[tuple[int, float]]
+
+  @property
+  def curve_gbps_per_chip(self) -> list[tuple[int, float]]:
+    return self.curve_gbps
+
+  @property
+  def peak_bandwidth_per_chip(self) -> float:
+    """Returns the asymptotic peak HBM bandwidth per chip (GB/s)."""
+    if not self.curve_gbps:
+      return 0.0
+    return max(bw for _, bw in self.curve_gbps)
+
+  def get_curve_gbps_per_device(
+      self, devices_per_chip: int = 1
+  ) -> list[tuple[int, float]]:
+    """Returns the HBM bandwidth curve scaled to per-device (TensorCore)."""
+    return [(size, bw / devices_per_chip) for size, bw in self.curve_gbps]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -65,15 +87,30 @@ class HardwareSpec:
 
   name: TpuVersion
   topology_dimension: int = 3
+  devices_per_chip: int = 1
   tflops: TflopsSpec | None = None
   ici: IciSpec | None = None
   hbm: HbmSpec | None = None
+
+  def get_hbm_curve_per_device(self) -> list[tuple[int, float]] | None:
+    """Returns HBM bandwidth curve per device based on devices_per_chip."""
+    if not self.hbm:
+      return None
+    return self.hbm.get_curve_gbps_per_device(self.devices_per_chip)
+
+  @property
+  def peak_hbm_bandwidth_per_device(self) -> float:
+    """Returns the asymptotic peak HBM bandwidth for a single device (GB/s)."""
+    if not self.hbm:
+      return 0.0
+    return self.hbm.peak_bandwidth_per_chip / self.devices_per_chip
 
 
 # TPU v7x (Ironwood)
 TPU7X_HARDWARE_SPEC = HardwareSpec(
     name=TpuVersion.TPU7X,
     topology_dimension=3,
+    devices_per_chip=2,
     tflops=TflopsSpec(
         peak_tflops_per_device={
             "bfloat16": 1153.5,
@@ -101,6 +138,7 @@ TPU7X_HARDWARE_SPEC = HardwareSpec(
 V6E_HARDWARE_SPEC = HardwareSpec(
     name=TpuVersion.V6E,
     topology_dimension=2,
+    devices_per_chip=1,
     tflops=TflopsSpec(
         peak_tflops_per_device={
             "bfloat16": 918.0,
