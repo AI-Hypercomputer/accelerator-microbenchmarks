@@ -380,70 +380,125 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         " disconnects.",
     )
 
-  def test_transfer_metrics_calculation(self):
+  @parameterized.named_parameters(
+      (
+          "all_gather_tpu7x",
+          collectives.AllGatherBenchmark,
+          collectives.CollectivesParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2",
+              sharding_strategy="2x2",
+          ),
+          system.TPU7X_HARDWARE_SPEC,
+          8.388608,
+      ),
+      (
+          "all_gather_v6e",
+          collectives.AllGatherBenchmark,
+          collectives.CollectivesParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2",
+              sharding_strategy="2x2",
+          ),
+          system.V6E_HARDWARE_SPEC,
+          12.582912,
+      ),
+      (
+          "all_reduce_tpu7x",
+          collectives.AllReduceBenchmark,
+          collectives.AllReduceParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2",
+              sharding_strategy="2x2",
+              reduce_op="sum",
+          ),
+          system.TPU7X_HARDWARE_SPEC,
+          4.194304,
+      ),
+      (
+          "all_reduce_v6e",
+          collectives.AllReduceBenchmark,
+          collectives.AllReduceParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2",
+              sharding_strategy="2x2",
+              reduce_op="sum",
+          ),
+          system.V6E_HARDWARE_SPEC,
+          6.291456,
+      ),
+      (
+          "all_to_all_tpu7x",
+          collectives.AllToAllBenchmark,
+          collectives.CollectivesParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2",
+              sharding_strategy="2x2",
+          ),
+          system.TPU7X_HARDWARE_SPEC,
+          2.097152,
+      ),
+      (
+          "all_to_all_v6e",
+          collectives.AllToAllBenchmark,
+          collectives.CollectivesParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2",
+              sharding_strategy="2x2",
+          ),
+          system.V6E_HARDWARE_SPEC,
+          3.145728,
+      ),
+  )
+  def test_transfer_metrics_calculation(
+      self, benchmark_cls, config, hardware_spec, expected_bw
+  ):
+    devices = np.array(jax.devices()).reshape((2, 2))
+    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
+    bm = benchmark_cls(config=config, hardware_spec=hardware_spec, mesh=mesh)
+    bm.setup()
+    metrics = bm.calculate_metrics([1.0])
+    self.assertAlmostEqual(
+        metrics["bandwidth_per_chip_gb_s"], expected_bw, places=4
+    )
+    self.assertNotIn("bandwidth_per_device_gb_s", metrics)
+    derived = bm.derive_chip_metrics(dict(metrics))
+    self.assertNotIn("bandwidth_per_device_gb_s", derived)
+
+  @parameterized.named_parameters(
+      ("parallel", "2x1", "parallel", 2, 8.388608),
+      ("non_parallel", "2x2", "non-parallel", 4, 8.388608),
+  )
+  def test_mesh_based_parallel_vs_non_parallel_metrics(
+      self, sharding_strategy, expected_group_type, expected_rank, expected_bw
+  ):
+    """Verify parallel vs non-parallel detection directly from mesh device layout without HLO dump files."""
     devices = np.array(jax.devices()).reshape((2, 2))
     mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
     config = collectives.CollectivesParams(
         matrix_dim=1024,
         dtype="float32",
         mesh_shape="2x2",
-        sharding_strategy="2x2",
+        sharding_strategy=sharding_strategy,
     )
-    # AllGather
     ag_bm = collectives.AllGatherBenchmark(
-        config=config, hardware_spec=system.V6E_HARDWARE_SPEC, mesh=mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=mesh,
     )
     ag_bm.setup()
-    ag_metrics = ag_bm.calculate_metrics([1.0])  # 1.0 ms latency
-    # local_size = 1024 * 8 * 128 * 4 = 4194304 bytes
-    # non-parallel: participating_ranks = 4 - 2 = 2
-    # data_transferred = 4194304 * 2 = 8388608 bytes
-    # avg_latency = 0.001 s -> bandwidth = 8.388608 GB/s
+    metrics = ag_bm.calculate_metrics([1.0])
+    self.assertEqual(metrics["replica_group_type"], expected_group_type)
+    self.assertEqual(metrics["replica_group_rank"], expected_rank)
     self.assertAlmostEqual(
-        ag_metrics["bandwidth_per_chip_gb_s"], 8.388608, places=4
+        metrics["bandwidth_per_chip_gb_s"], expected_bw, places=4
     )
-    self.assertNotIn("bandwidth_per_device_gb_s", ag_metrics)
-    ag_derived = ag_bm.derive_chip_metrics(dict(ag_metrics))
-    self.assertNotIn("bandwidth_per_device_gb_s", ag_derived)
-
-    # AllReduce
-    ar_config = collectives.AllReduceParams(
-        matrix_dim=1024,
-        dtype="float32",
-        mesh_shape="2x2",
-        sharding_strategy="2x2",
-        reduce_op="sum",
-    )
-    ar_bm = collectives.AllReduceBenchmark(
-        config=ar_config, hardware_spec=system.V6E_HARDWARE_SPEC, mesh=mesh
-    )
-    ar_bm.setup()
-    ar_metrics = ar_bm.calculate_metrics([1.0])
-    # local_size = 4194304 bytes
-    # data_transferred = 2 * 4194304 * (2 / 4) = 4194304 bytes
-    # avg_latency = 0.001 s -> bandwidth = 4.194304 GB/s
-    self.assertAlmostEqual(
-        ar_metrics["bandwidth_per_chip_gb_s"], 4.194304, places=4
-    )
-    self.assertNotIn("bandwidth_per_device_gb_s", ar_metrics)
-    ar_derived = ar_bm.derive_chip_metrics(dict(ar_metrics))
-    self.assertNotIn("bandwidth_per_device_gb_s", ar_derived)
-
-    # AllToAll
-    ata_bm = collectives.AllToAllBenchmark(
-        config=config, hardware_spec=system.V6E_HARDWARE_SPEC, mesh=mesh
-    )
-    ata_bm.setup()
-    ata_metrics = ata_bm.calculate_metrics([1.0])
-    # local_size = 4194304 bytes
-    # data_transferred = 4194304 * (2 / 4) = 2097152 bytes
-    # avg_latency = 0.001 s -> bandwidth = 2.097152 GB/s
-    self.assertAlmostEqual(
-        ata_metrics["bandwidth_per_chip_gb_s"], 2.097152, places=4
-    )
-    self.assertNotIn("bandwidth_per_device_gb_s", ata_metrics)
-    ata_derived = ata_bm.derive_chip_metrics(dict(ata_metrics))
-    self.assertNotIn("bandwidth_per_device_gb_s", ata_derived)
 
   def test_replica_groups_hlo_parsing(self):
     devices = np.array(jax.devices()).reshape((2, 2))

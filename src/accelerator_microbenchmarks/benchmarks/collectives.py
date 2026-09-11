@@ -87,7 +87,7 @@ class CollectivesParams(base.BaseBenchmarkParams):
       metadata={"help": "Random seed for tensor initialization."},
   )
   xla_dump_dir: Optional[str] = dataclasses.field(
-      default="/tmp/xla_dump",
+      default=None,
       metadata={"help": "Directory containing disk-based"
                         " XLA/HLO compilation dumps."},
   )
@@ -285,16 +285,20 @@ class BaseCollectiveBenchmark(
           except Exception:
             pass
 
-    # Fallback for CPU unit testing when no disk HLO is dumped
+    # Derive first replica group directly from mesh layout and sharding axes
     if self.mesh:
       sharding_axes = self._get_sharding_axes()
-      if isinstance(sharding_axes, str):
-        sharding_size = self.mesh.shape[sharding_axes]
-      else:
-        sharding_size = 1
-        for axis in sharding_axes:
-          sharding_size *= self.mesh.shape[axis]
-      return list(range(sharding_size))
+      sharding_axes_set = (
+          {sharding_axes}
+          if isinstance(sharding_axes, str)
+          else set(sharding_axes)
+      )
+      indexer = tuple(
+          slice(None) if axis in sharding_axes_set else 0
+          for axis in self.mesh.axis_names
+      )
+      first_group_devices = self.mesh.devices[indexer].flatten()
+      return [int(d.id) for d in first_group_devices]
 
     raise ValueError(
         "Could not find or parse replica_groups from disk HLO dump files in"
@@ -333,7 +337,7 @@ class BaseCollectiveBenchmark(
         tf_multiplier = devices_per_chip
       else:
         replica_group_type = "non-parallel"
-        participating_ranks = max(rank - 2, 1)
+        participating_ranks = max(rank - devices_per_chip, 1)
         tf_multiplier = 1
     except Exception as e:
       replica_group_type = "non-parallel"
