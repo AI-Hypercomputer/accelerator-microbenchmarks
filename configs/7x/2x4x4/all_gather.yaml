@@ -1,10 +1,11 @@
 benchmark:
   name: all_gather
-  warmup_tries: 2
-  num_runs: 5
-  dtype: bfloat16
-  xprof_timing: true
-  mesh_shape: 8x4x2
+  params:
+    warmup_tries: 2
+    num_runs: 5
+    dtype: bfloat16
+    xprof_timing: true
+    mesh_shape: 8x4x2
   sweep:
     sharding_strategy: ["8x4x1", "8x4x2"]
     matrix_dim: [8192, 16384, 32768]

@@ -1,13 +1,20 @@
 """Utility to load benchmark parameters from CSV files."""
 
-import csv
-import io
 from typing import Any
-import urllib.error
-import urllib.request
+
+import pandas as pd
 
 
-def load_shapes_from_csv(path: str) -> list[dict[str, Any]]:
+def _is_valid_value(val: Any) -> bool:
+  """Returns True if val is not NA/null and not an empty string."""
+  if pd.isna(val):
+    return False
+  if isinstance(val, str) and not val:
+    return False
+  return True
+
+
+def load_cases_from_csv(path: str) -> list[dict[str, Any]]:
   """Reads a CSV (local or remote URL) and returns a list of row dicts.
 
   Supports Google Sheets export links:
@@ -18,48 +25,48 @@ def load_shapes_from_csv(path: str) -> list[dict[str, Any]]:
 
   Returns:
     A list of dictionaries, where each dictionary represents a row in the CSV.
-    Column headers are keys and inferred-type values are values.
+    Column headers are stripped, unpopulated (empty/NaN) cells are omitted,
+    and values have inferred types (int, float, bool, or str).
+
+  Raises:
+    ValueError: If path is empty, malformed, or fails during fetch/parsing, or
+      contains no valid benchmark cases.
+    FileNotFoundError: If the local CSV file does not exist.
   """
-  if not path:
-    return []
+  if not path or not path.strip():
+    raise ValueError(
+        f"Invalid path '{path}': path cannot be empty or whitespace only."
+    )
+  path = path.strip()
 
-  shapes = []
   try:
-    if path.startswith(('http://', 'https://')):
-      with urllib.request.urlopen(path) as response:
-        content = response.read().decode('utf-8')
-        f = io.StringIO(content)
-    else:
-      f = open(path, mode='r', encoding='utf-8')
+    df = pd.read_csv(path).convert_dtypes()
+  except FileNotFoundError:
+    raise
+  except (
+      pd.errors.EmptyDataError,
+      pd.errors.ParserError,
+      OSError,
+      UnicodeDecodeError,
+  ) as e:
+    raise ValueError(f"Failed to parse CSV from '{path}': {e}") from e
 
-    with f:
-      reader = csv.DictReader(f)
-      for row in reader:
-        # Infer types
-        typed_row = {}
-        for k, v in row.items():
-          if v is None or not v:
-            typed_row[k] = None
-            continue
+  if df.empty:
+    raise ValueError(f"CSV file at '{path}' contains no data rows.")
 
-          # Try int
-          try:
-            typed_row[k] = int(v)
-            continue
-          except ValueError:
-            pass
+  # Clean column headers
+  df.columns = df.columns.str.strip()
 
-          # Try float
-          try:
-            typed_row[k] = float(v)
-            continue
-          except ValueError:
-            pass
+  cases = []
+  for row in df.to_dict(orient="records"):
+    if any(_is_valid_value(v) for v in row.values()):
+      cases.append({
+          k: v.item() if hasattr(v, "item") else v
+          for k, v in row.items()
+          if _is_valid_value(v)
+      })
 
-          # Stay as string
-          typed_row[k] = v
-        shapes.append(typed_row)
-  except (urllib.error.URLError, OSError, UnicodeDecodeError, csv.Error) as e:
-    print(f'Error loading CSV from {path}: {e}')
+  if not cases:
+    raise ValueError(f"CSV file at '{path}' contains no valid benchmark cases.")
 
-  return shapes
+  return cases

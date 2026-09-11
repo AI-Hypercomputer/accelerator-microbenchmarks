@@ -1,9 +1,10 @@
 benchmark:
   name: gemm_generalized
-  warmup_tries: 2
-  num_runs: 5
-  out_dtype: bfloat16
-  xprof_timing: true
+  params:
+    warmup_tries: 2
+    num_runs: 5
+    out_dtype: bfloat16
+    xprof_timing: true
   cases:
     - in_dtype: bfloat16
       m: 8192

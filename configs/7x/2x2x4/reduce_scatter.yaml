@@ -1,10 +1,11 @@
 benchmark:
   name: reduce_scatter
-  warmup_tries: 2
-  num_runs: 5
-  dtype: bfloat16
-  xprof_timing: true
-  mesh_shape: 4x4x2
+  params:
+    warmup_tries: 2
+    num_runs: 5
+    dtype: bfloat16
+    xprof_timing: true
+    mesh_shape: 4x4x2
   sweep:
     sharding_strategy: ["4x4x1", "4x4x2"]
     matrix_dim: [512, 1024, 2048]

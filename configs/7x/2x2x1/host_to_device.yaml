@@ -1,9 +1,9 @@
 benchmark:
   name: host_to_device
-  warmup_tries: 2
-  num_runs: 10
-  dtype: "float32"
-  xprof_timing: true
+  params:
+    warmup_tries: 2
+    num_runs: 10
+    dtype: "float32"
+    xprof_timing: true
   sweep:
     data_size_mib: [4096, 8192, 16384]
-
