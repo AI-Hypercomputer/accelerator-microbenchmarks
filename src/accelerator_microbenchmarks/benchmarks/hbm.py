@@ -28,7 +28,7 @@ class HBMKernelSpec:
   """
 
   name: str
-  kernel_fn: Callable[[tuple[Any, ...], Any], Any]
+  kernel_fn: Callable[..., Any]
   num_inputs: int
   num_arrays: int
   num_flops_per_element: float = 1.0
@@ -63,15 +63,37 @@ HBM_KERNELS: dict[str, HBMKernelSpec] = {
         num_arrays=3,  # 2 reads (x, y), 1 write (z)
         num_flops_per_element=2.0,
     ),
+    "read_only": HBMKernelSpec(
+        name="read_only",
+        kernel_fn=lambda args, scalar: jnp.any(args[0]),
+        num_inputs=1,
+        num_arrays=1,  # 1 read (x), 0 writes (scalar boolean return)
+        num_flops_per_element=1.0,
+    ),
+    "write_only": HBMKernelSpec(
+        name="write_only",
+        kernel_fn=lambda args, scalar, shape, dtype: jnp.full(
+            shape, scalar, dtype=dtype
+        ),
+        num_inputs=0,
+        num_arrays=1,  # 0 reads, 1 write (y)
+        num_flops_per_element=0.0,
+    ),
 }
+HBM_KERNELS["read"] = HBM_KERNELS["read_only"]
+HBM_KERNELS["write"] = HBM_KERNELS["write_only"]
 
 
 @dataclasses.dataclass
 class HBMBandwidthParams(base.BaseBenchmarkParams):
   op_type: str = dataclasses.field(
       default="copy",
-      metadata={"help": "HBM kernel operation type"
-                        " (copy, scale, add, triad)."},
+      metadata={
+          "help": (
+              "HBM kernel operation type (copy, scale, add, triad, read_only,"
+              " write_only)."
+          )
+      },
   )
   size: int = dataclasses.field(
       default=134217728,
@@ -139,6 +161,8 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     @jax.jit
     def hbm_op(*args):
       with jax.named_scope(constants.MARKER):
+        if spec.num_inputs == 0:
+          return spec.kernel_fn(args, scalar, (self.config.size,), dtype)
         return spec.kernel_fn(args, scalar)
 
     self._jit_fn = hbm_op

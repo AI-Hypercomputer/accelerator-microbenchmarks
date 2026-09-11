@@ -42,6 +42,8 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
       ("scale",),
       ("add",),
       ("triad",),
+      ("read_only",),
+      ("write_only",),
   )
   def test_hbm_utilization_above_80_percent(self, op_type):
     """Verify that HBM utilization is >80% for the given operation."""

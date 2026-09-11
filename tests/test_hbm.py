@@ -6,7 +6,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import hbm
 from accelerator_microbenchmarks.core import base
-from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -53,6 +52,10 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
       ("scale", "scale", 2048, 0, "scale_dim_2048_dev_0"),
       ("add", "add", 2048, 0, "add_dim_2048_dev_0"),
       ("triad", "triad", 2048, 0, "triad_dim_2048_dev_0"),
+      ("read_only", "read_only", 2048, 0, "read_only_dim_2048_dev_0"),
+      ("write_only", "write_only", 2048, 0, "write_only_dim_2048_dev_0"),
+      ("read_alias", "read", 2048, 0, "read_dim_2048_dev_0"),
+      ("write_alias", "write", 2048, 0, "write_dim_2048_dev_0"),
       ("custom_size", "copy", 4096, 0, "copy_dim_4096_dev_0"),
       ("large_size", "add", 134217728, 0, "add_dim_134217728_dev_0"),
   )
@@ -102,19 +105,85 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
       bm.setup()
       self.assertEqual(bm.get_device_to_measure(), mock_devices[7])
 
-  @parameterized.parameters("copy", "scale", "add", "triad")
+  @parameterized.parameters(
+      "copy", "scale", "add", "triad", "read_only", "write_only"
+  )
   def test_stream_ops_execution(self, op_type):
-    """Verify that all STREAM operations generate correct inputs and execute."""
+    """Verify that all operations generate correct inputs and execute."""
     self._setup_benchmark(op_type)
     inputs = self.bm.generate_inputs()
 
     if op_type in ("add", "triad"):
-      self.assertEqual(len(inputs), 2)
+      self.assertLen(inputs, 2)
       self.assertEqual(inputs[0].shape, (1024,))
       self.assertEqual(inputs[1].shape, (1024,))
+    elif op_type == "write_only":
+      self.assertEmpty(inputs)
     else:
-      self.assertEqual(len(inputs), 1)
+      self.assertLen(inputs, 1)
       self.assertEqual(inputs[0].shape, (1024,))
+
+  def test_read_and_write_values(self):
+    """Verify numerical correctness of read_only and write_only ops."""
+    # Test write_only: should produce array filled with scalar
+    self._setup_benchmark("write_only")
+    scalar = self.bm.scalar
+    self.assertIsNotNone(scalar)
+    out_write = self.bm.run_op()
+    self.assertEqual(out_write.shape, (1024,))
+    self.assertEqual(out_write.dtype, jnp.bfloat16)
+    np.testing.assert_allclose(out_write, np.full(1024, scalar), rtol=1e-2)
+
+    # Test read_only: should perform reduction of input array
+    self._setup_benchmark("read_only")
+    x_ones = jnp.ones((1024,), dtype=jnp.bfloat16)
+    out_read = self.bm.run_op(x_ones)
+    self.assertEqual(out_read.shape, ())
+    self.assertTrue(bool(out_read))
+
+    x_zeros = jnp.zeros((1024,), dtype=jnp.bfloat16)
+    out_read_zeros = self.bm.run_op(x_zeros)
+    self.assertEqual(out_read_zeros.shape, ())
+    self.assertFalse(bool(out_read_zeros))
+
+  def test_hlo_lowering_read_and_write(self):
+    """Verify compiler HLO IR lowering: 0 array writes for read, 0 reads for write."""
+    # 1. READ-only: verify reduce operation emitting a scalar, no output array
+    self._setup_benchmark("read_only")
+    x = jnp.ones((1024,), dtype=jnp.bfloat16)
+    hlo_read = (
+        self.bm._jit_fn.lower(x)  # pylint: disable=protected-access
+        .compile()
+        .as_text()
+    )
+    self.assertIn("reduce", hlo_read.lower())
+    self.assertIn("ROOT", hlo_read)
+    # Entry signature must take 1 array input and return scalar (pred[])
+    self.assertRegex(
+        hlo_read, r"ENTRY\s+%[a-zA-Z0-9_.]+\s+\([^)]+\)\s+->\s+pred\[\]"
+    )
+    print(
+        "\n--- READ-ONLY COMPILED HLO IR ---\n"
+        f"{hlo_read}\n"
+        "---------------------------------\n"
+    )
+
+    # 2. WRITE-only: verify broadcast/constant generation with 0 input parameters
+    self._setup_benchmark("write_only")
+    hlo_write = (
+        self.bm._jit_fn.lower()  # pylint: disable=protected-access
+        .compile()
+        .as_text()
+    )
+    self.assertIn("broadcast", hlo_write.lower())
+    # Entry computation layout and signature must take 0 inputs: () -> ...
+    self.assertIn("entry_computation_layout={()->", hlo_write)
+    self.assertRegex(hlo_write, r"ENTRY\s+%[a-zA-Z0-9_.]+\s+\(\)\s+->")
+    print(
+        "\n--- WRITE-ONLY COMPILED HLO IR ---\n"
+        f"{hlo_write}\n"
+        "----------------------------------\n"
+    )
 
   def test_run_op(self):
     """Verify that running the op returns the expected shape."""
@@ -176,6 +245,13 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self._setup_benchmark("triad")
     self.assertAlmostEqual(self.bm.get_total_bytes(), 6144.0)
 
+    # Read/Write only: size 1024 * 2 bytes/element * 1 array = 2048 bytes
+    self._setup_benchmark("read_only")
+    self.assertAlmostEqual(self.bm.get_total_bytes(), 2048.0)
+
+    self._setup_benchmark("write_only")
+    self.assertAlmostEqual(self.bm.get_total_bytes(), 2048.0)
+
   def test_get_arithmetic_intensity(self):
     """Verify arithmetic intensity calculations across all STREAM ops."""
     self._setup_benchmark("copy")
@@ -194,16 +270,31 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     # 2 FLOP / (2 bytes * 3 arrays)
     self.assertAlmostEqual(self.bm.get_arithmetic_intensity(), 1.0 / 3.0)
 
-  @parameterized.parameters("copy", "scale", "add", "triad")
+    self._setup_benchmark("read_only")
+    # 1 FLOP / (2 bytes * 1 array)
+    self.assertAlmostEqual(self.bm.get_arithmetic_intensity(), 0.5)
+
+    self._setup_benchmark("write_only")
+    # 0 FLOP / (2 bytes * 1 array)
+    self.assertAlmostEqual(self.bm.get_arithmetic_intensity(), 0.0)
+
+  @parameterized.parameters(
+      "copy", "scale", "add", "triad", "read_only", "write_only"
+  )
   def test_calculate_metrics(self, op_type):
-    """Verify that metrics are correctly calculated across all STREAM ops."""
-    # total_bytes = 4096 for copy/scale, 6144 for add/triad
+    """Verify that metrics are correctly calculated across all ops."""
+    # total_bytes = 4096 for copy/scale, 6144 for add/triad, 2048 for read/write
     # avg_ms = 10.0 -> avg_latency_s = 0.01s
     times_ms = [10.0, 10.0, 10.0]
     self._setup_benchmark(op_type)
     metrics = self.bm.calculate_metrics(times_ms)
 
-    expected_bytes = 4096.0 if op_type in ("copy", "scale") else 6144.0
+    if op_type in ("copy", "scale"):
+      expected_bytes = 4096.0
+    elif op_type in ("add", "triad"):
+      expected_bytes = 6144.0
+    else:
+      expected_bytes = 2048.0
     # total_bytes / avg_latency_s / 1e9
     expected_bw_gb_s = (expected_bytes / 0.01) / 1e9
 
