@@ -5,7 +5,7 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y git curl gnupg && \
     echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
     curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
-    apt-get update && apt-get install -y google-cloud-sdk && \
+    apt-get update && apt-get install -y google-cloud-cli && \
     rm -rf /var/lib/apt/lists/*
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.12 1
 
@@ -18,7 +18,8 @@ COPY . .
 # Install dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt -f https://storage.googleapis.com/jax-releases/libtpu_releases.html && \
-    pip install --no-cache-dir tpu-info
+    pip install --no-cache-dir tpu-info && \
+    rm -rf /usr/local/lib/python3.12/site-packages/ray/jars
 
 # Verify that the benchmark script can be run
 RUN python Ironwood/src/run_benchmark.py --help
