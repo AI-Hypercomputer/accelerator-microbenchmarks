@@ -574,17 +574,6 @@ class AllGatherBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
 class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
   """Benchmarks the latency and bandwidth of jax.lax.all_to_all across devices."""
 
-  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
-      ("dtype", report.format_str),
-      ("mesh_shape", report.format_str),
-      ("sharding_strategy", report.format_str),
-      ("matrix_dim", report.format_str),
-      ("local_size_mib", report.format_2f),
-      ("bandwidth_per_chip_gb_s", report.format_2f),
-      ("p50_ms", report.format_4f),
-      ("xprof_p50_ms", report.format_4f),
-  )
-
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
 
@@ -632,7 +621,9 @@ class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
     data_transferred = (
         local_size_bytes * (participating_ranks / max(rank, 1)) * tf_multiplier
     )
-    return data_transferred, {"local_size_mib": local_size_bytes / (1024 * 1024)}
+    return data_transferred, {
+        "shard_size_mib": local_size_bytes / (1024 * 1024)
+    }
 
 
 @registry.benchmark_registry.register("reduce_scatter", is_experimental=True)

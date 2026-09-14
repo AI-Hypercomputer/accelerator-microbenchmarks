@@ -353,7 +353,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
               mesh_shape="2x2x1",
               sharding_strategy="2x2x1",
           ),
-          "local_size_mib",
+          "shard_size_mib",
       ),
   )
   def test_input_shape_and_transfer_metrics_invariant(
@@ -645,7 +645,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
-            "local_size_mib": 64.0,
+            "shard_size_mib": 64.0,
             "p50_ms": 0.05201,
             "bandwidth_per_chip_gb_s": 350.123,
             "xprof_p50_ms": 0.04812,
@@ -657,7 +657,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "mesh_shape",
         "sharding_strategy",
         "matrix_dim",
-        "local_size_mib",
+        "shard_size_mib",
         "bandwidth_per_chip_gb_s",
         "p50_ms",
         "xprof_p50_ms",
