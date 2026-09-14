@@ -1,11 +1,12 @@
 benchmark:
-  name: all_gather
+  name: all_reduce
   params:
     warmup_tries: 2
     num_runs: 5
     dtype: bfloat16
     xprof_timing: true
-    mesh_shape: 2x2
-    sharding_strategy: 2x2
+    reduce_op: sum
+    mesh_shape: 8x8
+    sharding_strategy: 8x8
   sweep:
     matrix_dim: [8192, 16384, 32768]

@@ -1,5 +1,6 @@
 """Utility to load benchmark parameters from CSV files."""
 
+import os
 from typing import Any
 
 import pandas as pd
@@ -39,8 +40,10 @@ def load_cases_from_csv(path: str) -> list[dict[str, Any]]:
     )
   path = path.strip()
 
+  resolved_path = path
+
   try:
-    df = pd.read_csv(path).convert_dtypes()
+    df = pd.read_csv(resolved_path).convert_dtypes()
   except FileNotFoundError:
     raise
   except (

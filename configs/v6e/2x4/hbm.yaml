@@ -7,6 +7,6 @@ benchmark:
     xprof_timing: true
   sweep:
     size:
-      start: 32768
-      end: 17179869184
+      start: 524288
+      end: 536870912
       multiplier: 2
