@@ -73,10 +73,10 @@ class TransformerLayerMoE(ComponentBenchmark):
       ("dtype", report.format_str),
       ("model_dim", report.format_str),
       ("mslen", report.format_str),
-      ("tflops_per_device", report.format_2f),
-      ("tflops_per_chip", report.format_2f),
-      ("p50_ms", report.format_4f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_tflops_per_chip", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
+      ("xprof_tflops_per_chip", report.format_2f),
   )
 
   def setup(self):
@@ -171,13 +171,18 @@ class TransformerLayerMoE(ComponentBenchmark):
     flops = 24 * seq_len * (model_dim**2)
     return flops / self.get_total_bytes()
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
     model_dim = self.config.model_dim
     seq_len = self.config.mslen
     flops = 24 * seq_len * (model_dim**2)
 
-    avg_latency_s = metrics["avg_ms"] / 1000.0
-    metrics["tflops_per_device"] = (flops / avg_latency_s) / 1e12
-    metrics["intensity"] = self.get_arithmetic_intensity()
-    return metrics
+    latency_s = latency_ms / 1000.0
+    if latency_s == 0:
+      tflops_per_sec = float("inf")
+    else:
+      tflops_per_sec = (flops / latency_s) / 1e12
+    return {
+        f"{prefix}_tflops_per_device": tflops_per_sec,
+    }

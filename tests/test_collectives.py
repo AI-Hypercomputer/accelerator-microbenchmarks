@@ -32,6 +32,8 @@ os.environ["XLA_FLAGS"] = (
 jax.config.update("jax_platform_name", "cpu")
 
 _COLLECTIVES_IGNORED_KEYS: frozenset[str] = frozenset({
+    "data_transferred_bytes",
+    "sharding_size",
     "replica_group_type",
     "replica_group_rank",
 })
@@ -466,11 +468,11 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm.setup()
     metrics = bm.calculate_metrics([1.0])
     self.assertAlmostEqual(
-        metrics["bandwidth_per_chip_gb_s"], expected_bw, places=4
+        metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
     )
-    self.assertNotIn("bandwidth_per_device_gb_s", metrics)
+    self.assertNotIn("wall_clock_bandwidth_per_device_gb_s", metrics)
     derived = bm.derive_chip_metrics(dict(metrics))
-    self.assertNotIn("bandwidth_per_device_gb_s", derived)
+    self.assertNotIn("wall_clock_bandwidth_per_device_gb_s", derived)
 
   @parameterized.named_parameters(
       ("parallel", "2x1", "parallel", 2, 8.388608),
@@ -498,7 +500,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(metrics["replica_group_type"], expected_group_type)
     self.assertEqual(metrics["replica_group_rank"], expected_rank)
     self.assertAlmostEqual(
-        metrics["bandwidth_per_chip_gb_s"], expected_bw, places=4
+        metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
     )
 
   def test_replica_groups_hlo_parsing(self):
@@ -589,8 +591,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         ),
         metrics={
             "shard_size_mib": 32.0,
-            "p50_ms": 0.05201,
-            "bandwidth_per_chip_gb_s": 350.123,
+            "wall_clock_p50_ms": 0.05201,
+            "wall_clock_bandwidth_per_chip_gb_s": 350.123,
+            "xprof_bandwidth_per_chip_gb_s": 360.000,
             "xprof_p50_ms": 0.04812,
         },
         raw_times_ms=[1.0],
@@ -602,9 +605,10 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "sharding_strategy",
         "matrix_dim",
         "shard_size_mib",
-        "bandwidth_per_chip_gb_s",
-        "p50_ms",
+        "wall_clock_p50_ms",
+        "wall_clock_bandwidth_per_chip_gb_s",
         "xprof_p50_ms",
+        "xprof_bandwidth_per_chip_gb_s",
     ]
     schema_cols = [
         col for col, _ in collectives.AllReduceBenchmark.REPORT_SCHEMA
@@ -627,6 +631,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertIn("4096", table_ar)
     self.assertIn("32.00", table_ar)
     self.assertIn("350.12", table_ar)
+    self.assertIn("360.00", table_ar)
     self.assertIn("0.0520", table_ar)
     self.assertIn("0.0481", table_ar)
 
@@ -647,8 +652,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         ),
         metrics={
             "shard_size_mib": 64.0,
-            "p50_ms": 0.05201,
-            "bandwidth_per_chip_gb_s": 350.123,
+            "wall_clock_p50_ms": 0.05201,
+            "wall_clock_bandwidth_per_chip_gb_s": 350.123,
+            "xprof_bandwidth_per_chip_gb_s": 360.000,
             "xprof_p50_ms": 0.04812,
         },
         raw_times_ms=[1.0],
@@ -659,9 +665,10 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "sharding_strategy",
         "matrix_dim",
         "shard_size_mib",
-        "bandwidth_per_chip_gb_s",
-        "p50_ms",
+        "wall_clock_p50_ms",
+        "wall_clock_bandwidth_per_chip_gb_s",
         "xprof_p50_ms",
+        "xprof_bandwidth_per_chip_gb_s",
     ]
     schema_a2a_cols = [
         col for col, _ in collectives.AllToAllBenchmark.REPORT_SCHEMA
@@ -683,6 +690,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertIn("4096", table_a2a)
     self.assertIn("64.00", table_a2a)
     self.assertIn("350.12", table_a2a)
+    self.assertIn("360.00", table_a2a)
     self.assertIn("0.0520", table_a2a)
     self.assertIn("0.0481", table_a2a)
 
@@ -758,16 +766,36 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         mesh=self.mock_mesh,
     )
     initial_metrics = {
-        "bandwidth_per_chip_gb_s": 95.0,
-        "avg_ms": 1.0,
+        "wall_clock_bandwidth_per_chip_gb_s": 95.0,
+        "wall_clock_avg_ms": 1.0,
     }
     result_metrics = bm.apply_roofline_analysis(initial_metrics.copy())
     self.assertEqual(result_metrics, initial_metrics)
     self.assertEqual(bm.roofline_mode, constants.RooflineMode.NONE)
     self.assertNotIn("roofline_tflops_limit", result_metrics)
     self.assertNotIn("compute_roofline_efficiency_pct", result_metrics)
+    self.assertNotIn("wall_clock_compute_roofline_efficiency_pct", result_metrics)
     self.assertNotIn("peak_hbm_bw_gb_s", result_metrics)
     self.assertNotIn("memory_roofline_efficiency_pct", result_metrics)
+    self.assertNotIn("wall_clock_memory_roofline_efficiency_pct", result_metrics)
+
+  def test_zero_latency_and_get_total_bytes(self):
+    """Verify zero-latency guard in calculate_throughput_metrics and get_total_bytes."""
+    params = {"matrix_dim": 64, "dtype": "bfloat16"}
+    config = collectives.AllReduceParams(**params)
+    bm = collectives.AllReduceBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    bm.setup()
+    self.assertGreater(bm.get_total_bytes(), 0.0)
+    zero_metrics = bm.calculate_throughput_metrics(
+        0.0, constants.TimingDomain.WALL_CLOCK
+    )
+    self.assertEqual(
+        zero_metrics["wall_clock_bandwidth_per_chip_gb_s"], float("inf")
+    )
 
 
 if __name__ == "__main__":

@@ -106,8 +106,8 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     self.bm.generate_inputs = wrapped_generate_inputs
     # Run the benchmark
     result = self.bm.run()
-    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
-    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
 
     # If reset_data() was executed, the generated array must have been deleted
     self.assertGreater(len(generated_arrays), 1)
@@ -192,10 +192,10 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
     bm.setup()
     result = bm.run()
 
-    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
-    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
+    self.assertIn("xprof_bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
     print(f"result: {result}")
-    bandwidth_gb_s = result.metrics["bandwidth_per_device_gb_s"]
+    bandwidth_gb_s = result.metrics["xprof_bandwidth_per_device_gb_s"]
     print(f"bandwidth_gb_s: {bandwidth_gb_s}")
     self.assertGreater(bandwidth_gb_s, 0.0)
     # Theoretical maximum PCIe Gen5 bandwidth for v7x is 60 GB/s

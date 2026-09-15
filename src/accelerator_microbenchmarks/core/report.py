@@ -7,6 +7,7 @@ import os
 from typing import Any, Callable, Optional, Sequence
 
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 import numpy as np
 import pandas as pd
@@ -108,8 +109,17 @@ def format_benchmark_table(
   if df is None or df.empty or not schema:
     return ""
 
-  cols = [col_name for col_name, _ in schema]
-  formatters = [formatter for _, formatter in schema]
+  active_schema = [
+      (col_name, formatter)
+      for col_name, formatter in schema
+      if not col_name.startswith(f"{constants.TimingDomain.XPROF}_")
+      or col_name in df.columns
+  ]
+  if not active_schema:
+    return ""
+
+  cols = [col_name for col_name, _ in active_schema]
+  formatters = [formatter for _, formatter in active_schema]
 
   sub_df = df.reindex(columns=cols)
   table_body = sub_df.to_string(index=False, formatters=formatters, na_rep="-")
@@ -152,8 +162,21 @@ def format_device_matrix(
 
   src_col = "src_device_index"
   dst_col = "dst_device_index"
-  metric_col = "bandwidth_per_device_gb_s"
-  title_prefix = "Device-to-Device Bandwidth Matrix (GB/s)"
+  wall_clock_bw_col = (
+      f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_device_gb_s"
+  )
+  xprof_bw_col = f"{constants.TimingDomain.XPROF}_bandwidth_per_device_gb_s"
+  domains = [
+      (
+          wall_clock_bw_col,
+          "Device-to-Device Bandwidth Matrix (Wall Clock GB/s)",
+      ),
+  ]
+  if xprof_bw_col in df.columns:
+    domains.append((
+        xprof_bw_col,
+        "Device-to-Device Bandwidth Matrix (XProf GB/s)",
+    ))
 
   sweep_candidates = ["dtype", "direction", "data_size_mib"]
   effective_sweeps = [c for c in sweep_candidates if c in df.columns]
@@ -165,53 +188,54 @@ def format_device_matrix(
       else [(None, df)]
   )
 
-  for sweep_key, sub_df in groups:
-    src_devs = sub_df[src_col].dropna().unique()
-    dst_devs = sub_df[dst_col].dropna().unique()
-    unique_devs = set(src_devs) | set(dst_devs)
-    if not unique_devs:
-      continue
+  for metric_col, title_prefix in domains:
+    for sweep_key, sub_df in groups:
+      src_devs = sub_df[src_col].dropna().unique()
+      dst_devs = sub_df[dst_col].dropna().unique()
+      unique_devs = set(src_devs) | set(dst_devs)
+      if not unique_devs:
+        continue
 
-    sorted_devs = sorted(int(d) for d in unique_devs)
-    clean_sub_df = sub_df.dropna(subset=[src_col, dst_col]).copy()
-    clean_sub_df[src_col] = clean_sub_df[src_col].astype(int)
-    clean_sub_df[dst_col] = clean_sub_df[dst_col].astype(int)
-    if metric_col not in clean_sub_df.columns:
-      clean_sub_df[metric_col] = np.nan
-    clean_sub_df = clean_sub_df.drop_duplicates(
-        subset=[src_col, dst_col], keep="last"
-    )
+      sorted_devs = sorted(int(d) for d in unique_devs)
+      clean_sub_df = sub_df.dropna(subset=[src_col, dst_col]).copy()
+      clean_sub_df[src_col] = clean_sub_df[src_col].astype(int)
+      clean_sub_df[dst_col] = clean_sub_df[dst_col].astype(int)
+      if metric_col not in clean_sub_df.columns:
+        clean_sub_df[metric_col] = np.nan
+      clean_sub_df = clean_sub_df.drop_duplicates(
+          subset=[src_col, dst_col], keep="last"
+      )
 
-    # 1. Pivot into N x N matrix and reindex to full symmetric grid
-    matrix = clean_sub_df.pivot(
-        index=src_col, columns=dst_col, values=metric_col
-    )
-    matrix = matrix.reindex(index=sorted_devs, columns=sorted_devs)
+      # 1. Pivot into N x N matrix and reindex to full symmetric grid
+      matrix = clean_sub_df.pivot(
+          index=src_col, columns=dst_col, values=metric_col
+      )
+      matrix = matrix.reindex(index=sorted_devs, columns=sorted_devs)
 
-    # 2. Format values using format_2f (maps numeric to .2f and NaN to '-')
-    formatted_matrix = matrix.map(format_2f)
+      # 2. Format values using format_2f (maps numeric to .2f and NaN to '-')
+      formatted_matrix = matrix.map(format_2f)
 
-    # 3. Format row and column headers to D0, D1, etc.
-    formatted_matrix.index = pd.Index([f"D{d}" for d in sorted_devs])
-    formatted_matrix.columns = pd.Index([f"D{d}" for d in sorted_devs])
+      # 3. Format row and column headers to D0, D1, etc.
+      formatted_matrix.index = pd.Index([f"D{d}" for d in sorted_devs])
+      formatted_matrix.columns = pd.Index([f"D{d}" for d in sorted_devs])
 
-    # 4. Replace diagonal with diagonal marker
-    for d in sorted_devs:
-      formatted_matrix.loc[f"D{d}", f"D{d}"] = diagonal_marker
+      # 4. Replace diagonal with diagonal marker
+      for d in sorted_devs:
+        formatted_matrix.loc[f"D{d}", f"D{d}"] = diagonal_marker
 
-    body = formatted_matrix.to_string()
+      body = formatted_matrix.to_string()
 
-    config_parts = []
-    if sweep_key is not None and effective_sweeps:
-      if isinstance(sweep_key, tuple):
-        for k, v in zip(effective_sweeps, sweep_key):
-          config_parts.append(f"{k}={v}")
-      else:
-        config_parts.append(f"{effective_sweeps[0]}={sweep_key}")
-    config_str = ", ".join(config_parts)
-    title = f"{title_prefix} [{config_str}]" if config_str else title_prefix
+      config_parts = []
+      if sweep_key is not None and effective_sweeps:
+        if isinstance(sweep_key, tuple):
+          for k, v in zip(effective_sweeps, sweep_key):
+            config_parts.append(f"{k}={v}")
+        else:
+          config_parts.append(f"{effective_sweeps[0]}={sweep_key}")
+      config_str = ", ".join(config_parts)
+      title = f"{title_prefix} [{config_str}]" if config_str else title_prefix
 
-    matrices.append(_render_banner_box(title=title, body=body))
+      matrices.append(_render_banner_box(title=title, body=body))
 
   return "\n\n".join(matrices)
 
@@ -246,7 +270,6 @@ def results_to_dataframe(
         "libtpu_init_args": metadata.libtpu_init_args,
         "benchmark": benchmark_name,
         "test_name": test_name,
-        "KET_ms": metrics.get("avg_ms", 0.0),
         "start": start_time,
     }
     flat_results.append(entry)

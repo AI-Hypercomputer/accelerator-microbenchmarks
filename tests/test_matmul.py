@@ -119,8 +119,8 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     """Test calculating performance metrics."""
     self._setup_benchmark()
     metrics = self.bm.calculate_metrics([1.0, 1.5, 2.0])
-    self.assertIn("avg_ms", metrics)
-    self.assertIn("tflops_per_device", metrics)
+    self.assertIn("wall_clock_avg_ms", metrics)
+    self.assertIn("wall_clock_tflops_per_device", metrics)
     self.assertIn("total_flops", metrics)
     self.assertIn("intensity", metrics)
     self.assertEqual(metrics["total_flops"], 524288)
@@ -434,9 +434,11 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         ),
         metrics={
             "total_flops": 137438953472.0,
-            "tflops_per_device": 331.25,
-            "tflops_per_chip": 662.50,
-            "p50_ms": 0.4200,
+            "wall_clock_tflops_per_device": 331.25,
+            "wall_clock_tflops_per_chip": 662.50,
+            "xprof_tflops_per_device": 340.00,
+            "xprof_tflops_per_chip": 680.00,
+            "wall_clock_p50_ms": 0.4200,
             "xprof_p50_ms": 0.4100,
         },
         raw_times_ms=[1.0],
@@ -453,10 +455,10 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         "beta",
         "use_scaling_factors",
         "total_flops",
-        "tflops_per_device",
-        "tflops_per_chip",
-        "p50_ms",
+        "wall_clock_p50_ms",
+        "wall_clock_tflops_per_chip",
         "xprof_p50_ms",
+        "xprof_tflops_per_chip",
     ]
     schema_cols = [
         col for col, _ in matmul.GeneralizedGemmBenchmark.REPORT_SCHEMA
@@ -482,8 +484,8 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.assertIn("1.5", table)
     self.assertIn("0.5", table)
     self.assertIn("137438953472.00", table)
-    self.assertIn("331.25", table)
     self.assertIn("662.50", table)
+    self.assertIn("680.00", table)
     self.assertIn("0.4200", table)
     self.assertIn("0.4100", table)
 
@@ -546,11 +548,11 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     result = bm.run()
     self.assertIn("roofline_tflops_limit", result.metrics)
     self.assertIn("peak_hbm_bw_gb_s", result.metrics)
-    self.assertIn("compute_roofline_efficiency_pct", result.metrics)
+    self.assertIn("wall_clock_compute_roofline_efficiency_pct", result.metrics)
     self.assertGreater(result.metrics["roofline_tflops_limit"], 0.0)
     self.assertGreater(result.metrics["peak_hbm_bw_gb_s"], 0.0)
     self.assertGreaterEqual(
-        result.metrics["compute_roofline_efficiency_pct"], 0.0
+        result.metrics["wall_clock_compute_roofline_efficiency_pct"], 0.0
     )
 
 

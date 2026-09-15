@@ -87,29 +87,33 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     # avg_ms = 10.0 -> avg_latency_s = 0.01s
     # total_bytes = 4 * 1024 * 1024 = 4194304 bytes
     # bandwidth_gb_s = 4194304 / (0.01 * 1e9) = 0.4194304 GB/s
-    self.assertAlmostEqual(metrics["avg_ms"], 10.0)
-    self.assertIn("bandwidth_per_device_gb_s", metrics)
-    self.assertAlmostEqual(metrics["bandwidth_per_device_gb_s"], 0.4194304)
-    self.assertNotIn("bandwidth_per_chip_gb_s", metrics)
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", metrics)
+    self.assertAlmostEqual(
+        metrics["wall_clock_bandwidth_per_device_gb_s"], 0.4194304
+    )
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", metrics)
     self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
 
   def test_derive_chip_metrics_no_chip_bandwidth(self):
-    """Verify derive_chip_metrics does not derive bandwidth_per_chip_gb_s."""
+    """Verify derive_chip_metrics does not derive wall_clock_bandwidth_per_chip_gb_s."""
     self._setup_benchmark()
-    metrics = {"bandwidth_per_device_gb_s": 10.0}
+    metrics = {"wall_clock_bandwidth_per_device_gb_s": 10.0}
     derived = self.bm.derive_chip_metrics(metrics)
-    self.assertIn("bandwidth_per_device_gb_s", derived)
-    self.assertNotIn("bandwidth_per_chip_gb_s", derived)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", derived)
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", derived)
 
   def test_run_e2e(self):
-    """Verify run() produces valid bandwidth_per_device_gb_s without per_chip bandwidth."""
+    """Verify run() produces valid wall_clock_bandwidth_per_device_gb_s without per_chip bandwidth."""
     self._setup_benchmark(num_runs=2, warmup_tries=1)
     result = self.bm.run()
-    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
-    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
-    self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
-    self.assertIn("avg_ms", result.metrics)
-    self.assertGreater(result.metrics["avg_ms"], 0.0)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertGreater(
+        result.metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0
+    )
+    self.assertIn("wall_clock_avg_ms", result.metrics)
+    self.assertGreater(result.metrics["wall_clock_avg_ms"], 0.0)
     self.assertNotIn("roofline_tflops_limit", result.metrics)
     self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
     self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
@@ -128,8 +132,9 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
-            "bandwidth_per_device_gb_s": 18.25,
-            "p50_ms": 14.0274,
+            "wall_clock_bandwidth_per_device_gb_s": 18.25,
+            "xprof_bandwidth_per_device_gb_s": 18.50,
+            "wall_clock_p50_ms": 14.0274,
             "xprof_p50_ms": 14.0100,
         },
         raw_times_ms=[1.0],
@@ -137,9 +142,10 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     expected_cols = [
         "dtype",
         "data_size_mib",
-        "bandwidth_per_device_gb_s",
-        "p50_ms",
+        "wall_clock_p50_ms",
+        "wall_clock_bandwidth_per_device_gb_s",
         "xprof_p50_ms",
+        "xprof_bandwidth_per_device_gb_s",
     ]
     schema_cols = [
         col for col, _ in host_device.HostToDeviceBenchmark.REPORT_SCHEMA
@@ -158,6 +164,7 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     self.assertIn("float32", table)
     self.assertIn("256", table)
     self.assertIn("18.25", table)
+    self.assertIn("18.50", table)
     self.assertIn("14.0274", table)
     self.assertIn("14.0100", table)
 
@@ -237,29 +244,33 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     times_ms = [10.0, 10.0]
     self._setup_benchmark()
     metrics = self.bm.calculate_metrics(times_ms)
-    self.assertAlmostEqual(metrics["avg_ms"], 10.0)
-    self.assertIn("bandwidth_per_device_gb_s", metrics)
-    self.assertAlmostEqual(metrics["bandwidth_per_device_gb_s"], 0.4194304)
-    self.assertNotIn("bandwidth_per_chip_gb_s", metrics)
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", metrics)
+    self.assertAlmostEqual(
+        metrics["wall_clock_bandwidth_per_device_gb_s"], 0.4194304
+    )
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", metrics)
     self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
 
   def test_derive_chip_metrics_no_chip_bandwidth(self):
-    """Verify derive_chip_metrics does not derive bandwidth_per_chip_gb_s."""
+    """Verify derive_chip_metrics does not derive wall_clock_bandwidth_per_chip_gb_s."""
     self._setup_benchmark()
-    metrics = {"bandwidth_per_device_gb_s": 10.0}
+    metrics = {"wall_clock_bandwidth_per_device_gb_s": 10.0}
     derived = self.bm.derive_chip_metrics(metrics)
-    self.assertIn("bandwidth_per_device_gb_s", derived)
-    self.assertNotIn("bandwidth_per_chip_gb_s", derived)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", derived)
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", derived)
 
   def test_run_e2e(self):
-    """Verify run() produces valid bandwidth_per_device_gb_s without per_chip bandwidth."""
+    """Verify run() produces valid wall_clock_bandwidth_per_device_gb_s without per_chip bandwidth."""
     self._setup_benchmark(num_runs=2, warmup_tries=1)
     result = self.bm.run()
-    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
-    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
-    self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
-    self.assertIn("avg_ms", result.metrics)
-    self.assertGreater(result.metrics["avg_ms"], 0.0)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertGreater(
+        result.metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0
+    )
+    self.assertIn("wall_clock_avg_ms", result.metrics)
+    self.assertGreater(result.metrics["wall_clock_avg_ms"], 0.0)
     self.assertNotIn("roofline_tflops_limit", result.metrics)
     self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
     self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
@@ -278,8 +289,9 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
-            "bandwidth_per_device_gb_s": 24.50,
-            "p50_ms": 20.9000,
+            "wall_clock_bandwidth_per_device_gb_s": 24.50,
+            "xprof_bandwidth_per_device_gb_s": 24.80,
+            "wall_clock_p50_ms": 20.9000,
             "xprof_p50_ms": 20.8900,
         },
         raw_times_ms=[1.0],
@@ -287,9 +299,10 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     expected_cols = [
         "dtype",
         "data_size_mib",
-        "bandwidth_per_device_gb_s",
-        "p50_ms",
+        "wall_clock_p50_ms",
+        "wall_clock_bandwidth_per_device_gb_s",
         "xprof_p50_ms",
+        "xprof_bandwidth_per_device_gb_s",
     ]
     schema_cols = [
         col for col, _ in host_device.DeviceToHostBenchmark.REPORT_SCHEMA
@@ -308,6 +321,7 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     self.assertIn("float32", table)
     self.assertIn("512", table)
     self.assertIn("24.50", table)
+    self.assertIn("24.80", table)
     self.assertIn("20.9000", table)
     self.assertIn("20.8900", table)
 

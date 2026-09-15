@@ -304,10 +304,10 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     # total_bytes / avg_latency_s / 1e9
     expected_bw_gb_s = (expected_bytes / 0.01) / 1e9
 
-    self.assertAlmostEqual(metrics["avg_ms"], 10.0)
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
     self.assertEqual(metrics["op_type"], op_type)
     self.assertAlmostEqual(
-        metrics["bandwidth_per_device_gb_s"], expected_bw_gb_s
+        metrics["wall_clock_bandwidth_per_device_gb_s"], expected_bw_gb_s
     )
     self.assertAlmostEqual(
         metrics["total_bytes_mib"], expected_bytes / (1024 * 1024)
@@ -332,9 +332,11 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         ),
         metrics={
             "total_bytes_mib": 256.00,
-            "p50_ms": 0.07112,
-            "bandwidth_per_device_gb_s": 3769.107,
-            "bandwidth_per_chip_gb_s": 7538.214,
+            "wall_clock_p50_ms": 0.07112,
+            "wall_clock_bandwidth_per_device_gb_s": 3769.107,
+            "wall_clock_bandwidth_per_chip_gb_s": 7538.214,
+            "xprof_bandwidth_per_device_gb_s": 3800.000,
+            "xprof_bandwidth_per_chip_gb_s": 7600.000,
             "xprof_p50_ms": 0.06543,
         },
         raw_times_ms=[1.0],
@@ -345,10 +347,10 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         "device_id",
         "size",
         "total_bytes_mib",
-        "bandwidth_per_device_gb_s",
-        "bandwidth_per_chip_gb_s",
-        "p50_ms",
+        "wall_clock_p50_ms",
+        "wall_clock_bandwidth_per_chip_gb_s",
         "xprof_p50_ms",
+        "xprof_bandwidth_per_chip_gb_s",
     ]
     schema_cols = [col for col, _ in hbm.HBMBandwidthBenchmark.REPORT_SCHEMA]
     self.assertEqual(schema_cols, expected_cols)
@@ -367,8 +369,8 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self.assertIn("63", table)
     self.assertIn("134217728", table)
     self.assertIn("256.00", table)
-    self.assertIn("3769.11", table)
     self.assertIn("7538.21", table)
+    self.assertIn("7600.00", table)
     self.assertIn("0.0711", table)
     self.assertIn("0.0654", table)
 
@@ -378,12 +380,14 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     result = self.bm.run()
     self.assertIn("peak_hbm_bw_gb_s", result.metrics)
     self.assertEqual(result.metrics["peak_hbm_bw_gb_s"], 3690.0)
-    self.assertIn("memory_roofline_efficiency_pct", result.metrics)
+    self.assertIn("wall_clock_memory_roofline_efficiency_pct", result.metrics)
     self.assertLessEqual(
-        result.metrics["memory_roofline_efficiency_pct"], 100.0
+        result.metrics["wall_clock_memory_roofline_efficiency_pct"], 100.0
     )
     self.assertNotIn("roofline_tflops_limit", result.metrics)
-    self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
+    self.assertNotIn(
+        "wall_clock_compute_roofline_efficiency_pct", result.metrics
+    )
 
   def test_schema_coverage(self):
     """Verify REPORT_SCHEMA matches output keys and covers all metrics."""

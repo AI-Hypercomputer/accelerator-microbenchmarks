@@ -116,7 +116,7 @@ class DummyDualFormatterBenchmark(base.BaseBenchmark):
       ("dtype", report.format_str),
       ("src_device_index", report.format_str),
       ("dst_device_index", report.format_str),
-      ("bandwidth_per_device_gb_s", report.format_2f),
+      ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
   )
   REPORT_FORMATTERS = (
       report.format_standard_table,
@@ -157,6 +157,7 @@ class ReportTest(absltest.TestCase):
         ("param_col", report.format_str),
         ("metric_val", report.format_2f),
         ("missing_col", report.format_str),
+        ("xprof_p50_ms", report.format_4f),
     ]
     df = pd.DataFrame([{"param_col": "hello", "metric_val": 12.3456}])
     table = report.format_benchmark_table(df, schema=schema, title="custom")
@@ -164,6 +165,7 @@ class ReportTest(absltest.TestCase):
     self.assertIn("param_col", table)
     self.assertIn("metric_val", table)
     self.assertIn("missing_col", table)
+    self.assertNotIn("xprof_p50_ms", table)  # skipped when absent
     self.assertIn("hello", table)
     self.assertIn("12.35", table)
     self.assertIn("-", table)  # missing column formatted as '-'
@@ -176,7 +178,7 @@ class ReportTest(absltest.TestCase):
     res = _make_result(
         "DummyBenchmark",
         params={"m": 1024, "n": 2048},
-        metrics={"avg_ms": 1.23, "tflops_per_device": 500.0},
+        metrics={"wall_clock_avg_ms": 1.23, "wall_clock_tflops_per_device": 500.0},
         metadata=_make_metadata(
             "DummyBenchmark",
             params={"m": 1024, "n": 2048},
@@ -193,18 +195,20 @@ class ReportTest(absltest.TestCase):
     self.assertEqual(df["tpu_type"].iloc[0], system.TpuVersion.TPU7X.value)
     self.assertEqual(df["xla_flags"].iloc[0], "--xla_test_flag=1")
     self.assertEqual(df["libtpu_init_args"].iloc[0], "--tpu_arg=2")
-    self.assertEqual(df["KET_ms"].iloc[0], 1.23)
+    self.assertNotIn("KET_ms", df.columns)
     self.assertNotIn("throughput", df.columns)
     self.assertEqual(df["start"].iloc[0], "2026-08-18T10:00:00")
 
     # Robust handling of empty/missing metadata
-    res_empty = _make_result(name="", params={}, metrics={"avg_ms": 1.0})
+    res_empty = _make_result(
+        name="", params={}, metrics={"wall_clock_avg_ms": 1.0}
+    )
     df_none = report.results_to_dataframe([res_empty])
     self.assertLen(df_none, 1)
     self.assertEqual(df_none["benchmark"].iloc[0], "")
     self.assertEqual(df_none["xla_flags"].iloc[0], "")
     self.assertEqual(df_none["libtpu_init_args"].iloc[0], "")
-    self.assertEqual(df_none["KET_ms"].iloc[0], 1.0)
+    self.assertNotIn("KET_ms", df_none.columns)
     self.assertNotIn("throughput", df_none.columns)
 
   def test_value_formatters(self):
@@ -307,9 +311,10 @@ class ReportTest(absltest.TestCase):
     self.assertEqual(report.format_device_matrix(pd.DataFrame()), "")
     self.assertEqual(
         report.format_device_matrix(
-            pd.DataFrame(
-                [{"src_device_index": 0, "bandwidth_per_device_gb_s": 100.0}]
-            )
+            pd.DataFrame([{
+                "src_device_index": 0,
+                "wall_clock_bandwidth_per_device_gb_s": 100.0,
+            }])
         ),
         "",
     )
@@ -319,24 +324,26 @@ class ReportTest(absltest.TestCase):
         {
             "src_device_index": 0,
             "dst_device_index": 1,
-            "bandwidth_per_device_gb_s": 50.0,
+            "wall_clock_bandwidth_per_device_gb_s": 50.0,
         },
         {
             "src_device_index": 1,
             "dst_device_index": 0,
-            "bandwidth_per_device_gb_s": 55.0,
+            "wall_clock_bandwidth_per_device_gb_s": 55.0,
         },
         {
             "src_device_index": 2,
             "dst_device_index": 0,
-            "bandwidth_per_device_gb_s": 60.0,
+            "wall_clock_bandwidth_per_device_gb_s": 60.0,
         },
     ]
     single_matrix = report.format_device_matrix(
         pd.DataFrame(single_sweep_data),
         bench_cls=DummyDualFormatterBenchmark,
     )
-    self.assertIn("Device-to-Device Bandwidth Matrix (GB/s)", single_matrix)
+    self.assertIn(
+        "Device-to-Device Bandwidth Matrix (Wall Clock GB/s)", single_matrix
+    )
     self.assertIn("D0", single_matrix)
     self.assertIn("D1", single_matrix)
     self.assertIn("D2", single_matrix)
@@ -381,7 +388,7 @@ class ReportTest(absltest.TestCase):
             "data_size_mib": 1024,
             "src_device_index": 0,
             "dst_device_index": 1,
-            "bandwidth_per_device_gb_s": 80.0,
+            "wall_clock_bandwidth_per_device_gb_s": 80.0,
         },
         {
             "dtype": "bfloat16",
@@ -389,7 +396,7 @@ class ReportTest(absltest.TestCase):
             "data_size_mib": 1024,
             "src_device_index": 1,
             "dst_device_index": 0,
-            "bandwidth_per_device_gb_s": 85.0,
+            "wall_clock_bandwidth_per_device_gb_s": 85.0,
         },
         {
             "dtype": "float32",
@@ -397,7 +404,7 @@ class ReportTest(absltest.TestCase):
             "data_size_mib": 2048,
             "src_device_index": 0,
             "dst_device_index": 1,
-            "bandwidth_per_device_gb_s": 160.0,
+            "wall_clock_bandwidth_per_device_gb_s": 160.0,
         },
         {
             "dtype": "float32",
@@ -405,18 +412,18 @@ class ReportTest(absltest.TestCase):
             "data_size_mib": 2048,
             "src_device_index": 1,
             "dst_device_index": 0,
-            "bandwidth_per_device_gb_s": 165.0,
+            "wall_clock_bandwidth_per_device_gb_s": 165.0,
         },
     ]
     multi_matrix = report.format_device_matrix(pd.DataFrame(multi_sweep_data))
     self.assertIn(
-        "Device-to-Device Bandwidth Matrix (GB/s) [dtype=bfloat16,"
+        "Device-to-Device Bandwidth Matrix (Wall Clock GB/s) [dtype=bfloat16,"
         " direction=uni, data_size_mib=1024]",
         multi_matrix,
     )
     self.assertIn(
-        "Device-to-Device Bandwidth Matrix (GB/s) [dtype=float32, direction=bi,"
-        " data_size_mib=2048]",
+        "Device-to-Device Bandwidth Matrix (Wall Clock GB/s) [dtype=float32,"
+        " direction=bi, data_size_mib=2048]",
         multi_matrix,
     )
     self.assertIn("80.00", multi_matrix)
@@ -432,7 +439,7 @@ class ReportTest(absltest.TestCase):
             "data_size_mib": 1024,
             "src_device_index": 0,
             "dst_device_index": 1,
-            "bandwidth_per_device_gb_s": 75.0,
+            "wall_clock_bandwidth_per_device_gb_s": 75.0,
         },
         {
             "dtype": None,
@@ -440,14 +447,14 @@ class ReportTest(absltest.TestCase):
             "data_size_mib": 1024,
             "src_device_index": 1,
             "dst_device_index": 0,
-            "bandwidth_per_device_gb_s": 80.0,
+            "wall_clock_bandwidth_per_device_gb_s": 80.0,
         },
     ]
     matrix = report.format_device_matrix(pd.DataFrame(nan_sweep_data))
     self.assertTrue(matrix)
     self.assertIn(
-        "Device-to-Device Bandwidth Matrix (GB/s) [dtype=nan, direction=uni,"
-        " data_size_mib=1024]",
+        "Device-to-Device Bandwidth Matrix (Wall Clock GB/s) [dtype=nan,"
+        " direction=uni, data_size_mib=1024]",
         matrix,
     )
     self.assertIn("D0", matrix)
@@ -527,7 +534,7 @@ class ReportTest(absltest.TestCase):
             "src_device_index": 0,
             "dst_device_index": 1,
         },
-        metrics={"bandwidth_per_device_gb_s": 90.0},
+        metrics={"wall_clock_bandwidth_per_device_gb_s": 90.0},
     )
     res2 = _make_result(
         "DummyDualFormatterBenchmark",
@@ -536,7 +543,7 @@ class ReportTest(absltest.TestCase):
             "src_device_index": 1,
             "dst_device_index": 0,
         },
-        metrics={"bandwidth_per_device_gb_s": 95.0},
+        metrics={"wall_clock_bandwidth_per_device_gb_s": 95.0},
     )
     df = report.results_to_dataframe([res1, res2])
     rep = report.generate_benchmark_report(df)
@@ -547,7 +554,9 @@ class ReportTest(absltest.TestCase):
     self.assertIn("95.00", rep)
 
     # Should also contain device matrix
-    self.assertIn("Device-to-Device Bandwidth Matrix (GB/s)", rep)
+    self.assertIn(
+        "Device-to-Device Bandwidth Matrix (Wall Clock GB/s)", rep
+    )
     self.assertIn("D0", rep)
     self.assertIn("D1", rep)
     self.assertIn(report.DEFAULT_DIAGONAL_MARKER, rep)
@@ -587,8 +596,8 @@ class ReportTest(absltest.TestCase):
         params={"param_col": "val1"},
         metrics={
             "metric_val": 123.45,
-            "avg_ms": 5.0,
-            "tflops_per_device": 200.0,
+            "wall_clock_avg_ms": 5.0,
+            "wall_clock_tflops_per_device": 200.0,
         },
         metadata=_make_metadata(
             "DummyBenchmark",
@@ -608,9 +617,9 @@ class ReportTest(absltest.TestCase):
       df = pd.read_csv(csv_path)
       self.assertLen(df, 1)
       self.assertEqual(df["benchmark"].iloc[0], "DummyBenchmark")
-      self.assertEqual(df["avg_ms"].iloc[0], 5.0)
-      self.assertEqual(df["tflops_per_device"].iloc[0], 200.0)
-      self.assertEqual(df["KET_ms"].iloc[0], 5.0)
+      self.assertEqual(df["wall_clock_avg_ms"].iloc[0], 5.0)
+      self.assertEqual(df["wall_clock_tflops_per_device"].iloc[0], 200.0)
+      self.assertNotIn("KET_ms", df.columns)
       self.assertNotIn("throughput", df.columns)
       self.assertEqual(df["start"].iloc[0], "2026-08-18T10:00:00")
       self.assertEqual(df["xla_flags"].iloc[0], "--xla_test_flag=1")
@@ -623,8 +632,10 @@ class ReportTest(absltest.TestCase):
       self.assertEqual(data[0]["metadata"]["xla_flags"], "--xla_test_flag=1")
       self.assertEqual(data[0]["metadata"]["libtpu_init_args"], "--tpu_arg=2")
       self.assertEqual(data[0]["metrics"]["metric_val"], 123.45)
-      self.assertEqual(data[0]["metrics"]["avg_ms"], 5.0)
-      self.assertEqual(data[0]["metrics"]["tflops_per_device"], 200.0)
+      self.assertEqual(data[0]["metrics"]["wall_clock_avg_ms"], 5.0)
+      self.assertEqual(
+          data[0]["metrics"]["wall_clock_tflops_per_device"], 200.0
+      )
 
   def test_save_output_custom_json_serialization(self):
     """Tests that save_output serializes non-primitive metric objects cleanly to strings in detailed.json."""
@@ -652,8 +663,8 @@ class ReportTest(absltest.TestCase):
         params={"param1": "val1"},
     )
     metrics = {
-        "avg_ms": 10.0,
-        "bandwidth_per_device_gb_s": 100.0,
+        "wall_clock_avg_ms": 10.0,
+        "wall_clock_bandwidth_per_device_gb_s": 100.0,
     }
     result = _make_result(metadata=metadata, metrics=metrics)
 
@@ -667,20 +678,22 @@ class ReportTest(absltest.TestCase):
 
       df = pd.read_csv(csv_path)
       self.assertNotIn("Unnamed: 0", df.columns)
-      self.assertEqual(df["bandwidth_per_device_gb_s"].iloc[0], 100.0)
-      self.assertEqual(df["KET_ms"].iloc[0], 10.0)
+      self.assertEqual(
+          df["wall_clock_bandwidth_per_device_gb_s"].iloc[0], 100.0
+      )
+      self.assertNotIn("KET_ms", df.columns)
       self.assertEqual(df["benchmark"].iloc[0], "DummyBenchmark")
       self.assertNotIn("throughput", df.columns)
 
   def test_save_output_tflops(self):
-    """Tests that tflops_per_device is preserved when saving output."""
+    """Tests that wall_clock_tflops_per_device is preserved when saving output."""
     metadata = _make_metadata(
         name="DummyGemm",
         params={"param1": "val1"},
     )
     metrics = {
-        "avg_ms": 10.0,
-        "tflops_per_device": 250.0,
+        "wall_clock_avg_ms": 10.0,
+        "wall_clock_tflops_per_device": 250.0,
     }
     result = _make_result(metadata=metadata, metrics=metrics)
 
@@ -691,7 +704,7 @@ class ReportTest(absltest.TestCase):
       self.assertTrue(os.path.exists(csv_path))
 
       df = pd.read_csv(csv_path)
-      self.assertEqual(df["tflops_per_device"].iloc[0], 250.0)
+      self.assertEqual(df["wall_clock_tflops_per_device"].iloc[0], 250.0)
       self.assertNotIn("throughput", df.columns)
 
   def test_report_results(self):
@@ -743,12 +756,18 @@ class ReportTest(absltest.TestCase):
     h2d_res = _make_result(
         "HostToDeviceBenchmark",
         params={"dtype": "float32", "data_size_mib": 64},
-        metrics={"avg_ms": 5.0, "bandwidth_per_device_gb_s": 12.8},
+        metrics={
+            "wall_clock_avg_ms": 5.0,
+            "wall_clock_bandwidth_per_device_gb_s": 12.8,
+        },
     )
     d2h_res = _make_result(
         "DeviceToHostBenchmark",
         params={"dtype": "float32", "data_size_mib": 64},
-        metrics={"avg_ms": 4.0, "bandwidth_per_device_gb_s": 16.0},
+        metrics={
+            "wall_clock_avg_ms": 4.0,
+            "wall_clock_bandwidth_per_device_gb_s": 16.0,
+        },
     )
     d2d_res = _make_result(
         "DeviceToDeviceBenchmark",
@@ -759,29 +778,67 @@ class ReportTest(absltest.TestCase):
             "dst_device_index": 1,
             "data_size_mib": 128,
         },
-        metrics={"avg_ms": 2.0, "bandwidth_per_device_gb_s": 64.0},
+        metrics={
+            "wall_clock_avg_ms": 2.0,
+            "wall_clock_bandwidth_per_device_gb_s": 64.0,
+        },
     )
 
     for res in (h2d_res, d2h_res, d2d_res):
-      self.assertIn("bandwidth_per_device_gb_s", res.metrics)
-      self.assertNotIn("bandwidth_per_chip_gb_s", res.metrics)
+      self.assertIn("wall_clock_bandwidth_per_device_gb_s", res.metrics)
+      self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", res.metrics)
 
     df = report.results_to_dataframe([h2d_res, d2h_res, d2d_res])
     self.assertLen(df, 3)
 
     self.assertNotIn("throughput", df.columns)
-    self.assertEqual(df["bandwidth_per_device_gb_s"].iloc[0], 12.8)
-    self.assertEqual(df["bandwidth_per_device_gb_s"].iloc[1], 16.0)
-    self.assertEqual(df["bandwidth_per_device_gb_s"].iloc[2], 64.0)
+    self.assertEqual(df["wall_clock_bandwidth_per_device_gb_s"].iloc[0], 12.8)
+    self.assertEqual(df["wall_clock_bandwidth_per_device_gb_s"].iloc[1], 16.0)
+    self.assertEqual(df["wall_clock_bandwidth_per_device_gb_s"].iloc[2], 64.0)
 
-    # Format table for H2D and verify bandwidth_per_device_gb_s column appears
+    # Format table for H2D and verify wall_clock_bandwidth_per_device_gb_s column appears
     table_h2d = report.format_benchmark_table(
         df[df["benchmark"] == "HostToDeviceBenchmark"],
-        schema=[("bandwidth_per_device_gb_s", report.format_2f)],
+        schema=[("wall_clock_bandwidth_per_device_gb_s", report.format_2f)],
         title="HostToDeviceBenchmark",
     )
     self.assertIn("12.80", table_h2d)
-    self.assertIn("bandwidth_per_device_gb_s", table_h2d)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", table_h2d)
+
+  def test_format_benchmark_table_empty_active_schema(self):
+    """Tests format_benchmark_table returns empty string when active_schema is empty."""
+    df = pd.DataFrame([{"param_col": "hello"}])
+    schema = [("xprof_p50_ms", report.format_4f)]
+    self.assertEqual(report.format_benchmark_table(df, schema=schema), "")
+
+  def test_format_device_matrix_xprof_and_empty_devices(self):
+    """Tests format_device_matrix with XProf column and empty device sets."""
+    df_xprof = pd.DataFrame([
+        {
+            "src_device_index": 0,
+            "dst_device_index": 1,
+            "wall_clock_bandwidth_per_device_gb_s": 50.0,
+            "xprof_bandwidth_per_device_gb_s": 99.5,
+        },
+        {
+            "src_device_index": 1,
+            "dst_device_index": 0,
+            "wall_clock_bandwidth_per_device_gb_s": 55.0,
+            "xprof_bandwidth_per_device_gb_s": 98.0,
+        },
+    ])
+    matrix = report.format_device_matrix(df_xprof)
+    self.assertIn("Device-to-Device Bandwidth Matrix (XProf GB/s)", matrix)
+    self.assertIn("99.50", matrix)
+
+    df_empty_devs = pd.DataFrame([
+        {
+            "src_device_index": None,
+            "dst_device_index": None,
+            "wall_clock_bandwidth_per_device_gb_s": 50.0,
+        }
+    ])
+    self.assertEqual(report.format_device_matrix(df_empty_devs), "")
 
 
 if __name__ == "__main__":

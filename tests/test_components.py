@@ -2,6 +2,7 @@
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import components
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import system
 import jax
@@ -124,11 +125,23 @@ class ComponentsBenchmarkTest(absltest.TestCase):
     times_ms = [10.0, 10.0, 10.0]
     metrics = self.bm.calculate_metrics(times_ms)
 
-    self.assertAlmostEqual(metrics["avg_ms"], 10.0)
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
     self.assertAlmostEqual(metrics["intensity"], 61.44)
     self.assertAlmostEqual(
-        metrics["tflops_per_device"], 0.0100663296
+        metrics["wall_clock_tflops_per_device"], 0.0100663296
     )
+
+  def test_zero_latency_throughput_metrics(self):
+    """Verify zero-latency guard returns inf tflops in calculate_throughput_metrics."""
+    params = {"model_dim": 256, "mslen": 64}
+    config = components.TransformerLayerParams(**params)
+    bm = components.TransformerLayerMoE(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
+    metrics = bm.calculate_throughput_metrics(
+        0.0, constants.TimingDomain.WALL_CLOCK
+    )
+    self.assertEqual(metrics["wall_clock_tflops_per_device"], float("inf"))
 
 
 if __name__ == "__main__":

@@ -32,9 +32,10 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("data_size_mib", report.format_str),
-      ("bandwidth_per_device_gb_s", report.format_2f),
-      ("p50_ms", report.format_4f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
+      ("xprof_bandwidth_per_device_gb_s", report.format_2f),
   )
 
   @property
@@ -74,17 +75,24 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
     # 100% memory-bound operation
     return 0.0
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
+  def get_workload_metadata(self) -> dict[str, Any]:
+    return {
+        "total_bytes_mib": float(self.config.data_size_mib),
+        "intensity": self.get_arithmetic_intensity(),
+    }
+
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
     total_bytes = self.get_total_bytes()
-    avg_latency_s = metrics["avg_ms"] / 1000.0
-    if avg_latency_s == 0:
+    latency_s = latency_ms / 1000.0
+    if latency_s == 0:
       bandwidth_gb_s = float("inf")
     else:
-      bandwidth_gb_s = total_bytes / (avg_latency_s * 1e9)
-    metrics["bandwidth_per_device_gb_s"] = bandwidth_gb_s
-    metrics["total_bytes_mib"] = float(self.config.data_size_mib)
-    return metrics
+      bandwidth_gb_s = total_bytes / (latency_s * 1e9)
+    return {
+        f"{prefix}_bandwidth_per_device_gb_s": bandwidth_gb_s,
+    }
 
 
 @registry.benchmark_registry.register("device_to_host")
@@ -96,9 +104,10 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("data_size_mib", report.format_str),
-      ("bandwidth_per_device_gb_s", report.format_2f),
-      ("p50_ms", report.format_4f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
+      ("xprof_bandwidth_per_device_gb_s", report.format_2f),
   )
 
   host_data: np.ndarray
@@ -135,14 +144,21 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
     # 100% memory-bound operation
     return 0.0
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
+  def get_workload_metadata(self) -> dict[str, Any]:
+    return {
+        "total_bytes_mib": float(self.config.data_size_mib),
+        "intensity": self.get_arithmetic_intensity(),
+    }
+
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
     total_bytes = self.get_total_bytes()
-    avg_latency_s = metrics["avg_ms"] / 1000.0
-    if avg_latency_s == 0:
+    latency_s = latency_ms / 1000.0
+    if latency_s == 0:
       bandwidth_gb_s = float("inf")
     else:
-      bandwidth_gb_s = total_bytes / (avg_latency_s * 1e9)
-    metrics["bandwidth_per_device_gb_s"] = bandwidth_gb_s
-    metrics["total_bytes_mib"] = float(self.config.data_size_mib)
-    return metrics
+      bandwidth_gb_s = total_bytes / (latency_s * 1e9)
+    return {
+        f"{prefix}_bandwidth_per_device_gb_s": bandwidth_gb_s,
+    }

@@ -62,13 +62,11 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
     self.bm.setup()
     result = self.bm.run()
 
-    # Use xprof_avg_ms for precise device-level timing if available
-    xprof_avg_ms = result.metrics.get("xprof_avg_ms", None)
-    if xprof_avg_ms is not None:
-      total_bytes = self.bm.get_total_bytes()
-      bw_gb_s = (total_bytes / (xprof_avg_ms / 1000.0)) / 1e9
-    else:
-      bw_gb_s = result.metrics.get("bandwidth_per_device_gb_s", 0)
+    # Use xprof_bandwidth_per_device_gb_s for precise device-level timing if available
+    bw_gb_s = result.metrics.get(
+        "xprof_bandwidth_per_device_gb_s",
+        result.metrics.get("wall_clock_bandwidth_per_device_gb_s", 0),
+    )
 
     peak_bw = self._get_peak_bandwidth_per_core()
     utilization = bw_gb_s / peak_bw
@@ -125,8 +123,10 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
       self.assertIn(target_device, inp.devices())
 
     result = self.bm.run()
-    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
-    self.assertIn("bandwidth_per_chip_gb_s", result.metrics)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertIn("xprof_bandwidth_per_device_gb_s", result.metrics)
+    self.assertIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
     self.assertEqual(result.metadata.params.get("device_id"), target_dev_id)
 
     # 3. Verify target device execution through XProf trace analysis channel

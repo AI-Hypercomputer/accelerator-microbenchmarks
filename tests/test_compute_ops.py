@@ -71,6 +71,9 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
     self.assertAlmostEqual(
         self.bm.get_arithmetic_intensity(), expected_intensity
     )
+    metrics = self.bm.calculate_metrics([10.0])
+    self.assertAlmostEqual(metrics["intensity"], expected_intensity)
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
 
 
 class RMSNormBenchmarkTest(absltest.TestCase):
@@ -121,6 +124,8 @@ class RMSNormBenchmarkTest(absltest.TestCase):
     # 8192 + 256 + 8192 = 16640
     expected_bytes = 16640.0
     self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
+    metrics = self.bm.calculate_metrics([10.0])
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
 
 
 class RoPEBenchmarkTest(absltest.TestCase):
@@ -171,6 +176,8 @@ class RoPEBenchmarkTest(absltest.TestCase):
     # 8 * 16 * 64 * 32 * 8 * 2 = 4194304
     expected_bytes = 4194304.0
     self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
+    metrics = self.bm.calculate_metrics([10.0])
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
 
 
 class QuantizationBenchmarkTest(absltest.TestCase):
@@ -221,6 +228,8 @@ class QuantizationBenchmarkTest(absltest.TestCase):
     # 16384 + 8192 + 256 = 24832
     expected_bytes = 24832.0
     self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
+    metrics = self.bm.calculate_metrics([10.0])
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
 
 
 class AddBenchmarkTest(absltest.TestCase):
@@ -271,6 +280,8 @@ class AddBenchmarkTest(absltest.TestCase):
     # 1024 * 2 * 3 = 6144
     expected_bytes = 6144.0
     self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
+    metrics = self.bm.calculate_metrics([10.0])
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
 
 
 if __name__ == "__main__":

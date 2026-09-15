@@ -81,9 +81,10 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
       ("src_device_index", report.format_str),
       ("dst_device_index", report.format_str),
       ("data_size_mib", report.format_str),
-      ("bandwidth_per_device_gb_s", report.format_2f),
-      ("p50_ms", report.format_4f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
+      ("xprof_bandwidth_per_device_gb_s", report.format_2f),
   )
   REPORT_FORMATTERS = (
       report.format_standard_table,
@@ -204,19 +205,27 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
   def get_arithmetic_intensity(self) -> float:
     return 0.0
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
+  def get_workload_metadata(self) -> dict[str, Any]:
     total_bytes = self.get_total_bytes()
-    avg_latency_s = metrics["avg_ms"] / 1000.0
+    return {
+        "total_bytes_mib": total_bytes / (1024 * 1024),
+        "src_device_index": self.config.src_device_index,
+        "dst_device_index": self.config.dst_device_index,
+        "direction": self.config.direction,
+        "intensity": self.get_arithmetic_intensity(),
+    }
 
-    if avg_latency_s == 0:
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    total_bytes = self.get_total_bytes()
+    latency_s = latency_ms / 1000.0
+
+    if latency_s == 0:
       bandwidth_gb_s = float("inf")
     else:
-      bandwidth_gb_s = total_bytes / (avg_latency_s * 1e9)
+      bandwidth_gb_s = total_bytes / (latency_s * 1e9)
 
-    metrics["bandwidth_per_device_gb_s"] = bandwidth_gb_s
-    metrics["total_bytes_mib"] = total_bytes / (1024 * 1024)
-    metrics["src_device_index"] = self.config.src_device_index
-    metrics["dst_device_index"] = self.config.dst_device_index
-    metrics["direction"] = self.config.direction
-    return metrics
+    return {
+        f"{prefix}_bandwidth_per_device_gb_s": bandwidth_gb_s,
+    }

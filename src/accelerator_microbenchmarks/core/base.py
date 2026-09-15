@@ -169,13 +169,38 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     pass
 
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    """Derive performance metrics from raw timing data."""
+    """Derive static workload metadata, host wall-clock latency statistics, and domain throughput metrics."""
+    metrics = self.get_workload_metadata()
+    latency_stats = self.calculate_latency_stats(
+        times_ms, prefix=constants.TimingDomain.WALL_CLOCK
+    )
+    metrics.update(latency_stats)
+    metrics.update(
+        self.calculate_throughput_metrics(
+            latency_ms=latency_stats[
+                f"{constants.TimingDomain.WALL_CLOCK}_p50_ms"
+            ],
+            prefix=constants.TimingDomain.WALL_CLOCK,
+        )
+    )
+    return metrics
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    """Return static, timing-invariant workload metadata (e.g., total_flops, intensity)."""
+    return {
+        "intensity": self.get_arithmetic_intensity(),
+    }
+
+  def calculate_latency_stats(
+      self, times_ms: list[float], prefix: constants.TimingDomain
+  ) -> dict[str, float]:
+    """Derive statistical latency metrics (avg, p50, p90, std) from raw timing data."""
     if not times_ms:
       return {
-          "avg_ms": 0.0,
-          "p50_ms": 0.0,
-          "p90_ms": 0.0,
-          "std_ms": 0.0,
+          f"{prefix}_avg_ms": 0.0,
+          f"{prefix}_p50_ms": 0.0,
+          f"{prefix}_p90_ms": 0.0,
+          f"{prefix}_std_ms": 0.0,
       }
 
     # Filter outliers using Interquartile Range (IQR) if we have enough data
@@ -195,11 +220,17 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       filtered_times = times_ms
 
     return {
-        "p50_ms": float(np.percentile(filtered_times, 50)),
-        "p90_ms": float(np.percentile(filtered_times, 90)),
-        "avg_ms": float(np.mean(filtered_times)),
-        "std_ms": float(np.std(filtered_times)),
+        f"{prefix}_p50_ms": float(np.percentile(filtered_times, 50)),
+        f"{prefix}_p90_ms": float(np.percentile(filtered_times, 90)),
+        f"{prefix}_avg_ms": float(np.mean(filtered_times)),
+        f"{prefix}_std_ms": float(np.std(filtered_times)),
     }
+
+  @abc.abstractmethod
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    """Calculate domain-prefixed throughput metrics from a representative latency (ms)."""
 
   def match_xprof_op_fallback(self, event: dict[str, Any]) -> bool:
     """Fallback to capture relevant xprof op when MARKER is not present."""
@@ -292,7 +323,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
     # 1. Parse local XProf trace on relevant hosts
     should_parse = not self.requires_multihost_sync or is_owner
-    local_avg, local_p50, local_p90 = 0.0, 0.0, 0.0
+    local_avg, local_p50, local_p90, local_std = 0.0, 0.0, 0.0, 0.0
 
     if should_parse:
       try:
@@ -311,9 +342,13 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
               f"Using XProf device timings ({len(durations)} runs)"
               " to calculate derived performance metrics."
           )
-          local_avg = float(np.mean(durations))
-          local_p50 = float(np.percentile(durations, 50))
-          local_p90 = float(np.percentile(durations, 90))
+          xprof_stats = self.calculate_latency_stats(
+              durations, prefix=constants.TimingDomain.XPROF
+          )
+          local_avg = xprof_stats[f"{constants.TimingDomain.XPROF}_avg_ms"]
+          local_p50 = xprof_stats[f"{constants.TimingDomain.XPROF}_p50_ms"]
+          local_p90 = xprof_stats[f"{constants.TimingDomain.XPROF}_p90_ms"]
+          local_std = xprof_stats[f"{constants.TimingDomain.XPROF}_std_ms"]
         else:
           print("Warning: No XProf device timings found locally.")
       except Exception as e:  # pylint: disable=broad-exception-caught
@@ -326,71 +361,98 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       )
 
     # 2. Optionally broadcast stats across hosts for asymmetric targets (D2D)
-    synced_avg, synced_p50, synced_p90 = local_avg, local_p50, local_p90
+    synced_avg, synced_p50, synced_p90, synced_std = (
+        local_avg,
+        local_p50,
+        local_p90,
+        local_std,
+    )
     if self.requires_multihost_sync:
       try:
-        stats = jnp.array([local_avg, local_p50, local_p90], dtype=jnp.float32)
+        stats = jnp.array(
+            [local_avg, local_p50, local_p90, local_std], dtype=jnp.float32
+        )
         synced_stats = multihost_utils.broadcast_one_to_all(
             stats, is_source=is_owner
         )
         synced_avg = float(synced_stats[0])
         synced_p50 = float(synced_stats[1])
         synced_p90 = float(synced_stats[2])
+        synced_std = float(synced_stats[3])
       except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"Warning: multihost broadcast failed ({e}); using local values.")
 
     # 3. Apply XProf timings or fallback to None for unmeasured durations
-    if synced_avg > 0:
+    if synced_p50 > 0:
       metrics.update({
-          "xprof_avg_ms": synced_avg,
-          "xprof_p50_ms": synced_p50,
-          "xprof_p90_ms": synced_p90,
+          f"{constants.TimingDomain.XPROF}_avg_ms": synced_avg,
+          f"{constants.TimingDomain.XPROF}_p50_ms": synced_p50,
+          f"{constants.TimingDomain.XPROF}_p90_ms": synced_p90,
+          f"{constants.TimingDomain.XPROF}_std_ms": synced_std,
       })
-      ignore_keys = {"avg_ms", "p50_ms", "p90_ms", "std_ms"}
-      derived = self.calculate_metrics([synced_avg])
-      metrics.update({k: v for k, v in derived.items() if k not in ignore_keys})
+      metrics.update(
+          self.calculate_throughput_metrics(
+              latency_ms=synced_p50, prefix=constants.TimingDomain.XPROF
+          )
+      )
     else:
       print(
           "Warning: No valid XProf timings recorded; setting XProf metrics to"
           " None."
       )
       metrics.update({
-          "xprof_avg_ms": None,
-          "xprof_p50_ms": None,
-          "xprof_p90_ms": None,
+          f"{constants.TimingDomain.XPROF}_avg_ms": None,
+          f"{constants.TimingDomain.XPROF}_p50_ms": None,
+          f"{constants.TimingDomain.XPROF}_p90_ms": None,
+          f"{constants.TimingDomain.XPROF}_std_ms": None,
       })
-      for metric_key in (
-          "bandwidth_per_device_gb_s",
-          "bandwidth_per_chip_gb_s",
-          "tflops_per_device",
-          "tflops_per_chip",
+      for wall_clock_key, xprof_key in (
+          (
+              f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_device_gb_s",
+              f"{constants.TimingDomain.XPROF}_bandwidth_per_device_gb_s",
+          ),
+          (
+              f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_chip_gb_s",
+              f"{constants.TimingDomain.XPROF}_bandwidth_per_chip_gb_s",
+          ),
+          (
+              f"{constants.TimingDomain.WALL_CLOCK}_tflops_per_device",
+              f"{constants.TimingDomain.XPROF}_tflops_per_device",
+          ),
+          (
+              f"{constants.TimingDomain.WALL_CLOCK}_tflops_per_chip",
+              f"{constants.TimingDomain.XPROF}_tflops_per_chip",
+          ),
       ):
-        if metric_key in metrics:
-          metrics[metric_key] = None
+        if wall_clock_key in metrics:
+          metrics[xprof_key] = None
     return metrics
 
   def derive_chip_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
-    """Derives per-chip metrics from per-device metrics if present."""
+    """Derives per-chip metrics from per-device metrics for available domains."""
     devices_per_chip = self.hardware_spec.devices_per_chip
-    if (
-        "tflops_per_device" in metrics
-        and "tflops_per_chip" not in metrics
-    ):
-      metrics["tflops_per_chip"] = (
-          metrics["tflops_per_device"] * devices_per_chip
-          if metrics["tflops_per_device"] is not None
-          else None
-      )
-    if (
-        self.derive_chip_bandwidth
-        and "bandwidth_per_device_gb_s" in metrics
-        and "bandwidth_per_chip_gb_s" not in metrics
-    ):
-      metrics["bandwidth_per_chip_gb_s"] = (
-          metrics["bandwidth_per_device_gb_s"] * devices_per_chip
-          if metrics["bandwidth_per_device_gb_s"] is not None
-          else None
-      )
+    for prefix in constants.TimingDomain:
+      tflops_dev_key = f"{prefix}_tflops_per_device"
+      tflops_chip_key = f"{prefix}_tflops_per_chip"
+      if tflops_dev_key in metrics and tflops_chip_key not in metrics:
+        metrics[tflops_chip_key] = (
+            metrics[tflops_dev_key] * devices_per_chip
+            if metrics[tflops_dev_key] is not None
+            else None
+        )
+
+      bw_dev_key = f"{prefix}_bandwidth_per_device_gb_s"
+      bw_chip_key = f"{prefix}_bandwidth_per_chip_gb_s"
+      if (
+          self.derive_chip_bandwidth
+          and bw_dev_key in metrics
+          and bw_chip_key not in metrics
+      ):
+        metrics[bw_chip_key] = (
+            metrics[bw_dev_key] * devices_per_chip
+            if metrics[bw_dev_key] is not None
+            else None
+        )
     return metrics
 
   def run(self) -> BenchmarkResult:

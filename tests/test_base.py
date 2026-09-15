@@ -53,6 +53,12 @@ class DummyBenchmark(base.BaseBenchmark):
   def get_total_bytes(self, **_params):
     return 400.0
 
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ):
+    del latency_ms, prefix
+    return {}
+
 
 class BaseBenchmarkParamsTest(absltest.TestCase):
   """Tests for BaseBenchmarkParams configuration and expansion contract."""
@@ -111,8 +117,8 @@ class BaseBenchmarkTest(absltest.TestCase):
 
     # 100.0 and 0.1 should be filtered out by IQR
     # Left with [10.0, 11.0, 10.5, 9.5, 10.2] -> mean should be ~10.24
-    self.assertGreater(metrics["avg_ms"], 9.0)
-    self.assertLess(metrics["avg_ms"], 12.0)
+    self.assertGreater(metrics["wall_clock_avg_ms"], 9.0)
+    self.assertLess(metrics["wall_clock_avg_ms"], 12.0)
 
   def test_init_without_mesh(self):
     bm = DummyBenchmark()
@@ -137,7 +143,7 @@ class BaseBenchmarkTest(absltest.TestCase):
   def test_calculate_metrics_empty(self):
     bm = DummyBenchmark()
     metrics = bm.calculate_metrics([])
-    self.assertEqual(metrics["avg_ms"], 0.0)
+    self.assertEqual(metrics["wall_clock_avg_ms"], 0.0)
 
   @unittest.mock.patch("jax.experimental.roofline.roofline")
   def test_get_trace_metrics(self, mock_roofline):
@@ -259,8 +265,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     result = bm.run()
 
     # Assert that the base metrics retain the host timings (not 5.0 ms)
-    self.assertNotEqual(result.metrics.get("avg_ms"), 5.0)
-    self.assertNotEqual(result.metrics.get("p50_ms"), 5.0)
+    self.assertNotEqual(result.metrics.get("wall_clock_avg_ms"), 5.0)
+    self.assertNotEqual(result.metrics.get("wall_clock_p50_ms"), 5.0)
 
     # Assert XProf metrics correctly reflect the mocked XProf durations
     self.assertEqual(result.metrics["xprof_avg_ms"], 5.0)
@@ -337,7 +343,7 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_parse_durations.assert_called_once()
     self.assertIsNone(result.metrics["xprof_avg_ms"])
     self.assertIsNone(result.metrics["xprof_p50_ms"])
-    self.assertGreater(result.metrics["avg_ms"], 0.0)
+    self.assertGreater(result.metrics["wall_clock_avg_ms"], 0.0)
 
   @unittest.mock.patch("jax.experimental.multihost_utils.broadcast_one_to_all")
   @unittest.mock.patch(
@@ -374,7 +380,9 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_process_index.return_value = 1  # Current host is Host 1 (non-owner)
     mock_trace.return_value = contextlib.nullcontext()
     mock_upload.return_value = "http://mock_xprof_url"
-    mock_broadcast.return_value = jnp.array([4.2, 4.1, 4.5], dtype=jnp.float32)
+    mock_broadcast.return_value = jnp.array(
+        [4.2, 4.1, 4.5, 0.1], dtype=jnp.float32
+    )
 
     params = {
         "warmup_tries": 1,
@@ -491,26 +499,28 @@ class BaseBenchmarkTest(absltest.TestCase):
     bm = DummyBenchmark(hardware_spec=hw_spec)
     self.assertTrue(bm.derive_chip_bandwidth)
 
-    metrics = {"bandwidth_per_device_gb_s": 100.0}
+    metrics = {"wall_clock_bandwidth_per_device_gb_s": 100.0}
     derived = bm.derive_chip_metrics(metrics)
-    self.assertIn("bandwidth_per_device_gb_s", derived)
-    self.assertIn("bandwidth_per_chip_gb_s", derived)
-    self.assertEqual(derived["bandwidth_per_chip_gb_s"], 200.0)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", derived)
+    self.assertIn("wall_clock_bandwidth_per_chip_gb_s", derived)
+    self.assertEqual(derived["wall_clock_bandwidth_per_chip_gb_s"], 200.0)
 
-    # If bandwidth_per_device_gb_s is None, bandwidth_per_chip_gb_s is also None
-    metrics_none = {"bandwidth_per_device_gb_s": None}
+    # If wall_clock_bandwidth_per_device_gb_s is None, wall_clock_bandwidth_per_chip_gb_s is also None
+    metrics_none = {"wall_clock_bandwidth_per_device_gb_s": None}
     derived_none = bm.derive_chip_metrics(metrics_none)
-    self.assertIn("bandwidth_per_device_gb_s", derived_none)
-    self.assertIn("bandwidth_per_chip_gb_s", derived_none)
-    self.assertIsNone(derived_none["bandwidth_per_chip_gb_s"])
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", derived_none)
+    self.assertIn("wall_clock_bandwidth_per_chip_gb_s", derived_none)
+    self.assertIsNone(derived_none["wall_clock_bandwidth_per_chip_gb_s"])
 
-    # If bandwidth_per_chip_gb_s is already present, it is not overwritten
+    # If wall_clock_bandwidth_per_chip_gb_s is already present, it is not overwritten
     metrics_existing = {
-        "bandwidth_per_device_gb_s": 100.0,
-        "bandwidth_per_chip_gb_s": 300.0,
+        "wall_clock_bandwidth_per_device_gb_s": 100.0,
+        "wall_clock_bandwidth_per_chip_gb_s": 300.0,
     }
     derived_existing = bm.derive_chip_metrics(metrics_existing)
-    self.assertEqual(derived_existing["bandwidth_per_chip_gb_s"], 300.0)
+    self.assertEqual(
+        derived_existing["wall_clock_bandwidth_per_chip_gb_s"], 300.0
+    )
 
   def test_derive_chip_metrics_with_chip_bandwidth_disabled(self):
     """Tests derive_chip_metrics does NOT derive chip bandwidth when derive_chip_bandwidth=False."""
@@ -525,10 +535,10 @@ class BaseBenchmarkTest(absltest.TestCase):
     bm = NoChipBwBenchmark(hardware_spec=hw_spec)
     self.assertFalse(bm.derive_chip_bandwidth)
 
-    metrics = {"bandwidth_per_device_gb_s": 100.0}
+    metrics = {"wall_clock_bandwidth_per_device_gb_s": 100.0}
     derived = bm.derive_chip_metrics(metrics)
-    self.assertIn("bandwidth_per_device_gb_s", derived)
-    self.assertNotIn("bandwidth_per_chip_gb_s", derived)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", derived)
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", derived)
 
   def test_derive_chip_metrics_tflops(self):
     """Tests derive_chip_metrics derives tflops_per_chip from tflops_per_device."""
@@ -538,23 +548,26 @@ class BaseBenchmarkTest(absltest.TestCase):
     )
     bm = DummyBenchmark(hardware_spec=hw_spec)
 
-    metrics = {"tflops_per_device": 150.0}
+    metrics = {"wall_clock_tflops_per_device": 150.0}
     derived = bm.derive_chip_metrics(metrics)
-    self.assertIn("tflops_per_device", derived)
-    self.assertIn("tflops_per_chip", derived)
-    self.assertEqual(derived["tflops_per_chip"], 300.0)
+    self.assertIn("wall_clock_tflops_per_device", derived)
+    self.assertIn("wall_clock_tflops_per_chip", derived)
+    self.assertEqual(derived["wall_clock_tflops_per_chip"], 300.0)
 
-    # If tflops_per_device is None, tflops_per_chip is also None
-    metrics_none = {"tflops_per_device": None}
+    # If wall_clock_tflops_per_device is None, wall_clock_tflops_per_chip is also None
+    metrics_none = {"wall_clock_tflops_per_device": None}
     derived_none = bm.derive_chip_metrics(metrics_none)
-    self.assertIn("tflops_per_device", derived_none)
-    self.assertIn("tflops_per_chip", derived_none)
-    self.assertIsNone(derived_none["tflops_per_chip"])
+    self.assertIn("wall_clock_tflops_per_device", derived_none)
+    self.assertIn("wall_clock_tflops_per_chip", derived_none)
+    self.assertIsNone(derived_none["wall_clock_tflops_per_chip"])
 
-    # If tflops_per_chip is already present, it is not overwritten
-    metrics_existing = {"tflops_per_device": 150.0, "tflops_per_chip": 400.0}
+    # If wall_clock_tflops_per_chip is already present, it is not overwritten
+    metrics_existing = {
+        "wall_clock_tflops_per_device": 150.0,
+        "wall_clock_tflops_per_chip": 400.0,
+    }
     derived_existing = bm.derive_chip_metrics(metrics_existing)
-    self.assertEqual(derived_existing["tflops_per_chip"], 400.0)
+    self.assertEqual(derived_existing["wall_clock_tflops_per_chip"], 400.0)
 
   def test_apply_xprof_timing_and_sync_fallback_schema_cleanliness(self):
     """Tests that xprof timing fallback to None does not pollute unrelated benchmark metrics."""
@@ -566,16 +579,25 @@ class BaseBenchmarkTest(absltest.TestCase):
       def requires_multihost_sync(self) -> bool:
         return False
 
+      def calculate_throughput_metrics(self, latency_ms: float, prefix: str):
+        del latency_ms
+        return {f"{prefix}_bandwidth_per_device_gb_s": 50.0}
+
     bm = BenchmarkWithNoChipBw()
-    metrics = {"bandwidth_per_device_gb_s": 50.0}
+    metrics = {"wall_clock_bandwidth_per_device_gb_s": 50.0}
     # pylint: disable=protected-access
     # Simulate empty duration fallback (synced_avg = 0.0)
     result_metrics = bm._apply_xprof_timing_and_sync(metrics)
 
-    self.assertIn("bandwidth_per_device_gb_s", result_metrics)
-    self.assertIsNone(result_metrics["bandwidth_per_device_gb_s"])
-    self.assertNotIn("bandwidth_per_chip_gb_s", result_metrics)
-    self.assertNotIn("tflops_per_device", result_metrics)
+    # Wall clock throughput remains intact!
+    self.assertEqual(
+        result_metrics["wall_clock_bandwidth_per_device_gb_s"], 50.0
+    )
+    # XProf throughput is set to None on fallback
+    self.assertIn("xprof_bandwidth_per_device_gb_s", result_metrics)
+    self.assertIsNone(result_metrics["xprof_bandwidth_per_device_gb_s"])
+    self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result_metrics)
+    self.assertNotIn("xprof_tflops_per_device", result_metrics)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,12 @@ def apply_roofline_analysis(
     if hw_spec and hw_spec.hbm:
       bw = hw_spec.peak_hbm_bandwidth_per_device
       metrics["peak_hbm_bw_gb_s"] = bw
+      for prefix in constants.TimingDomain:
+        actual_bw = metrics.get(f"{prefix}_bandwidth_per_device_gb_s")
+        if actual_bw is not None and actual_bw >= 0 and bw > 0:
+          metrics[f"{prefix}_memory_roofline_efficiency_pct"] = (
+              actual_bw / bw
+          ) * 100.0
       actual_bw = metrics.get("bandwidth_per_device_gb_s")
       if actual_bw is not None and actual_bw >= 0 and bw > 0:
         metrics["memory_roofline_efficiency_pct"] = (actual_bw / bw) * 100.0
@@ -73,6 +79,16 @@ def apply_roofline_analysis(
       roofline_tflops = min(peak_tflops, (intensity * bw) / 1000.0)
       metrics["roofline_tflops_limit"] = roofline_tflops
       metrics["peak_hbm_bw_gb_s"] = bw
+      for prefix in constants.TimingDomain:
+        actual_tflops = metrics.get(f"{prefix}_tflops_per_device")
+        if (
+            actual_tflops is not None
+            and actual_tflops >= 0
+            and roofline_tflops > 0
+        ):
+          metrics[f"{prefix}_compute_roofline_efficiency_pct"] = (
+              actual_tflops / roofline_tflops
+          ) * 100.0
       actual_tflops = metrics.get("tflops_per_device")
       if (
           actual_tflops is not None

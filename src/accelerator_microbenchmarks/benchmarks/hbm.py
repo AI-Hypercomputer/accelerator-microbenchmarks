@@ -117,10 +117,10 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
       ("device_id", report.format_str),
       ("size", report.format_str),
       ("total_bytes_mib", report.format_2f),
-      ("bandwidth_per_device_gb_s", report.format_2f),
-      ("bandwidth_per_chip_gb_s", report.format_2f),
-      ("p50_ms", report.format_4f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
+      ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
   )
 
   def __init__(
@@ -222,19 +222,26 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     bytes_moved = self.get_total_bytes()
     return flops / bytes_moved
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+  def get_workload_metadata(self) -> dict[str, Any]:
     assert self.spec is not None
-    metrics = super().calculate_metrics(times_ms)
+    total_bytes = self.get_total_bytes()
+    return {
+        "total_bytes_mib": total_bytes / (1024 * 1024),
+        "intensity": self.get_arithmetic_intensity(),
+        "op_type": self.spec.name,
+    }
+
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
     total_bytes = self.get_total_bytes()
 
-    avg_latency_s = metrics["avg_ms"] / 1000.0
-    if avg_latency_s == 0:
+    latency_s = latency_ms / 1000.0
+    if latency_s == 0:
       bandwidth_gb_s = float("inf")
     else:
-      bandwidth_gb_s = (total_bytes / avg_latency_s) / 1e9
+      bandwidth_gb_s = (total_bytes / latency_s) / 1e9
 
-    metrics["bandwidth_per_device_gb_s"] = bandwidth_gb_s
-    metrics["total_bytes_mib"] = total_bytes / (1024 * 1024)
-    metrics["intensity"] = self.get_arithmetic_intensity()
-    metrics["op_type"] = self.spec.name
-    return metrics
+    return {
+        f"{prefix}_bandwidth_per_device_gb_s": bandwidth_gb_s,
+    }

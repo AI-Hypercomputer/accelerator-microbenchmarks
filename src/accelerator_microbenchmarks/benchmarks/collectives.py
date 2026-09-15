@@ -118,9 +118,10 @@ class BaseCollectiveBenchmark(
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
       ("shard_size_mib", report.format_2f),
-      ("bandwidth_per_chip_gb_s", report.format_2f),
-      ("p50_ms", report.format_4f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
+      ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
   )
 
   def __init__(
@@ -297,10 +298,10 @@ class BaseCollectiveBenchmark(
         f" search directories: {search_dirs}"
     )
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+  def get_workload_metadata(self) -> dict[str, Any]:
+    """Calculate static collective transfer metadata (bytes moved, sharding size, replica group)."""
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
-    metrics = super().calculate_metrics(times_ms)
 
     dim = self.config.matrix_dim
     dtype = utils.parse_dtype(self.config.dtype)
@@ -341,8 +342,6 @@ class BaseCollectiveBenchmark(
           f" back to non-parallel replica group. Error: {e}"
       )
 
-    avg_latency_s = metrics["avg_ms"] / 1000.0
-
     data_transferred_bytes, extra_metrics = self._get_transfer_metrics(
         dim=dim,
         itemsize=itemsize,
@@ -351,62 +350,34 @@ class BaseCollectiveBenchmark(
         participating_ranks=participating_ranks,
         tf_multiplier=tf_multiplier,
     )
+    return {
+        "data_transferred_bytes": data_transferred_bytes,
+        "sharding_size": sharding_size,
+        "replica_group_type": replica_group_type,
+        "replica_group_rank": rank,
+        "intensity": self.get_arithmetic_intensity(),
+        **extra_metrics,
+    }
 
-    if sharding_size > 1:
-      bandwidth_gb_s = data_transferred_bytes / (avg_latency_s * 1e9)
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    metadata = self.get_workload_metadata()
+    latency_s = latency_ms / 1000.0
+    if metadata["sharding_size"] > 1:
+      if latency_s == 0:
+        bandwidth_gb_s = float("inf")
+      else:
+        bandwidth_gb_s = metadata["data_transferred_bytes"] / (latency_s * 1e9)
     else:
       bandwidth_gb_s = 0.0
 
-    metrics["bandwidth_per_chip_gb_s"] = bandwidth_gb_s
-    metrics["replica_group_type"] = replica_group_type
-    metrics["replica_group_rank"] = rank
-    metrics.update(extra_metrics)
-    return metrics
+    return {
+        f"{prefix}_bandwidth_per_chip_gb_s": bandwidth_gb_s,
+    }
 
   def get_total_bytes(self) -> float:
-    dim = self.config.matrix_dim
-    dtype = utils.parse_dtype(self.config.dtype)
-    itemsize = jnp.dtype(dtype).itemsize
-
-    if self.mesh:
-      sharding_axes = self._get_sharding_axes()
-      if isinstance(sharding_axes, str):
-        sharding_size = self.mesh.shape[sharding_axes]
-      else:
-        sharding_size = 1
-        for axis in sharding_axes:
-          sharding_size *= self.mesh.shape[axis]
-    else:
-      sharding_size = 1
-
-    try:
-      first_replica_group = self._extract_first_replica_group_from_hlo_dump()
-      rank = len(first_replica_group)
-      devices_per_chip = self.hardware_spec.devices_per_chip
-      if (
-          devices_per_chip > 1
-          and first_replica_group
-          and all(i % devices_per_chip == 0 for i in first_replica_group)
-      ):
-        participating_ranks = max(rank - 1, 1)
-        tf_multiplier = devices_per_chip
-      else:
-        participating_ranks = max(rank - 2, 1)
-        tf_multiplier = 1
-    except Exception:
-      rank = sharding_size
-      participating_ranks = max(rank - 1, 1)
-      tf_multiplier = 1
-
-    bytes_moved, _ = self._get_transfer_metrics(
-        dim=dim,
-        itemsize=itemsize,
-        num_devices=sharding_size,
-        rank=rank,
-        participating_ranks=participating_ranks,
-        tf_multiplier=tf_multiplier,
-    )
-    return bytes_moved
+    return float(self.get_workload_metadata()["data_transferred_bytes"])
 
   def get_arithmetic_intensity(self) -> float:
     return 0.0
@@ -435,9 +406,10 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
       ("shard_size_mib", report.format_2f),
-      ("bandwidth_per_chip_gb_s", report.format_2f),
-      ("p50_ms", report.format_4f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
+      ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
   )
 
   def setup(self):

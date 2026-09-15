@@ -2,6 +2,7 @@
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import attention
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import system
 import jax
@@ -137,10 +138,10 @@ class AttentionBenchmarkTest(absltest.TestCase):
     times_ms = [10.0, 10.0, 10.0]
     metrics = self.bm.calculate_metrics(times_ms)
 
-    self.assertAlmostEqual(metrics["avg_ms"], 10.0)
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
     self.assertAlmostEqual(metrics["total_flops"], 8388608)
     self.assertAlmostEqual(
-        metrics["tflops_per_device"], 0.0008388608
+        metrics["wall_clock_tflops_per_device"], 0.0008388608
     )
     self.assertAlmostEqual(metrics["intensity"], 32.0)
 
@@ -224,6 +225,24 @@ class AttentionBenchmarkTest(absltest.TestCase):
     self.assertAlmostEqual(
         self.bm.get_arithmetic_intensity(), expected_intensity
     )
+
+  def test_zero_latency_throughput_metrics(self):
+    """Verify zero-latency guard returns inf tflops in calculate_throughput_metrics."""
+    params = {
+        "batch": 1,
+        "seq_len": 128,
+        "num_q_heads": 4,
+        "num_kv_heads": 4,
+        "head_dim": 64,
+    }
+    config = attention.AttentionParams(**params)
+    bm = attention.AttentionBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+    )
+    metrics = bm.calculate_throughput_metrics(
+        0.0, constants.TimingDomain.WALL_CLOCK
+    )
+    self.assertEqual(metrics["wall_clock_tflops_per_device"], float("inf"))
 
 
 if __name__ == "__main__":

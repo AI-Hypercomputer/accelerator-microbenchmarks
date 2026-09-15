@@ -51,11 +51,13 @@ class DeviceToDeviceTPUTest(parameterized.TestCase):
     bm.setup()
     result = bm.run()
 
-    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
-    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
-    self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
-    self.assertIn("avg_ms", result.metrics)
-    self.assertGreater(result.metrics["avg_ms"], 0.0)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertGreater(
+        result.metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0
+    )
+    self.assertIn("wall_clock_avg_ms", result.metrics)
+    self.assertGreater(result.metrics["wall_clock_avg_ms"], 0.0)
     self.assertEqual(result.metrics["direction"], direction)
 
   def test_e2e_device_to_device_with_xprof_timing(self):
@@ -77,9 +79,9 @@ class DeviceToDeviceTPUTest(parameterized.TestCase):
     bm.setup()
     result = bm.run()
 
-    self.assertIn("bandwidth_per_device_gb_s", result.metrics)
-    self.assertNotIn("bandwidth_per_chip_gb_s", result.metrics)
-    self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
+    self.assertIn("xprof_bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertGreater(result.metrics["xprof_bandwidth_per_device_gb_s"], 0.0)
     self.assertIn("xprof_url", result.metrics)
 
 

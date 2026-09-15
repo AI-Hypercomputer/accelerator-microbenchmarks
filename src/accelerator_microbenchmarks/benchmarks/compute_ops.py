@@ -121,10 +121,10 @@ class SwiGLUBenchmark(base.BaseBenchmark[ComputeParams]):
     total_flops = batch * dim * 10
     return total_flops / self.get_total_bytes()
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
-    metrics["intensity"] = self.get_arithmetic_intensity()
-    return metrics
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    return {}
 
 
 @registry.benchmark_registry.register("rmsnorm", is_experimental=True)
@@ -186,10 +186,10 @@ class RMSNormBenchmark(base.BaseBenchmark[ComputeParams]):
     total_flops = batch * dim * 5
     return total_flops / self.get_total_bytes()
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
-    metrics["intensity"] = self.get_arithmetic_intensity()
-    return metrics
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    return {}
 
 
 @registry.benchmark_registry.register("rope", is_experimental=True)
@@ -272,10 +272,10 @@ class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
     total_flops = batch * heads * m * (n // 2) * 6
     return total_flops / self.get_total_bytes()
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
-    metrics["intensity"] = self.get_arithmetic_intensity()
-    return metrics
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    return {}
 
 
 @registry.benchmark_registry.register("quantization", is_experimental=True)
@@ -333,10 +333,10 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     # Approximation: 4 flops per element
     return (m * n * 4) / self.get_total_bytes()
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
-    metrics["intensity"] = self.get_arithmetic_intensity()
-    return metrics
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    return {}
 
 
 @registry.benchmark_registry.register("simple_add", is_experimental=True)
@@ -386,7 +386,7 @@ class AddBenchmark(base.BaseBenchmark[AddParams]):
     # 1 add per element
     return size / self.get_total_bytes()
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
-    metrics["intensity"] = self.get_arithmetic_intensity()
-    return metrics
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    return {}

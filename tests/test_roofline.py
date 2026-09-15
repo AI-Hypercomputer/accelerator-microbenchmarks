@@ -44,7 +44,11 @@ class RooflineTest(absltest.TestCase):
   def test_apply_roofline_analysis_compute_mode(self):
     """Test that RooflineMode.COMPUTE computes tflops roofline and omits memory efficiency."""
     self.mock_benchmark.roofline_mode = constants.RooflineMode.COMPUTE
-    metrics = {"tflops_per_device": 50.0, "bandwidth_per_device_gb_s": 80.0}
+    metrics = {
+        "tflops_per_device": 50.0,
+        "wall_clock_tflops_per_device": 50.0,
+        "bandwidth_per_device_gb_s": 80.0,
+    }
     mock_hw = mock.MagicMock(spec=system.HardwareSpec)
     mock_hw.name = system.TpuVersion.TPU7X
     mock_hw.tflops = system.TflopsSpec(
@@ -57,6 +61,9 @@ class RooflineTest(absltest.TestCase):
     result = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
     self.assertAlmostEqual(result["roofline_tflops_limit"], 0.2)
     self.assertAlmostEqual(result["compute_roofline_efficiency_pct"], 25000.0)
+    self.assertAlmostEqual(
+        result["wall_clock_compute_roofline_efficiency_pct"], 25000.0
+    )
     self.assertEqual(result["peak_hbm_bw_gb_s"], 200.0)
     self.assertNotIn("memory_roofline_efficiency_pct", result)
 
@@ -115,7 +122,7 @@ class RooflineTest(absltest.TestCase):
   def test_apply_roofline_analysis_chip_tflops_no_roofline_efficiency(self):
     """Test that chip-level tflops does not trigger device-level roofline efficiency."""
     self.mock_benchmark.roofline_mode = constants.RooflineMode.COMPUTE
-    metrics = {"tflops_per_chip": 100.0}
+    metrics = {"wall_clock_tflops_per_chip": 100.0}
     self.mock_benchmark.hardware_spec = system.HardwareSpec(
         name=system.TpuVersion.TPU7X,
         tflops=system.TflopsSpec(peak_tflops_per_device={"bfloat16": 100.0}),
@@ -123,7 +130,7 @@ class RooflineTest(absltest.TestCase):
     )
     result = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
     self.assertNotIn("compute_roofline_efficiency_pct", result)
-    self.assertNotIn("roofline_efficiency", result)
+    self.assertNotIn("wall_clock_compute_roofline_efficiency_pct", result)
 
   def test_apply_roofline_analysis_memory_roofline_efficiency_pct(self):
     """Test roofline analysis calculates bandwidth efficiency strictly at device level."""
@@ -135,20 +142,23 @@ class RooflineTest(absltest.TestCase):
         hbm=system.HbmSpec(peak_bw_gbps=200.0),
     )
     # Per-device peak HBM is 200.0 / 2 = 100.0 GB/s.
-    # 1. Using bandwidth_per_device_gb_s: 80.0 / 100.0 = 80.0%
-    metrics_dev = {"bandwidth_per_device_gb_s": 80.0}
+    # 1. Using wall_clock_bandwidth_per_device_gb_s: 80.0 / 100.0 = 80.0%
+    metrics_dev = {"wall_clock_bandwidth_per_device_gb_s": 80.0}
     res_dev = roofline.apply_roofline_analysis(
         self.mock_benchmark, metrics_dev
     )
-    self.assertAlmostEqual(res_dev["memory_roofline_efficiency_pct"], 80.0)
+    self.assertAlmostEqual(
+        res_dev["wall_clock_memory_roofline_efficiency_pct"], 80.0
+    )
 
     # 2. Chip-only metric (e.g. from collectives) does NOT compute HBM
     # memory_roofline_efficiency_pct.
-    metrics_chip = {"bandwidth_per_chip_gb_s": 100.0}
+    metrics_chip = {"wall_clock_bandwidth_per_chip_gb_s": 100.0}
     res_chip = roofline.apply_roofline_analysis(
         self.mock_benchmark, metrics_chip
     )
     self.assertNotIn("memory_roofline_efficiency_pct", res_chip)
+    self.assertNotIn("wall_clock_memory_roofline_efficiency_pct", res_chip)
 
   def test_apply_roofline_analysis_zero_peak_bw(self):
     """Test roofline analysis when peak HBM bandwidth is zero."""

@@ -99,10 +99,10 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
       ("beta", report.format_str),
       ("use_scaling_factors", report.format_str),
       ("total_flops", report.format_2f),
-      ("tflops_per_device", report.format_2f),
-      ("tflops_per_chip", report.format_2f),
-      ("p50_ms", report.format_4f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_tflops_per_chip", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
+      ("xprof_tflops_per_chip", report.format_2f),
   )
 
   def get_compute_dtype(self) -> str:
@@ -265,17 +265,23 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     bytes_moved = self.get_total_bytes()
     return flops / bytes_moved if bytes_moved > 0 else 0.0
 
-  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
-    metrics = super().calculate_metrics(times_ms)
+  def get_workload_metadata(self) -> dict[str, Any]:
+    return {
+        "total_flops": self.get_total_flops(),
+        "intensity": self.get_arithmetic_intensity(),
+    }
+
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
     total_flops = self.get_total_flops()
 
-    avg_latency_s = metrics["avg_ms"] / 1000.0
-    if avg_latency_s == 0:
+    latency_s = latency_ms / 1000.0
+    if latency_s == 0:
       tflops_per_sec = float("inf")
     else:
-      tflops_per_sec = (total_flops / avg_latency_s) / 1e12
+      tflops_per_sec = (total_flops / latency_s) / 1e12
 
-    metrics["tflops_per_device"] = tflops_per_sec
-    metrics["total_flops"] = total_flops
-    metrics["intensity"] = self.get_arithmetic_intensity()
-    return metrics
+    return {
+        f"{prefix}_tflops_per_device": tflops_per_sec,
+    }
