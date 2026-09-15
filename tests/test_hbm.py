@@ -23,6 +23,12 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
+    self.patcher = mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self.patcher.start()
+    self.addCleanup(self.patcher.stop)
     # Create a dummy mesh for testing on CPU
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
@@ -365,6 +371,19 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self.assertIn("7538.21", table)
     self.assertIn("0.0711", table)
     self.assertIn("0.0654", table)
+
+  def test_run_e2e_roofline_metrics(self):
+    """Verifies that HBMBandwidthBenchmark emits memory roofline metrics and omits compute roofline metrics."""
+    self._setup_benchmark("copy")
+    result = self.bm.run()
+    self.assertIn("peak_hbm_bw_gb_s", result.metrics)
+    self.assertEqual(result.metrics["peak_hbm_bw_gb_s"], 3690.0)
+    self.assertIn("memory_roofline_efficiency_pct", result.metrics)
+    self.assertLessEqual(
+        result.metrics["memory_roofline_efficiency_pct"], 100.0
+    )
+    self.assertNotIn("roofline_tflops_limit", result.metrics)
+    self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
 
   def test_schema_coverage(self):
     """Verify REPORT_SCHEMA matches output keys and covers all metrics."""

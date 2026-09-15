@@ -1,5 +1,7 @@
 """Unit tests for matlmul.py."""
 
+import unittest
+
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import matmul
@@ -22,6 +24,12 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
+    self._platform_patcher = unittest.mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self._platform_patcher.start()
+    self.addCleanup(self._platform_patcher.stop)
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
@@ -517,6 +525,33 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.assertEqual(params_in_only.dtype, "float16")
     self.assertEqual(params_in_only.in_dtype, "float8_e4m3fn")
     self.assertEqual(params_in_only.out_dtype, "float16")
+
+  def test_run_orchestration_roofline_metrics(self):
+    """Verifies end-to-end run emits compute roofline metrics."""
+    params = {
+        "m": 64,
+        "k": 64,
+        "n": 64,
+        "in_dtype": "bfloat16",
+        "out_dtype": "bfloat16",
+        "warmup_tries": 1,
+        "num_runs": 2,
+    }
+    config = matmul.GemmParams(**params)
+    bm = matmul.GeneralizedGemmBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    result = bm.run()
+    self.assertIn("roofline_tflops_limit", result.metrics)
+    self.assertIn("peak_hbm_bw_gb_s", result.metrics)
+    self.assertIn("compute_roofline_efficiency_pct", result.metrics)
+    self.assertGreater(result.metrics["roofline_tflops_limit"], 0.0)
+    self.assertGreater(result.metrics["peak_hbm_bw_gb_s"], 0.0)
+    self.assertGreaterEqual(
+        result.metrics["compute_roofline_efficiency_pct"], 0.0
+    )
 
 
 if __name__ == "__main__":

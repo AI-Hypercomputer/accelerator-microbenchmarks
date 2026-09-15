@@ -9,6 +9,7 @@ from absl.testing import parameterized
 # pylint: disable=g-import-not-at-top
 from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
@@ -762,9 +763,11 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     }
     result_metrics = bm.apply_roofline_analysis(initial_metrics.copy())
     self.assertEqual(result_metrics, initial_metrics)
-    self.assertNotIn("bw_efficiency", result_metrics)
-    self.assertNotIn("roofline_efficiency", result_metrics)
+    self.assertEqual(bm.roofline_mode, constants.RooflineMode.NONE)
     self.assertNotIn("roofline_tflops_limit", result_metrics)
+    self.assertNotIn("compute_roofline_efficiency_pct", result_metrics)
+    self.assertNotIn("peak_hbm_bw_gb_s", result_metrics)
+    self.assertNotIn("memory_roofline_efficiency_pct", result_metrics)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 """Hardware system specifications for roofline analysis."""
 
 import dataclasses
-from typing import Any
 import enum
+from typing import Any
 
 
 class TpuVersion(str, enum.Enum):
@@ -57,28 +57,19 @@ class IciSpec:
 
 @dataclasses.dataclass(frozen=True)
 class HbmSpec:
-  """High Bandwidth Memory specifications (per-chip)."""
+  """High Bandwidth Memory specifications (per-chip).
 
-  # List of tuples: (transfer_size_bytes, bandwidth_per_chip_gb_s) representing
-  # the total per-chip HBM bandwidth.
-  curve_gbps: list[tuple[int, float]]
+  For the classical roofline model, peak_bw_gbps represents the flat
+  asymptotic physical peak bandwidth ceiling (speed of light) from the
+  hardware datasheet.
+  """
+
+  peak_bw_gbps: float
 
   @property
-  def curve_gbps_per_chip(self) -> list[tuple[int, float]]:
-    return self.curve_gbps
-
-  @property
-  def peak_bandwidth_per_chip(self) -> float:
+  def peak_bw_gbps_per_chip(self) -> float:
     """Returns the asymptotic peak HBM bandwidth per chip (GB/s)."""
-    if not self.curve_gbps:
-      return 0.0
-    return max(bw for _, bw in self.curve_gbps)
-
-  def get_curve_gbps_per_device(
-      self, devices_per_chip: int = 1
-  ) -> list[tuple[int, float]]:
-    """Returns the HBM bandwidth curve scaled to per-device (TensorCore)."""
-    return [(size, bw / devices_per_chip) for size, bw in self.curve_gbps]
+    return self.peak_bw_gbps
 
 
 @dataclasses.dataclass(frozen=True)
@@ -92,21 +83,16 @@ class HardwareSpec:
   ici: IciSpec | None = None
   hbm: HbmSpec | None = None
 
-  def get_hbm_curve_per_device(self) -> list[tuple[int, float]] | None:
-    """Returns HBM bandwidth curve per device based on devices_per_chip."""
-    if not self.hbm:
-      return None
-    return self.hbm.get_curve_gbps_per_device(self.devices_per_chip)
-
   @property
   def peak_hbm_bandwidth_per_device(self) -> float:
     """Returns the asymptotic peak HBM bandwidth for a single device (GB/s)."""
-    if not self.hbm:
+    if not self.hbm or self.devices_per_chip <= 0:
       return 0.0
-    return self.hbm.peak_bandwidth_per_chip / self.devices_per_chip
+    return self.hbm.peak_bw_gbps_per_chip / self.devices_per_chip
 
 
 # TPU v7x (Ironwood)
+# See also spec in https://docs.cloud.google.com/tpu/docs/tpu7x
 TPU7X_HARDWARE_SPEC = HardwareSpec(
     name=TpuVersion.TPU7X,
     topology_dimension=3,
@@ -124,17 +110,11 @@ TPU7X_HARDWARE_SPEC = HardwareSpec(
         peak_bw_gbps=1200.0,
         bidirectional=True,
     ),
-    hbm=HbmSpec(
-        curve_gbps=[
-            (1024, 100.0),
-            (1048576, 2000.0),
-            (104857600, 5000.0),
-            (1073741824, 7380.0),  # ~1GB transfer reaches peak 7380 GB/s
-        ]
-    ),
+    hbm=HbmSpec(peak_bw_gbps=7380.0),
 )
 
 # TPU v6e (Trillium)
+# See also spec in https://docs.cloud.google.com/tpu/docs/v6e
 V6E_HARDWARE_SPEC = HardwareSpec(
     name=TpuVersion.V6E,
     topology_dimension=2,
@@ -153,14 +133,7 @@ V6E_HARDWARE_SPEC = HardwareSpec(
         peak_bw_gbps=800.0,
         bidirectional=True,
     ),
-    hbm=HbmSpec(
-        curve_gbps=[
-            (1024, 50.0),
-            (1048576, 800.0),
-            (104857600, 1400.0),
-            (1073741824, 1638.4),
-        ]
-    ),
+    hbm=HbmSpec(peak_bw_gbps=1638.4),
 )
 
 HARDWARE_SPECS: dict[TpuVersion, HardwareSpec] = {
@@ -178,4 +151,3 @@ def get_hardware_spec(target: TpuVersion | str) -> HardwareSpec:
         " registry."
     )
   return HARDWARE_SPECS[tpu_version]
-

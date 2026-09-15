@@ -86,6 +86,7 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
   """
 
   Config = GemmParams
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.COMPUTE
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("in_dtype", report.format_str),
       ("out_dtype", report.format_str),

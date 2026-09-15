@@ -31,6 +31,7 @@ class ComponentBenchmark(base.BaseBenchmark[TransformerLayerParams]):
   Includes hooks for TP/CP/EP degree management and overlap tracking.
   """
   Config = TransformerLayerParams
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.COMPUTE
 
   def __init__(
       self,

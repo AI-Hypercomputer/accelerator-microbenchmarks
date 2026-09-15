@@ -47,7 +47,6 @@ class AttentionParams(base.BaseBenchmarkParams):
     "attention_flashed", is_experimental=True
 )
 class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
-  Config = AttentionParams
   """Attention benchmark simulating FlashAttention behavior.
 
   Supports:
@@ -55,6 +54,9 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
   - BF16 compute
   - Causal masking
   """
+
+  Config = AttentionParams
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.COMPUTE
 
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),

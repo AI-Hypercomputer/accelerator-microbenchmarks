@@ -138,20 +138,6 @@ class BaseCollectiveBenchmark(
     )
     self.sharding_strategy = None
 
-  def apply_roofline_analysis(self, metrics: dict[str, Any]) -> dict[str, Any]:
-    """Skips HBM roofline analysis for collective communication benchmarks.
-
-    Collectives operate on Inter-Chip Interconnect (ICI) at chip level; HBM
-    roofline analysis does not apply.
-
-    Args:
-      metrics: Dictionary of benchmark metrics.
-
-    Returns:
-      Original metrics dictionary unchanged.
-    """
-    return metrics
-
   def setup(self):
     mesh_shape_str = self.config.mesh_shape
     if mesh_shape_str is not None:

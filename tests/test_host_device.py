@@ -110,6 +110,10 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
     self.assertIn("avg_ms", result.metrics)
     self.assertGreater(result.metrics["avg_ms"], 0.0)
+    self.assertNotIn("roofline_tflops_limit", result.metrics)
+    self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
+    self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
+    self.assertNotIn("memory_roofline_efficiency_pct", result.metrics)
 
   def test_format_benchmark_table(self):
     """Tests formatting of Host-to-Device benchmark tables."""
@@ -256,6 +260,10 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
     self.assertIn("avg_ms", result.metrics)
     self.assertGreater(result.metrics["avg_ms"], 0.0)
+    self.assertNotIn("roofline_tflops_limit", result.metrics)
+    self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
+    self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
+    self.assertNotIn("memory_roofline_efficiency_pct", result.metrics)
 
   def test_format_benchmark_table(self):
     """Tests formatting of Device-to-Host benchmark tables."""

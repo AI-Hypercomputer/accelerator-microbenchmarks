@@ -19,14 +19,17 @@ class SystemTest(absltest.TestCase):
         "TPU7",
         "v7",
     ):
-      self.assertEqual(system.TpuVersion.from_str(alias), system.TpuVersion.TPU7X)
+      self.assertEqual(
+          system.TpuVersion.from_str(alias), system.TpuVersion.TPU7X
+      )
 
     for alias in ("v6e", "tpu v6 lite", "trillium", "6e"):
       self.assertEqual(system.TpuVersion.from_str(alias), system.TpuVersion.V6E)
 
     # Idempotent on enum instance
     self.assertEqual(
-        system.TpuVersion.from_str(system.TpuVersion.TPU7X), system.TpuVersion.TPU7X
+        system.TpuVersion.from_str(system.TpuVersion.TPU7X),
+        system.TpuVersion.TPU7X,
     )
 
   def test_tpu_version_str_behavior(self):
@@ -103,7 +106,7 @@ class SystemTest(absltest.TestCase):
     with self.assertRaises(ValueError):
       system.get_hardware_spec("nonexistent")
 
-  def test_hardware_spec_presets(self):
+  def test_hardware_spec_tpu7x_presets(self):
     """Verify that the TPU7X_HARDWARE_SPEC preset has correct values."""
     hw_spec = system.TPU7X_HARDWARE_SPEC
     self.assertEqual(hw_spec.name, system.TpuVersion.TPU7X)
@@ -129,18 +132,9 @@ class SystemTest(absltest.TestCase):
     self.assertTrue(hw_spec.ici.bidirectional)
 
     # Test HBM stats
-    self.assertEqual(hw_spec.hbm.curve_gbps[0], (1024, 100.0))
-    self.assertEqual(hw_spec.hbm.curve_gbps[1], (1048576, 2000.0))
-    self.assertEqual(hw_spec.hbm.curve_gbps[2], (104857600, 5000.0))
-    self.assertEqual(hw_spec.hbm.curve_gbps[3], (1073741824, 7380.0))
-    self.assertEqual(hw_spec.hbm.curve_gbps_per_chip, hw_spec.hbm.curve_gbps)
-    self.assertEqual(hw_spec.hbm.peak_bandwidth_per_chip, 7380.0)
+    self.assertEqual(hw_spec.hbm.peak_bw_gbps, 7380.0)
+    self.assertEqual(hw_spec.hbm.peak_bw_gbps_per_chip, 7380.0)
     self.assertEqual(hw_spec.peak_hbm_bandwidth_per_device, 3690.0)
-    # Per-device HBM curve scaled by devices_per_chip (2)
-    device_curve = hw_spec.get_hbm_curve_per_device()
-    self.assertEqual(device_curve[0], (1024, 50.0))
-    self.assertEqual(device_curve[3], (1073741824, 3690.0))
-
 
   def test_hardware_spec_v6e_presets(self):
     """Verify that the V6E_HARDWARE_SPEC preset has correct values."""
@@ -169,17 +163,25 @@ class SystemTest(absltest.TestCase):
     self.assertTrue(hw_spec.ici.bidirectional)
 
     # Test HBM stats
-    self.assertEqual(hw_spec.hbm.curve_gbps[0], (1024, 50.0))
-    self.assertEqual(hw_spec.hbm.curve_gbps[1], (1048576, 800.0))
-    self.assertEqual(hw_spec.hbm.curve_gbps[2], (104857600, 1400.0))
-    self.assertEqual(hw_spec.hbm.curve_gbps[3], (1073741824, 1638.4))
-    self.assertEqual(hw_spec.hbm.curve_gbps_per_chip, hw_spec.hbm.curve_gbps)
-    self.assertEqual(hw_spec.hbm.peak_bandwidth_per_chip, 1638.4)
+    self.assertEqual(hw_spec.hbm.peak_bw_gbps, 1638.4)
+    self.assertEqual(hw_spec.hbm.peak_bw_gbps_per_chip, 1638.4)
     self.assertEqual(hw_spec.peak_hbm_bandwidth_per_device, 1638.4)
-    # Per-device HBM curve scaled by devices_per_chip (1)
-    device_curve_v6e = hw_spec.get_hbm_curve_per_device()
-    self.assertEqual(device_curve_v6e[0], (1024, 50.0))
-    self.assertEqual(device_curve_v6e[3], (1073741824, 1638.4))
+
+  def test_hardware_spec_hbm_none(self):
+    """Verify peak_hbm_bandwidth_per_device returns 0.0 when HBM is None or devices_per_chip <= 0."""
+    hw_spec = system.HardwareSpec(
+        name=system.TpuVersion.TPU7X,
+        devices_per_chip=2,
+        hbm=None,
+    )
+    self.assertEqual(hw_spec.peak_hbm_bandwidth_per_device, 0.0)
+
+    hw_spec_zero_dev = system.HardwareSpec(
+        name=system.TpuVersion.TPU7X,
+        devices_per_chip=0,
+        hbm=system.HbmSpec(peak_bw_gbps=100.0),
+    )
+    self.assertEqual(hw_spec_zero_dev.peak_hbm_bandwidth_per_device, 0.0)
 
 
 if __name__ == "__main__":

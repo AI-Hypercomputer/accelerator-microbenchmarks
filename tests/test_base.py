@@ -3,10 +3,12 @@
 import contextlib
 import dataclasses
 import os
+from typing import Any
 import unittest
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
@@ -93,6 +95,14 @@ class BaseBenchmarkTest(absltest.TestCase):
     self._platform_patcher.stop()
     super().tearDown()
 
+  def test_base_benchmark_default_roofline_mode(self):
+    """Verifies BaseBenchmark defaults to RooflineMode.NONE."""
+    self.assertEqual(
+        base.BaseBenchmark.roofline_mode, constants.RooflineMode.NONE
+    )
+    bm = DummyBenchmark()
+    self.assertEqual(bm.roofline_mode, constants.RooflineMode.NONE)
+
   def test_calculate_metrics_iqr(self):
     bm = DummyBenchmark()
     # Deliberately introduce outliers
@@ -123,27 +133,6 @@ class BaseBenchmarkTest(absltest.TestCase):
     mesh = bm._create_default_mesh()  # pylint: disable=protected-access
     self.assertIsInstance(mesh, jax.sharding.Mesh)
     self.assertEqual(mesh.axis_names, ("device",))
-
-  def test_get_roofline_performance_float(self):
-    bm = DummyBenchmark()
-    perf = bm.get_roofline_performance(peak_tflops=100.0, hbm_bw_data=200.0)
-    self.assertAlmostEqual(perf, 0.2)
-
-  def test_get_roofline_performance_list(self):
-    bm = DummyBenchmark()
-    hbm_bw_data = [(100, 50.0), (500, 250.0)]
-    perf = bm.get_roofline_performance(
-        peak_tflops=100.0, hbm_bw_data=hbm_bw_data
-    )
-    self.assertAlmostEqual(perf, 0.2)
-
-  def test_get_roofline_performance_dict(self):
-    bm = DummyBenchmark()
-    hbm_bw_data = {100: 50.0, 500: 250.0}
-    perf = bm.get_roofline_performance(
-        peak_tflops=100.0, hbm_bw_data=hbm_bw_data
-    )
-    self.assertAlmostEqual(perf, 0.2)
 
   def test_calculate_metrics_empty(self):
     bm = DummyBenchmark()
@@ -183,12 +172,37 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertEqual(result.metadata.hardware_spec, hw_spec)
     self.assertIsNone(result.metadata.xprof_config)
 
-    # Validate Roofline values computed correctly
+    # Validate Roofline values are NOT computed by default for NONE mode
+    self.assertNotIn("roofline_tflops_limit", result.metrics)
+    self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
+    self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
+    self.assertNotIn("memory_roofline_efficiency_pct", result.metrics)
+
+  def test_run_orchestration_with_compute_mode(self):
+    """Tests run orchestration when roofline_mode is COMPUTE."""
+
+    class ComputeDummyBenchmark(DummyBenchmark):
+      roofline_mode = constants.RooflineMode.COMPUTE
+
+      def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+        metrics = super().calculate_metrics(times_ms)
+        metrics["tflops_per_device"] = 50.0
+        return metrics
+
+    params = {
+        "warmup_tries": 2,
+        "num_runs": 5,
+        "dtype": "float32",
+    }
+    config = base.BaseBenchmarkParams(**params)
+    hw_spec = system.get_hardware_spec(system.TpuVersion.TPU7X)
+    bm = ComputeDummyBenchmark(config=config, hardware_spec=hw_spec)
+    result = bm.run()
+
     self.assertIn("roofline_tflops_limit", result.metrics)
-    self.assertIn("peak_bw_at_size_gb_s", result.metrics)
-    self.assertEqual(
-        result.metrics["peak_bw_at_size_gb_s"], 50.0
-    )  # size is 400 bytes, <= 1024 (100.0 / 2 devices_per_chip)
+    self.assertIn("compute_roofline_efficiency_pct", result.metrics)
+    self.assertIn("peak_hbm_bw_gb_s", result.metrics)
+    self.assertNotIn("memory_roofline_efficiency_pct", result.metrics)
 
   @unittest.mock.patch("jax.profiler.trace")
   def test_xprof_naming_with_identifier(self, mock_trace):

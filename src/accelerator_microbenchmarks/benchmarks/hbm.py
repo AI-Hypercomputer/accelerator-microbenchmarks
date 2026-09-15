@@ -110,6 +110,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
   """HBM bandwidth microbenchmark supporting standard memory kernels."""
 
   Config = HBMBandwidthParams
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.MEMORY_HBM
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("op_type", report.format_str),

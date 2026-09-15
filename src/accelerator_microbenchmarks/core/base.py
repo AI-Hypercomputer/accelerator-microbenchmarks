@@ -8,6 +8,7 @@ import os
 import time
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
 
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
@@ -45,8 +46,12 @@ class BaseBenchmarkParams:
   )
   use_trace_roofline: bool = dataclasses.field(
       default=False,
-      metadata={"help": "Extract bottom-up metrics using"
-                        " jax.experimental.roofline."},
+      metadata={
+          "help": (
+              "Override analytical arithmetic intensity with bottom-up FLOPs"
+              " and HBM bytes extracted via jax.experimental.roofline."
+          )
+      },
   )
   dtype: str = dataclasses.field(
       default="bfloat16",
@@ -99,6 +104,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       Sequence[Callable[[pd.DataFrame, type["BaseBenchmark"]], str]]
   ] = None
   derive_chip_bandwidth: bool = True
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.NONE
 
   def __init__(
       self,
@@ -156,69 +162,6 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       The arithmetic intensity as a float.
     """
     pass
-
-  def get_roofline_performance(
-      self, peak_tflops: float, hbm_bw_data: Any
-  ) -> float:
-    """Calculate the theoretical roofline performance ceiling (TFLOPS).
-
-    Args:
-      peak_tflops: The peak theoretical TFLOPS of the device.
-      hbm_bw_data: HBM bandwidth data, either a float (peak GB/s) or a dict of
-        {transfer_size_bytes: bandwidth_gb_s} for interpolation.
-
-    Returns:
-      The theoretical roofline performance ceiling in TFLOPS.
-    """
-    intensity = self.get_arithmetic_intensity()
-
-    # Calculate total bytes moved for this op
-    # Intensity = Flops / Bytes => Bytes = Flops / Intensity
-    # But intensity might be 0 for memory-bound ops.
-    # It's better to have a get_total_bytes method.
-    total_bytes = self.get_total_bytes()
-    bw = 0.0
-
-    if isinstance(hbm_bw_data, (int, float)):
-      bw = hbm_bw_data
-    elif isinstance(hbm_bw_data, list):
-      sorted_data = sorted(hbm_bw_data, key=lambda x: x[0])
-      if not sorted_data:
-        bw = 0.0
-      elif total_bytes <= sorted_data[0][0]:
-        bw = sorted_data[0][1]
-      elif total_bytes >= sorted_data[-1][0]:
-        bw = sorted_data[-1][1]
-      else:
-        bw = 0.0
-        for i in range(len(sorted_data) - 1):
-          s0, bw0 = sorted_data[i]
-          s1, bw1 = sorted_data[i + 1]
-          if s0 <= total_bytes <= s1:
-            bw = bw0 + (bw1 - bw0) * (total_bytes - s0) / (s1 - s0)
-            break
-    elif isinstance(hbm_bw_data, dict):
-      # Simple linear interpolation or nearest neighbor
-      # Sorting by transfer size
-      sorted_sizes = sorted(hbm_bw_data.keys())
-      if total_bytes <= sorted_sizes[0]:
-        bw = hbm_bw_data[sorted_sizes[0]]
-      elif total_bytes >= sorted_sizes[-1]:
-        bw = hbm_bw_data[sorted_sizes[-1]]
-      else:
-        # Find the bracket
-        for i in range(len(sorted_sizes) - 1):
-          s0, s1 = sorted_sizes[i], sorted_sizes[i + 1]
-          if s0 <= total_bytes <= s1:
-            bw0, bw1 = hbm_bw_data[s0], hbm_bw_data[s1]
-            # Interpolate
-            bw = bw0 + (bw1 - bw0) * (total_bytes - s0) / (s1 - s0)
-            break
-    else:
-      bw = 0.0
-
-    # Roofline = min(Peak Math, BW * Intensity)
-    return min(peak_tflops, (intensity * bw) / 1000.0)
 
   @abc.abstractmethod
   def get_total_bytes(self) -> float:

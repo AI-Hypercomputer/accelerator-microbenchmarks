@@ -148,6 +148,10 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
     self.assertGreater(result.metrics["bandwidth_per_device_gb_s"], 0.0)
     self.assertEqual(result.metrics["src_device_index"], 0)
     self.assertEqual(result.metrics["dst_device_index"], 1)
+    self.assertNotIn("roofline_tflops_limit", result.metrics)
+    self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
+    self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
+    self.assertNotIn("memory_roofline_efficiency_pct", result.metrics)
 
   def test_get_arithmetic_intensity(self):
     """Verify arithmetic intensity for pure memory transfer is 0.0."""
