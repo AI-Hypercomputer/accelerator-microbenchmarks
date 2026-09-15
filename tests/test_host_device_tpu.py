@@ -5,6 +5,9 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import host_device
+from accelerator_microbenchmarks.core import (
+    base,
+)
 from accelerator_microbenchmarks.core import system
 import jax
 import numpy as np
@@ -177,12 +180,14 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
         "data_size_mib": 8192,
         "num_runs": 10,
         "warmup_tries": 2,
-        "xprof_timing": True,
         "dtype": "float32",
     }
     config = host_device.HostDeviceParams(**params)
     bm = host_device.HostToDeviceBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+        xprof_config=base.XprofConfig(xprof_timing=True),
     )
     bm.setup()
     result = bm.run()

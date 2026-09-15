@@ -7,6 +7,7 @@ import sys
 from unittest import mock
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
@@ -14,7 +15,7 @@ from accelerator_microbenchmarks.core import runner
 from accelerator_microbenchmarks.tests import test_report_utils
 
 
-class TestCli(absltest.TestCase):
+class TestCli(parameterized.TestCase):
   """Unit tests for cli.py."""
 
   def setUp(self):
@@ -126,9 +127,14 @@ class TestCli(absltest.TestCase):
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_config(self, mock_run_benchmarks):
     """Verifies that `tpums benchmark run-config` calls runner.run_benchmarks."""
-    config_path = (
-        "third_party/py/accelerator_microbenchmarks/configs/7x/2x2x1/hbm_bandwidth.yaml"
-    )
+    fake_config = self.create_tempfile(content="""
+benchmark:
+  name: gemm
+  params:
+    warmup_tries: 1
+    num_runs: 1
+""")
+    config_path = fake_config.full_path
     cli.run(
         ["benchmark", "run-config", config_path, "--output_dir", "test_out"]
     )
@@ -141,9 +147,14 @@ class TestCli(absltest.TestCase):
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_config_with_unknown_flags(self, mock_run_benchmarks):
     """Verifies that unknown flags (e.g. Borg infrastructure flags) are ignored."""
-    config_path = (
-        "third_party/py/accelerator_microbenchmarks/configs/7x/2x2x1/hbm_bandwidth.yaml"
-    )
+    fake_config = self.create_tempfile(content="""
+benchmark:
+  name: gemm
+  params:
+    warmup_tries: 1
+    num_runs: 1
+""")
+    config_path = fake_config.full_path
     # Trailing unknown flags
     cli.run([
         "benchmark",
@@ -161,9 +172,14 @@ class TestCli(absltest.TestCase):
       self, mock_run_benchmarks
   ):
     """Verifies that `benchmark run-config` passes xla_flags_file_path to runner."""
-    config_path = (
-        "third_party/py/accelerator_microbenchmarks/configs/7x/2x2x1/hbm_bandwidth.yaml"
-    )
+    fake_config = self.create_tempfile(content="""
+benchmark:
+  name: gemm
+  params:
+    warmup_tries: 1
+    num_runs: 1
+""")
+    config_path = fake_config.full_path
     cli.run([
         "benchmark",
         "run-config",
@@ -173,21 +189,20 @@ class TestCli(absltest.TestCase):
     ])
     mock_run_benchmarks.assert_called_once()
     _, kwargs = mock_run_benchmarks.call_args
-    self.assertEqual(
-        kwargs["xla_flags_file_path"], "/tmp/custom_op_flags.yaml"
-    )
+    self.assertEqual(kwargs["xla_flags_file_path"], "/tmp/custom_op_flags.yaml")
 
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_with_common_flags(self, mock_run_benchmarks):
-    """Verifies that `benchmark run` passes output_dir and profile_dir to runner."""
+    """Verifies that `benchmark run` passes output_dir and primitive xprof flags to runner."""
     cli.run([
         "benchmark",
         "run",
         "gemm",
         "--output_dir",
         "/tmp/custom_results",
-        "--profile_dir",
+        "--xprof_dir",
         "/tmp/custom_profile",
+        "--xprof_timing",
         "-m",
         "128",
         "-n",
@@ -198,7 +213,110 @@ class TestCli(absltest.TestCase):
     mock_run_benchmarks.assert_called_once()
     _, kwargs = mock_run_benchmarks.call_args
     self.assertEqual(kwargs["output_dir"], "/tmp/custom_results")
+    self.assertTrue(kwargs["xprof_timing"])
     self.assertEqual(kwargs["xprof_dir"], "/tmp/custom_profile")
+
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_without_xprof_timing(self, mock_run_benchmarks):
+    """Verifies that `benchmark run` without --xprof_timing passes default primitive flags."""
+    cli.run([
+        "benchmark",
+        "run",
+        "gemm",
+        "-m",
+        "128",
+        "-n",
+        "128",
+        "-k",
+        "128",
+    ])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertFalse(kwargs["xprof_timing"])
+    self.assertEqual(kwargs["xprof_dir"], "/tmp/tensorboard")
+
+  @parameterized.named_parameters(
+      (
+          "yaml_xprof_true",
+          """
+benchmark:
+  name: gemm
+  xprof_timing: true
+  params:
+    warmup_tries: 1
+    num_runs: 1
+""",
+          [],
+          True,
+      ),
+      (
+          "yaml_xprof_false",
+          """
+benchmark:
+  name: gemm
+  xprof_timing: false
+  params:
+    warmup_tries: 1
+    num_runs: 1
+""",
+          [],
+          False,
+      ),
+      (
+          "yaml_xprof_omitted",
+          """
+benchmark:
+  name: gemm
+  params:
+    warmup_tries: 1
+    num_runs: 1
+""",
+          [],
+          False,
+      ),
+      (
+          "cli_flag_ignored",
+          """
+benchmark:
+  name: gemm
+  params:
+    warmup_tries: 1
+    num_runs: 1
+""",
+          ["--xprof_timing"],
+          False,
+      ),
+  )
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_config_xprof_timing(
+      self,
+      config_yaml,
+      extra_flags,
+      expected_xprof_timing,
+      mock_run_benchmarks,
+  ):
+    """Verifies xprof_timing resolution for benchmark run-config."""
+    fake_config = self.create_tempfile(content=config_yaml)
+    cli.run(["benchmark", "run-config", fake_config.full_path] + extra_flags)
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertIs(kwargs["xprof_timing"], expected_xprof_timing)
+
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_xprof_timing_enabled(self, mock_run_benchmarks):
+    """Verifies `benchmark run gemm --xprof_timing` passes xprof_timing=True."""
+    cli.run(["benchmark", "run", "gemm", "--xprof_timing"])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertIs(kwargs["xprof_timing"], True)
+
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_xprof_timing_default(self, mock_run_benchmarks):
+    """Verifies `benchmark run gemm` without flag passes xprof_timing=False."""
+    cli.run(["benchmark", "run", "gemm"])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertIs(kwargs["xprof_timing"], False)
 
   def test_google_flags_parser(self):
     """Verifies that _google_flags_parser strips Abseil flags and returns domain argv."""

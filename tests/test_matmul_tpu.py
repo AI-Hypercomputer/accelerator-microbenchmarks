@@ -7,7 +7,9 @@ import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import matmul
-from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import (
+    base,
+)
 from accelerator_microbenchmarks.core import system
 import jax
 import numpy as np
@@ -103,13 +105,14 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         "transpose_b": transpose_b,
         "warmup_tries": 2,
         "num_runs": 3,
-        "xprof_timing": True,
-        "xprof_dir": temp_dir,
     }
 
     config = matmul.GemmParams(**params)
     bm = matmul.GeneralizedGemmBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=None
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=None,
+        xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=temp_dir),
     )
     bm.setup()
     result = bm.run()

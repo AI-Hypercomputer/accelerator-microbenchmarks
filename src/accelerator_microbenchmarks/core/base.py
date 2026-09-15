@@ -19,6 +19,14 @@ import numpy as np
 import pandas as pd
 
 
+@dataclasses.dataclass(frozen=True)
+class XprofConfig:
+  """Configuration for XProf trace collection and device timing analysis."""
+
+  xprof_timing: bool = False
+  xprof_dir: str = "/tmp/tensorboard"
+
+
 @dataclasses.dataclass
 class BaseBenchmarkParams:
   warmup_tries: int = dataclasses.field(
@@ -34,15 +42,6 @@ class BaseBenchmarkParams:
       metadata={"help": "Minimum measurement duration in seconds."
                         " Also runs warmup for at least min_duration_s / 5"
                         " (capped at 1.0s)."},
-  )
-  xprof_timing: bool = dataclasses.field(
-      default=False,
-      metadata={"help": "Enable XProf trace collection"
-                        " and device timing analysis."},
-  )
-  xprof_dir: str = dataclasses.field(
-      default="/tmp/tensorboard",
-      metadata={"help": "Directory to save raw XProf trace outputs."},
   )
   use_trace_roofline: bool = dataclasses.field(
       default=False,
@@ -73,6 +72,7 @@ class BenchmarkMetadata:
   hardware_spec: system.HardwareSpec
   xla_flags: str = ""
   libtpu_init_args: str = ""
+  xprof_config: Optional[XprofConfig] = None
 
 
 @dataclasses.dataclass
@@ -105,12 +105,14 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       config: TConfig,
       hardware_spec: system.HardwareSpec,
       mesh: Optional[jax.sharding.Mesh] = None,
+      xprof_config: Optional[XprofConfig] = None,
   ):
     self.config: TConfig = config
     self.hardware_spec: system.HardwareSpec = hardware_spec
     self.mesh: Optional[jax.sharding.Mesh] = mesh
+    self.xprof_config: XprofConfig = xprof_config or XprofConfig()
     self._jit_fn = None
-    self._xprof_dir_actual: str = self.config.xprof_dir
+    self._xprof_dir_actual: str = self.xprof_config.xprof_dir
     self._xprof_dir_cns: str = self._xprof_dir_actual
 
   def _create_default_mesh(self) -> jax.sharding.Mesh:
@@ -472,12 +474,12 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       jax.block_until_ready(outputs)
       i += 1
 
-    if self.config.xprof_timing:
+    if self.xprof_config.xprof_timing:
       try:
         jax.profiler.stop_trace()
       except RuntimeError:
         pass
-      xprof_base_dir = self.config.xprof_dir
+      xprof_base_dir = self.xprof_config.xprof_dir
       benchmark_name = self.__class__.__name__
       timestamp = int(time.time())
 
@@ -525,7 +527,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         if actual_runs < 1000:
           raw_times.append((t1 - t0) * 1000.0)
 
-    if self.config.xprof_timing:
+    if self.xprof_config.xprof_timing:
       print("Xprof trace collected.")
 
     end_ts = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
@@ -534,7 +536,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     # Calculate host-side metrics
     metrics = self.calculate_metrics(raw_times)
 
-    if self.config.xprof_timing:
+    if self.xprof_config.xprof_timing:
       metrics = self._apply_xprof_timing_and_sync(metrics)
 
     metrics = self.derive_chip_metrics(metrics)
@@ -559,6 +561,9 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         hardware_spec=self.hardware_spec,
         xla_flags=os.environ.get("XLA_FLAGS", ""),
         libtpu_init_args=os.environ.get("LIBTPU_INIT_ARGS", ""),
+        xprof_config=(
+            self.xprof_config if self.xprof_config.xprof_timing else None
+        ),
     )
 
     return BenchmarkResult(

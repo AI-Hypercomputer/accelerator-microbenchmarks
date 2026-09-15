@@ -96,12 +96,17 @@ def init_jax_distributed():
 def run_benchmarks(
     tasks: List[tuple[str, base.BaseBenchmarkParams]],
     output_dir: str = "results",
+    xprof_timing: bool = False,
     xprof_dir: str = "/tmp/tensorboard",
     config_path: Optional[str] = None,
     xla_flags_file_path: Optional[str] = None,
     print_table: bool = True,
 ) -> List[base.BenchmarkResult]:
   """Core execution engine for typed benchmark task configurations."""
+  xprof_config = base.XprofConfig(
+      xprof_timing=xprof_timing, xprof_dir=xprof_dir
+  )
+
   benchmark_loader.load_all_benchmarks()
 
   # 1. Set Env Vars from op_flags.yaml
@@ -124,15 +129,13 @@ def run_benchmarks(
     try:
       benchmark_cls = registry.benchmark_registry.get_benchmark(task_name)
 
-      if not config_obj.xprof_dir or config_obj.xprof_dir == "/tmp/tensorboard":
-        config_obj.xprof_dir = xprof_dir
-
       test_case_configs = config_obj.expand_test_cases()
       total_cases = len(test_case_configs)
       for idx, test_case_config in enumerate(test_case_configs, 1):
         benchmark_instance = benchmark_cls(
             config=test_case_config,
             hardware_spec=resolved_hardware_spec,
+            xprof_config=xprof_config,
         )
         run_id = benchmark_instance.get_run_identifier()
         print(f"\nRunning [{idx}/{total_cases}] {task_name} ({run_id})...")

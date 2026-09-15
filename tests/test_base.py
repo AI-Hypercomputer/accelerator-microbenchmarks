@@ -21,12 +21,23 @@ jax.config.update("jax_platform_name", "cpu")
 class DummyBenchmark(base.BaseBenchmark):
   """A dummy benchmark for testing the BaseBenchmark class."""
 
-  def __init__(self, config=None, hardware_spec=None, mesh=None):
+  def __init__(
+      self,
+      config=None,
+      hardware_spec=None,
+      mesh=None,
+      xprof_config=None,
+  ):
     if config is None:
       config = base.BaseBenchmarkParams()
     if hardware_spec is None:
       hardware_spec = system.get_hardware_spec(system.TpuVersion.TPU7X)
-    super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
+    super().__init__(
+        config=config,
+        hardware_spec=hardware_spec,
+        mesh=mesh,
+        xprof_config=xprof_config,
+    )
 
   def run_op(self, x):
     return x * 2.0
@@ -159,7 +170,6 @@ class BaseBenchmarkTest(absltest.TestCase):
         "warmup_tries": 2,
         "num_runs": 5,
         "dtype": "float32",
-        "xprof_timing": False,
     }
 
     config = base.BaseBenchmarkParams(**params)
@@ -171,6 +181,7 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertEqual(result.metrics["actual_runs"], 5)
     self.assertIsNotNone(result.metadata.platform_info)
     self.assertEqual(result.metadata.hardware_spec, hw_spec)
+    self.assertIsNone(result.metadata.xprof_config)
 
     # Validate Roofline values computed correctly
     self.assertIn("roofline_tflops_limit", result.metrics)
@@ -191,12 +202,13 @@ class BaseBenchmarkTest(absltest.TestCase):
     params = {
         "warmup_tries": 1,
         "num_runs": 1,
-        "xprof_timing": True,
-        "xprof_dir": "/tmp/test_xprof",
     }
 
     config = base.BaseBenchmarkParams(**params)
-    bm = BenchmarkWithId(config=config)
+    xprof_config = base.XprofConfig(
+        xprof_timing=True, xprof_dir="/tmp/test_xprof"
+    )
+    bm = BenchmarkWithId(config=config, xprof_config=xprof_config)
     bm.run()
 
     mock_trace.assert_called_once()
@@ -223,12 +235,13 @@ class BaseBenchmarkTest(absltest.TestCase):
     params = {
         "warmup_tries": 1,
         "num_runs": 5,
-        "xprof_timing": True,
-        "xprof_dir": "/tmp/test_xprof",
     }
 
     config = base.BaseBenchmarkParams(**params)
-    bm = DummyBenchmark(config=config)
+    xprof_config = base.XprofConfig(
+        xprof_timing=True, xprof_dir="/tmp/test_xprof"
+    )
+    bm = DummyBenchmark(config=config, xprof_config=xprof_config)
     result = bm.run()
 
     # Assert that the base metrics retain the host timings (not 5.0 ms)
@@ -238,6 +251,7 @@ class BaseBenchmarkTest(absltest.TestCase):
     # Assert XProf metrics correctly reflect the mocked XProf durations
     self.assertEqual(result.metrics["xprof_avg_ms"], 5.0)
     self.assertEqual(result.metrics["xprof_url"], "http://mock_xprof_url")
+    self.assertEqual(result.metadata.xprof_config, xprof_config)
 
     mock_upload.assert_called_once()
     mock_parse_durations.assert_called_once()
@@ -267,11 +281,12 @@ class BaseBenchmarkTest(absltest.TestCase):
     params = {
         "warmup_tries": 1,
         "num_runs": 1,
-        "xprof_timing": True,
-        "xprof_dir": "/tmp/test_xprof",
     }
     config = base.BaseBenchmarkParams(**params)
-    bm = HostCpuBenchmark(config=config)
+    xprof_config = base.XprofConfig(
+        xprof_timing=True, xprof_dir="/tmp/test_xprof"
+    )
+    bm = HostCpuBenchmark(config=config, xprof_config=xprof_config)
     bm.run()
 
     mock_parse_durations.assert_called_once()
@@ -297,11 +312,12 @@ class BaseBenchmarkTest(absltest.TestCase):
     params = {
         "warmup_tries": 1,
         "num_runs": 1,
-        "xprof_timing": True,
-        "xprof_dir": "/tmp/test_xprof",
     }
     config = base.BaseBenchmarkParams(**params)
-    bm = DummyBenchmark(config=config)
+    xprof_config = base.XprofConfig(
+        xprof_timing=True, xprof_dir="/tmp/test_xprof"
+    )
+    bm = DummyBenchmark(config=config, xprof_config=xprof_config)
     result = bm.run()
 
     mock_parse_durations.assert_called_once()
@@ -349,11 +365,12 @@ class BaseBenchmarkTest(absltest.TestCase):
     params = {
         "warmup_tries": 1,
         "num_runs": 1,
-        "xprof_timing": True,
-        "xprof_dir": "/tmp/test_xprof",
     }
     config = base.BaseBenchmarkParams(**params)
-    bm = MultihostBenchmark(config=config)
+    xprof_config = base.XprofConfig(
+        xprof_timing=True, xprof_dir="/tmp/test_xprof"
+    )
+    bm = MultihostBenchmark(config=config, xprof_config=xprof_config)
     result = bm.run()
 
     # When requires_multihost_sync=True (e.g. Device-to-Device asymmetric
@@ -395,11 +412,12 @@ class BaseBenchmarkTest(absltest.TestCase):
     params = {
         "warmup_tries": 1,
         "num_runs": 3,
-        "xprof_timing": True,
-        "xprof_dir": "/tmp/test_xprof",
     }
     config = base.BaseBenchmarkParams(**params)
-    bm = MultihostBenchmark(config=config)
+    xprof_config = base.XprofConfig(
+        xprof_timing=True, xprof_dir="/tmp/test_xprof"
+    )
+    bm = MultihostBenchmark(config=config, xprof_config=xprof_config)
     result = bm.run()
 
     # When requires_multihost_sync=False (e.g., Collective symmetric benchmarks),
@@ -407,6 +425,26 @@ class BaseBenchmarkTest(absltest.TestCase):
     # XProf trace for its local device without invoking cross-host metric broadcast.
     mock_parse_durations.assert_called_once()
     self.assertEqual(result.metrics["xprof_avg_ms"], 3.5)
+
+  def test_xprof_config_immutability(self):
+    """Verifies that XprofConfig is frozen and immutable."""
+    cfg = base.XprofConfig(xprof_timing=True, xprof_dir="/tmp/test")
+    with self.assertRaises(dataclasses.FrozenInstanceError):
+      cfg.xprof_timing = False
+
+  def test_xprof_config_disabled_metadata_none(self):
+    """Verifies that xprof_timing=False results in xprof_config is None."""
+    xprof_config = base.XprofConfig(xprof_timing=False, xprof_dir="/tmp/test")
+    bm = DummyBenchmark(xprof_config=xprof_config)
+    result = bm.run()
+    self.assertIsNone(result.metadata.xprof_config)
+
+  def test_base_benchmark_default_xprof_config(self):
+    """Verifies that BaseBenchmark defaults xprof_config to XprofConfig instance."""
+    bm = DummyBenchmark()
+    self.assertIsInstance(bm.xprof_config, base.XprofConfig)
+    self.assertFalse(bm.xprof_config.xprof_timing)
+    self.assertEqual(bm.xprof_config.xprof_dir, "/tmp/tensorboard")
 
   def test_run_metadata_env_flags(self):
     """Tests BaseBenchmark.run() captures runtime flags or defaults to empty."""

@@ -128,8 +128,14 @@ class BaseCollectiveBenchmark(
       config: TCollectiveConfig,
       hardware_spec: system.HardwareSpec,
       mesh: Optional[jax.sharding.Mesh] = None,
+      xprof_config: Optional[base.XprofConfig] = None,
   ):
-    super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
+    super().__init__(
+        config=config,
+        hardware_spec=hardware_spec,
+        mesh=mesh,
+        xprof_config=xprof_config,
+    )
     self.sharding_strategy = None
 
   def apply_roofline_analysis(self, metrics: dict[str, Any]) -> dict[str, Any]:

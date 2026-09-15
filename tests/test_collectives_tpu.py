@@ -7,6 +7,7 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import collectives
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import system
 import jax
 import numpy as np
@@ -42,11 +43,13 @@ class AllReduceTpuTest(parameterized.TestCase):
         "reduce_op": reduce_op,
         "warmup_tries": 1,
         "num_runs": 2,
-        "xprof_timing": True,
     }
     config = collectives.AllReduceParams(**params)
     bm = collectives.AllReduceBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+        xprof_config=base.XprofConfig(xprof_timing=True),
     )
     bm.setup()
     (data,) = bm.generate_inputs()
@@ -94,8 +97,6 @@ class AllGatherTpuTest(parameterized.TestCase):
         "dtype": "bfloat16",
         "warmup_tries": 1,
         "num_runs": 2,
-        "xprof_timing": True,
-        "xprof_dir": temp_dir,
     }
     config = collectives.CollectivesParams(**params)
 
@@ -104,7 +105,10 @@ class AllGatherTpuTest(parameterized.TestCase):
         jax, "named_scope", side_effect=lambda name: contextlib.nullcontext()
     ):
       bm = collectives.AllGatherBenchmark(
-          config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+          config=config,
+          hardware_spec=system.TPU7X_HARDWARE_SPEC,
+          mesh=self.mock_mesh,
+          xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=temp_dir),
       )
       bm.setup()
       (data,) = bm.generate_inputs()
@@ -122,6 +126,7 @@ class AllGatherTpuTest(parameterized.TestCase):
         " missing.",
     )
     self.assertGreater(result.metrics["xprof_avg_ms"], 0.0)
+
 
 if __name__ == "__main__":
   absltest.main()

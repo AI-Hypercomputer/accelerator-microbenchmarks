@@ -95,8 +95,14 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
       config: DeviceToDeviceTestCaseParams,
       hardware_spec: system.HardwareSpec,
       mesh: Optional[jax.sharding.Mesh] = None,
+      xprof_config: Optional[base.XprofConfig] = None,
   ):
-    super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
+    super().__init__(
+        config=config,
+        hardware_spec=hardware_spec,
+        mesh=mesh,
+        xprof_config=xprof_config,
+    )
     self._jit_fn = None
 
   def get_device_to_measure(self) -> jax.Device:

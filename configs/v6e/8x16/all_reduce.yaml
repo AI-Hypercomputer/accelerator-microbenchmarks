@@ -1,10 +1,10 @@
 benchmark:
   name: all_reduce
+  xprof_timing: true
   params:
     warmup_tries: 2
     num_runs: 5
     dtype: bfloat16
-    xprof_timing: true
     reduce_op: sum
     mesh_shape: 8x16
     sharding_strategy: 8x16

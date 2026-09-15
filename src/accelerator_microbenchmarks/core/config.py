@@ -17,6 +17,7 @@ class BenchmarkKey(str, enum.Enum):
   CASES = "cases"
   CASES_FROM_CSV = "cases_from_csv"
   SWEEP = "sweep"
+  XPROF_TIMING = "xprof_timing"
 
 
 _ALLOWED_BENCHMARK_KEYS = frozenset(BenchmarkKey)
@@ -228,12 +229,6 @@ def load_config(path: str) -> list[dict[str, Any]]:
           f" '{benchmark_name}' to be a list, but got"
           f" {type(cases_list).__name__}."
       )
-    for c in cases_list:
-      if not isinstance(c, dict):
-        raise ValueError(
-            f"Expected each item in '{BenchmarkKey.CASES.value}' of benchmark"
-            f" '{benchmark_name}' to be a dict, but got {type(c).__name__}."
-        )
   elif BenchmarkKey.CASES_FROM_CSV in benchmark_spec:
     csv_path = benchmark_spec.get(BenchmarkKey.CASES_FROM_CSV)
     if not isinstance(csv_path, str) or not csv_path.strip():
@@ -244,12 +239,19 @@ def load_config(path: str) -> list[dict[str, Any]]:
       )
     cases_list = csv_loader.load_cases_from_csv(csv_path)
     cases_source = BenchmarkKey.CASES_FROM_CSV
+
+  if cases_list is not None:
     for c in cases_list:
       if not isinstance(c, dict):
         raise ValueError(
-            f"Expected each item in '{BenchmarkKey.CASES_FROM_CSV.value}' of"
-            f" benchmark '{benchmark_name}' to be a dict, but got"
-            f" {type(c).__name__}."
+            f"Expected each item in '{cases_source.value}' of benchmark"
+            f" '{benchmark_name}' to be a dict, but got {type(c).__name__}."
+        )
+      cases_reserved = set(c.keys()) & _ALLOWED_BENCHMARK_KEYS
+      if cases_reserved:
+        raise ValueError(
+            f"Benchmark '{benchmark_name}' has reserved key(s)"
+            f" {sorted(cases_reserved)} defined in '{cases_source.value}'."
         )
 
   # Validate and extract sweep
@@ -272,6 +274,15 @@ def load_config(path: str) -> list[dict[str, Any]]:
   # Stage 1 (model_preset) & Stage 2 (params): Base parameters
   # params overrides model_defaults; benchmark name is injected.
   base_params = {**model_defaults, **params, "name": benchmark_name}
+  xprof_timing = benchmark_spec.get(BenchmarkKey.XPROF_TIMING)
+  if xprof_timing is not None:
+    if not isinstance(xprof_timing, bool):
+      raise ValueError(
+          f"Expected '{BenchmarkKey.XPROF_TIMING.value}' in benchmark"
+          f" '{benchmark_name}' to be a bool, but got"
+          f" {type(xprof_timing).__name__}."
+      )
+    base_params["xprof_timing"] = xprof_timing
 
   # Stage 3: Cases (per-case parameter overrides over base_params)
   case_dicts = (

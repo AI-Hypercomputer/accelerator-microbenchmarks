@@ -127,8 +127,14 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
       config: HBMBandwidthParams,
       hardware_spec: system.HardwareSpec,
       mesh: jax.sharding.Mesh | None = None,
+      xprof_config: base.XprofConfig | None = None,
   ):
-    super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
+    super().__init__(
+        config=config,
+        hardware_spec=hardware_spec,
+        mesh=mesh,
+        xprof_config=xprof_config,
+    )
     self.spec: HBMKernelSpec | None = None
     self.scalar: Any | None = None
 

@@ -23,7 +23,7 @@ def _add_common_execution_args(parser) -> None:
       help="Directory to save persistent benchmark reports.",
   )
   parser.add_argument(
-      "--profile_dir",
+      "--xprof_dir",
       type=str,
       default="/tmp/tensorboard",
       help="Directory to collect and save profiling trace files.",
@@ -112,6 +112,12 @@ def create_parser() -> simple_parsing.ArgumentParser:
         help=f"Run {task_name} benchmark.",
     )
     _add_common_execution_args(task_parser)
+    task_parser.add_argument(
+        "--xprof_timing",
+        action="store_true",
+        default=False,
+        help="Enable XProf trace collection and device timing analysis.",
+    )
     task_parser.add_arguments(bench_cls.Config, dest="task_config")
 
   return parser
@@ -156,16 +162,24 @@ def run(argv: Sequence[str]) -> None:
       resolved_path = args.config_path
 
     raw_configs = config.load_config(resolved_path)
+    effective_xprof_timing = (
+        bool(raw_configs[0].get("xprof_timing", False))
+        if raw_configs
+        else False
+    )
+
     tasks = []
     for raw in raw_configs:
       name = raw.pop("name")
+      raw.pop("xprof_timing", None)
       bench_cls = registry.benchmark_registry.get_benchmark(name)
       tasks.append((name, bench_cls.Config(**raw)))
 
     runner.run_benchmarks(
         tasks=tasks,
         output_dir=args.output_dir,
-        xprof_dir=args.profile_dir,
+        xprof_timing=effective_xprof_timing,
+        xprof_dir=args.xprof_dir,
         config_path=args.config_path,
         xla_flags_file_path=args.xla_flags_file_path,
     )
@@ -176,7 +190,8 @@ def run(argv: Sequence[str]) -> None:
     runner.run_benchmarks(
         tasks=[(args.task, args.task_config)],
         output_dir=args.output_dir,
-        xprof_dir=args.profile_dir,
+        xprof_timing=args.xprof_timing,
+        xprof_dir=args.xprof_dir,
         xla_flags_file_path=args.xla_flags_file_path,
     )
     return

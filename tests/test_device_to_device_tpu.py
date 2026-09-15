@@ -5,6 +5,9 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import device_to_device
+from accelerator_microbenchmarks.core import (
+    base,
+)
 from accelerator_microbenchmarks.core import system
 import jax
 
@@ -64,11 +67,12 @@ class DeviceToDeviceTPUTest(parameterized.TestCase):
         direction="uni",
         src_device_index=0,
         dst_device_index=1,
-        xprof_timing=True,
     )
     config = device_to_device.DeviceToDeviceTestCaseParams(**params)
     bm = device_to_device.DeviceToDeviceBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        xprof_config=base.XprofConfig(xprof_timing=True),
     )
     bm.setup()
     result = bm.run()

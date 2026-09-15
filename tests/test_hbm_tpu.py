@@ -6,6 +6,9 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import hbm
+from accelerator_microbenchmarks.core import (
+    base,
+)
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import system
 import jax
@@ -25,7 +28,6 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
         "size": 1024 * 1024 * 128,
         "warmup_tries": 3,
         "num_runs": 10,
-        "xprof_timing": True,
     }
 
   def tearDown(self):
@@ -53,7 +55,9 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
     params = dict(self.params, op_type=op_type)
     config = hbm.HBMBandwidthParams(**params)
     self.bm = hbm.HBMBandwidthBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        xprof_config=base.XprofConfig(xprof_timing=True),
     )
     self.bm.setup()
     result = self.bm.run()
@@ -103,11 +107,12 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
         self.params,
         op_type="copy",
         device_id=target_dev_id,
-        xprof_dir=temp_dir,
     )
     config = hbm.HBMBandwidthParams(**params)
     self.bm = hbm.HBMBandwidthBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=temp_dir),
     )
     self.bm.setup()
 

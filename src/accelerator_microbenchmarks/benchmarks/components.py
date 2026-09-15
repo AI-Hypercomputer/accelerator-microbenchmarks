@@ -37,10 +37,16 @@ class ComponentBenchmark(base.BaseBenchmark[TransformerLayerParams]):
       config: TransformerLayerParams,
       hardware_spec: system.HardwareSpec,
       mesh: jax.sharding.Mesh | None = None,
+      xprof_config: base.XprofConfig | None = None,
       **parallelism_cfg,
   ):
     mesh = mesh or parallelism_cfg.pop("mesh", None)
-    super().__init__(config=config, hardware_spec=hardware_spec, mesh=mesh)
+    super().__init__(
+        config=config,
+        hardware_spec=hardware_spec,
+        mesh=mesh,
+        xprof_config=xprof_config,
+    )
     self._fprop = None
     # Parallelism settings from Table C1-C18
     self.tp = parallelism_cfg.get("tp", 1)

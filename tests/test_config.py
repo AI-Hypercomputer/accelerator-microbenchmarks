@@ -492,9 +492,18 @@ benchmark:
     self.assertEqual(config.BenchmarkKey.CASES, "cases")
     self.assertEqual(config.BenchmarkKey.CASES_FROM_CSV, "cases_from_csv")
     self.assertEqual(config.BenchmarkKey.SWEEP, "sweep")
+    self.assertEqual(config.BenchmarkKey.XPROF_TIMING, "xprof_timing")
     self.assertEqual(
         {k.value for k in config.BenchmarkKey},
-        {"name", "model_preset", "params", "cases", "cases_from_csv", "sweep"},
+        {
+            "name",
+            "model_preset",
+            "params",
+            "cases",
+            "cases_from_csv",
+            "sweep",
+            "xprof_timing",
+        },
     )
 
   def test_load_config_params_not_a_dict_raises_error(self):
@@ -567,6 +576,75 @@ benchmark:
       config.load_config(config_path)
     self.assertIn("Expected 'sweep' in benchmark", str(ctx.exception))
     self.assertIn("to be a non-empty dict", str(ctx.exception))
+
+  @parameterized.named_parameters(
+      ("true", "xprof_timing: true\n", True),
+      ("false", "xprof_timing: false\n", False),
+      ("omitted", "", None),
+  )
+  def test_load_config_root_xprof_timing_extracted(
+      self, xprof_snippet, expected
+  ):
+    """Verifies that root xprof_timing is extracted into base params."""
+    yaml_content = (
+        "benchmark:\n"
+        "  name: gemm_generalized\n"
+        f"{'  ' + xprof_snippet if xprof_snippet else ''}"
+        "  params:\n"
+        "    warmup_tries: 1\n"
+    )
+    config_path = os.path.join(self.test_dir.name, "config_xprof.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+    expanded = config.load_config(config_path)
+    self.assertNotEmpty(expanded)
+    self.assertEqual(expanded[0].get("xprof_timing"), expected)
+
+  @parameterized.named_parameters(
+      ("in_params", "params:\n  xprof_timing: true\n"),
+      ("in_sweep", "sweep:\n  xprof_timing: [true, false]\n"),
+      ("in_cases", "cases:\n  - m: 1024\n    xprof_timing: true\n"),
+  )
+  def test_load_config_xprof_timing_reserved_key_raises_error(self, snippet):
+    """Verifies reserved key xprof_timing in config sections raises error."""
+    yaml_content = "benchmark:\n  name: gemm_generalized\n" + "".join(
+        f"  {line}\n" for line in snippet.splitlines()
+    )
+    config_path = os.path.join(
+        self.test_dir.name, "config_reserved_xprof_timing.yaml"
+    )
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    with self.assertRaises(ValueError) as ctx:
+      config.load_config(config_path)
+    self.assertIn("reserved key(s)", str(ctx.exception))
+    self.assertIn("xprof_timing", str(ctx.exception))
+
+  @parameterized.named_parameters(
+      ("string_false", '"false"'),
+      ("string_true", '"true"'),
+      ("integer", "1"),
+  )
+  def test_load_config_xprof_timing_non_bool_raises_error(self, value):
+    """Verifies non-bool xprof_timing at benchmark root raises ValueError."""
+    yaml_content = f"""
+benchmark:
+  name: gemm_generalized
+  xprof_timing: {value}
+  params:
+    m: 1024
+"""
+    config_path = os.path.join(
+        self.test_dir.name, "config_invalid_xprof_timing.yaml"
+    )
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    with self.assertRaises(ValueError) as ctx:
+      config.load_config(config_path)
+    self.assertIn("Expected 'xprof_timing' in benchmark", str(ctx.exception))
+    self.assertIn("to be a bool", str(ctx.exception))
 
   @parameterized.named_parameters(_find_all_benchmark_configs())
   def test_all_configs_load_successfully(self, config_path):

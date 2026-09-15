@@ -202,7 +202,6 @@ class TestRunner(absltest.TestCase):
     dummy_params = base.BaseBenchmarkParams(
         warmup_tries=1,
         num_runs=1,
-        xprof_dir="/tmp/custom_xprof",
     )
     mock_platform = platform.PlatformInfo(
         tpu_type=system.TpuVersion.V6E,
@@ -248,12 +247,20 @@ class TestRunner(absltest.TestCase):
                 )
                 mock_get_benchmark.return_value = mock_bench_cls
 
-                results = runner.run_benchmarks(
+                expected_xprof_cfg = base.XprofConfig(
+                    xprof_timing=True, xprof_dir="/tmp/custom_xprof"
+                )
+                runner.run_benchmarks(
                     tasks=[("dummy", dummy_params)],
                     output_dir=tmpdir,
-                    xprof_dir="/tmp/fallback_xprof",
+                    xprof_timing=True,
+                    xprof_dir="/tmp/custom_xprof",
                 )
-                self.assertEqual(dummy_params.xprof_dir, "/tmp/custom_xprof")
+                mock_bench_cls.assert_called_once_with(
+                    config=dummy_params,
+                    hardware_spec=system.V6E_HARDWARE_SPEC,
+                    xprof_config=expected_xprof_cfg,
+                )
                 mock_export.assert_called_once()
 
   def test_run_benchmarks_with_xla_flags_file_path(self):

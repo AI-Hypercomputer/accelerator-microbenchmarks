@@ -31,8 +31,6 @@ DEFAULT_IGNORED_KEYS: frozenset[str] = frozenset({
     "warmup_tries",
     "num_runs",
     "min_duration_s",
-    "xprof_timing",
-    "xprof_dir",
     "xla_dump_dir",
     "use_trace_roofline",
     "seed",
