@@ -21,7 +21,7 @@ class TransferDirection(str, enum.Enum):
 
 
 @dataclasses.dataclass
-class DeviceToDeviceParams(base.BaseBenchmarkParams):
+class DeviceToDeviceParams(base.SingleDtypeBenchmarkParams):
   """YAML / CLI configuration specification (NO src/dst fields)."""
 
   data_size_mib: int = dataclasses.field(

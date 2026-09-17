@@ -167,7 +167,7 @@ class BaseBenchmarkTest(absltest.TestCase):
         "dtype": "float32",
     }
 
-    config = base.BaseBenchmarkParams(**params)
+    config = base.SingleDtypeBenchmarkParams(**params)
     hw_spec = system.get_hardware_spec(system.TpuVersion.TPU7X)
     bm = DummyBenchmark(config=config, hardware_spec=hw_spec)
     result = bm.run()
@@ -200,7 +200,7 @@ class BaseBenchmarkTest(absltest.TestCase):
         "num_runs": 5,
         "dtype": "float32",
     }
-    config = base.BaseBenchmarkParams(**params)
+    config = base.SingleDtypeBenchmarkParams(**params)
     hw_spec = system.get_hardware_spec(system.TpuVersion.TPU7X)
     bm = ComputeDummyBenchmark(config=config, hardware_spec=hw_spec)
     result = bm.run()

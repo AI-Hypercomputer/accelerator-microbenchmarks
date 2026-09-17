@@ -85,7 +85,7 @@ HBM_KERNELS["write"] = HBM_KERNELS["write_only"]
 
 
 @dataclasses.dataclass
-class HBMBandwidthParams(base.BaseBenchmarkParams):
+class HBMBandwidthParams(base.SingleDtypeBenchmarkParams):
   op_type: str = dataclasses.field(
       default="copy",
       metadata={

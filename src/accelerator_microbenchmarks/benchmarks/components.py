@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 
 @dataclasses.dataclass
-class TransformerLayerParams(base.BaseBenchmarkParams):
+class TransformerLayerParams(base.SingleDtypeBenchmarkParams):
   model_dim: int = dataclasses.field(
       default=7168,
       metadata={"help": "Model dimension size for Transformer layer."},

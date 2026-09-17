@@ -205,7 +205,7 @@ benchmark:
   name: gemm_generalized
   params:
     warmup_tries: 2
-    dtype: bfloat16
+    in_dtype: bfloat16
   cases:
     - m: 4096
       n: 4096
@@ -223,14 +223,14 @@ benchmark:
     self.assertLen(expanded, 2)
     self.assertEqual(expanded[0]["name"], "gemm_generalized")
     self.assertEqual(expanded[0]["warmup_tries"], 2)
-    self.assertEqual(expanded[0]["dtype"], "bfloat16")
+    self.assertEqual(expanded[0]["in_dtype"], "bfloat16")
     self.assertEqual(expanded[0]["m"], 4096)
     self.assertEqual(expanded[0]["n"], 4096)
     self.assertEqual(expanded[0]["k"], 4096)
 
     self.assertEqual(expanded[1]["name"], "gemm_generalized")
     self.assertEqual(expanded[1]["warmup_tries"], 2)
-    self.assertEqual(expanded[1]["dtype"], "bfloat16")
+    self.assertEqual(expanded[1]["in_dtype"], "bfloat16")
     self.assertEqual(expanded[1]["m"], 8192)
     self.assertEqual(expanded[1]["n"], 8192)
     self.assertEqual(expanded[1]["k"], 8192)

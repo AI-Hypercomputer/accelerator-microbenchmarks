@@ -11,7 +11,7 @@ import jax.numpy as jnp
 
 
 @dataclasses.dataclass
-class ComputeParams(base.BaseBenchmarkParams):
+class ComputeParams(base.SingleDtypeBenchmarkParams):
   dim: int = dataclasses.field(
       default=4096,
       metadata={"help": "Hidden dimension size."},
@@ -23,7 +23,7 @@ class ComputeParams(base.BaseBenchmarkParams):
 
 
 @dataclasses.dataclass
-class RoPEParams(base.BaseBenchmarkParams):
+class RoPEParams(base.SingleDtypeBenchmarkParams):
   seq_len: int = dataclasses.field(
       default=1024,
       metadata={"help": "Sequence length dimension."},
@@ -43,7 +43,7 @@ class RoPEParams(base.BaseBenchmarkParams):
 
 
 @dataclasses.dataclass
-class QuantParams(base.BaseBenchmarkParams):
+class QuantParams(base.SingleDtypeBenchmarkParams):
   m: int = dataclasses.field(
       default=4096,
       metadata={"help": "Matrix dimension M (rows)."},
@@ -55,7 +55,7 @@ class QuantParams(base.BaseBenchmarkParams):
 
 
 @dataclasses.dataclass
-class AddParams(base.BaseBenchmarkParams):
+class AddParams(base.SingleDtypeBenchmarkParams):
   size: int = dataclasses.field(
       default=1024 * 1024,
       metadata={"help": "Number of elements in the array."},

@@ -66,7 +66,7 @@ _REDUCE_OP_MAP = {
 
 
 @dataclasses.dataclass
-class CollectivesParams(base.BaseBenchmarkParams):
+class CollectivesParams(base.SingleDtypeBenchmarkParams):
   mesh_shape: Optional[str] = dataclasses.field(
       default=None,
       metadata={"help": "Logical TPU mesh shape string"

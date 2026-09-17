@@ -124,6 +124,17 @@ class TestCli(parameterized.TestCase):
     self.assertEqual(task_config.n, 512)
     self.assertEqual(task_config.k, 256)
 
+  def test_benchmark_run_gemm_help_excludes_dtype(self):
+    """Verifies that `tpums benchmark run gemm --help` does not expose --dtype."""
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
+      with self.assertRaises(SystemExit) as cm:
+        cli.run(["benchmark", "run", "gemm", "--help"])
+      self.assertEqual(cm.exception.code, 0)
+      help_text = fake_out.getvalue()
+      self.assertIn("--in_dtype", help_text)
+      self.assertIn("--out_dtype", help_text)
+      self.assertNotIn("--dtype ", help_text)
+
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_config(self, mock_run_benchmarks):
     """Verifies that `tpums benchmark run-config` calls runner.run_benchmarks."""

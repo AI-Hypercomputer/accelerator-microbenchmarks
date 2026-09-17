@@ -12,7 +12,7 @@ import numpy as np
 
 
 @dataclasses.dataclass
-class HostDeviceParams(base.BaseBenchmarkParams):
+class HostDeviceParams(base.SingleDtypeBenchmarkParams):
   data_size_mib: int = dataclasses.field(
       default=64,
       metadata={"help": "Transfer payload size in Mebibytes (MiB)."},

@@ -3,6 +3,6 @@ benchmark:
   params:
     warmup_tries: 2
     num_runs: 2
-    dtype: "bfloat16"
     in_dtype: "float8_e4m3fn"
+    out_dtype: "bfloat16"
   cases_from_csv: "configs/shapes/matrix_shapes.csv"

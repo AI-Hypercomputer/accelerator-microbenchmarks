@@ -53,15 +53,21 @@ class BaseBenchmarkParams:
           )
       },
   )
-  dtype: str = dataclasses.field(
-      default="bfloat16",
-      metadata={"help": "Data type for tensor operations"
-                        " (e.g. bfloat16, float32)."},
-  )
-
   def expand_test_cases(self) -> Sequence["BaseBenchmarkParams"]:
     """Default 1-to-1 mapping: returns [self]."""
     return [self]
+
+
+@dataclasses.dataclass
+class SingleDtypeBenchmarkParams(BaseBenchmarkParams):
+  """Base parameters for benchmarks using a single tensor data type."""
+
+  dtype: str = dataclasses.field(
+      default="bfloat16",
+      metadata={
+          "help": "Data type for tensor operations (e.g. bfloat16, float32)."
+      },
+  )
 
 
 @dataclasses.dataclass
@@ -270,6 +276,11 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
   def get_compute_dtype(self) -> str:
     """Return the primary data type used for compute math, to determine peak TFLOPS."""
+    if not hasattr(self.config, "dtype"):
+      raise ValueError(
+          f"Benchmark config {self.config} does not have a 'dtype' attribute. "
+          "Please implement get_compute_dtype() in the subclass."
+      )
     return self.config.dtype
 
   def get_device_to_measure(self) -> jax.Device:

@@ -31,17 +31,15 @@ class GemmParams(base.BaseBenchmarkParams):
       },
   )
   in_dtype: str = dataclasses.field(
-      default="",
+      default="bfloat16",
       metadata={
-          "help": "Input operand data type"
-                  " (e.g. float8_e4m3fn, bfloat16)."
+          "help": "Input operand data type (e.g. float8_e4m3fn, bfloat16)."
       },
   )
   out_dtype: str = dataclasses.field(
-      default="",
+      default="bfloat16",
       metadata={
-          "help": "Output accumulation/result data type"
-                  " (e.g. bfloat16)."
+          "help": "Output accumulation/result data type (e.g. bfloat16)."
       },
   )
 
@@ -70,12 +68,6 @@ class GemmParams(base.BaseBenchmarkParams):
       metadata={"help": "Scalar multiplier"
                         " for accumulator matrix C (beta * C)."},
   )
-
-  def __post_init__(self):
-    if not self.in_dtype:
-      self.in_dtype = self.dtype
-    if not self.out_dtype:
-      self.out_dtype = self.dtype
 
 
 @registry.benchmark_registry.register("gemm", aliases=["gemm_generalized"])
@@ -264,6 +256,10 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     flops = self.get_total_flops()
     bytes_moved = self.get_total_bytes()
     return flops / bytes_moved if bytes_moved > 0 else 0.0
+
+  def get_compute_dtype(self) -> str:
+    """Return the primary data type used for compute math, to determine peak TFLOPS."""
+    return self.config.in_dtype
 
   def get_workload_metadata(self) -> dict[str, Any]:
     return {

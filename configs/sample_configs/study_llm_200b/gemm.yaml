@@ -7,8 +7,8 @@ benchmark:
     min_duration_s: 5.0 # Power-aware sustained run
     warmup_tries: 10
     num_runs: 5
-    dtype: "bfloat16"
     in_dtype: "float8_e4m3fn"
+    out_dtype: "bfloat16"
     use_scaling_factors: true
   sweep:
     m: [1024, 2048, 4096]

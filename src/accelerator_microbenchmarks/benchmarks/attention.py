@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 
 @dataclasses.dataclass
-class AttentionParams(base.BaseBenchmarkParams):
+class AttentionParams(base.SingleDtypeBenchmarkParams):
   mode: str = dataclasses.field(
       default="fwd",
       metadata={"help": "Attention execution pass ('fwd' or 'bwd')."},
