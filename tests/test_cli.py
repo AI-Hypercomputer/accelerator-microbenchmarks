@@ -9,6 +9,10 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks import cli
+from accelerator_microbenchmarks.benchmarks import attention
+from accelerator_microbenchmarks.benchmarks import collectives
+from accelerator_microbenchmarks.benchmarks import device_to_device
+from accelerator_microbenchmarks.benchmarks import hbm
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
@@ -124,6 +128,93 @@ class TestCli(parameterized.TestCase):
     self.assertEqual(task_config.n, 512)
     self.assertEqual(task_config.k, 256)
 
+  _BENCHMARK_RUN_ENUM_CASES = (
+      tuple(
+          (
+              f"all_reduce_{op.name.lower()}",
+              "all_reduce",
+              "--reduce_op",
+              op.value,
+              "reduce_op",
+              op,
+          )
+          for op in collectives.ReduceOp
+      )
+      + tuple(
+          (
+              f"hbm_{op.name.lower()}",
+              "hbm",
+              "--op_type",
+              op.value,
+              "op_type",
+              op,
+          )
+          for op in hbm.HBMKernelOp
+      )
+      + tuple(
+          (
+              f"device_to_device_{direction.name.lower()}",
+              "device_to_device",
+              "--direction",
+              direction.value,
+              "direction",
+              direction,
+          )
+          for direction in device_to_device.TransferDirection
+      )
+  )
+
+  @parameterized.named_parameters(*_BENCHMARK_RUN_ENUM_CASES)
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_existing_enum_types(
+      self,
+      task_name,
+      flag_name,
+      flag_val,
+      attr_name,
+      expected_enum_val,
+      mock_run_benchmarks,
+  ):
+    """Verifies benchmark run accepts and coerces all existing enum flags.
+
+    Checks that runner.run_benchmarks receives a task config with the
+    correct enum type and value.
+    """
+    cli.run(["benchmark", "run", task_name, flag_name, flag_val])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    resolved_task, task_config = kwargs["tasks"][0]
+    self.assertEqual(resolved_task, task_name)
+    self.assertEqual(getattr(task_config, attr_name), expected_enum_val)
+    self.assertIsInstance(
+        getattr(task_config, attr_name), type(expected_enum_val)
+    )
+
+  @parameterized.named_parameters(
+      ("all_reduce_invalid_op", "all_reduce", "--reduce_op", "invalid_op"),
+      ("all_reduce_wrong_casing", "all_reduce", "--reduce_op", "SUM"),
+      ("hbm_invalid_op", "hbm", "--op_type", "invalid_kernel"),
+      ("hbm_wrong_casing", "hbm", "--op_type", "SCALE"),
+      (
+          "device_to_device_invalid_direction",
+          "device_to_device",
+          "--direction",
+          "invalid_dir",
+      ),
+      (
+          "device_to_device_wrong_casing",
+          "device_to_device",
+          "--direction",
+          "BI",
+      ),
+  )
+  def test_benchmark_run_invalid_enum_raises(
+      self, task_name, flag_name, invalid_val
+  ):
+    """Verifies that non-canonical or invalid enum values are rejected."""
+    with self.assertRaises(SystemExit):
+      cli.run(["benchmark", "run", task_name, flag_name, invalid_val])
+
   def test_benchmark_run_gemm_help_excludes_dtype(self):
     """Verifies that `tpums benchmark run gemm --help` does not expose --dtype."""
     with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
@@ -201,6 +292,215 @@ benchmark:
     mock_run_benchmarks.assert_called_once()
     _, kwargs = mock_run_benchmarks.call_args
     self.assertEqual(kwargs["xla_flags_file_path"], "/tmp/custom_op_flags.yaml")
+
+  @parameterized.named_parameters(
+      (
+          "negative_warmup_tries",
+          """
+benchmark:
+  name: gemm
+  params:
+    warmup_tries: -1
+""",
+          "warmup_tries must be >= 0",
+      ),
+      (
+          "zero_matrix_dim",
+          """
+benchmark:
+  name: all_reduce
+  params:
+    matrix_dim: 0
+""",
+          "matrix_dim must be >= 1",
+      ),
+  )
+  def test_benchmark_run_config_out_of_bounds_validation_raises(
+      self, config_yaml, expected_error_msg
+  ):
+    """Verifies out-of-bounds parameters in YAML config raise ValueError."""
+    fake_config = self.create_tempfile(content=config_yaml)
+    with self.assertRaisesRegex(ValueError, expected_error_msg):
+      cli.run(["benchmark", "run-config", fake_config.full_path])
+
+  @parameterized.named_parameters(
+      (
+          "all_reduce_invalid_op",
+          """
+benchmark:
+  name: all_reduce
+  params:
+    reduce_op: invalid_op
+""",
+          "Invalid reduce_op 'invalid_op'",
+      ),
+      (
+          "all_reduce_wrong_casing",
+          """
+benchmark:
+  name: all_reduce
+  params:
+    reduce_op: SUM
+""",
+          "Invalid reduce_op 'SUM'",
+      ),
+      (
+          "hbm_invalid_op",
+          """
+benchmark:
+  name: hbm
+  params:
+    op_type: invalid_kernel
+""",
+          "Invalid op_type 'invalid_kernel'",
+      ),
+      (
+          "hbm_wrong_casing",
+          """
+benchmark:
+  name: hbm
+  params:
+    op_type: SCALE
+""",
+          "Invalid op_type 'SCALE'",
+      ),
+      (
+          "device_to_device_invalid_direction",
+          """
+benchmark:
+  name: device_to_device
+  params:
+    direction: invalid_direction
+""",
+          "Invalid direction 'invalid_direction'",
+      ),
+      (
+          "device_to_device_wrong_casing",
+          """
+benchmark:
+  name: device_to_device
+  params:
+    direction: BI
+""",
+          "Invalid direction 'BI'",
+      ),
+      (
+          "attention_invalid_mode",
+          """
+benchmark:
+  name: attention_flashed
+  params:
+    mode: invalid_mode
+""",
+          "Invalid mode 'invalid_mode'",
+      ),
+      (
+          "attention_wrong_casing",
+          """
+benchmark:
+  name: attention_flashed
+  params:
+    mode: FWD
+""",
+          "Invalid mode 'FWD'",
+      ),
+  )
+  def test_benchmark_run_config_invalid_enum_raises(
+      self, config_yaml, expected_error_msg
+  ):
+    """Verifies that invalid enum values in YAML config raise ValueError."""
+    fake_config = self.create_tempfile(content=config_yaml)
+    with self.assertRaisesRegex(ValueError, expected_error_msg):
+      cli.run(["benchmark", "run-config", fake_config.full_path])
+
+  _BENCHMARK_RUN_CONFIG_ENUM_CASES = (
+      tuple(
+          (
+              f"all_reduce_{op.name.lower()}",
+              f"""
+benchmark:
+  name: all_reduce
+  params:
+    reduce_op: {op.value}
+""",
+              "all_reduce",
+              "reduce_op",
+              op,
+          )
+          for op in collectives.ReduceOp
+      )
+      + tuple(
+          (
+              f"hbm_{op.name.lower()}",
+              f"""
+benchmark:
+  name: hbm
+  params:
+    op_type: {op.value}
+""",
+              "hbm",
+              "op_type",
+              op,
+          )
+          for op in hbm.HBMKernelOp
+      )
+      + tuple(
+          (
+              f"device_to_device_{direction.name.lower()}",
+              f"""
+benchmark:
+  name: device_to_device
+  params:
+    direction: {direction.value}
+""",
+              "device_to_device",
+              "direction",
+              direction,
+          )
+          for direction in device_to_device.TransferDirection
+      )
+      + tuple(
+          (
+              f"attention_flashed_{mode.name.lower()}",
+              f"""
+benchmark:
+  name: attention_flashed
+  params:
+    mode: {mode.value}
+""",
+              "attention_flashed",
+              "mode",
+              mode,
+          )
+          for mode in attention.AttentionMode
+      )
+  )
+
+  @parameterized.named_parameters(*_BENCHMARK_RUN_CONFIG_ENUM_CASES)
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_config_existing_enum_types(
+      self,
+      config_yaml,
+      expected_task_name,
+      attr_name,
+      expected_enum_val,
+      mock_run_benchmarks,
+  ):
+    """Verifies benchmark run accepts and coerces all existing enum flags.
+
+    Checks that runner.run_benchmarks receives a task config with the
+    correct enum type and value.
+    """
+    fake_config = self.create_tempfile(content=config_yaml)
+    cli.run(["benchmark", "run-config", fake_config.full_path])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    task_name, task_config = kwargs["tasks"][0]
+    self.assertEqual(task_name, expected_task_name)
+    self.assertEqual(getattr(task_config, attr_name), expected_enum_val)
+    self.assertIsInstance(
+        getattr(task_config, attr_name), type(expected_enum_val)
+    )
 
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_with_common_flags(self, mock_run_benchmarks):
@@ -397,7 +697,7 @@ benchmark:
           self.assertEqual(cm.exception.code, 0)
           output = fake_out.getvalue()
           self.assertIn(f"usage: tpums benchmark run {task_name}", output)
-          self.assertIn(f"{bench_cls.Config.__name__} ['task_config']:", output)
+          self.assertIn(f"{bench_cls.Config.__name__} parameters:", output)
           for field in dataclasses.fields(bench_cls.Config):
             self.assertIn(f"--{field.name}", output)
             self.assertIn(
@@ -418,6 +718,82 @@ benchmark:
                 f"Help text for parameter '{field.name}' in benchmark"
                 f" '{task_name}' missing from help output.",
             )
+
+  @parameterized.named_parameters(
+      ("true", "true", True),
+      ("false", "false", False),
+      ("mixed_case", "True", True),
+      ("equals_form", "=true", True),
+  )
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_boolean_flag(
+      self, flag_value, expected, mock_run_benchmarks
+  ):
+    """Verifies boolean flags accept explicit true/false values."""
+    if flag_value.startswith("="):
+      argv = ["benchmark", "run", "gemm", f"--transpose_a{flag_value}"]
+    else:
+      argv = ["benchmark", "run", "gemm", "--transpose_a", flag_value]
+    cli.run(argv)
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    _, task_config = kwargs["tasks"][0]
+    self.assertIs(task_config.transpose_a, expected)
+
+  @parameterized.named_parameters(
+      ("invalid_token", ["--transpose_a", "maybe"]),
+      # `yes` was accepted before this CL replaced simple_parsing; the narrower
+      # true/false token set is intentional.
+      ("legacy_yes_token", ["--transpose_a", "yes"]),
+      # Bare `--transpose_a` no longer implies True; a value is now required.
+      ("bare_flag", ["--transpose_a"]),
+  )
+  def test_benchmark_run_boolean_flag_rejected_values(self, extra_argv):
+    """Verifies unsupported boolean values exit rather than silently pass."""
+    with self.assertRaises(SystemExit):
+      cli.run(["benchmark", "run", "gemm"] + extra_argv)
+
+
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_boolean_flag_defaults(self, mock_run_benchmarks):
+    """Verifies omitted boolean flags keep their scalar dataclass defaults."""
+    cli.run(["benchmark", "run", "gemm"])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    _, task_config = kwargs["tasks"][0]
+    self.assertIs(task_config.transpose_a, False)
+    self.assertIs(task_config.use_trace_roofline, False)
+
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_inherited_boolean_flag(self, mock_run_benchmarks):
+    """Verifies booleans inherited from BaseBenchmarkParams take values too."""
+    cli.run(["benchmark", "run", "gemm", "--use_trace_roofline", "true"])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    _, task_config = kwargs["tasks"][0]
+    self.assertIs(task_config.use_trace_roofline, True)
+
+  def test_boolean_flag_accepts_multiple_values(self):
+    """Verifies booleans parse into a list, for future parameter sweeps.
+
+    `parse_cli_config` currently keeps only the first value, so this asserts at
+    the argparse layer rather than on the resulting config.
+    """
+    parser = cli.create_parser()
+    args = parser.parse_args(
+        ["benchmark", "run", "gemm", "--transpose_a", "true", "false"]
+    )
+    self.assertEqual(args.transpose_a, [True, False])
+
+  def test_benchmark_run_boolean_flag_help(self):
+    """Verifies boolean flags advertise their value form and default."""
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
+      with self.assertRaises(SystemExit):
+        cli.run(["benchmark", "run", "gemm", "--help"])
+      output = fake_out.getvalue()
+      self.assertIn("--transpose_a {true,false}", output)
+      self.assertIn("(default: False)", output)
+      self.assertNotIn("--no-transpose_a", output)
 
   def test_invalid_command_exits(self):
     """Verifies that invalid subcommands raise SystemExit."""

@@ -17,17 +17,23 @@ class GemmParams(base.BaseBenchmarkParams):
 
   m: int = dataclasses.field(
       default=1024,
-      metadata={"help": "Matrix dimension M (rows of operand A / output C)."},
+      metadata={
+          "min": 1,
+          "help": "Matrix dimension M (rows of operand A / output C).",
+      },
   )
   k: int = dataclasses.field(
       default=1024,
-      metadata={"help": "Contracting dimension K (columns of A / rows of B)."},
+      metadata={
+          "min": 1,
+          "help": "Contracting dimension K (columns of A / rows of B).",
+      },
   )
   n: int = dataclasses.field(
       default=1024,
       metadata={
-          "help": "Matrix dimension N (columns of operand B /"
-                  " output C)."
+          "min": 1,
+          "help": "Matrix dimension N (columns of operand B / output C).",
       },
   )
   in_dtype: str = dataclasses.field(
@@ -45,7 +51,7 @@ class GemmParams(base.BaseBenchmarkParams):
 
   seed: int = dataclasses.field(
       default=0,
-      metadata={"help": "Random seed for tensor initialization."},
+      metadata={"min": 0, "help": "Random seed for tensor initialization."},
   )
   use_scaling_factors: bool = dataclasses.field(
       default=False,

@@ -1,12 +1,15 @@
 """Unit tests for device_to_device.py."""
 
+import argparse
+import io
 import os
 from unittest import mock
 
 from absl.testing import absltest
+from absl.testing import parameterized
+from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.benchmarks import device_to_device
 from accelerator_microbenchmarks.core import base
-from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -23,7 +26,7 @@ os.environ["XLA_FLAGS"] = (
 jax.config.update("jax_platform_name", "cpu")
 
 
-class DeviceToDeviceParamsTest(absltest.TestCase):
+class DeviceToDeviceParamsTest(parameterized.TestCase):
   """Unit tests for DeviceToDeviceParams parameter expansion and properties."""
 
   def test_expand_test_cases_pair_generation(self):
@@ -65,6 +68,74 @@ class DeviceToDeviceParamsTest(absltest.TestCase):
     """Verifies MiB to bytes conversion."""
     cfg = device_to_device.DeviceToDeviceParams(data_size_mib=4)
     self.assertEqual(cfg.data_size_bytes, 4 * 1024 * 1024)
+
+  @parameterized.named_parameters(
+      (d.name.lower(), d.value) for d in device_to_device.TransferDirection
+  )
+  def test_direction_help_message_and_default_value(self, choice: str):
+    """Verifies help message includes choice and matching default."""
+    parser = argparse.ArgumentParser()
+    cli.add_dataclass_arguments(
+        parser, device_to_device.DeviceToDeviceParams
+    )
+    s = io.StringIO()
+    parser.print_help(file=s)
+    help_msg = s.getvalue()
+
+    normalized_help = " ".join(help_msg.split())
+    self.assertIn(
+        choice,
+        help_msg,
+        f"Enum value '{choice}' missing from help message: {help_msg}",
+    )
+
+    default_direction = (
+        device_to_device.DeviceToDeviceParams().direction.value
+    )
+    self.assertIn(
+        f"(default: {default_direction})",
+        normalized_help,
+        f"Displayed default '{default_direction}' missing from help:"
+        f" {help_msg}",
+    )
+
+  @parameterized.parameters(
+      ("uni", device_to_device.TransferDirection.UNI),
+      ("bi", device_to_device.TransferDirection.BI),
+  )
+  def test_direction_is_normalized_to_enum(self, value, expected):
+    """Verifies raw direction strings are coerced to TransferDirection."""
+    cfg = device_to_device.DeviceToDeviceParams(direction=value)
+    self.assertEqual(cfg.direction, expected)
+
+  @parameterized.parameters("TESTING", "BI")
+  def test_unknown_direction_raises_error(self, value):
+    """Verifies unknown directions are rejected, including wrong casing."""
+    with self.assertRaisesRegex(ValueError, f"Invalid direction '{value}'"):
+      device_to_device.DeviceToDeviceParams(direction=value)
+
+  @parameterized.parameters(
+      (device_to_device.DeviceToDeviceParams, "data_size_mib", 0, 1),
+      (device_to_device.DeviceToDeviceParams, "seed", -1, 0),
+      (
+          device_to_device.DeviceToDeviceTestCaseParams,
+          "src_device_index",
+          -1,
+          0,
+      ),
+      (
+          device_to_device.DeviceToDeviceTestCaseParams,
+          "dst_device_index",
+          -1,
+          0,
+      ),
+  )
+  def test_out_of_range_values_raise_error(
+      self, params_cls, field, value, bound
+  ):
+    """Verifies the bounds declared on the device_to_device params fields."""
+    with self.assertRaisesRegex(ValueError, f"{field} must be >= {bound}"):
+      params_cls(**{field: value})
 
 
 class DeviceToDeviceBenchmarkTest(absltest.TestCase):
@@ -172,10 +243,10 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
     """Verify run identifier string generation."""
     self.bm.config.src_device_index = 0
     self.bm.config.dst_device_index = 1
-    self.bm.config.direction = "uni"
+    self.bm.config.direction = device_to_device.TransferDirection.UNI
     self.bm.config.data_size_mib = 1
     self.assertEqual(self.bm.get_run_identifier(), "d2d_0_to_1_uni_1mib")
-    self.bm.config.direction = "bi"
+    self.bm.config.direction = device_to_device.TransferDirection.BI
     self.assertEqual(self.bm.get_run_identifier(), "d2d_0_to_1_bi_1mib")
 
   def test_requires_multihost_sync(self):

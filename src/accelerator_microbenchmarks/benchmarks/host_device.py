@@ -15,7 +15,7 @@ import numpy as np
 class HostDeviceParams(base.SingleDtypeBenchmarkParams):
   data_size_mib: int = dataclasses.field(
       default=64,
-      metadata={"help": "Transfer payload size in Mebibytes (MiB)."},
+      metadata={"min": 1, "help": "Transfer payload size in Mebibytes (MiB)."},
   )
 
   @property

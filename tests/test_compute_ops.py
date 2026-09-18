@@ -1,6 +1,7 @@
 """Unit tests for compute_ops.py."""
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import compute_ops
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import system
@@ -282,6 +283,26 @@ class AddBenchmarkTest(absltest.TestCase):
     self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
     metrics = self.bm.calculate_metrics([10.0])
     self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
+
+
+class ComputeOpsParamsValidationTest(parameterized.TestCase):
+  """Verifies the bounds declared on the compute_ops params classes."""
+
+  @parameterized.parameters(
+      (compute_ops.ComputeParams, "dim", 0),
+      (compute_ops.ComputeParams, "batch", -1),
+      (compute_ops.RoPEParams, "seq_len", 0),
+      (compute_ops.RoPEParams, "head_dim", -1),
+      (compute_ops.RoPEParams, "batch", 0),
+      (compute_ops.RoPEParams, "heads", 0),
+      (compute_ops.QuantParams, "m", 0),
+      (compute_ops.QuantParams, "n", -1),
+      (compute_ops.AddParams, "size", 0),
+  )
+  def test_out_of_range_values_raise_error(self, params_cls, field, value):
+    """Verifies that out-of-range numeric values raise a ValueError."""
+    with self.assertRaisesRegex(ValueError, f"{field} must be >= 1"):
+      params_cls(**{field: value})
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 """Device-to-Device (D2D) transfer performance microbenchmark."""
 
 import dataclasses
-import enum
 from typing import Any, Callable, Optional, Sequence
 
 from accelerator_microbenchmarks.core import base
@@ -15,7 +14,9 @@ from jax.experimental import mesh_utils
 import jax.numpy as jnp
 
 
-class TransferDirection(str, enum.Enum):
+class TransferDirection(constants.ParamEnum):
+  """Transfer direction for device-to-device benchmarks."""
+
   UNI = "uni"
   BI = "bi"
 
@@ -26,16 +27,20 @@ class DeviceToDeviceParams(base.SingleDtypeBenchmarkParams):
 
   data_size_mib: int = dataclasses.field(
       default=1024,
-      metadata={"help": "Transfer payload size in Mebibytes (MiB)."},
+      metadata={"min": 1, "help": "Transfer payload size in Mebibytes (MiB)."},
   )
   direction: TransferDirection = dataclasses.field(
       default=TransferDirection.UNI,
-      metadata={"help": "Transfer direction mode"
-                        " ('uni' for unidirectional, 'bi' for bidirectional)."},
+      metadata={
+          "help": (
+              "Transfer direction mode ('uni' for unidirectional, 'bi' for"
+              " bidirectional)."
+          )
+      },
   )
   seed: int = dataclasses.field(
       default=0,
-      metadata={"help": "Random seed for tensor initialization."},
+      metadata={"min": 0, "help": "Random seed for tensor initialization."},
   )
 
   @property
@@ -65,8 +70,17 @@ class DeviceToDeviceParams(base.SingleDtypeBenchmarkParams):
 class DeviceToDeviceTestCaseParams(DeviceToDeviceParams):
   """Concrete execution config for a single (src, dst) pair."""
 
-  src_device_index: int = 0
-  dst_device_index: int = 1
+  src_device_index: int = dataclasses.field(
+      default=0,
+      metadata={"min": 0, "help": "Source local accelerator device index."},
+  )
+  dst_device_index: int = dataclasses.field(
+      default=1,
+      metadata={
+          "min": 0,
+          "help": "Destination local accelerator device index.",
+      },
+  )
 
 
 @registry.benchmark_registry.register("device_to_device")

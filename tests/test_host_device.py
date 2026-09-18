@@ -3,6 +3,7 @@
 from unittest import mock
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import host_device
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import platform
@@ -331,6 +332,15 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     test_report_utils.assert_schema_matches_output(
         self, self.bm, ignored_keys={"total_bytes_mib"}
     )
+
+
+class HostDeviceParamsValidationTest(parameterized.TestCase):
+  """Verifies the bounds declared on HostDeviceParams fields."""
+
+  @parameterized.parameters(0, -10)
+  def test_non_positive_data_size_raises_error(self, data_size_mib):
+    with self.assertRaisesRegex(ValueError, "data_size_mib must be >= 1"):
+      host_device.HostDeviceParams(data_size_mib=data_size_mib)
 
 
 if __name__ == "__main__":

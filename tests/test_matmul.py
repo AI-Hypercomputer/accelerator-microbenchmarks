@@ -550,5 +550,20 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     )
 
 
+class GemmParamsValidationTest(parameterized.TestCase):
+  """Verifies the bounds declared on GemmParams fields."""
+
+  @parameterized.parameters(
+      ("m", -1, 1),
+      ("m", 0, 1),
+      ("k", 0, 1),
+      ("n", -5, 1),
+      ("seed", -1, 0),
+  )
+  def test_out_of_range_values_raise_error(self, field, value, bound):
+    with self.assertRaisesRegex(ValueError, f"{field} must be >= {bound}"):
+      matmul.GemmParams(**{field: value})
+
+
 if __name__ == "__main__":
   absltest.main()

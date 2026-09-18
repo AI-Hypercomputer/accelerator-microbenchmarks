@@ -1,12 +1,15 @@
 """Test for collective benchmarks."""
 
+import argparse
 import dataclasses
+import io
 import os
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 # pylint: disable=g-import-not-at-top
+from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
@@ -56,18 +59,14 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(bm_class.Config, collectives.AllReduceParams)
 
   def test_all_reduce_invalid_op_raises_error(self):
-    """Verify that invalid reduce_op raises ValueError in setup()."""
+    """Verify that invalid reduce_op raises ValueError at initialization."""
     params = {
         "matrix_dim": 64,
         "dtype": "bfloat16",
         "reduce_op": "invalid_op",
     }
-    config = collectives.AllReduceParams(**params)
-    bm = collectives.AllReduceBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
-    )
-    with self.assertRaises(ValueError):
-      bm.setup()
+    with self.assertRaisesRegex(ValueError, "Invalid reduce_op 'invalid_op'"):
+      collectives.AllReduceParams(**params)
 
   def test_all_reduce_get_run_identifier(self):
     """Verify get_run_identifier returns dim_1024_op_max format."""
@@ -795,6 +794,55 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     )
     self.assertEqual(
         zero_metrics["wall_clock_bandwidth_per_chip_gb_s"], float("inf")
+    )
+
+
+class CollectivesParamsValidationTest(parameterized.TestCase):
+  """Verifies the bounds declared on CollectivesParams fields."""
+
+  @parameterized.parameters(
+      ("matrix_dim", 0, 1),
+      ("matrix_dim", -1, 1),
+      ("seed", -1, 0),
+  )
+  def test_out_of_range_values_raise_error(self, field, value, bound):
+    with self.assertRaisesRegex(ValueError, f"{field} must be >= {bound}"):
+      collectives.CollectivesParams(**{field: value})
+
+  def test_reduce_op_coerces_to_enum(self):
+    params = collectives.AllReduceParams(reduce_op="mean")
+    self.assertEqual(params.reduce_op, collectives.ReduceOp.MEAN)
+    self.assertIsInstance(params.reduce_op, collectives.ReduceOp)
+
+  def test_invalid_reduce_op_raises_error(self):
+    with self.assertRaisesRegex(ValueError, "Invalid reduce_op 'unsupported'"):
+      collectives.AllReduceParams(reduce_op="unsupported")
+
+  @parameterized.named_parameters(
+      (op.name.lower(), op.value) for op in collectives.ReduceOp
+  )
+  def test_all_reduce_reduce_op_help_message_and_default_value(
+      self, choice: str
+  ):
+    """Verifies help message includes choice and matching default."""
+    parser = argparse.ArgumentParser()
+    cli.add_dataclass_arguments(parser, collectives.AllReduceParams)
+    s = io.StringIO()
+    parser.print_help(file=s)
+    help_msg = s.getvalue()
+
+    normalized_help = " ".join(help_msg.split())
+    self.assertIn(
+        choice,
+        help_msg,
+        f"Enum value '{choice}' missing from help message: {help_msg}",
+    )
+
+    default_op = collectives.AllReduceParams().reduce_op.value
+    self.assertIn(
+        f"(default: {default_op})",
+        normalized_help,
+        f"Displayed default '{default_op}' missing from help: {help_msg}",
     )
 
 

@@ -57,11 +57,20 @@ def zero_crop(x):
   )(x)
 
 
-_REDUCE_OP_MAP = {
-    "sum": jax.lax.psum,
-    "mean": jax.lax.pmean,
-    "max": jax.lax.pmax,
-    "min": jax.lax.pmin,
+class ReduceOp(constants.ParamEnum):
+  """Reduction operations supported by all-reduce collective benchmark."""
+
+  SUM = "sum"
+  MEAN = "mean"
+  MAX = "max"
+  MIN = "min"
+
+
+_REDUCE_OP_MAP: dict[ReduceOp, Callable[..., Any]] = {
+    ReduceOp.SUM: jax.lax.psum,
+    ReduceOp.MEAN: jax.lax.pmean,
+    ReduceOp.MAX: jax.lax.pmax,
+    ReduceOp.MIN: jax.lax.pmin,
 }
 
 
@@ -79,12 +88,17 @@ class CollectivesParams(base.SingleDtypeBenchmarkParams):
   )
   matrix_dim: int = dataclasses.field(
       default=1024,
-      metadata={"help": "Dimension size for sharded collective matrices."
-                        " Actual matrix size will be (matrix_dim, 8, 128)."},
+      metadata={
+          "min": 1,
+          "help": (
+              "Dimension size for sharded collective matrices. Actual matrix"
+              " size will be (matrix_dim, 8, 128)."
+          ),
+      },
   )
   seed: int = dataclasses.field(
       default=0,
-      metadata={"help": "Random seed for tensor initialization."},
+      metadata={"min": 0, "help": "Random seed for tensor initialization."},
   )
   xla_dump_dir: Optional[str] = dataclasses.field(
       default=None,
@@ -95,13 +109,12 @@ class CollectivesParams(base.SingleDtypeBenchmarkParams):
 
 @dataclasses.dataclass
 class AllReduceParams(CollectivesParams):
-  reduce_op: str = dataclasses.field(
-      default="sum",
+  reduce_op: ReduceOp = dataclasses.field(
+      default=ReduceOp.SUM,
       metadata={
-          "help": "Reduction operation ('sum', 'mean', 'max', 'min').",
+          "help": "Reduction operation.",
       },
   )
-
 
 TCollectiveConfig = TypeVar("TCollectiveConfig", bound=CollectivesParams)
 
@@ -413,17 +426,17 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
   )
 
   def setup(self):
-    op = self.config.reduce_op.lower()
+    op = self.config.reduce_op
     if op not in _REDUCE_OP_MAP:
       raise ValueError(
           f"Invalid reduce_op '{self.config.reduce_op}'. "
-          f"Must be one of {list(_REDUCE_OP_MAP.keys())}"
+          f"Must be one of {ReduceOp.supported_options_str()}"
       )
     super().setup()
 
   def get_run_identifier(self) -> str:
     dim = self.config.matrix_dim
-    op = self.config.reduce_op.lower()
+    op = self.config.reduce_op
     return f"dim_{dim}_op_{op}"
 
   def _get_input_shape_and_sharding(
@@ -437,7 +450,7 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
-    op_fn = _REDUCE_OP_MAP[self.config.reduce_op.lower()]
+    op_fn = _REDUCE_OP_MAP[self.config.reduce_op]
 
     @jax.jit
     def all_reduce_sharded(x):

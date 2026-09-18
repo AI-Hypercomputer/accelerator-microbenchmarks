@@ -1,9 +1,12 @@
 """Unit tests for hbm.py."""
 
+import argparse
+import io
 from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.benchmarks import hbm
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import registry
@@ -38,7 +41,12 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         "dtype": "bfloat16",
     }
 
-  def _setup_benchmark(self, op_type: str = "copy", **kwargs):
+  def _setup_benchmark(
+      self,
+      op_type: hbm.HBMKernelOp | str = hbm.HBMKernelOp.COPY,
+      **kwargs,
+  ):
+    """Initializes the HBMBandwidthBenchmark with given params."""
     params = self.params.copy()
     params["op_type"] = op_type
     params.update(kwargs)
@@ -81,14 +89,6 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
   def test_device_id_validation(self):
     """Verify setup validates device_id is within range of local devices."""
     num_devices = len(jax.devices())
-
-    # Invalid negative device_id
-    config = hbm.HBMBandwidthParams(device_id=-1)
-    bm = hbm.HBMBandwidthBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
-    )
-    with self.assertRaisesRegex(ValueError, "Invalid device_id: -1"):
-      bm.setup()
 
     # Invalid out of range device_id
     config = hbm.HBMBandwidthParams(device_id=num_devices)
@@ -220,11 +220,11 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     np.testing.assert_allclose(out_triad, np.ones(1024) * scalar, rtol=1e-2)
 
   def test_unsupported_op_type(self):
-    """Verify an unsupported op_type raises a ValueError when setup is called."""
+    """Verify an unsupported op_type raises a ValueError when initialized."""
     with self.assertRaisesRegex(
-        ValueError, "Unsupported op_type: 'invalid_kernel'"
+        ValueError, "Invalid op_type 'invalid_kernel'"
     ):
-      self._setup_benchmark("invalid_kernel")
+      hbm.HBMBandwidthParams(op_type="invalid_kernel")
 
   def test_run_op_uninitialized(self):
     """Verify calling run_op before setup raises a ValueError."""
@@ -393,6 +393,54 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
     self._setup_benchmark("copy")
     test_report_utils.assert_schema_matches_output(self, self.bm)
+
+
+class HBMBandwidthParamsValidationTest(parameterized.TestCase):
+  """Verifies the bounds declared on HBMBandwidthParams fields."""
+
+  @parameterized.parameters(0, -1)
+  def test_non_positive_size_raises_error(self, size):
+    with self.assertRaisesRegex(ValueError, "size must be >= 1"):
+      hbm.HBMBandwidthParams(size=size)
+
+  @parameterized.parameters(-1, -5)
+  def test_negative_device_id_raises_error(self, device_id):
+    with self.assertRaisesRegex(ValueError, "device_id must be >= 0"):
+      hbm.HBMBandwidthParams(device_id=device_id)
+
+  def test_invalid_op_type_raises_error(self):
+    with self.assertRaisesRegex(ValueError, "Invalid op_type 'invalid_kernel'"):
+      hbm.HBMBandwidthParams(op_type="invalid_kernel")
+
+  def test_op_type_coerces_to_enum(self):
+    params = hbm.HBMBandwidthParams(op_type="scale")
+    self.assertEqual(params.op_type, hbm.HBMKernelOp.SCALE)
+    self.assertIsInstance(params.op_type, hbm.HBMKernelOp)
+
+  @parameterized.named_parameters(
+      (op.name.lower(), op.value) for op in hbm.HBMKernelOp
+  )
+  def test_op_type_help_message_and_default_value(self, choice: str):
+    """Verifies help message includes choice and matching default."""
+    parser = argparse.ArgumentParser()
+    cli.add_dataclass_arguments(parser, hbm.HBMBandwidthParams)
+    s = io.StringIO()
+    parser.print_help(file=s)
+    help_msg = s.getvalue()
+
+    normalized_help = " ".join(help_msg.split())
+    self.assertIn(
+        choice,
+        help_msg,
+        f"Enum value '{choice}' missing from help message: {help_msg}",
+    )
+
+    default_op = hbm.HBMBandwidthParams().op_type.value
+    self.assertIn(
+        f"(default: {default_op})",
+        normalized_help,
+        f"Displayed default '{default_op}' missing from help: {help_msg}",
+    )
 
 
 if __name__ == "__main__":

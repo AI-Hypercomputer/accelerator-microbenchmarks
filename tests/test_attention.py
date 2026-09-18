@@ -1,6 +1,11 @@
 """Unit tests for attention.py."""
 
+import argparse
+import io
+
 from absl.testing import absltest
+from absl.testing import parameterized
+from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.benchmarks import attention
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
@@ -243,6 +248,55 @@ class AttentionBenchmarkTest(absltest.TestCase):
         0.0, constants.TimingDomain.WALL_CLOCK
     )
     self.assertEqual(metrics["wall_clock_tflops_per_device"], float("inf"))
+
+
+class AttentionParamsValidationTest(parameterized.TestCase):
+  """Verifies the bounds declared on AttentionParams fields."""
+
+  def test_out_of_range_values_raise_error(self):
+    for field, value in (
+        ("batch", 0),
+        ("seq_len", -1),
+        ("num_q_heads", 0),
+        ("num_kv_heads", 0),
+        ("head_dim", -10),
+    ):
+      with self.subTest(field=field):
+        with self.assertRaisesRegex(ValueError, f"{field} must be >= 1"):
+          attention.AttentionParams(**{field: value})
+
+  def test_invalid_mode_raises_error(self):
+    with self.assertRaisesRegex(ValueError, "Invalid mode 'invalid'"):
+      attention.AttentionParams(mode="invalid")
+
+  def test_mode_coerces_to_enum(self):
+    params = attention.AttentionParams(mode="bwd")
+    self.assertEqual(params.mode, attention.AttentionMode.BWD)
+    self.assertIsInstance(params.mode, attention.AttentionMode)
+
+  @parameterized.named_parameters(
+      (member.name.lower(), member.value) for member in attention.AttentionMode
+  )
+  def test_mode_help_message_and_default_value(self, choice: str):
+    """Verifies help message includes choice and matching default."""
+    parser = argparse.ArgumentParser()
+    cli.add_dataclass_arguments(parser, attention.AttentionParams)
+    s = io.StringIO()
+    parser.print_help(file=s)
+    help_msg = s.getvalue()
+
+    normalized_help = " ".join(help_msg.split())
+    self.assertIn(
+        choice,
+        help_msg,
+        f"Enum value '{choice}' missing from help message: {help_msg}",
+    )
+    default_mode = attention.AttentionParams().mode.value
+    self.assertIn(
+        f"(default: {default_mode})",
+        normalized_help,
+        f"Displayed default '{default_mode}' missing from help: {help_msg}",
+    )
 
 
 if __name__ == "__main__":

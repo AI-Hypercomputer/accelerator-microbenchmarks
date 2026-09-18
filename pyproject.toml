@@ -7,7 +7,7 @@ name = "accelerator_microbenchmarks"
 version = "2.0"
 description = "Clean, modular, and high-fidelity JAX microbenchmarks for TPU/GPU."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "absl-py",
     "jax[tpu]",

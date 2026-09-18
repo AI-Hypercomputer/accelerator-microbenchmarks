@@ -11,11 +11,20 @@ import jax
 import jax.numpy as jnp
 
 
+class AttentionMode(constants.ParamEnum):
+  """Execution mode for attention benchmark."""
+
+  FWD = "fwd"
+  BWD = "bwd"
+
+
 @dataclasses.dataclass
 class AttentionParams(base.SingleDtypeBenchmarkParams):
-  mode: str = dataclasses.field(
-      default="fwd",
-      metadata={"help": "Attention execution pass ('fwd' or 'bwd')."},
+  mode: AttentionMode = dataclasses.field(
+      default=AttentionMode.FWD,
+      metadata={
+          "help": "Attention execution pass (forward or backward).",
+      },
   )
   causal: bool = dataclasses.field(
       default=True,
@@ -23,23 +32,26 @@ class AttentionParams(base.SingleDtypeBenchmarkParams):
   )
   batch: int = dataclasses.field(
       default=1,
-      metadata={"help": "Batch size dimension."},
+      metadata={"min": 1, "help": "Batch size dimension."},
   )
   seq_len: int = dataclasses.field(
       default=8192,
-      metadata={"help": "Sequence length dimension."},
+      metadata={"min": 1, "help": "Sequence length dimension."},
   )
   num_q_heads: int = dataclasses.field(
       default=56,
-      metadata={"help": "Number of query attention heads."},
+      metadata={"min": 1, "help": "Number of query attention heads."},
   )
   num_kv_heads: int = dataclasses.field(
       default=56,
-      metadata={"help": "Number of key/value attention heads (GQA/MHA)."},
+      metadata={
+          "min": 1,
+          "help": "Number of key/value attention heads (GQA/MHA).",
+      },
   )
   head_dim: int = dataclasses.field(
       default=128,
-      metadata={"help": "Dimension size per attention head."},
+      metadata={"min": 1, "help": "Dimension size per attention head."},
   )
 
 
@@ -87,9 +99,9 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
             q, k, v, mask=mask, is_causal=causal
         )
 
-    if mode == "fwd":
+    if mode == AttentionMode.FWD:
       self._jit_fn = attention_fwd
-    elif mode == "bwd":
+    elif mode == AttentionMode.BWD:
 
       @jax.jit
       def attention_bwd(q, k, v, mask=None):
@@ -183,7 +195,7 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
     itemsize = jnp.dtype(jnp.bfloat16).itemsize
     mode = self.config.mode
 
-    if mode == "fwd":
+    if mode == AttentionMode.FWD:
       # Bytes = Load(Q, K, V) + Store(Out)
       return batch * (
           (heads_q * q_len * head_dim * itemsize)  # Q
@@ -191,7 +203,7 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
           + (heads_kv * kv_len * head_dim * itemsize)  # V
           + (heads_q * q_len * head_dim * itemsize)  # Out
       )
-    elif mode == "bwd":
+    elif mode == AttentionMode.BWD:
       # Bytes = Load(Q, K, V, Out, dOut) + Store(dQ, dK, dV)
       return batch * (
           2 * (heads_q * q_len * head_dim * itemsize)  # Q + dQ
@@ -217,7 +229,7 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
     else:
       flops = 4 * q_len * kv_len * heads * head_dim
 
-    if mode == "bwd":
+    if mode == AttentionMode.BWD:
       flops *= 2
 
     return flops / self.get_total_bytes()
@@ -235,7 +247,7 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
     else:
       total_flops = 4 * q_len * kv_len * heads * head_dim
 
-    if mode == "bwd":
+    if mode == AttentionMode.BWD:
       total_flops *= 2
 
     return float(total_flops)

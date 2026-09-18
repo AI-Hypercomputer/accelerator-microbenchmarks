@@ -14,11 +14,11 @@ import jax.numpy as jnp
 class ComputeParams(base.SingleDtypeBenchmarkParams):
   dim: int = dataclasses.field(
       default=4096,
-      metadata={"help": "Hidden dimension size."},
+      metadata={"min": 1, "help": "Hidden dimension size."},
   )
   batch: int = dataclasses.field(
       default=1024,
-      metadata={"help": "Batch size dimension."},
+      metadata={"min": 1, "help": "Batch size dimension."},
   )
 
 
@@ -26,19 +26,19 @@ class ComputeParams(base.SingleDtypeBenchmarkParams):
 class RoPEParams(base.SingleDtypeBenchmarkParams):
   seq_len: int = dataclasses.field(
       default=1024,
-      metadata={"help": "Sequence length dimension."},
+      metadata={"min": 1, "help": "Sequence length dimension."},
   )
   head_dim: int = dataclasses.field(
       default=128,
-      metadata={"help": "Dimension size per attention head."},
+      metadata={"min": 1, "help": "Dimension size per attention head."},
   )
   batch: int = dataclasses.field(
       default=32,
-      metadata={"help": "Batch size dimension."},
+      metadata={"min": 1, "help": "Batch size dimension."},
   )
   heads: int = dataclasses.field(
       default=32,
-      metadata={"help": "Number of attention heads."},
+      metadata={"min": 1, "help": "Number of attention heads."},
   )
 
 
@@ -46,11 +46,11 @@ class RoPEParams(base.SingleDtypeBenchmarkParams):
 class QuantParams(base.SingleDtypeBenchmarkParams):
   m: int = dataclasses.field(
       default=4096,
-      metadata={"help": "Matrix dimension M (rows)."},
+      metadata={"min": 1, "help": "Matrix dimension M (rows)."},
   )
   n: int = dataclasses.field(
       default=4096,
-      metadata={"help": "Matrix dimension N (columns)."},
+      metadata={"min": 1, "help": "Matrix dimension N (columns)."},
   )
 
 
@@ -58,7 +58,7 @@ class QuantParams(base.SingleDtypeBenchmarkParams):
 class AddParams(base.SingleDtypeBenchmarkParams):
   size: int = dataclasses.field(
       default=1024 * 1024,
-      metadata={"help": "Number of elements in the array."},
+      metadata={"min": 1, "help": "Number of elements in the array."},
   )
 
 

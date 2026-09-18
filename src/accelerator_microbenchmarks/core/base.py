@@ -4,6 +4,7 @@ import abc
 import contextlib
 import dataclasses
 import datetime
+import enum
 import os
 import time
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
@@ -32,17 +33,24 @@ class XprofConfig:
 class BaseBenchmarkParams:
   warmup_tries: int = dataclasses.field(
       default=10,
-      metadata={"help": "Number of warmup iterations before measurement."},
+      metadata={
+          "min": 0,
+          "help": "Number of warmup iterations before measurement.",
+      },
   )
   num_runs: int = dataclasses.field(
       default=10,
-      metadata={"help": "Number of measurement iterations."},
+      metadata={"min": 0, "help": "Number of measurement iterations."},
   )
   min_duration_s: float = dataclasses.field(
       default=0.0,
-      metadata={"help": "Minimum measurement duration in seconds."
-                        " Also runs warmup for at least min_duration_s / 5"
-                        " (capped at 1.0s)."},
+      metadata={
+          "min": 0.0,
+          "help": (
+              "Minimum measurement duration in seconds. Also runs warmup for"
+              " at least min_duration_s / 5 (capped at 1.0s)."
+          ),
+      },
   )
   use_trace_roofline: bool = dataclasses.field(
       default=False,
@@ -53,6 +61,62 @@ class BaseBenchmarkParams:
           )
       },
   )
+
+  def _validate_bounds(self) -> None:
+    """Checks every field against its min/max metadata constraints.
+
+    Raises:
+      ValueError: If any field violates its `min`/`max` bound.
+    """
+    for field in dataclasses.fields(self):
+      value = getattr(self, field.name)
+      if value is None:
+        continue
+
+      # Only validate numeric fields (int, float) for min/max bounds.
+      # Exclude bool since bool is a subclass of int in Python.
+      if not isinstance(value, (int, float)) or isinstance(value, bool):
+        continue
+
+      minimum = field.metadata.get("min")
+      if minimum is not None and value < minimum:
+        raise ValueError(f"{field.name} must be >= {minimum}, got {value}")
+
+      maximum = field.metadata.get("max")
+      if maximum is not None and value > maximum:
+        raise ValueError(f"{field.name} must be <= {maximum}, got {value}")
+
+  def _coerce_enums(self) -> None:
+    """Coerces every enum field in-place into a member of its Enum type.
+
+    Raises:
+      ValueError: If any field is not a valid member of its Enum type.
+    """
+    for field in dataclasses.fields(self):
+      value = getattr(self, field.name)
+      if value is None:
+        continue
+
+      # Checks if the field is an enum by coercing raw values into their Enum
+      # member. Only scalar enum fields are supported, not containers such as
+      # list[Enum].
+      if isinstance(field.type, type) and issubclass(field.type, enum.Enum):
+        enum_type: type[enum.Enum] = field.type
+      else:
+        continue
+
+      try:
+        setattr(self, field.name, enum_type(value))
+      except (ValueError, TypeError) as exc:
+        raise ValueError(
+            f"Invalid {field.name} '{value}'. Must be one of"
+            f" {[member.value for member in enum_type]}."
+        ) from exc
+
+  def __post_init__(self):
+    self._coerce_enums()
+    self._validate_bounds()
+
   def expand_test_cases(self) -> Sequence["BaseBenchmarkParams"]:
     """Default 1-to-1 mapping: returns [self]."""
     return [self]

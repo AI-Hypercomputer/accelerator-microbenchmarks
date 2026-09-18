@@ -1,6 +1,7 @@
 """Unit tests for components.py."""
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import components
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
@@ -142,6 +143,20 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         0.0, constants.TimingDomain.WALL_CLOCK
     )
     self.assertEqual(metrics["wall_clock_tflops_per_device"], float("inf"))
+
+
+class ComponentsParamsValidationTest(parameterized.TestCase):
+  """Verifies the bounds declared on TransformerLayerParams fields."""
+
+  @parameterized.parameters(
+      ("model_dim", 0),
+      ("model_dim", -1),
+      ("mslen", 0),
+      ("mslen", -5),
+  )
+  def test_out_of_range_values_raise_error(self, field, value):
+    with self.assertRaisesRegex(ValueError, f"{field} must be >= 1"):
+      components.TransformerLayerParams(**{field: value})
 
 
 if __name__ == "__main__":

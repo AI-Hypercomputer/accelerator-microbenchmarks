@@ -1,20 +1,24 @@
 """Canonical CLI entry point for the TPU Microbenchmark Suite (TPUMS)."""
 
+import argparse
 import dataclasses
+import enum
 import json
 import os
 import sys
-from typing import Sequence
+from typing import Any, Sequence, Type
 
-import simple_parsing
+from absl import app
+from absl import flags
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import platform as core_platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
 
 
-def _add_common_execution_args(parser) -> None:
+def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
   """Adds common output and profiling flags to a subparser."""
   parser.add_argument(
       "--output_dir",
@@ -36,9 +40,115 @@ def _add_common_execution_args(parser) -> None:
   )
 
 
-def create_parser() -> simple_parsing.ArgumentParser:
+def _str_to_bool(value: str) -> bool:
+  """Converts a CLI string token into a boolean."""
+  lowered = value.lower()
+  if lowered == "true":
+    return True
+  if lowered == "false":
+    return False
+  raise argparse.ArgumentTypeError(
+      f"invalid boolean value: '{value}' (choose from 'true', 'false')"
+  )
+
+
+def add_dataclass_arguments(
+    parser: argparse.ArgumentParser,
+    config_cls: Type[base.BaseBenchmarkParams],
+) -> None:
+  """Registers dataclass fields as argparse flags.
+
+  Flags are grouped under a `<ConfigClass> parameters` section. Boolean, enum,
+  numeric, and string flags all take explicit values and support `nargs="+"`;
+  booleans accept the literal tokens `true` and `false`.
+
+  Args:
+    parser: The (sub)parser to register the flags on.
+    config_cls: The benchmark configuration dataclass (e.g. `AllReduceParams`).
+  """
+  parser.formatter_class = argparse.ArgumentDefaultsHelpFormatter
+  group = parser.add_argument_group(
+      title=f"{config_cls.__name__} parameters",
+  )
+
+  for field in dataclasses.fields(config_cls):
+    if not field.init:
+      continue
+
+    flag_names = [f"--{field.name}"]
+    # Preserve the single-dash shorthand (e.g. `-m`) for one-letter fields.
+    if len(field.name) == 1:
+      flag_names.append(f"-{field.name}")
+
+    default = (
+        field.default if field.default is not dataclasses.MISSING else None
+    )
+    help_text = field.metadata.get("help", "").strip()
+
+    # 1. Boolean flags: `--transpose_a true` or `--transpose_a true false`
+    if field.type is bool:
+      group.add_argument(
+          *flag_names,
+          type=_str_to_bool,
+          nargs="+",
+          default=default,
+          metavar="{true,false}",
+          help=help_text,
+      )
+    # 2. Enum flags (strictly lowercase values)
+    elif isinstance(field.type, type) and issubclass(field.type, enum.Enum):
+      default_val = (
+          default.value if isinstance(default, enum.Enum) else default
+      )
+      group.add_argument(
+          *flag_names,
+          type=str,
+          nargs="+",
+          choices=[e.value for e in field.type],
+          default=default_val,
+          help=help_text,
+      )
+    # 3. Numeric / string flags
+    else:
+      # Non-class annotations (e.g. `Optional[str]`) fall back to str parsing;
+      # the dataclass itself remains the source of truth for validation.
+      field_type = field.type if isinstance(field.type, type) else str
+      group.add_argument(
+          *flag_names,
+          type=field_type,
+          nargs="+",
+          default=default,
+          help=help_text,
+      )
+
+
+def parse_cli_config(
+    config_cls: Type[base.BaseBenchmarkParams],
+    parsed_args: argparse.Namespace,
+) -> base.BaseBenchmarkParams:
+  """Builds a BaseBenchmarkParams instance from parsed CLI arguments.
+
+  Args:
+    config_cls: The benchmark configuration dataclass to instantiate.
+    parsed_args: Namespace produced by a parser configured via
+      `add_dataclass_arguments`.
+
+  Returns:
+    An instance of `config_cls`.
+  """
+  kwargs: dict[str, Any] = {}
+  for field in dataclasses.fields(config_cls):
+    if not field.init or not hasattr(parsed_args, field.name):
+      continue
+    value = getattr(parsed_args, field.name)
+    ## Does not support multiple values for a single flag.
+    kwargs[field.name] = value[0] if isinstance(value, list) else value
+  return config_cls(**kwargs)
+
+
+def create_parser() -> argparse.ArgumentParser:
   """Constructs the hierarchical resource-action CLI parser for tpums."""
-  parser = simple_parsing.ArgumentParser(
+  parser = argparse.ArgumentParser(
       prog="tpums",
       description=(
           "TPU Microbenchmark Suite (TPUMS) CLI tool for performance"
@@ -118,7 +228,7 @@ def create_parser() -> simple_parsing.ArgumentParser:
         default=False,
         help="Enable XProf trace collection and device timing analysis.",
     )
-    task_parser.add_arguments(bench_cls.Config, dest="task_config")
+    add_dataclass_arguments(task_parser, bench_cls.Config)
 
   return parser
 
@@ -187,8 +297,10 @@ def run(argv: Sequence[str]) -> None:
 
   # 4. Handle `tpums benchmark run <task> [options]`
   if args.resource == "benchmark" and args.action == "run":
+    bench_cls = registry.benchmark_registry.get_benchmark(args.task)
+    task_config = parse_cli_config(bench_cls.Config, args)
     runner.run_benchmarks(
-        tasks=[(args.task, args.task_config)],
+        tasks=[(args.task, task_config)],
         output_dir=args.output_dir,
         xprof_timing=args.xprof_timing,
         xprof_dir=args.xprof_dir,

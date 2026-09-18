@@ -17,11 +17,17 @@ import jax.numpy as jnp
 class TransformerLayerParams(base.SingleDtypeBenchmarkParams):
   model_dim: int = dataclasses.field(
       default=7168,
-      metadata={"help": "Model dimension size for Transformer layer."},
+      metadata={
+          "min": 1,
+          "help": "Model dimension size for Transformer layer.",
+      },
   )
   mslen: int = dataclasses.field(
       default=1024,
-      metadata={"help": "Micro-sequence length after Context Parallelism."},
+      metadata={
+          "min": 1,
+          "help": "Micro-sequence length after Context Parallelism.",
+      },
   )
 
 

@@ -2,6 +2,7 @@
 
 import contextlib
 import dataclasses
+import enum
 import os
 from typing import Any
 import unittest
@@ -18,6 +19,13 @@ import numpy as np
 
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
+
+
+class _Color(constants.ParamEnum):
+  """Sample ParamEnum used to exercise the shared base class."""
+
+  RED = "red"
+  GREEN = "green"
 
 
 class DummyBenchmark(base.BaseBenchmark):
@@ -84,6 +92,88 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
     self.assertLen(cases, 1)
     self.assertIs(cases[0], cfg)
     self.assertEqual(cases[0].custom_flag, "hello")
+
+  def test_warmup_tries_negative_raises_error(self):
+    """Verifies that warmup_tries < 0 raises ValueError."""
+    with self.assertRaises(ValueError):
+      base.BaseBenchmarkParams(warmup_tries=-5)
+
+  def test_num_runs_negative_raises_error(self):
+    """Verifies that num_runs < 0 raises ValueError."""
+    with self.assertRaises(ValueError):
+      base.BaseBenchmarkParams(num_runs=-2)
+
+  def test_min_duration_s_negative_raises_error(self):
+    """Verifies that min_duration_s < 0 raises ValueError."""
+    with self.assertRaises(ValueError):
+      base.BaseBenchmarkParams(min_duration_s=-2.0)
+
+  def test_custom_min_max_and_enum_validation(self):
+    """Verifies min, max, and enum validation on custom subclass."""
+
+    class SampleEnum(enum.Enum):
+      ALPHA = "alpha"
+      BETA = "beta"
+
+    @dataclasses.dataclass
+    class CustomParams(base.BaseBenchmarkParams):
+      score: int = dataclasses.field(
+          default=5,
+          metadata={"min": 1, "max": 10},
+      )
+      mode: SampleEnum = dataclasses.field(default=SampleEnum.ALPHA)
+
+    # Valid string enum conversion
+    cfg = CustomParams(score=8, mode="beta")
+    self.assertEqual(cfg.score, 8)
+    self.assertEqual(cfg.mode, SampleEnum.BETA)
+
+    # Below min
+    with self.assertRaisesRegex(ValueError, "score must be >= 1"):
+      CustomParams(score=0)
+
+    # Above max
+    with self.assertRaisesRegex(ValueError, "score must be <= 10"):
+      CustomParams(score=11)
+
+    # Invalid enum
+    with self.assertRaisesRegex(ValueError, "Invalid mode 'gamma'"):
+      CustomParams(mode="gamma")
+
+    # Test _validate_bounds() independently
+    cfg_direct = CustomParams(score=5)
+    cfg_direct.score = 0
+    with self.assertRaisesRegex(ValueError, "score must be >= 1"):
+      cfg_direct._validate_bounds()  # pylint: disable=protected-access
+
+    # Test _coerce_enums() independently
+    cfg_direct.score = 5
+    cfg_direct.mode = "gamma"
+    with self.assertRaisesRegex(ValueError, "Invalid mode 'gamma'"):
+      cfg_direct._coerce_enums()  # pylint: disable=protected-access
+
+
+class ParamEnumTest(absltest.TestCase):
+  """Tests for the shared ParamEnum base class."""
+
+  def test_supported_options_str(self):
+    """Verifies values are joined in declaration order."""
+    self.assertEqual(_Color.supported_options_str(), "red, green")
+
+  def test_member_is_str(self):
+    """Verifies members interpolate as their value, without a `__str__`."""
+    self.assertEqual(f"{_Color.RED}", "red")
+    self.assertEqual(_Color.RED, "red")
+
+  def test_coerces_from_raw_string(self):
+    """Verifies a ParamEnum field is coerced by BaseBenchmarkParams."""
+
+    @dataclasses.dataclass
+    class ColorParams(base.BaseBenchmarkParams):
+      color: _Color = dataclasses.field(default=_Color.RED)
+
+    cfg = ColorParams(color="green")
+    self.assertIs(cfg.color, _Color.GREEN)
 
 
 class BaseBenchmarkTest(absltest.TestCase):

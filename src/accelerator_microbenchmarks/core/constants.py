@@ -5,6 +5,15 @@ import enum
 MARKER = "MARKER!!!"
 
 
+class ParamEnum(enum.StrEnum):
+  """Base class for string-based enums with formatting utilities."""
+
+  @classmethod
+  def supported_options_str(cls) -> str:
+    """Returns a comma-separated string of all enum values."""
+    return ", ".join(cls)
+
+
 class RooflineMode(str, enum.Enum):
   """Roofline calculation mode for microbenchmarks.
 

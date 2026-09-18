@@ -13,6 +13,19 @@ import jax
 import jax.numpy as jnp
 
 
+class HBMKernelOp(constants.ParamEnum):
+  """Operation types supported by HBM bandwidth microbenchmarks."""
+
+  COPY = "copy"
+  SCALE = "scale"
+  ADD = "add"
+  TRIAD = "triad"
+  READ_ONLY = "read_only"
+  WRITE_ONLY = "write_only"
+  READ = "read"  # Alias for READ_ONLY.
+  WRITE = "write"  # Alias for WRITE_ONLY.
+
+
 @dataclasses.dataclass(frozen=True)
 class HBMKernelSpec:
   """Specification for an HBM benchmark kernel.
@@ -34,44 +47,44 @@ class HBMKernelSpec:
   num_flops_per_element: float = 1.0
 
 
-HBM_KERNELS: dict[str, HBMKernelSpec] = {
-    "copy": HBMKernelSpec(
-        name="copy",
+HBM_KERNELS: dict[HBMKernelOp, HBMKernelSpec] = {
+    HBMKernelOp.COPY: HBMKernelSpec(
+        name=HBMKernelOp.COPY.value,
         kernel_fn=lambda args, scalar: args[0] + 1.0,
         num_inputs=1,
         num_arrays=2,  # 1 read (x), 1 write (y)
         num_flops_per_element=1.0,
     ),
-    "scale": HBMKernelSpec(
-        name="scale",
+    HBMKernelOp.SCALE: HBMKernelSpec(
+        name=HBMKernelOp.SCALE.value,
         kernel_fn=lambda args, scalar: args[0] * scalar,
         num_inputs=1,
         num_arrays=2,  # 1 read (x), 1 write (y)
         num_flops_per_element=1.0,
     ),
-    "add": HBMKernelSpec(
-        name="add",
+    HBMKernelOp.ADD: HBMKernelSpec(
+        name=HBMKernelOp.ADD.value,
         kernel_fn=lambda args, scalar: args[0] + args[1],
         num_inputs=2,
         num_arrays=3,  # 2 reads (x, y), 1 write (z)
         num_flops_per_element=1.0,
     ),
-    "triad": HBMKernelSpec(
-        name="triad",
+    HBMKernelOp.TRIAD: HBMKernelSpec(
+        name=HBMKernelOp.TRIAD.value,
         kernel_fn=lambda args, scalar: args[0] + (args[1] * scalar),
         num_inputs=2,
         num_arrays=3,  # 2 reads (x, y), 1 write (z)
         num_flops_per_element=2.0,
     ),
-    "read_only": HBMKernelSpec(
-        name="read_only",
+    HBMKernelOp.READ_ONLY: HBMKernelSpec(
+        name=HBMKernelOp.READ_ONLY.value,
         kernel_fn=lambda args, scalar: jnp.any(args[0]),
         num_inputs=1,
         num_arrays=1,  # 1 read (x), 0 writes (scalar boolean return)
         num_flops_per_element=1.0,
     ),
-    "write_only": HBMKernelSpec(
-        name="write_only",
+    HBMKernelOp.WRITE_ONLY: HBMKernelSpec(
+        name=HBMKernelOp.WRITE_ONLY.value,
         kernel_fn=lambda args, scalar, shape, dtype: jnp.full(
             shape, scalar, dtype=dtype
         ),
@@ -80,28 +93,23 @@ HBM_KERNELS: dict[str, HBMKernelSpec] = {
         num_flops_per_element=0.0,
     ),
 }
-HBM_KERNELS["read"] = HBM_KERNELS["read_only"]
-HBM_KERNELS["write"] = HBM_KERNELS["write_only"]
+HBM_KERNELS[HBMKernelOp.READ] = HBM_KERNELS[HBMKernelOp.READ_ONLY]
+HBM_KERNELS[HBMKernelOp.WRITE] = HBM_KERNELS[HBMKernelOp.WRITE_ONLY]
 
 
 @dataclasses.dataclass
 class HBMBandwidthParams(base.SingleDtypeBenchmarkParams):
-  op_type: str = dataclasses.field(
-      default="copy",
-      metadata={
-          "help": (
-              "HBM kernel operation type (copy, scale, add, triad, read_only,"
-              " write_only)."
-          )
-      },
+  op_type: HBMKernelOp = dataclasses.field(
+      default=HBMKernelOp.COPY,
+      metadata={"help": "HBM kernel operation type."},
   )
   size: int = dataclasses.field(
       default=134217728,
-      metadata={"help": "Number of elements for HBM input arrays."},
+      metadata={"min": 1, "help": "Number of elements for HBM input arrays."},
   )
   device_id: int = dataclasses.field(
       default=0,
-      metadata={"help": "Target local accelerator device ID."},
+      metadata={"min": 0, "help": "Target local accelerator device ID."},
   )
 
 
@@ -151,13 +159,12 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     if op_type is None:
       raise ValueError("op_type must be specified.")
 
-    op_type = op_type.lower()
     if op_type in HBM_KERNELS:
       spec = HBM_KERNELS[op_type]
     else:
-      supported = ", ".join(HBM_KERNELS.keys())
       raise ValueError(
-          f"Unsupported op_type: '{op_type}'. Supported: {supported}."
+          f"Unsupported op_type: '{op_type}'. Supported:"
+          f" {HBMKernelOp.supported_options_str()}."
       )
     self.spec = spec
 
