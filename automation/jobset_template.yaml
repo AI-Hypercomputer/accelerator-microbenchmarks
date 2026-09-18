@@ -1,0 +1,177 @@
+# ==============================================================================
+# Generic Parameterized JobSet Template for TPUMS Workloads on GKE TPU Clusters
+# TODO: Support running on v6e in the future.
+# ==============================================================================
+#
+# Topology Reference Guide:
+# ------------------------------------------------------------------------------
+# | Topology | Chips | Hosts (Parallelism/Completions) | Placement Policy                         |
+# |----------|-------|---------------------------------|------------------------------------------|
+# | 2x2x1    | 4     | 1                               | (none required for single-host)          |
+# | 2x2x2    | 8     | 2                               | tpu7x-16-2x2x2-placement-policy          |
+# | 2x4x4    | 32    | 8                               | tpu7x-64-2x4x4-placement-policy          |
+# | 4x4x4    | 64    | 16                              | tpu7x-128-4x4x4-placement-policy         |
+# | 4x4x8    | 128   | 32                              | tpu7x-256-4x4x8-placement-policy         |
+# ------------------------------------------------------------------------------
+#
+# Usage with envsubst:
+#   export WORKLOAD_NAME="tpums-bench"
+#   export NAMESPACE="default"
+#   export QUEUE_NAME="multislice-queue"
+#   export PRIORITY_CLASS="medium"
+#   export TOPOLOGY="2x2x1"
+#   export PARALLELISM="1"
+#   export COMPLETIONS="1"
+#   export CHIPS_PER_NODE="4"
+#   export DOCKER_IMAGE="us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest"
+#   export CONFIG_PATH="configs/tpu7x/2x2x1/gemm_generalized.yaml"
+#   export GCS_OUTPUT_DIR="gs://<your-gcs-bucket>/tpums/results"
+#   export DECLARED_DURATION="30"
+#   export RESERVATION_NAME="<your-reservation-name>"  # optional
+#   envsubst < jobset_template.yaml | kubectl apply -f -
+#
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: ${WORKLOAD_NAME}
+  namespace: ${NAMESPACE}
+  labels:
+    kueue.x-k8s.io/queue-name: ${QUEUE_NAME}
+    kueue.x-k8s.io/priority-class: ${PRIORITY_CLASS}
+  annotations:
+    alpha.jobset.sigs.k8s.io/exclusive-topology: ${EXCLUSIVE_TOPOLOGY}
+spec:
+  failurePolicy:
+    maxRestarts: 0
+  successPolicy:
+    operator: All
+  startupPolicy:
+    startupPolicyOrder: AnyOrder
+  network:
+    enableDNSHostnames: true
+    publishNotReadyAddresses: true
+  replicatedJobs:
+    - name: slice-job
+      replicas: 1
+      template:
+        spec:
+          parallelism: ${PARALLELISM}
+          completions: ${COMPLETIONS}
+          backoffLimit: 0
+          template:
+            metadata:
+              labels:
+                declared-duration-minutes: "${DECLARED_DURATION}"
+            spec:
+              restartPolicy: Never
+              hostNetwork: true
+              dnsPolicy: ClusterFirstWithHostNet
+              tolerations:
+                - key: "google.com/tpu"
+                  operator: "Exists"
+                  effect: "NoSchedule"
+                - key: "cloud.google.com/reservation-name"
+                  operator: "Exists"
+                  effect: "NoSchedule"
+              nodeSelector:
+                cloud.google.com/gke-tpu-accelerator: tpu7x
+                cloud.google.com/gke-tpu-topology: ${TOPOLOGY}
+                # For multi-node (e.g. 2x2x2, 2x4x4, 4x4x4), specify the placement policy:
+                # cloud.google.com/placement-policy-name: ${PLACEMENT_POLICY}
+                # Optional GCE reservation name when running on reserved capacity:
+                # cloud.google.com/reservation-name: ${RESERVATION_NAME}
+              initContainers:
+                - name: tpu-node-setup
+                  image: busybox
+                  securityContext:
+                    privileged: true
+                  command:
+                    - /bin/sh
+                    - -c
+                  args:
+                    - |
+                      sysctl -w vm.max_map_count=8388608 || true
+                      if [ -f /sys/module/vfio_iommu_type1/parameters/dma_entry_limit ]; then
+                        echo 2000000 > /sys/module/vfio_iommu_type1/parameters/dma_entry_limit || true
+                      fi
+              containers:
+                - name: jax-tpu
+                  image: ${DOCKER_IMAGE}
+                  securityContext:
+                    privileged: true
+                  env:
+                    - name: GCS_OUTPUT_DIR
+                      value: "${GCS_OUTPUT_DIR}"
+                    - name: CONFIG_PATH
+                      value: "${CONFIG_PATH}"
+                    - name: GIT_BRANCH
+                      value: "${GIT_BRANCH}"
+                    - name: JAX_PLATFORMS
+                      value: "tpu"
+                    - name: ENABLE_PJRT_COMPATIBILITY
+                      value: "true"
+                    - name: TF_CPP_MIN_LOG_LEVEL
+                      value: "1"
+                    - name: JAX_COORDINATION_SERVICE_INITIALIZE_TIMEOUT
+                      value: "1800"
+                    - name: JAX_COORDINATOR_TIMEOUT_SECONDS
+                      value: "1800"
+                  command:
+                    - /bin/bash
+                    - -c
+                  args:
+                    - |
+                      set -e -o pipefail
+                      export HOME=/tmp
+                      cd /tmp
+
+                      echo "=== [TPUMS Workload] Multi-Node JAX Environment Setup ==="
+                      printenv
+
+                      echo "=== Cloning accelerator-microbenchmarks repository (branch: ${GIT_BRANCH}) ==="
+                      git clone --branch "${GIT_BRANCH}" --single-branch https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git /tmp/tpums_repo
+                      cd /tmp/tpums_repo
+                      mkdir -p /tmp/results
+                      git rev-parse HEAD > /tmp/results/git_commit.txt 2>/dev/null || true
+
+                      echo "=== Installing dependencies ==="
+                      curl -LsSf https://astral.sh/uv/install.sh | sh
+                      export PATH="/tmp/.local/bin:$PATH"
+                      uv venv /tmp/venv
+                      source /tmp/venv/bin/activate
+                      uv pip install .
+
+                      echo "=== Executing Benchmark: ${CONFIG_PATH} ==="
+                      mkdir -p /tmp/results
+                      rm -rf /tmp/tensorboard
+
+                      tpums benchmark run-config "${CONFIG_PATH}" \
+                        --output_dir=/tmp/results \
+                        --xprof_dir=/tmp/tensorboard 2>&1 | tee /tmp/execution.log
+
+                      echo "=== Exporting Results to GCS ==="
+                      if [ "${UPLOAD_TRACE}" = "true" ] && [ -d /tmp/tensorboard ]; then
+                        echo "Uploading TensorBoard / XLA traces to GCS..."
+                        gcloud storage cp -r /tmp/tensorboard "${GCS_OUTPUT_DIR}/tensorboard" || true
+                      fi
+
+                      if [ -d /tmp/results ]; then
+                        tar czf /tmp/tpums_results.tar.gz -C /tmp results execution.log || true
+                        gcloud storage cp /tmp/tpums_results.tar.gz "${GCS_OUTPUT_DIR}/" || true
+                        gcloud storage cp /tmp/results/* "${GCS_OUTPUT_DIR}/" || true
+                        gcloud storage cp /tmp/execution.log "${GCS_OUTPUT_DIR}/execution.log" || true
+                      fi
+
+                      echo "=== [TPUMS Workload] Benchmark Completed Successfully ==="
+                  resources:
+                    limits:
+                      google.com/tpu: ${CHIPS_PER_NODE}
+                    requests:
+                      google.com/tpu: ${CHIPS_PER_NODE}
+                  volumeMounts:
+                    - mountPath: /dev/shm
+                      name: dshm
+              volumes:
+                - name: dshm
+                  emptyDir:
+                    medium: Memory
