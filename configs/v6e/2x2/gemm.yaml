@@ -4,7 +4,12 @@ benchmark:
   params:
     warmup_tries: 2
     num_runs: 5
-    out_dtype: "bfloat16"
-  cases_from_csv: "configs/shapes/gemm_square_stability.csv"
-  sweep:
-    in_dtype: ["bfloat16", "float32", "float16", "float8_e4m3fn", "float4", "int8"]
+    in_dtype: bfloat16
+    out_dtype: bfloat16
+  cases:
+    - m: 4096
+      k: 4096
+      n: 4096
+    - m: 8192
+      k: 8192
+      n: 8192
