@@ -63,9 +63,10 @@ class ReportGeneratorTest(parameterized.TestCase):
             "mesh_shape": "16x4x2",
             "sharding_strategy": "16x4x1",
             "matrix_dim": "1000",
-            "shard_size_mib": "512.0",
             "dtype": "bf16",
             "num_runs": "10",
+            "replica_group_rank": "16",
+            "shard_size_mib": "512.0",
             "bandwidth_per_chip_gb_s": "380.0",
             "p50_ms": "1.31",
             "custom_dynamic_col": "active",
@@ -93,7 +94,13 @@ class ReportGeneratorTest(parameterized.TestCase):
     self.assertIn("16x4x2", report_md)
     self.assertIn("16x4x1", report_md)
     self.assertIn("matrix_dim", report_md)
+    self.assertIn("replica_group_rank", report_md)
     self.assertIn("shard_size_mib", report_md)
+    self.assertIn(
+        "| topology | mesh_shape | sharding_strategy | dtype | matrix_dim |"
+        " replica_group_rank | shard_size_mib | num_runs |",
+        report_md,
+    )
     self.assertIn("custom_dynamic_col", report_md)
     self.assertIn("**Environment:**", report_md)
     self.assertIn("GitHub Commit:", report_md)

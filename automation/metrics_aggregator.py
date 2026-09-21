@@ -101,6 +101,8 @@ CATEGORY_LEADING_COLUMNS: dict[str, tuple[str, ...]] = {
         "benchmark",
         "dtype",
         "matrix_dim",
+        "replica_group_rank",
+        "shard_size_mib",
         "xprof_p50_ms",
         "xprof_bandwidth_per_chip_gb_s",
     ),

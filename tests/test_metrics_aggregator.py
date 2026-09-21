@@ -68,6 +68,7 @@ class MetricsAggregatorTest(parameterized.TestCase):
                 "matrix_dim": "1000",
                 "dtype": "bf16",
                 "num_runs": "10",
+                "replica_group_rank": "16",
                 "shard_size_mib": "512.0",
                 "bandwidth_per_chip_gb_s": "380.0",
                 "p50_ms": "1.31",
@@ -115,6 +116,7 @@ class MetricsAggregatorTest(parameterized.TestCase):
     self.assertEqual(coll_row.get("mesh_shape"), "16x4x2")
     self.assertEqual(coll_row.get("sharding_strategy"), "16x4x1")
     self.assertEqual(coll_row.get("matrix_dim"), "1000")
+    self.assertEqual(coll_row.get("replica_group_rank"), "16")
     self.assertEqual(coll_row.get("shard_size_mib"), "512.0")
     self.assertEqual(coll_row.get("p50_ms"), "1.31")
     self.assertEqual(
@@ -125,8 +127,9 @@ class MetricsAggregatorTest(parameterized.TestCase):
             "sharding_strategy",
             "dtype",
             "matrix_dim",
-            "num_runs",
+            "replica_group_rank",
             "shard_size_mib",
+            "num_runs",
             "bandwidth_per_chip_gb_s",
             "p50_ms",
             "warmup_tries",
@@ -377,6 +380,8 @@ class MetricsAggregatorTest(parameterized.TestCase):
             "benchmark",
             "dtype",
             "matrix_dim",
+            "replica_group_rank",
+            "shard_size_mib",
             "xprof_p50_ms",
             "xprof_bandwidth_per_chip_gb_s",
         ),
