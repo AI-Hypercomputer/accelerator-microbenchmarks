@@ -1,153 +1,54 @@
-"""Hardware system specifications for roofline analysis."""
+"""Hardware system specifications for roofline analysis.
 
-import dataclasses
-import enum
-from typing import Any
+The concrete per-generation specifications live in the `specs` package, one
+module per TPU generation. This module aggregates them into `HARDWARE_SPECS`
+and is the stable entry point for the rest of the codebase, re-exporting the
+spec data types so callers never import the `specs` package directly.
+"""
+
+from accelerator_microbenchmarks.specs import schema
+from accelerator_microbenchmarks.specs import tpu7x
+from accelerator_microbenchmarks.specs import v6e
 
 
-class TpuVersion(str, enum.Enum):
-  """Canonical TPU generation identifiers in TPUMS."""
-
-  TPU7X = "tpu7x"
-  V6E = "v6e"
-
-  def __str__(self) -> str:
-    return str(self.value)
-
-  @classmethod
-  def from_str(cls, val: Any) -> "TpuVersion":
-    """Normalizes arbitrary string, device_kind, or enum to canonical TpuVersion."""
-    if isinstance(val, cls):
-      return val
-    low = str(val).strip().lower() if val else ""
-    if "7" in low or "ironwood" in low:
-      return cls.TPU7X
-    if "v6e" in low or "6e" in low or "v6 lite" in low or "trillium" in low:
-      return cls.V6E
-    raise ValueError(
-        f"Unsupported TPU hardware '{val}'. Available versions:"
-        f" {[v.value for v in cls]}"
-    )
-
+TpuVersion = schema.TpuVersion
+HardwareSpec = schema.HardwareSpec
+TflopsSpec = schema.TflopsSpec
+IciSpec = schema.IciSpec
+HbmSpec = schema.HbmSpec
 
 # The canonical native precision baseline for Google TPU MXU architectures.
-DEFAULT_FALLBACK_DTYPE: str = "bfloat16"
+DEFAULT_FALLBACK_DTYPE: str = schema.DEFAULT_FALLBACK_DTYPE
 
+TPU7X_HARDWARE_SPEC: HardwareSpec = tpu7x.TPU7X_HARDWARE_SPEC
+V6E_HARDWARE_SPEC: HardwareSpec = v6e.V6E_HARDWARE_SPEC
 
-@dataclasses.dataclass(frozen=True)
-class TflopsSpec:
-  """Compute throughput specifications per datatype."""
-
-  # Maps dtype string (e.g., 'bfloat16', 'float32', 'int8') to peak TFLOPS
-  # per device (TensorCore).
-  peak_tflops_per_device: dict[str, float]
-
-
-@dataclasses.dataclass(frozen=True)
-class IciSpec:
-  """Inter-Chip Interconnect specifications (per-chip)."""
-
-  peak_bw_gbps: float
-  bidirectional: bool
-
-  @property
-  def peak_bw_gbps_per_chip(self) -> float:
-    return self.peak_bw_gbps
-
-
-@dataclasses.dataclass(frozen=True)
-class HbmSpec:
-  """High Bandwidth Memory specifications (per-chip).
-
-  For the classical roofline model, peak_bw_gbps represents the flat
-  asymptotic physical peak bandwidth ceiling (speed of light) from the
-  hardware datasheet.
-  """
-
-  peak_bw_gbps: float
-
-  @property
-  def peak_bw_gbps_per_chip(self) -> float:
-    """Returns the asymptotic peak HBM bandwidth per chip (GB/s)."""
-    return self.peak_bw_gbps
-
-
-@dataclasses.dataclass(frozen=True)
-class HardwareSpec:
-  """Hardware accelerator specifications."""
-
-  name: TpuVersion
-  topology_dimension: int = 3
-  devices_per_chip: int = 1
-  tflops: TflopsSpec | None = None
-  ici: IciSpec | None = None
-  hbm: HbmSpec | None = None
-
-  @property
-  def peak_hbm_bandwidth_per_device(self) -> float:
-    """Returns the asymptotic peak HBM bandwidth for a single device (GB/s)."""
-    if not self.hbm or self.devices_per_chip <= 0:
-      return 0.0
-    return self.hbm.peak_bw_gbps_per_chip / self.devices_per_chip
-
-
-# TPU v7x (Ironwood)
-# See also spec in https://docs.cloud.google.com/tpu/docs/tpu7x
-TPU7X_HARDWARE_SPEC = HardwareSpec(
-    name=TpuVersion.TPU7X,
-    topology_dimension=3,
-    devices_per_chip=2,
-    tflops=TflopsSpec(
-        peak_tflops_per_device={
-            "bfloat16": 1153.5,
-            "float32": 576.75,  # Estimated based on VPU capability
-            "float8_e5m2": 2307.0,
-            "float8_e4m3fn": 2307.0,
-            "int8": 2307.0,
-        }
-    ),
-    ici=IciSpec(
-        peak_bw_gbps=1200.0,
-        bidirectional=True,
-    ),
-    hbm=HbmSpec(peak_bw_gbps=7380.0),
-)
-
-# TPU v6e (Trillium)
-# See also spec in https://docs.cloud.google.com/tpu/docs/v6e
-V6E_HARDWARE_SPEC = HardwareSpec(
-    name=TpuVersion.V6E,
-    topology_dimension=2,
-    devices_per_chip=1,
-    tflops=TflopsSpec(
-        peak_tflops_per_device={
-            "bfloat16": 918.0,
-            "float32": 459.0,
-            "float8_e5m2": 918.0,
-            "float8_e4m3fn": 918.0,
-            "int8": 1836.0,
-            "int4": 3672.0,
-        }
-    ),
-    ici=IciSpec(
-        peak_bw_gbps=800.0,
-        bidirectional=True,
-    ),
-    hbm=HbmSpec(peak_bw_gbps=1638.4),
-)
-
+# Every generation available in this checkout, keyed by canonical
+# `TpuVersion`. Adding a generation means adding its spec module and one entry
+# here; generations excluded from a checkout, for example by a Copybara
+# export, are absent from both `TpuVersion` and this mapping.
 HARDWARE_SPECS: dict[TpuVersion, HardwareSpec] = {
     TpuVersion.TPU7X: TPU7X_HARDWARE_SPEC,
     TpuVersion.V6E: V6E_HARDWARE_SPEC,
 }
 
 
-def get_hardware_spec(target: TpuVersion | str) -> HardwareSpec:
-  """Retrieves a HardwareSpec by TpuVersion enum or string alias."""
-  tpu_version = TpuVersion.from_str(target)
-  if tpu_version not in HARDWARE_SPECS:
+def get_hardware_spec(version: TpuVersion) -> HardwareSpec:
+  """Retrieves the hardware spec of a canonical TPU generation.
+
+  Args:
+    version: The canonical TPU generation, for example `TpuVersion.TPU7X`.
+      Resolve a JAX `device_kind` with `TpuVersion.from_device_kind` first.
+
+  Returns:
+    The hardware spec of the requested generation.
+
+  Raises:
+    ValueError: If no spec is available for `version` in this checkout.
+  """
+  if version not in HARDWARE_SPECS:
     raise ValueError(
-        f"Hardware spec for '{tpu_version}' not found in HARDWARE_SPECS"
-        " registry."
+        f"Unsupported TPU hardware '{version}'. Available versions:"
+        f" {sorted(str(available) for available in HARDWARE_SPECS)}"
     )
-  return HARDWARE_SPECS[tpu_version]
+  return HARDWARE_SPECS[version]

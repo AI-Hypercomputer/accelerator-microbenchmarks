@@ -18,9 +18,7 @@ class PlatformTpuTest(absltest.TestCase):
 
     self.assertIsInstance(desc, platform.PlatformInfo)
     self.assertIsInstance(desc.tpu_type, system.TpuVersion)
-    self.assertIn(
-        desc.tpu_type, (system.TpuVersion.TPU7X, system.TpuVersion.V6E)
-    )
+    self.assertIn(desc.tpu_type, system.HARDWARE_SPECS)
     self.assertNotEqual(desc.topology, "unknown")
     self.assertRegex(desc.topology, r"^\d+(x\d+)*$")
     self.assertGreater(desc.total_devices, 0)

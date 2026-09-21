@@ -1,36 +1,65 @@
 """Unit tests for system.py."""
 
+import os
+import pkgutil
+
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import system
+from accelerator_microbenchmarks.specs import schema
+
+# Modules in the `specs` package that hold shared infrastructure rather than a
+# TPU generation definition. Every other module is expected to be named after
+# the canonical version id whose spec it defines.
+_INFRASTRUCTURE_MODULES = frozenset({"schema"})
 
 
 class SystemTest(absltest.TestCase):
   """Unit tests for system.py."""
 
-  def test_tpu_version_from_str_valid(self):
-    """Verify that TpuVersion.from_str correctly normalizes aliases."""
-    for alias in (
-        "tpu v7x",
-        "tpu7x",
-        "TPU7x",
-        "ironwood",
-        "tpu v7",
-        "tpu7",
-        "TPU7",
-        "v7",
-    ):
+  def test_tpu_version_from_device_kind_valid(self):
+    """Verify that from_device_kind maps JAX device kinds to generations."""
+    for device_kind in ("tpu7x", "TPU7x", "TPU v7x", "  tpu7x  "):
       self.assertEqual(
-          system.TpuVersion.from_str(alias), system.TpuVersion.TPU7X
+          system.TpuVersion.from_device_kind(device_kind),
+          system.TpuVersion.TPU7X,
       )
 
-    for alias in ("v6e", "tpu v6 lite", "trillium", "6e"):
-      self.assertEqual(system.TpuVersion.from_str(alias), system.TpuVersion.V6E)
+    for device_kind in ("v6e", "V6E", "TPU v6e", "TPU v6 lite"):
+      self.assertEqual(
+          system.TpuVersion.from_device_kind(device_kind),
+          system.TpuVersion.V6E,
+      )
 
-    # Idempotent on enum instance
-    self.assertEqual(
-        system.TpuVersion.from_str(system.TpuVersion.TPU7X),
+  def test_tpu_version_from_device_kind_is_idempotent_on_enum(self):
+    """Verify that an already resolved TpuVersion is returned unchanged."""
+    self.assertIs(
+        system.TpuVersion.from_device_kind(system.TpuVersion.TPU7X),
         system.TpuVersion.TPU7X,
     )
+
+  def test_tpu_version_from_device_kind_rejects_partial_match(self):
+    """Verify that device kinds are matched exactly rather than by substring."""
+    for device_kind in ("tpu7xyz", "v6", "7", "7x", "v7x"):
+      with self.assertRaises(ValueError):
+        system.TpuVersion.from_device_kind(device_kind)
+
+  def test_tpu_version_from_device_kind_rejects_marketing_names(self):
+    """Verify that only device kinds, not marketing names, are accepted.
+
+    Marketing and codenames live in a different namespace than the PJRT
+    `device_kind` strings, so they are deliberately not resolvable here.
+    """
+    for name in ("ironwood", "trillium", "6e"):
+      with self.assertRaises(ValueError):
+        system.TpuVersion.from_device_kind(name)
+
+  def test_tpu_version_from_device_kind_invalid(self):
+    """Verify that from_device_kind rejects unsupported hardware."""
+    with self.assertRaises(ValueError):
+      system.TpuVersion.from_device_kind("unsupported_chip")
+
+    with self.assertRaises(ValueError):
+      system.TpuVersion.from_device_kind("")
 
   def test_tpu_version_str_behavior(self):
     """Verify that TpuVersion inherits from str and stringifies to its value."""
@@ -55,13 +84,40 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(system.TpuVersion.TPU7X, "tpu7x")
     self.assertEqual(system.TpuVersion.V6E, "v6e")
 
-  def test_tpu_version_from_str_invalid(self):
-    """Verify that TpuVersion.from_str raises ValueError for unsupported hardware."""
-    with self.assertRaises(ValueError):
-      system.TpuVersion.from_str("unsupported_chip")
+  def test_public_generations_are_always_available(self):
+    """Verify that the publicly announced generations are never stripped."""
+    self.assertContainsSubset(
+        [system.TpuVersion.TPU7X, system.TpuVersion.V6E],
+        system.HARDWARE_SPECS,
+    )
 
-    with self.assertRaises(ValueError):
-      system.TpuVersion.from_str("")
+  def test_canonical_version_ids_are_lowercase(self):
+    """Verify that every canonical version id is lowercase."""
+    for version in system.HARDWARE_SPECS:
+      self.assertEqual(str(version), str(version).lower())
+
+  def test_specs_declare_their_own_version_as_name(self):
+    """Verify that HARDWARE_SPECS keys agree with the specs they map to."""
+    for version, spec in system.HARDWARE_SPECS.items():
+      self.assertEqual(spec.name, version)
+
+  def test_every_spec_module_in_the_package_is_aggregated(self):
+    """Verify that no spec module is missing from HARDWARE_SPECS.
+
+    `HARDWARE_SPECS` is maintained by hand, so this guards against adding a
+    spec module and forgetting to register it. Spec modules must be named
+    after the canonical version id they define.
+    """
+    package_dir = os.path.dirname(schema.__file__)
+    discovered = {
+        module_name
+        for _, module_name, _ in pkgutil.iter_modules([package_dir])
+        if module_name not in _INFRASTRUCTURE_MODULES
+    }
+    self.assertNotEmpty(discovered)
+    self.assertContainsSubset(
+        discovered, {str(version) for version in system.HARDWARE_SPECS}
+    )
 
   def test_get_hardware_spec_valid(self):
     """Verify that get_hardware_spec returns the correct HardwareSpec."""
@@ -74,37 +130,38 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(v6e_spec.name, system.TpuVersion.V6E)
     self.assertEqual(v6e_spec, system.V6E_HARDWARE_SPEC)
 
-    # Test string aliases
+  def test_get_hardware_spec_from_jax_device_kind(self):
+    """Verify that JAX device_kind strings resolve to the right generation."""
     self.assertEqual(
-        system.get_hardware_spec("ironwood"), system.TPU7X_HARDWARE_SPEC
+        system.get_hardware_spec(system.TpuVersion.from_device_kind("TPU7x")),
+        system.TPU7X_HARDWARE_SPEC,
     )
     self.assertEqual(
-        system.get_hardware_spec("tpu v7"), system.TPU7X_HARDWARE_SPEC
+        system.get_hardware_spec(
+            system.TpuVersion.from_device_kind("TPU v6 lite")
+        ),
+        system.V6E_HARDWARE_SPEC,
     )
-    self.assertEqual(
-        system.get_hardware_spec("tpu7"), system.TPU7X_HARDWARE_SPEC
-    )
-    self.assertEqual(
-        system.get_hardware_spec("v7"), system.TPU7X_HARDWARE_SPEC
-    )
-    self.assertEqual(
-        system.get_hardware_spec("trillium"), system.V6E_HARDWARE_SPEC
-    )
-    self.assertEqual(
-        system.get_hardware_spec("v6e"), system.V6E_HARDWARE_SPEC
-    )
-
-  def test_get_hardware_spec_case_insensitive(self):
-    """Verify that get_hardware_spec is case insensitive."""
-    hw_spec = system.get_hardware_spec("IRONWOOD")
-    self.assertEqual(hw_spec.name, system.TpuVersion.TPU7X)
-    hw_spec_v6e = system.get_hardware_spec("V6E")
-    self.assertEqual(hw_spec_v6e.name, system.TpuVersion.V6E)
 
   def test_get_hardware_spec_invalid(self):
-    """Verify that get_hardware_spec raises ValueError for invalid names."""
-    with self.assertRaises(ValueError):
+    """Verify that get_hardware_spec raises ValueError for invalid versions."""
+    with self.assertRaisesRegex(ValueError, "Unsupported TPU hardware"):
       system.get_hardware_spec("nonexistent")
+
+  def test_get_hardware_spec_keys_on_the_canonical_version(self):
+    """Verify lookups resolve by canonical version, not by arbitrary spelling.
+
+    `TpuVersion` subclasses `str`, so a member hashes like its value and the
+    exact canonical id resolves as well as the enum member itself. Every
+    other spelling, including JAX device kinds and marketing names, must go
+    through `TpuVersion.from_device_kind` first.
+    """
+    self.assertEqual(
+        system.get_hardware_spec("tpu7x"), system.TPU7X_HARDWARE_SPEC
+    )
+    for target in ("TPU7x", "TPU v7x", "IRONWOOD", "ironwood", "7x"):
+      with self.assertRaisesRegex(ValueError, "Unsupported TPU hardware"):
+        system.get_hardware_spec(target)
 
   def test_hardware_spec_tpu7x_presets(self):
     """Verify that the TPU7X_HARDWARE_SPEC preset has correct values."""

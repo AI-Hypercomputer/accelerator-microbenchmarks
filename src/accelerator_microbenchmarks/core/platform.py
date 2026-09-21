@@ -13,7 +13,7 @@ import dataclasses
 import importlib
 import importlib.metadata
 import platform as py_platform
-from typing import Any, Sequence
+from typing import Sequence
 
 from accelerator_microbenchmarks.core import system
 import jax
@@ -23,6 +23,7 @@ import jax
 class PlatformInfo:
   """Structured runtime topology, process ranks, and software versions."""
 
+  # Canonical TPU version, as resolved by `TpuVersion.from_device_kind`.
   tpu_type: system.TpuVersion
   topology: str
   total_devices: int
@@ -113,7 +114,8 @@ def get_platform_info() -> PlatformInfo:
 
   if backend != "tpu":
     raise RuntimeError(
-        f"TPUMS requires TPU accelerator hardware, but detected JAX backend: '{backend}'. "
+        "TPUMS requires TPU accelerator hardware, but detected JAX backend:"
+        f" '{backend}'. "
         "Accelerator microbenchmarks cannot execute on CPU. "
         "Please run on a Cloud TPU VM (e.g., v6e Trillium or v7x Ironwood)."
     )
@@ -130,7 +132,7 @@ def get_platform_info() -> PlatformInfo:
         "The PJRT TPU runtime or libtpu may not be initialized correctly."
     )
 
-  tpu_version = system.TpuVersion.from_str(str(raw_device_kind))
+  tpu_version = system.TpuVersion.from_device_kind(str(raw_device_kind))
   hw_spec = system.get_hardware_spec(tpu_version)
   topology = _get_topology(
       devices, topology_dimension=hw_spec.topology_dimension
