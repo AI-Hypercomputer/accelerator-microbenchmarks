@@ -1,40 +1,45 @@
-# JAX Benchmarks: Design Document
+# TPUMS: Design Document
 
 ## 1. Introduction & Motivation
 
 This document details the design and architecture of the
-`accelerator-microbenchmarks` repository, a framework for high-fidelity,
-modular, and scalable JAX microbenchmarks. The primary motivation is to address
-limitations of ad-hoc benchmarking scripts, providing a standardized,
-extensible, and insight-rich platform for performance analysis on TPUs and
-GPUs.
+`accelerator-microbenchmarks` (`tpums`) repository, a framework for
+high-fidelity, modular, and scalable JAX microbenchmarks. The primary motivation
+is to replace ad-hoc benchmarking scripts with a standardized, extensible, and
+insight-rich platform for evaluating compute, memory, and interconnect
+performance on Cloud TPUs (`tpu7x`, `v6e`).
 
-(See [RATIONALE.md](RATIONALE.md) for a detailed breakdown of motivations
-and gaps addressed).
+(See [RATIONALE.md](RATIONALE.md) for a detailed breakdown of motivations and
+gaps addressed).
 
 ## 2. Core Features
 
--   **Modular Architecture:** Registry-based system (`core/registry.py`) for
-    easy discovery and addition of new benchmarks.
--   **Standardized Benchmark Lifecycle:** `BaseBenchmark` class (`core/base.py`)
-    enforces consistent setup, input generation, execution, and metric
-    calculation.
--   **Hierarchical Configuration:** YAML-based configs with global parameters,
-    hardware specifications, and per-benchmark settings.
--   **Bulk Configuration:** Support for large-scale studies via:
-    -   YAML Sweeps: Cartesian product generation of parameters.
-    -   CSV/Google Sheets Ingestion: Loading shapes directly from spreadsheets.
--   **Integrated Roofline Analysis:** Automatic calculation of arithmetic
-    intensity, roofline ceilings, and efficiency, supporting both:
-    -   **Analytical Models:** Theory-based Flops/Bytes counts.
-    -   **Trace-Based Models:** Using `jax.experimental.roofline` for Jaxpr
-        profiling.
--   **Power-Aware Runs:** Capability to run benchmarks for a minimum duration
-    (`min_duration_s`) to capture thermal/power effects.
--   **Model Presets:** Pre-defined configurations for common LLM sizes (e.g.,
-    `LLM-200B`) in `core/model_configs.py`.
--   **Installable Package:** Packaged using `pyproject.toml` with a `tpums`
-    CLI entry point.
+-   **Modular Registry Architecture**: Decorator-based registry
+    (`core/registry.py`) and dynamic loader
+    (`benchmarks/benchmark_loader.py`) for automatic discovery of benchmarks and
+    aliases.
+-   **Typed Dataclass Configuration**: Each benchmark binds a typed
+    `BaseBenchmarkParams` (or `SingleDtypeBenchmarkParams`) dataclass via
+    `Config = <ParamsClass>`, providing automatic bounds validation, enum
+    coercion, and dynamic CLI flag generation.
+-   **Standardized Benchmark Lifecycle**: `BaseBenchmark` (`core/base.py`)
+    enforces a unified execution pipeline across compilation warmup, device
+    synchronization (`jax.block_until_ready`), timing loops, XProf trace
+    extraction, per-chip metric derivation, and Roofline analysis.
+-   **Dual Timing Domains (`wall_clock_*` & `xprof_*`)**: Captures end-to-end
+    Python wall-clock latency alongside pure on-device kernel duration parsed
+    from XLA / XProf hardware traces (`.xplane.pb`).
+-   **Single-Benchmark YAML & 3-Stage Precedence**: Reproducible YAML configs
+    supporting a strict 3-stage parameter evaluation order (`params:` ->
+    `cases:` / `cases_from_csv:` -> `sweep:`).
+-   **Hardware-Aware Roofline Analysis**: Automatic computation of arithmetic
+    intensity, device-level compute/memory ceilings, and achieved Roofline
+    efficiency (`RooflineMode.COMPUTE`, `RooflineMode.MEMORY_HBM`,
+    `RooflineMode.NONE`), supporting both analytical formulas and trace-based
+    `jax.experimental.roofline` profiling.
+-   **Runtime Hardware Auto-Detection**: Automatically queries active TPU
+    generation, chip topology, and per-chip device ratios at runtime
+    (`core/platform.py` and `core/system.py`).
 
 ## 3. Architecture & Design
 
@@ -42,71 +47,102 @@ and gaps addressed).
 
 ```text
 accelerator_microbenchmarks/
-├── configs/            # YAML configuration files (e.g., sample.yaml, hbm_sweep.yaml)
-├── docs/               # Documentation (README, DEVELOPERS, DESIGN, RATIONALE)
+├── configs/                    # YAML configurations and shape CSVs
+│   ├── sample_configs/         # Introductory sweeps and validation configs
+│   ├── shapes/                 # Predefined matrix shape sweeps (CSV)
+│   └── tpu7x/, v6e/            # Hardware-saturating topology configurations
+├── docs/                       # Architecture and developer documentation
 │   ├── DESIGN.md
 │   ├── DEVELOPERS.md
 │   └── RATIONALE.md
-├── pyproject.toml
-├── results/            # Output directory for benchmark metrics (JSON, CSV)
-├── src/
-│   └── accelerator_microbenchmarks/
-│       ├── benchmarks/ # Concrete benchmark implementations (collectives, matmul, etc.)
-│       ├── core/       # Framework core (BaseBenchmark, registry, config parsing)
-│       └── cli.py      # Entry point for running benchmarks (tpums)
+├── pyproject.toml              # Package build config and `tpums` entry point
+├── results/                    # Default destination for CSV and JSON reports
+├── tests/                      # Unit, config validation, and hardware tests
+└── src/
+    └── accelerator_microbenchmarks/
+        ├── benchmarks/         # Benchmark implementations (gemm, hbm, etc.)
+        ├── core/               # Framework core (base, config, runner, report)
+        ├── cli.py              # Resource-action CLI entry point (`tpums`)
+        └── op_flags.yaml       # Per-benchmark XLA / LIBTPU_INIT_ARGS mappings
 ```
 
 ### Core Components
 
--   **`core/base.py:BaseBenchmark`:** Abstract base class defining the benchmark
-    interface:
-    -   `setup()`: One-time setup (e.g., JIT compilation).
-    -   `generate_inputs()`: Data generation for `run_op`.
-    -   `run_op()`: The core JAX function to be benchmarked.
-    -   `get_run_identifier()`: Run differentiator according to parameters.
-    -   `calculate_metrics()`: Computes performance metrics (TFLOPS, GB/s).
-    -   `get_total_bytes()`, `get_arithmetic_intensity()`: For roofline
-        analysis.
-    -   `apply_roofline_analysis()`: Calculates roofline efficiency.
-    -   `run()`: Orchestrates the benchmark execution, including warm-up, timing
-        loops, and power-aware runs.
--   **`core/registry.py`:** A simple decorator-based registry
-    (`@registry.register`) to make benchmark classes discoverable by name in
-    YAML configs.
--   **`core/config.py`:** Handles loading YAML files, expanding sweeps, loading
-    shapes from CSVs (`core/csv_loader.py`), and merging with model presets
-    (`core/model_configs.py`).
--   **`accelerator_microbenchmarks/cli.py`:** The main entry point for the
-    `tpums` CLI, parses arguments, loads configs, and runs the selected
-    benchmarks.
+-   **`core/base.py` (`BaseBenchmark[TConfig]`)**: Generic abstract base class
+    defining the benchmark lifecycle:
+    -   `Config`: Typed `BaseBenchmarkParams` subclass declaring configurable
+        fields, defaults, and validation metadata.
+    -   `setup(self)`: One-time initialization and `@jax.jit` kernel compilation
+        using `self.config`.
+    -   `generate_inputs(self)`: Device-resident input tensor allocation.
+    -   `run_op(self, *args, **kwargs)`: Core JAX kernel invoked during warmup
+        and measurement loops.
+    -   `get_run_identifier(self)`: Deterministic string identifier for the
+        active parameter set.
+    -   `get_total_bytes(self)` & `get_arithmetic_intensity(self)`: Required
+        abstract methods returning analytical byte traffic and FLOP/byte ratio
+        for Roofline modeling.
+    -   `get_workload_metadata(self)` & `calculate_metrics(self, times_ms)`:
+        Combines static workload metadata, IQR-filtered latency statistics
+        (`calculate_latency_stats`), and domain throughput metrics.
+    -   `calculate_throughput_metrics(self, latency_ms, prefix)`: Required
+        abstract method computing domain-prefixed throughput (`wall_clock_*` and
+        `xprof_*`) in `TFLOPS` or `GB/s`.
+    -   `derive_chip_metrics(self, metrics)`: Scales per-device throughput to
+        per-chip throughput via `hardware_spec.devices_per_chip`.
+    -   `apply_roofline_analysis(self, metrics)`: Computes Roofline efficiency
+        percentages against hardware specifications.
+    -   `run(self)`: Orchestrates mesh setup, warmup iterations, XProf profiler
+        context management, measurement timing loops, and result packaging.
+-   **`core/config.py`**: Validates single-benchmark YAML files (`benchmark:`
+    mapping) and expands parameter combinations across the 3-stage precedence
+    pipeline (`params` -> `cases` / `cases_from_csv` -> `sweep`).
+-   **`core/runner.py`**: Initializes distributed JAX environments, loads
+    benchmark-specific `LIBTPU_INIT_ARGS` from `op_flags.yaml`, executes all
+    expanded cases, and writes `summary.csv` and `detailed.json` via
+    `core/report.py`.
+-   **`cli.py`**: Implements the `tpums` CLI (`tpums platform describe`,
+    `tpums benchmark list`, `tpums benchmark run`, and
+    `tpums benchmark run-config`).
 
-### Configuration System Flow
+### Configuration Evaluation Flow
 
-1.  Load base YAML file.
-2.  Merge global parameters.
-3.  For each benchmark entry: a. Resolve model presets. b. Expand CSV shapes if
-    specified. c. Generate parameter combinations from `sweep` definitions.
-4.  Return a list of fully resolved benchmark run configurations.
+1.  **Load & Validate YAML (`core/config.py`)**: Verify the single top-level
+    `benchmark:` block (`name`, `xprof_timing`, `params`, `cases` or
+    `cases_from_csv`, `sweep`) and check that `sweep:` keys are disjoint from
+    `params:` and case keys.
+2.  **Stage 1 — Baseline (`params:`)**: Load shared baseline parameters (and
+    optional `model_preset` defaults).
+3.  **Stage 2 — Case Overrides (`cases:` or `cases_from_csv:`)**: Overlay
+    explicit per-case dictionaries or rows loaded from external CSV files via
+    `core/csv_loader.py`.
+4.  **Stage 3 — Cartesian Sweep (`sweep:`)**: Expand each case across discrete
+    lists or geometric/arithmetic ranges (`start`, `end`, `multiplier` /
+    `increase_by`) to produce typed `Config` instances.
 
 ## 4. Usage
 
-(See [README.md](README.md) for detailed usage instructions and examples).
+(See `README.md` at the repository root for comprehensive CLI and config
+examples).
 
--   Installation: `pip install -e .`
--   Running: `tpums benchmark run-config configs/sample.yaml`
+```bash
+# Install package in editable mode
+pip install -e .
+
+# Inspect hardware topology and software versions
+tpums platform describe
+
+# Run a single benchmark interactively via CLI flags
+tpums benchmark run hbm --xprof_timing --op_type copy --size 134217728 \
+    --dtype bfloat16
+
+# Run a multi-case YAML configuration or parameter sweep
+tpums benchmark run-config configs/sample_configs/parameter_sweep.yaml \
+    --xprof_dir /tmp/tensorboard \
+    --output_dir results/
+```
 
 ## 5. Extensibility
 
-The framework is designed to be easily extensible. To add a new benchmark,
-please refer to the step-by-step guide in [DEVELOPERS.md](DEVELOPERS.md).
-
-## 6. Future Directions
-
--   Automated testing suite (`tests/`).
--   More sophisticated hardware-aware roofline models (e.g., considering cache
-    hierarchies).
--   Integration with profiling tools (e.g., Xprof).
--   Enhanced result visualization capabilities.
-
-This design provides a solid foundation for collaborative development and
-comprehensive JAX performance analysis.
+To add a new benchmark or custom operation, follow the step-by-step developer
+guide in [DEVELOPERS.md](DEVELOPERS.md).

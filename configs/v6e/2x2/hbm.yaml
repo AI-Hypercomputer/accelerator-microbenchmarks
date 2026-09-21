@@ -7,6 +7,6 @@ benchmark:
     dtype: bfloat16
   sweep:
     size:
-      start: 524288
+      start: 67108864
       end: 536870912
       multiplier: 2

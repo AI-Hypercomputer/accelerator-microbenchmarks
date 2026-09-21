@@ -9,4 +9,4 @@ benchmark:
     mesh_shape: 8x16
     sharding_strategy: 8x16
   sweep:
-    matrix_dim: [8192, 16384, 32768]
+    matrix_dim: [131072, 262144, 524288]
