@@ -166,7 +166,7 @@ benchmark:
     ]
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   params:
     in_dtype: float32
   cases_from_csv: shapes.csv
@@ -178,10 +178,10 @@ benchmark:
     expanded = config.load_config(config_path)
 
     self.assertLen(expanded, 2)
-    self.assertEqual(expanded[0]["name"], "gemm_generalized")
+    self.assertEqual(expanded[0]["name"], "gemm")
     self.assertEqual(expanded[0]["in_dtype"], "float32")
     self.assertEqual(expanded[0]["m"], 128)
-    self.assertEqual(expanded[1]["name"], "gemm_generalized")
+    self.assertEqual(expanded[1]["name"], "gemm")
     self.assertEqual(expanded[1]["m"], 256)
 
   def test_load_config_missing_benchmark_raises_error(self):
@@ -202,7 +202,7 @@ num_runs: 10
     """Test loading a config with explicit cases list."""
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   params:
     warmup_tries: 2
     in_dtype: bfloat16
@@ -221,14 +221,14 @@ benchmark:
     expanded = config.load_config(config_path)
 
     self.assertLen(expanded, 2)
-    self.assertEqual(expanded[0]["name"], "gemm_generalized")
+    self.assertEqual(expanded[0]["name"], "gemm")
     self.assertEqual(expanded[0]["warmup_tries"], 2)
     self.assertEqual(expanded[0]["in_dtype"], "bfloat16")
     self.assertEqual(expanded[0]["m"], 4096)
     self.assertEqual(expanded[0]["n"], 4096)
     self.assertEqual(expanded[0]["k"], 4096)
 
-    self.assertEqual(expanded[1]["name"], "gemm_generalized")
+    self.assertEqual(expanded[1]["name"], "gemm")
     self.assertEqual(expanded[1]["warmup_tries"], 2)
     self.assertEqual(expanded[1]["in_dtype"], "bfloat16")
     self.assertEqual(expanded[1]["m"], 8192)
@@ -239,7 +239,7 @@ benchmark:
     """Verifies that non-list cases raises ValueError."""
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   cases: "not_a_list"
 """
     config_path = os.path.join(self.test_dir.name, "config_cases_invalid.yaml")
@@ -254,7 +254,7 @@ benchmark:
     """Verifies that non-dict items in cases raise ValueError."""
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   cases:
     - "not_a_dict"
 """
@@ -330,7 +330,7 @@ benchmark:
     """Verifies that specifying both cases and cases_from_csv raises ValueError."""
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   cases:
     - m: 1024
   cases_from_csv: shapes.csv
@@ -350,7 +350,7 @@ benchmark:
           "reserved_key",
           """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   sweep:
     name: [gemm_a, gemm_b]
 """,
@@ -361,7 +361,7 @@ benchmark:
           "params_collision",
           """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   params:
     m: 1024
   sweep:
@@ -374,7 +374,7 @@ benchmark:
           "cases_collision",
           """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   cases:
     - m: 1024
       n: 512
@@ -388,7 +388,7 @@ benchmark:
           "cases_from_csv_collision",
           """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   cases_from_csv: shapes.csv
   sweep:
     m: [1024, 2048]
@@ -446,7 +446,7 @@ benchmark:
     """Verifies that unrecognized keys directly under benchmark raise ValueError."""
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   warmup_tries: 2
 """
     config_path = os.path.join(
@@ -510,7 +510,7 @@ benchmark:
     """Verifies that non-dict params raises ValueError."""
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   params: "not_a_dict"
 """
     config_path = os.path.join(
@@ -528,7 +528,7 @@ benchmark:
     """Verifies that params containing reserved keys raises ValueError."""
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   params:
     sweep:
       m: [1024]
@@ -547,7 +547,7 @@ benchmark:
     """Verifies that non-dict sweep raises ValueError."""
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   sweep: "not_a_dict"
 """
     config_path = os.path.join(
@@ -565,7 +565,7 @@ benchmark:
     """Verifies that empty sweep mapping raises ValueError."""
     yaml_content = """
 benchmark:
-  name: gemm_generalized
+  name: gemm
   sweep: {}
 """
     config_path = os.path.join(self.test_dir.name, "config_sweep_empty.yaml")
@@ -588,7 +588,7 @@ benchmark:
     """Verifies that root xprof_timing is extracted into base params."""
     yaml_content = (
         "benchmark:\n"
-        "  name: gemm_generalized\n"
+        "  name: gemm\n"
         f"{'  ' + xprof_snippet if xprof_snippet else ''}"
         "  params:\n"
         "    warmup_tries: 1\n"
@@ -607,7 +607,7 @@ benchmark:
   )
   def test_load_config_xprof_timing_reserved_key_raises_error(self, snippet):
     """Verifies reserved key xprof_timing in config sections raises error."""
-    yaml_content = "benchmark:\n  name: gemm_generalized\n" + "".join(
+    yaml_content = "benchmark:\n  name: gemm\n" + "".join(
         f"  {line}\n" for line in snippet.splitlines()
     )
     config_path = os.path.join(
@@ -630,7 +630,7 @@ benchmark:
     """Verifies non-bool xprof_timing at benchmark root raises ValueError."""
     yaml_content = f"""
 benchmark:
-  name: gemm_generalized
+  name: gemm
   xprof_timing: {value}
   params:
     m: 1024

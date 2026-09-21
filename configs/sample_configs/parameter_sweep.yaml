@@ -1,6 +1,6 @@
 benchmark:
-  # Sweep over different sizes for gemm_generalized
-  name: gemm_generalized
+  # Sweep over different sizes for gemm
+  name: gemm
   xprof_timing: true
   params:
     warmup_tries: 2

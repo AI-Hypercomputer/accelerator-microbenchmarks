@@ -1,7 +1,7 @@
 # High-Fidelity Study Configuration: LLM-200B
 benchmark:
   # Microbenchmarks (Section 3.1)
-  name: gemm_generalized
+  name: gemm
   model_preset: "LLM-200B"
   params:
     min_duration_s: 5.0 # Power-aware sustained run

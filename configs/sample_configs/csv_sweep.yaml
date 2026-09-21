@@ -1,5 +1,5 @@
 benchmark:
-  name: gemm_generalized
+  name: gemm
   params:
     warmup_tries: 2
     num_runs: 2

@@ -16,8 +16,8 @@ configs:
   - configs/tpu7x/2x2x1/all_to_all.yaml
 
   # 2x2x1 Single-node Microbenchmarks (1 node, 4 chips)
-  - configs/tpu7x/2x2x1/gemm_generalized.yaml
-  - configs/tpu7x/2x2x1/hbm_bandwidth.yaml
+  - configs/tpu7x/2x2x1/gemm.yaml
+  - configs/tpu7x/2x2x1/hbm.yaml
   - configs/tpu7x/2x2x1/host_to_device.yaml
   - configs/tpu7x/2x2x1/device_to_host.yaml
   - configs/tpu7x/2x2x1/device_to_device.yaml

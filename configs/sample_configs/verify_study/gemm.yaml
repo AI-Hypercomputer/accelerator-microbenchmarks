@@ -1,5 +1,5 @@
 benchmark:
-  name: gemm_generalized
+  name: gemm
   params:
     min_duration_s: 2.0 # Test the sustained run logic
     warmup_tries: 2

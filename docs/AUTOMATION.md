@@ -78,11 +78,11 @@ suite by passing selection flags to
 
 ### Run Specific Benchmark Names
 
-Filter by benchmark substring (e.g. `all_gather` and `gemm_generalized`):
+Filter by benchmark substring (e.g. `all_gather` and `gemm`):
 
 ```bash
 python3 automation/nightly_runner.py \
-  --filter all_gather gemm_generalized \
+  --filter all_gather gemm \
   --cluster="<cluster>" \
   --project="<project>" \
   --gcs-bucket="gs://<bucket>"
@@ -111,7 +111,7 @@ description: Custom benchmark subset for targeted regression testing
 
 configs:
   - configs/tpu7x/4x4x4/all_gather.yaml
-  - configs/tpu7x/2x2x1/gemm_generalized.yaml
+  - configs/tpu7x/2x2x1/gemm.yaml
   - configs/tpu7x/2x2x1/device_to_device.yaml
 ```
 

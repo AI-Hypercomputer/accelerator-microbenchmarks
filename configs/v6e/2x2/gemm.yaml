@@ -1,5 +1,5 @@
 benchmark:
-  name: gemm_generalized
+  name: gemm
   xprof_timing: true
   params:
     warmup_tries: 2

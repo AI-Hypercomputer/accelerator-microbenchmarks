@@ -19,13 +19,6 @@ import yaml
 
 _REPO_ROOT = "third_party/py/accelerator_microbenchmarks"
 
-# TODO: Revisit benchmark name mapping design.
-_BENCHMARK_NAME_MAPPING = {
-    "all_reduce": "all_reduce",
-    "reduce_scatter": "psum_scatter",
-    "hbm": "hbm_bandwidth",
-}
-
 
 def set_xla_flags(
     benchmark_configs: List[dict[str, Any]],
@@ -41,7 +34,6 @@ def set_xla_flags(
   if not benchmark_name:
     return
 
-  op_key = _BENCHMARK_NAME_MAPPING.get(benchmark_name, benchmark_name)
   try:
     if xla_flags_file_path is None:
       xla_flags_file_path = os.path.normpath(
@@ -52,8 +44,8 @@ def set_xla_flags(
       with open(xla_flags_file_path, "r") as f:
         op_flags = yaml.safe_load(f)
 
-      if op_key in op_flags:
-        flags_config = op_flags[op_key]
+      if benchmark_name in op_flags:
+        flags_config = op_flags[benchmark_name]
         if isinstance(flags_config, list):
           os.environ["LIBTPU_INIT_ARGS"] = " ".join(flags_config)
           print(f"Set LIBTPU_INIT_ARGS: {os.environ['LIBTPU_INIT_ARGS']}")

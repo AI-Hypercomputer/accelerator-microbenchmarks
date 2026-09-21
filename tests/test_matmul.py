@@ -51,7 +51,7 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
 
   def test_benchmark_registered(self):
     """Test that the benchmark is properly registered."""
-    bm_class = registry.benchmark_registry.get_benchmark("gemm_generalized")
+    bm_class = registry.benchmark_registry.get_benchmark("gemm")
     self.assertEqual(bm_class, matmul.GeneralizedGemmBenchmark)
 
   def test_generate_inputs(self):

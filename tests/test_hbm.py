@@ -58,7 +58,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
 
   def test_benchmark_registered(self):
     """Verify that the benchmark is correctly registered."""
-    bm_class = registry.benchmark_registry.get_benchmark("hbm_bandwidth")
+    bm_class = registry.benchmark_registry.get_benchmark("hbm")
     self.assertEqual(bm_class, hbm.HBMBandwidthBenchmark)
 
   @parameterized.named_parameters(

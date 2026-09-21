@@ -107,11 +107,24 @@ class TestRunner(absltest.TestCase):
     self.assertIn("--xla_jf_debug_level=3", init_args)
 
   def test_set_xla_flags_default_path_google3(self):
-    """Verifies that this fix does not break the original google3 path."""
-    runner.set_xla_flags([{"name": "gemm_generalized"}], None)
+    """Verifies that set_xla_flags resolves canonical benchmark names."""
+    os.environ.pop("LIBTPU_INIT_ARGS", None)
+    runner.set_xla_flags([{"name": "gemm"}], None)
     init_args = os.environ.get("LIBTPU_INIT_ARGS")
     self.assertIsNotNone(init_args)
     self.assertIn("--xla_tpu_vmem_scavenging_mode=NONE", init_args)
+
+    os.environ.pop("LIBTPU_INIT_ARGS", None)
+    runner.set_xla_flags([{"name": "hbm"}], None)
+    init_args = os.environ.get("LIBTPU_INIT_ARGS")
+    self.assertIsNotNone(init_args)
+    self.assertIn("--xla_jf_bounds_check=false", init_args)
+
+    os.environ.pop("LIBTPU_INIT_ARGS", None)
+    runner.set_xla_flags([{"name": "reduce_scatter"}], None)
+    init_args = os.environ.get("LIBTPU_INIT_ARGS")
+    self.assertIsNotNone(init_args)
+    self.assertIn("--xla_tpu_enable_reduce_scatter_offload_tracing=true", init_args)
 
   def test_set_xla_flags_copybara_path(self):
     """Verifies that set_xla_flags works with the path used post-copybara."""

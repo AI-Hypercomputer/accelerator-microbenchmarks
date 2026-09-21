@@ -34,12 +34,12 @@ class MetricsAggregatorTest(parameterized.TestCase):
         {
             "topology": "2x2x1",
             "gcs_artifact_path": (
-                "gs://test-bucket/2026-08-27/tpums-2x2x1-gemm-generalized"
+                "gs://test-bucket/2026-08-27/tpums-2x2x1-gemm"
             ),
-            "config_name": "gemm_generalized",
+            "config_name": "gemm",
             "metrics": [{
                 "_source_path": (
-                    "gs://test-bucket/2026-08-27/tpums-2x2x1-gemm-generalized/gemm.tsv"
+                    "gs://test-bucket/2026-08-27/tpums-2x2x1-gemm/gemm.tsv"
                 ),
                 "m": 2048,
                 "n": 2048,
@@ -391,7 +391,7 @@ class MetricsAggregatorTest(parameterized.TestCase):
     raw_data = [{
         "topology": "2x2x1",
         "gcs_artifact_path": "gs://bucket/date/tpums-2x2x1-gemm",
-        "config_name": "gemm_generalized",
+        "config_name": "gemm",
         "metrics": [{
             "_source_path": "gs://bucket/date/tpums-2x2x1-gemm/summary.csv",
             "m": 2048,

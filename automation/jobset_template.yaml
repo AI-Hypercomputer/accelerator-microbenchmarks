@@ -24,7 +24,7 @@
 #   export COMPLETIONS="1"
 #   export CHIPS_PER_NODE="4"
 #   export DOCKER_IMAGE="us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest"
-#   export CONFIG_PATH="configs/tpu7x/2x2x1/gemm_generalized.yaml"
+#   export CONFIG_PATH="configs/tpu7x/2x2x1/gemm.yaml"
 #   export GCS_OUTPUT_DIR="gs://<your-gcs-bucket>/tpums/results"
 #   export DECLARED_DURATION="30"
 #   export RESERVATION_NAME="<your-reservation-name>"  # optional

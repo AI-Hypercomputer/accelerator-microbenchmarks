@@ -84,7 +84,7 @@ class NightlyRunnerTest(parameterized.TestCase):
     mock_agg.return_value = {"gemm": []}
     results = nightly_runner.run_pipeline(
         config_dir=_CONFIG_DIR,
-        filter_patterns=["gemm_generalized"],
+        filter_patterns=["gemm"],
         dry_run=True,
     )
     self.assertTrue(len(results) >= 1)

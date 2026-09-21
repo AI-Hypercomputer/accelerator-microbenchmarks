@@ -1,6 +1,6 @@
 # Roofline Verification Config
 benchmark:
-  name: hbm_bandwidth
+  name: hbm
   params:
     warmup_tries: 2
     num_runs: 5

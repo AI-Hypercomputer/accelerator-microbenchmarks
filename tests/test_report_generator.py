@@ -34,8 +34,8 @@ class ReportGeneratorTest(parameterized.TestCase):
   def test_format_consolidated_report(self):
     result = workload_submitter.BenchmarkResult(
         workload_name="tpums-gemm-01",
-        config_name="gemm_generalized",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_name="gemm",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         topology="2x2x1",
         status="SUCCESS",
         duration_seconds=120.5,
@@ -435,8 +435,8 @@ class ReportGeneratorTest(parameterized.TestCase):
   def test_generate_html_report_dry_run_zero_failures(self):
     dry_run_result = workload_submitter.BenchmarkResult(
         workload_name="tpums-2x2x1-gemm",
-        config_name="gemm_generalized",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_name="gemm",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         topology="2x2x1",
         status="DRY_RUN",
         duration_seconds=0.0,

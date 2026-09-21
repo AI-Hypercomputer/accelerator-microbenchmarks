@@ -35,7 +35,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
   def test_infer_topology_from_config(self):
     self.assertEqual(
         workload_submitter.infer_topology_from_config(
-            "configs/tpu7x/2x2x1/gemm_generalized.yaml", {}
+            "configs/tpu7x/2x2x1/gemm.yaml", {}
         ),
         "2x2x1",
     )
@@ -71,9 +71,9 @@ class WorkloadSubmitterTest(parameterized.TestCase):
 
   def test_sanitize_workload_name(self):
     name = workload_submitter.sanitize_workload_name(
-        "gemm_generalized", topology="2x2x1"
+        "gemm", topology="2x2x1"
     )
-    self.assertEqual(name, "tpums-2x2x1-gemm-generalized")
+    self.assertEqual(name, "tpums-2x2x1-gemm")
     self.assertLessEqual(len(name), 45)
     self.assertRegex(name, r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
@@ -93,7 +93,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
         docker_image=(
             "us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest"
         ),
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         gcs_output_dir="gs://test-bucket/daily/test",
     )
 
@@ -122,7 +122,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
     container_script = pod_spec["containers"][0]["args"][0]
     self.assertIn(
         "tpums benchmark run-config"
-        ' "configs/tpu7x/2x2x1/gemm_generalized.yaml"',
+        ' "configs/tpu7x/2x2x1/gemm.yaml"',
         container_script,
     )
 
@@ -156,7 +156,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
         priority_class="medium",
         topology="2x2x1",
         docker_image="gcr.io/test/image:latest",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         gcs_output_dir="gs://test-bucket/daily/test",
         reservation_name=None,
     )
@@ -203,7 +203,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
         priority_class="medium",
         topology="2x2x1",
         docker_image="gcr.io/test/image:latest",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         gcs_output_dir="gs://test-bucket/daily/test",
     )
     doc = yaml.safe_load(manifest_yaml)
@@ -225,7 +225,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
         priority_class="medium",
         topology="2x2x1",
         docker_image="gcr.io/test/image:latest",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         gcs_output_dir="gs://test-bucket/daily/test",
         git_branch="feat/custom-mesh-v2",
     )
@@ -244,19 +244,19 @@ class WorkloadSubmitterTest(parameterized.TestCase):
     with self.assertRaises(ValueError):
       workload_submitter.resolve_config_files(
           config_dir=_CONFIG_DIR,
-          configs=[os.path.join(_CONFIG_DIR, "2x2x1/gemm_generalized.yaml")],
+          configs=[os.path.join(_CONFIG_DIR, "2x2x1/gemm.yaml")],
           filter_patterns=["all_gather"],
       )
 
   def test_resolve_config_files_filter_multi_pattern(self):
     resolved = workload_submitter.resolve_config_files(
         config_dir=_CONFIG_DIR,
-        filter_patterns=["all_gather", "gemm_generalized"],
+        filter_patterns=["all_gather", "gemm"],
     )
     self.assertTrue(len(resolved) > 0)
     for p in resolved:
       name = str(p).lower()
-      self.assertTrue("all_gather" in name or "gemm_generalized" in name)
+      self.assertTrue("all_gather" in name or "gemm" in name)
 
   def test_resolve_config_files_topologies(self):
     resolved = workload_submitter.resolve_config_files(
@@ -281,8 +281,8 @@ class WorkloadSubmitterTest(parameterized.TestCase):
         "2x2x1/all_to_all.yaml",
         "2x2x1/device_to_device.yaml",
         "2x2x1/device_to_host.yaml",
-        "2x2x1/gemm_generalized.yaml",
-        "2x2x1/hbm_bandwidth.yaml",
+        "2x2x1/gemm.yaml",
+        "2x2x1/hbm.yaml",
         "2x2x1/host_to_device.yaml",
         "4x4x4/all_gather.yaml",
         "4x4x4/all_reduce.yaml",
@@ -319,7 +319,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
   def test_resolve_config_files_custom_suite_file(self):
     custom_content = {
         "configs": [
-            "configs/tpu7x/2x2x1/gemm_generalized.yaml",
+            "configs/tpu7x/2x2x1/gemm.yaml",
             "configs/tpu7x/4x4x4/all_gather.yaml",
         ]
     }
@@ -334,7 +334,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
       self.assertLen(resolved, 2)
       names = sorted([f"{p.parent.name}/{p.name}" for p in resolved])
       self.assertEqual(
-          names, ["2x2x1/gemm_generalized.yaml", "4x4x4/all_gather.yaml"]
+          names, ["2x2x1/gemm.yaml", "4x4x4/all_gather.yaml"]
       )
     finally:
       os.remove(custom_file)
@@ -346,8 +346,8 @@ class WorkloadSubmitterTest(parameterized.TestCase):
   def test_update_workload_states_and_dashboard(self):
     wl = workload_submitter.ActiveWorkload(
         workload_name="tpums-test-workload",
-        config_name="gemm_generalized",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_name="gemm",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         topology="2x2x1",
         manifest_yaml="",
         gcs_output_dir="gs://test-bucket/daily/test",
@@ -395,8 +395,8 @@ class WorkloadSubmitterTest(parameterized.TestCase):
   def test_update_workload_states_jobset_completed_with_no_pods(self):
     wl = workload_submitter.ActiveWorkload(
         workload_name="tpums-empty-pods-success",
-        config_name="gemm_generalized",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_name="gemm",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         topology="2x2x1",
         manifest_yaml="",
         gcs_output_dir="gs://test-bucket/daily/test",
@@ -421,8 +421,8 @@ class WorkloadSubmitterTest(parameterized.TestCase):
   def test_update_workload_states_jobset_failed_with_no_pods(self):
     wl = workload_submitter.ActiveWorkload(
         workload_name="tpums-empty-pods-failed",
-        config_name="gemm_generalized",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_name="gemm",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         topology="2x2x1",
         manifest_yaml="",
         gcs_output_dir="gs://test-bucket/daily/test",
@@ -454,8 +454,8 @@ class WorkloadSubmitterTest(parameterized.TestCase):
   def test_poll_active_workloads_cleanup_flag(self):
     wl = workload_submitter.ActiveWorkload(
         workload_name="tpums-cleanup-test",
-        config_name="gemm_generalized",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_name="gemm",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         topology="2x2x1",
         manifest_yaml="",
         gcs_output_dir="gs://test-bucket/daily/test",
@@ -480,7 +480,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
     wl = workload_submitter.ActiveWorkload(
         workload_name="tpums-long-running",
         config_name="gemm",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         topology="2x2x1",
         total_pods=1,
         gcs_output_dir="gs://bucket/test",
@@ -591,7 +591,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
           workload_submitter.compute_topology_info(bad_topo)
 
   def test_workload_manager_prepare_dry_run(self):
-    cfg_path = pathlib.Path(_CONFIG_DIR) / "2x2x1" / "gemm_generalized.yaml"
+    cfg_path = pathlib.Path(_CONFIG_DIR) / "2x2x1" / "gemm.yaml"
     manager = workload_submitter.WorkloadManager(dry_run=True)
     results = manager.run([cfg_path])
     self.assertLen(results, 1)
@@ -601,7 +601,7 @@ class WorkloadSubmitterTest(parameterized.TestCase):
 
   @mock.patch.object(workload_submitter, "apply_jobset")
   def test_workload_manager_prepare_and_submit(self, mock_apply):
-    cfg_path = pathlib.Path(_CONFIG_DIR) / "2x2x1" / "gemm_generalized.yaml"
+    cfg_path = pathlib.Path(_CONFIG_DIR) / "2x2x1" / "gemm.yaml"
     manager = workload_submitter.WorkloadManager(dry_run=False)
     dry_run_results = manager.prepare_workloads([cfg_path])
     self.assertEqual(dry_run_results, [])
@@ -614,8 +614,8 @@ class WorkloadSubmitterTest(parameterized.TestCase):
   def test_workload_manager_cleanup(self, mock_delete):
     wl = workload_submitter.ActiveWorkload(
         workload_name="tpums-mgr-test",
-        config_name="gemm_generalized",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_name="gemm",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         topology="2x2x1",
         manifest_yaml="",
         gcs_output_dir="gs://test-bucket/test",
@@ -634,8 +634,8 @@ class WorkloadSubmitterTest(parameterized.TestCase):
   def test_workload_manager_update_states_and_dashboard(self):
     wl = workload_submitter.ActiveWorkload(
         workload_name="tpums-mgr-dash",
-        config_name="gemm_generalized",
-        config_rel_path="configs/tpu7x/2x2x1/gemm_generalized.yaml",
+        config_name="gemm",
+        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
         topology="2x2x1",
         manifest_yaml="",
         gcs_output_dir="gs://test-bucket/test",
