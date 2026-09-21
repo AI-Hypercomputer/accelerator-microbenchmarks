@@ -456,6 +456,35 @@ class ReportGeneratorTest(parameterized.TestCase):
     )
     self.assertNotIn("stat-card danger", html_report)
 
+  def test_generate_html_report_total_suite_duration_uses_max_not_sum(self):
+    results = [
+        workload_submitter.BenchmarkResult(
+            workload_name="tpums-4x4x4-all-gather",
+            config_name="all_gather",
+            config_rel_path="configs/tpu7x/4x4x4/all_gather.yaml",
+            topology="4x4x4",
+            status="SUCCESS",
+            duration_seconds=120.0,
+            gcs_artifact_path="gs://bucket/date/tpums-4x4x4-all-gather",
+        ),
+        workload_submitter.BenchmarkResult(
+            workload_name="tpums-2x2x1-device-to-device",
+            config_name="device_to_device",
+            config_rel_path="configs/tpu7x/2x2x1/device_to_device.yaml",
+            topology="2x2x1",
+            status="SUCCESS",
+            duration_seconds=300.0,
+            gcs_artifact_path="gs://bucket/date/tpums-2x2x1-device-to-device",
+        ),
+    ]
+    html_report = report_generator.generate_html_report(results)
+    self.assertIn(
+        '<div class="stat-card"><div class="label">Total Suite'
+        ' Duration</div><div class="value">300.0s</div></div>',
+        html_report,
+    )
+    self.assertNotIn("420.0s", html_report)
+
 
 if __name__ == "__main__":
   absltest.main()

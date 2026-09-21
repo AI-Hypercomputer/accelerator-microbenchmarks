@@ -516,11 +516,14 @@ def generate_html_report(
       )
       in ("FAILED", "TIMEOUT", "EVICTED")
   )
-  total_duration = sum(
-      getattr(r, "duration_seconds", 0.0)
-      if hasattr(r, "duration_seconds")
-      else (r.get("duration_seconds", 0.0) if isinstance(r, dict) else 0.0)
-      for r in results
+  total_duration = max(
+      (
+          getattr(r, "duration_seconds", 0.0)
+          if hasattr(r, "duration_seconds")
+          else (r.get("duration_seconds", 0.0) if isinstance(r, dict) else 0.0)
+          for r in results
+      ),
+      default=0.0,
   )
 
   html_lines = [
