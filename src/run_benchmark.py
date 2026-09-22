@@ -301,6 +301,12 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
     xla_dump_dir = benchmark_config.get("xla_dump_dir")
     warmup_tries = benchmark_config.get("warmup_tries")
     warmup_tries = warmup_tries if warmup_tries is not None else 10
+    # Inject run_on_local_node from config if not present in params
+    global_run_on_local_node = benchmark_config.get("run_on_local_node")
+    if global_run_on_local_node is not None:
+        for param in benchmark_params:
+            if "run_on_local_node" not in param:
+                param["run_on_local_node"] = global_run_on_local_node
 
     if not benchmark_name:
         raise ValueError("Each benchmark must have a benchmark_name.")
@@ -381,6 +387,29 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
         write_to_csv(f"{csv_path}/{test_name}.csv", calculate_metrics_results)
 
 
+def should_initialize_distributed(config: Dict[str, Any]) -> bool:
+    """Determines whether to call jax.distributed.initialize().
+
+    Returns False if run_on_local_node is True at the root config level,
+    at the benchmark level, or in any benchmark parameters.
+    """
+    if config.get("run_on_local_node", False):
+        return False
+    benchmarks = config.get("benchmarks", [])
+    if isinstance(benchmarks, list):
+        for benchmark in benchmarks:
+            if isinstance(benchmark, dict):
+                if benchmark.get("run_on_local_node", False):
+                    return False
+                for param in benchmark.get("benchmark_params", []):
+                    if isinstance(param, dict) and param.get("run_on_local_node", False):
+                        return False
+                for sweep in benchmark.get("benchmark_sweep_params", []):
+                    if isinstance(sweep, dict) and sweep.get("run_on_local_node", False):
+                        return False
+    return True
+
+
 def main(config_path: str, multithreaded: bool):
     """Main function."""
     # Load configuration
@@ -417,7 +446,8 @@ def main(config_path: str, multithreaded: bool):
             run_benchmark_multithreaded(benchmark_config)
 
     else:
-        jax.distributed.initialize()
+        if should_initialize_distributed(config):
+            jax.distributed.initialize()
         for benchmark_config in benchmarks:
             run_single_benchmark(benchmark_config)
 
@@ -436,6 +466,12 @@ def run_benchmark_multithreaded(benchmark_config):
         raise ValueError("Each benchmark must have a 'benchmark_name'.")
     warmup_tries = benchmark_config.get("warmup_tries")
     warmup_tries = warmup_tries if warmup_tries is not None else 10
+    # Inject run_on_local_node from config if not present in params
+    global_run_on_local_node = benchmark_config.get("run_on_local_node")
+    if global_run_on_local_node is not None:
+        for param in benchmark_params:
+            if "run_on_local_node" not in param:
+                param["run_on_local_node"] = global_run_on_local_node
 
     # Get the benchmark function
     benchmark_func, calculate_metrics_func = get_benchmark_functions(

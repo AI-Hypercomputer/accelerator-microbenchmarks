@@ -375,6 +375,12 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         for param in benchmark_params:
             if "topology" not in param:
                 param["topology"] = global_topology
+    # Inject run_on_local_node from config if present in benchmark_config
+    global_run_on_local_node = benchmark_config.get("run_on_local_node")
+    if global_run_on_local_node is not None:
+        for param in benchmark_params:
+            if "run_on_local_node" not in param:
+                param["run_on_local_node"] = global_run_on_local_node
 
     if not benchmark_name:
         raise ValueError("Each benchmark must have a benchmark_name.")
@@ -460,6 +466,29 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
 
 
+def should_initialize_distributed(config: Dict[str, Any]) -> bool:
+    """Determines whether to call jax.distributed.initialize().
+
+    Returns False if run_on_local_node is True at the root config level,
+    at the benchmark level, or in any benchmark parameters.
+    """
+    if config.get("run_on_local_node", False):
+        return False
+    benchmarks = config.get("benchmarks", [])
+    if isinstance(benchmarks, list):
+        for benchmark in benchmarks:
+            if isinstance(benchmark, dict):
+                if benchmark.get("run_on_local_node", False):
+                    return False
+                for param in benchmark.get("benchmark_params", []):
+                    if isinstance(param, dict) and param.get("run_on_local_node", False):
+                        return False
+                for sweep in benchmark.get("benchmark_sweep_params", []):
+                    if isinstance(sweep, dict) and sweep.get("run_on_local_node", False):
+                        return False
+    return True
+
+
 def main(args):
     # pylint: disable=redefined-outer-name
     """Main function."""
@@ -499,6 +528,11 @@ def main(args):
         for benchmark_config in benchmarks:
             run_benchmark_multithreaded(benchmark_config, output_path)
     else:
+        if should_initialize_distributed(config):
+            try:
+                jax.distributed.initialize()
+            except Exception as e:
+                print(f"jax.distributed.initialize() failed or not needed: {e}")
         for benchmark_config in benchmarks:
             run_single_benchmark(benchmark_config, output_path)
 
@@ -530,6 +564,12 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
         for param in benchmark_params:
             if "topology" not in param:
                 param["topology"] = global_topology
+    # Inject run_on_local_node from config if present in benchmark_config
+    global_run_on_local_node = benchmark_config.get("run_on_local_node")
+    if global_run_on_local_node is not None:
+        for param in benchmark_params:
+            if "run_on_local_node" not in param:
+                param["run_on_local_node"] = global_run_on_local_node
 
     # Get the benchmark function
     benchmark_func, calculate_metrics_func = get_benchmark_functions(
