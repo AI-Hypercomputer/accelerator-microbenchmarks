@@ -10,7 +10,7 @@ V6E_HARDWARE_SPEC = schema.HardwareSpec(
     tflops=schema.TflopsSpec(
         peak_tflops_per_device={
             "bfloat16": 918.0,
-            "float32": 459.0,
+            "float32": 459.0,  # 2-pass BF16 emulation on MXU
             "float8_e5m2": 918.0,
             "float8_e4m3fn": 918.0,
             "int8": 1836.0,
@@ -18,8 +18,8 @@ V6E_HARDWARE_SPEC = schema.HardwareSpec(
         }
     ),
     ici=schema.IciSpec(
-        peak_bw_gbps=800.0,
+        unidirectional_link_bw_gb_s=800.0,
         bidirectional=True,
     ),
-    hbm=schema.HbmSpec(peak_bw_gbps=1638.4),
+    hbm=schema.HbmSpec(peak_bw_gb_s=1638.4),
 )

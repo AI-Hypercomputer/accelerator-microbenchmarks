@@ -75,6 +75,8 @@ class TransformerLayerMoE(ComponentBenchmark):
   - Residual connections
   """
   Config = TransformerLayerParams
+  QKV_PROJ_FACTOR: int = 3
+  FFN_EXPANSION_FACTOR: int = 2
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("model_dim", report.format_str),
@@ -127,25 +129,48 @@ class TransformerLayerMoE(ComponentBenchmark):
     x = jax.random.normal(key, (batch, seq_len, model_dim), dtype=dtype)
 
     # Large-scale weights that would normally be sharded via FSDP/TP
-    w_attn = jax.random.normal(key, (model_dim, model_dim * 3), dtype=dtype)
-    b_attn = jax.random.normal(key, (model_dim * 3, model_dim), dtype=dtype)
-    w_ffn = jax.random.normal(key, (model_dim, model_dim * 2), dtype=dtype)
-    b_ffn = jax.random.normal(key, (model_dim * 2, model_dim), dtype=dtype)
+    w_attn = jax.random.normal(
+        key, (model_dim, model_dim * self.QKV_PROJ_FACTOR), dtype=dtype
+    )
+    b_attn = jax.random.normal(
+        key, (model_dim * self.QKV_PROJ_FACTOR, model_dim), dtype=dtype
+    )
+    w_ffn = jax.random.normal(
+        key, (model_dim, model_dim * self.FFN_EXPANSION_FACTOR), dtype=dtype
+    )
+    b_ffn = jax.random.normal(
+        key, (model_dim * self.FFN_EXPANSION_FACTOR, model_dim), dtype=dtype
+    )
 
-    # TP Sharding: Partition model_dim across the mesh
+    # Sequence & Tensor Parallel Sharding: partition seq_len for x and
+    # model_dim for weights
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
     mesh_axis = self.mesh.axis_names[0]
-    sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, mesh_axis, None)
+    x_spec = (
+        jax.sharding.PartitionSpec(None, mesh_axis, None)
+        if self._get_num_seq_sharded_devices() > 1
+        else jax.sharding.PartitionSpec(None, None, None)
     )
+    if self._get_num_sharded_devices() > 1:
+      col_spec = jax.sharding.PartitionSpec(None, mesh_axis)
+      row_spec = jax.sharding.PartitionSpec(mesh_axis, None)
+    else:
+      col_spec = jax.sharding.PartitionSpec(None, None)
+      row_spec = jax.sharding.PartitionSpec(None, None)
 
-    x = jax.device_put(x, sharding)
+    x = jax.device_put(x, jax.sharding.NamedSharding(self.mesh, x_spec))
     w_attn = jax.device_put(
-        w_attn,
-        jax.sharding.NamedSharding(
-            self.mesh, jax.sharding.PartitionSpec(mesh_axis, None)
-        ),
+        w_attn, jax.sharding.NamedSharding(self.mesh, col_spec)
+    )
+    b_attn = jax.device_put(
+        b_attn, jax.sharding.NamedSharding(self.mesh, row_spec)
+    )
+    w_ffn = jax.device_put(
+        w_ffn, jax.sharding.NamedSharding(self.mesh, col_spec)
+    )
+    b_ffn = jax.device_put(
+        b_ffn, jax.sharding.NamedSharding(self.mesh, row_spec)
     )
 
     return x, w_attn, b_attn, w_ffn, b_ffn
@@ -155,34 +180,75 @@ class TransformerLayerMoE(ComponentBenchmark):
       raise ValueError("Forward function not initialized.")
     return self._fprop(*args)
 
+  def _get_num_sharded_devices(self) -> int:
+    if self.mesh is None:
+      return 1
+    mesh_axis = self.mesh.axis_names[0]
+    num_devices = int(self.mesh.shape[mesh_axis])
+    if self.config.model_dim % num_devices == 0:
+      return num_devices
+    return 1
+
+  def _get_num_seq_sharded_devices(self) -> int:
+    if self.mesh is None:
+      return 1
+    mesh_axis = self.mesh.axis_names[0]
+    num_devices = int(self.mesh.shape[mesh_axis])
+    if self.config.mslen % num_devices == 0:
+      return num_devices
+    return 1
+
   def get_total_bytes(self) -> float:
     model_dim = self.config.model_dim
     seq_len = self.config.mslen
-    itemsize = jnp.dtype(jnp.bfloat16).itemsize
+    dtype = utils.parse_dtype(self.config.dtype)
+    itemsize = jnp.dtype(dtype).itemsize
 
-    # Very rough estimate for a full layer:
-    # Inputs + Weights + Intermediates
-    # For a study, we may need a more detailed breakdown.
-    # Approximation: 10 * X_size + Weight_size
     x_size = seq_len * model_dim * itemsize
-    w_size = (
-        model_dim * model_dim * 10
-    ) * itemsize  # Rough param count across all experts/attn
-    return 10 * x_size + w_size
+    # Total weight elements across w_attn (3d^2), b_attn (3d^2),
+    # w_ffn (2d^2), and b_ffn (2d^2): (3 + 3 + 2 + 2) * d^2 = 10 * d^2
+    weight_dim_multiplier = 2 * (
+        self.QKV_PROJ_FACTOR + self.FFN_EXPANSION_FACTOR
+    )
+    w_size = (model_dim * model_dim * weight_dim_multiplier) * itemsize
+    x_bytes_per_dev = (10 * x_size) / self._get_num_seq_sharded_devices()
+    w_bytes_per_dev = w_size / self._get_num_sharded_devices()
+    return float(x_bytes_per_dev + w_bytes_per_dev)
 
-  def get_arithmetic_intensity(self) -> float:
+  def get_total_flops(self) -> float:
     model_dim = self.config.model_dim
     seq_len = self.config.mslen
-    # Rough Flops: 24 * seq_len * model_dim^2
-    flops = 24 * seq_len * (model_dim**2)
-    return flops / self.get_total_bytes()
+    # Sum of 2 * M * K * N across the 4 matmuls in full_layer_fwd (batch=1):
+    # 1. qkv = x_norm @ w_attn (d -> 3d): 2 * seq_len * d * 3d = 6 * s * d^2
+    # 2. attn_out = qkv @ b_attn (3d -> d): 2 * seq_len * 3d * d = 6 * s * d^2
+    # 3. ffn_mid = x @ w_ffn (d -> 2d): 2 * seq_len * d * 2d = 4 * s * d^2
+    # 4. ffn_out = ffn_mid @ b_ffn (2d -> d): 2 * seq_len * 2d * d = 4 * s * d^2
+    # Total coefficient = 2 * (3 + 3 + 2 + 2) = 20
+    qkv_proj_flops = 2 * self.QKV_PROJ_FACTOR * seq_len * (model_dim**2)
+    attn_out_flops = 2 * self.QKV_PROJ_FACTOR * seq_len * (model_dim**2)
+    ffn_up_flops = 2 * self.FFN_EXPANSION_FACTOR * seq_len * (model_dim**2)
+    ffn_down_flops = 2 * self.FFN_EXPANSION_FACTOR * seq_len * (model_dim**2)
+    global_flops = (
+        qkv_proj_flops + attn_out_flops + ffn_up_flops + ffn_down_flops
+    )
+    divisor = max(
+        self._get_num_sharded_devices(), self._get_num_seq_sharded_devices()
+    )
+    return float(global_flops) / divisor
+
+  def get_arithmetic_intensity(self) -> float:
+    total_bytes = self.get_total_bytes()
+    return self.get_total_flops() / total_bytes if total_bytes > 0 else 0.0
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    return {
+        "total_flops": self.get_total_flops(),
+    }
 
   def calculate_throughput_metrics(
       self, latency_ms: float, prefix: constants.TimingDomain
   ) -> dict[str, Any]:
-    model_dim = self.config.model_dim
-    seq_len = self.config.mslen
-    flops = 24 * seq_len * (model_dim**2)
+    flops = self.get_total_flops()
 
     latency_s = latency_ms / 1000.0
     if latency_s == 0:

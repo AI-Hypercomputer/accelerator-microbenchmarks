@@ -216,9 +216,6 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
     data_factor = 2.0 if is_bi else 1.0
     return float(size_bytes * data_factor)
 
-  def get_arithmetic_intensity(self) -> float:
-    return 0.0
-
   def get_workload_metadata(self) -> dict[str, Any]:
     total_bytes = self.get_total_bytes()
     return {
@@ -226,7 +223,6 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
         "src_device_index": self.config.src_device_index,
         "dst_device_index": self.config.dst_device_index,
         "direction": self.config.direction,
-        "intensity": self.get_arithmetic_intensity(),
     }
 
   def calculate_throughput_metrics(

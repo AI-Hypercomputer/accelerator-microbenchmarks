@@ -540,11 +540,11 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         mesh=self.mock_mesh,
     )
     result = bm.run()
-    self.assertIn("roofline_tflops_limit", result.metrics)
-    self.assertIn("peak_hbm_bw_gb_s", result.metrics)
+    self.assertIn("roofline_tflops_limit_per_device", result.metrics)
+    self.assertIn("peak_hbm_bw_per_device_gb_s", result.metrics)
     self.assertIn("wall_clock_compute_roofline_efficiency_pct", result.metrics)
-    self.assertGreater(result.metrics["roofline_tflops_limit"], 0.0)
-    self.assertGreater(result.metrics["peak_hbm_bw_gb_s"], 0.0)
+    self.assertGreater(result.metrics["roofline_tflops_limit_per_device"], 0.0)
+    self.assertGreater(result.metrics["peak_hbm_bw_per_device_gb_s"], 0.0)
     self.assertGreaterEqual(
         result.metrics["wall_clock_compute_roofline_efficiency_pct"], 0.0
     )

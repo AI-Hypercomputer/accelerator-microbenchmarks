@@ -753,7 +753,6 @@ benchmark:
     with self.assertRaises(SystemExit):
       cli.run(["benchmark", "run", "gemm"] + extra_argv)
 
-
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_boolean_flag_defaults(self, mock_run_benchmarks):
     """Verifies omitted boolean flags keep their scalar dataclass defaults."""
@@ -762,16 +761,7 @@ benchmark:
     _, kwargs = mock_run_benchmarks.call_args
     _, task_config = kwargs["tasks"][0]
     self.assertIs(task_config.transpose_a, False)
-    self.assertIs(task_config.use_trace_roofline, False)
-
-  @mock.patch.object(runner, "run_benchmarks")
-  def test_benchmark_run_inherited_boolean_flag(self, mock_run_benchmarks):
-    """Verifies booleans inherited from BaseBenchmarkParams take values too."""
-    cli.run(["benchmark", "run", "gemm", "--use_trace_roofline", "true"])
-    mock_run_benchmarks.assert_called_once()
-    _, kwargs = mock_run_benchmarks.call_args
-    _, task_config = kwargs["tasks"][0]
-    self.assertIs(task_config.use_trace_roofline, True)
+    self.assertIs(task_config.transpose_b, False)
 
   def test_boolean_flag_accepts_multiple_values(self):
     """Verifies booleans parse into a list, for future parameter sweeps.

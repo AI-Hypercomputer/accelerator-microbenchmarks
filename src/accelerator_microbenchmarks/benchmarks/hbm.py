@@ -118,6 +118,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
   """HBM bandwidth microbenchmark supporting standard memory kernels."""
 
   Config = HBMBandwidthParams
+  derive_chip_bandwidth: bool = False
   roofline_mode: constants.RooflineMode = constants.RooflineMode.MEMORY_HBM
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
@@ -126,9 +127,9 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
       ("size", report.format_str),
       ("total_bytes_mib", report.format_2f),
       ("wall_clock_p50_ms", report.format_4f),
-      ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
+      ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
-      ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
+      ("xprof_bandwidth_per_device_gb_s", report.format_2f),
   )
 
   def __init__(
@@ -234,7 +235,6 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     total_bytes = self.get_total_bytes()
     return {
         "total_bytes_mib": total_bytes / (1024 * 1024),
-        "intensity": self.get_arithmetic_intensity(),
         "op_type": self.spec.name,
     }
 

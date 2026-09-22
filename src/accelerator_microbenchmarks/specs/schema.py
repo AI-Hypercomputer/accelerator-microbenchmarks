@@ -70,29 +70,20 @@ class TflopsSpec:
 class IciSpec:
   """Inter-Chip Interconnect specifications (per-chip)."""
 
-  peak_bw_gbps: float
-  bidirectional: bool
-
-  @property
-  def peak_bw_gbps_per_chip(self) -> float:
-    return self.peak_bw_gbps
+  unidirectional_link_bw_gb_s: float
+  bidirectional: bool = True
 
 
 @dataclasses.dataclass(frozen=True)
 class HbmSpec:
   """High Bandwidth Memory specifications (per-chip).
 
-  For the classical roofline model, peak_bw_gbps represents the flat
+  For the classical roofline model, peak_bw_gb_s represents the flat
   asymptotic physical peak bandwidth ceiling (speed of light) from the
   hardware datasheet.
   """
 
-  peak_bw_gbps: float
-
-  @property
-  def peak_bw_gbps_per_chip(self) -> float:
-    """Returns the asymptotic peak HBM bandwidth per chip (GB/s)."""
-    return self.peak_bw_gbps
+  peak_bw_gb_s: float
 
 
 @dataclasses.dataclass(frozen=True)
@@ -112,4 +103,4 @@ class HardwareSpec:
     """Returns the asymptotic peak HBM bandwidth for a single device (GB/s)."""
     if not self.hbm or self.devices_per_chip <= 0:
       return 0.0
-    return self.hbm.peak_bw_gbps_per_chip / self.devices_per_chip
+    return self.hbm.peak_bw_gb_s / self.devices_per_chip

@@ -2,6 +2,7 @@
 
 import argparse
 import io
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -207,7 +208,7 @@ class AttentionBenchmarkTest(absltest.TestCase):
     self.bm = attention.AttentionBenchmark(
         config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
-    expected_intensity = 32.0
+    expected_intensity = 56.0
     self.assertAlmostEqual(
         self.bm.get_arithmetic_intensity(), expected_intensity
     )
@@ -248,6 +249,68 @@ class AttentionBenchmarkTest(absltest.TestCase):
         0.0, constants.TimingDomain.WALL_CLOCK
     )
     self.assertEqual(metrics["wall_clock_tflops_per_device"], float("inf"))
+
+  def test_sharding_divisors_and_fallbacks(self):
+    """Verify sharding divisors for mesh=None, divisible heads, and non-divisible heads."""
+    divisible_cfg = attention.AttentionParams(
+        batch=1, seq_len=128, num_q_heads=8, num_kv_heads=4, head_dim=64
+    )
+    bm_no_mesh = attention.AttentionBenchmark(
+        config=divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=None,
+    )
+    bm_1dev = attention.AttentionBenchmark(
+        config=divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.assertAlmostEqual(
+        bm_no_mesh.get_total_flops(), bm_1dev.get_total_flops()
+    )
+    self.assertAlmostEqual(
+        bm_no_mesh.get_total_bytes(), bm_1dev.get_total_bytes()
+    )
+
+    mock_4dev_mesh = mock.MagicMock(axis_names=("device",), shape={"device": 4})
+    bm_sharded = attention.AttentionBenchmark(
+        config=divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=mock_4dev_mesh,
+    )
+    self.assertAlmostEqual(
+        bm_sharded.get_total_flops(), bm_no_mesh.get_total_flops() / 4
+    )
+    self.assertAlmostEqual(
+        bm_sharded.get_total_bytes(), bm_no_mesh.get_total_bytes() / 4
+    )
+
+    non_divisible_cfg = attention.AttentionParams(
+        batch=1, seq_len=128, num_q_heads=6, num_kv_heads=2, head_dim=64
+    )
+    bm_unsharded_no_mesh = attention.AttentionBenchmark(
+        config=non_divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=None,
+    )
+    bm_unsharded = attention.AttentionBenchmark(
+        config=non_divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=mock_4dev_mesh,
+    )
+    self.assertAlmostEqual(
+        bm_unsharded.get_total_flops(), bm_unsharded_no_mesh.get_total_flops()
+    )
+    self.assertAlmostEqual(
+        bm_unsharded.get_total_bytes(), bm_unsharded_no_mesh.get_total_bytes()
+    )
+    with (
+        mock.patch.object(jax.sharding, "NamedSharding") as mock_named_sharding,
+        mock.patch.object(jax, "device_put", side_effect=lambda arr, _: arr),
+    ):
+      bm_unsharded.generate_inputs()
+      replicated_spec = jax.sharding.PartitionSpec(None, None, None, None)
+      mock_named_sharding.assert_any_call(mock_4dev_mesh, replicated_spec)
 
 
 class AttentionParamsValidationTest(parameterized.TestCase):

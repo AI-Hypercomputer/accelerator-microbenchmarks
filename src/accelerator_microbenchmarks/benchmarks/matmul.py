@@ -104,6 +104,7 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
   )
 
   def get_compute_dtype(self) -> str:
+    """Return the primary data type used for compute math, to determine peak TFLOPS."""
     return self.config.in_dtype
 
   def match_xprof_op_fallback(self, event):
@@ -263,14 +264,9 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     bytes_moved = self.get_total_bytes()
     return flops / bytes_moved if bytes_moved > 0 else 0.0
 
-  def get_compute_dtype(self) -> str:
-    """Return the primary data type used for compute math, to determine peak TFLOPS."""
-    return self.config.in_dtype
-
   def get_workload_metadata(self) -> dict[str, Any]:
     return {
         "total_flops": self.get_total_flops(),
-        "intensity": self.get_arithmetic_intensity(),
     }
 
   def calculate_throughput_metrics(

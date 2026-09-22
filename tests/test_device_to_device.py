@@ -229,8 +229,9 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
     self.assertNotIn("memory_roofline_efficiency_pct", result.metrics)
 
   def test_get_arithmetic_intensity(self):
-    """Verify arithmetic intensity for pure memory transfer is 0.0."""
-    self.assertEqual(self.bm.get_arithmetic_intensity(), 0.0)
+    """Verify DeviceToDeviceBenchmark does not implement get_arithmetic_intensity."""
+    with self.assertRaises(NotImplementedError):
+      self.bm.get_arithmetic_intensity()
 
   def test_calculate_metrics_zero_latency(self):
     """Verify bandwidth calculation handles zero latency cleanly (inf)."""

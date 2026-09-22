@@ -368,7 +368,6 @@ class BaseCollectiveBenchmark(
         "sharding_size": sharding_size,
         "replica_group_type": replica_group_type,
         "replica_group_rank": rank,
-        "intensity": self.get_arithmetic_intensity(),
         **extra_metrics,
     }
 
@@ -391,9 +390,6 @@ class BaseCollectiveBenchmark(
 
   def get_total_bytes(self) -> float:
     return float(self.get_workload_metadata()["data_transferred_bytes"])
-
-  def get_arithmetic_intensity(self) -> float:
-    return 0.0
 
   def _get_transfer_metrics(
       self,

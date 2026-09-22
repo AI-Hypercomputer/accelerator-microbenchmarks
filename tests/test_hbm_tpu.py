@@ -124,9 +124,9 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
 
     result = self.bm.run()
     self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
-    self.assertIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
     self.assertIn("xprof_bandwidth_per_device_gb_s", result.metrics)
-    self.assertIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
     self.assertEqual(result.metadata.params.get("device_id"), target_dev_id)
 
     # 3. Verify target device execution through XProf trace analysis channel

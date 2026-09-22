@@ -181,16 +181,14 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(
         hw_spec.tflops.peak_tflops_per_device["float8_e4m3fn"], 2307.0
     )
-    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["int8"], 2307.0)
+    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["int8"], 1153.5)
 
     # Test ICI stats
-    self.assertEqual(hw_spec.ici.peak_bw_gbps, 1200.0)
-    self.assertEqual(hw_spec.ici.peak_bw_gbps_per_chip, 1200.0)
+    self.assertEqual(hw_spec.ici.unidirectional_link_bw_gb_s, 1200.0)
     self.assertTrue(hw_spec.ici.bidirectional)
 
     # Test HBM stats
-    self.assertEqual(hw_spec.hbm.peak_bw_gbps, 7380.0)
-    self.assertEqual(hw_spec.hbm.peak_bw_gbps_per_chip, 7380.0)
+    self.assertEqual(hw_spec.hbm.peak_bw_gb_s, 7380.0)
     self.assertEqual(hw_spec.peak_hbm_bandwidth_per_device, 3690.0)
 
   def test_hardware_spec_v6e_presets(self):
@@ -215,13 +213,11 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(hw_spec.tflops.peak_tflops_per_device["int4"], 3672.0)
 
     # Test ICI stats
-    self.assertEqual(hw_spec.ici.peak_bw_gbps, 800.0)
-    self.assertEqual(hw_spec.ici.peak_bw_gbps_per_chip, 800.0)
+    self.assertEqual(hw_spec.ici.unidirectional_link_bw_gb_s, 800.0)
     self.assertTrue(hw_spec.ici.bidirectional)
 
     # Test HBM stats
-    self.assertEqual(hw_spec.hbm.peak_bw_gbps, 1638.4)
-    self.assertEqual(hw_spec.hbm.peak_bw_gbps_per_chip, 1638.4)
+    self.assertEqual(hw_spec.hbm.peak_bw_gb_s, 1638.4)
     self.assertEqual(hw_spec.peak_hbm_bandwidth_per_device, 1638.4)
 
   def test_hardware_spec_hbm_none(self):
@@ -236,7 +232,7 @@ class SystemTest(absltest.TestCase):
     hw_spec_zero_dev = system.HardwareSpec(
         name=system.TpuVersion.TPU7X,
         devices_per_chip=0,
-        hbm=system.HbmSpec(peak_bw_gbps=100.0),
+        hbm=system.HbmSpec(peak_bw_gb_s=100.0),
     )
     self.assertEqual(hw_spec_zero_dev.peak_hbm_bandwidth_per_device, 0.0)
 

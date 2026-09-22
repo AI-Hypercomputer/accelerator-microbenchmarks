@@ -71,14 +71,9 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
   def get_total_bytes(self) -> float:
     return float(self.config.data_size_bytes)
 
-  def get_arithmetic_intensity(self) -> float:
-    # 100% memory-bound operation
-    return 0.0
-
   def get_workload_metadata(self) -> dict[str, Any]:
     return {
         "total_bytes_mib": float(self.config.data_size_mib),
-        "intensity": self.get_arithmetic_intensity(),
     }
 
   def calculate_throughput_metrics(
@@ -140,14 +135,9 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
   def get_total_bytes(self) -> float:
     return float(self.config.data_size_bytes)
 
-  def get_arithmetic_intensity(self) -> float:
-    # 100% memory-bound operation
-    return 0.0
-
   def get_workload_metadata(self) -> dict[str, Any]:
     return {
         "total_bytes_mib": float(self.config.data_size_mib),
-        "intensity": self.get_arithmetic_intensity(),
     }
 
   def calculate_throughput_metrics(

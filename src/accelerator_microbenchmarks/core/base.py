@@ -52,15 +52,6 @@ class BaseBenchmarkParams:
           ),
       },
   )
-  use_trace_roofline: bool = dataclasses.field(
-      default=False,
-      metadata={
-          "help": (
-              "Override analytical arithmetic intensity with bottom-up FLOPs"
-              " and HBM bytes extracted via jax.experimental.roofline."
-          )
-      },
-  )
 
   def _validate_bounds(self) -> None:
     """Checks every field against its min/max metadata constraints.
@@ -165,6 +156,7 @@ TConfig = TypeVar("TConfig", bound=BaseBenchmarkParams)
 class BaseBenchmark(Generic[TConfig], abc.ABC):
   """Abstract base class for microbenchmarks."""
 
+  name: str = ""
   Config = BaseBenchmarkParams
   DEFAULT_LOCAL_DEVICE_ID: int = 0
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = ()
@@ -175,6 +167,11 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   ] = None
   derive_chip_bandwidth: bool = True
   roofline_mode: constants.RooflineMode = constants.RooflineMode.NONE
+
+  def __init_subclass__(cls, **kwargs):
+    super().__init_subclass__(**kwargs)
+    if "name" not in cls.__dict__:
+      cls.name = cls.__name__
 
   def __init__(
       self,
@@ -222,16 +219,12 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     """
     pass
 
-  @abc.abstractmethod
   def get_arithmetic_intensity(self) -> float:
-    """Calculate the arithmetic intensity (Flops / Bytes) for the operation.
-
-    To be implemented by subclasses.
-
-    Returns:
-      The arithmetic intensity as a float.
-    """
-    pass
+    """Return operational intensity (FLOPs/Byte) for roofline analysis."""
+    raise NotImplementedError(
+        f"{self.__class__.__name__} must implement get_arithmetic_intensity() "
+        "when roofline_mode != RooflineMode.NONE."
+    )
 
   @abc.abstractmethod
   def get_total_bytes(self) -> float:
@@ -241,6 +234,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     """Derive static workload metadata, host wall-clock latency statistics, and domain throughput metrics."""
     metrics = self.get_workload_metadata()
+    if self.roofline_mode != constants.RooflineMode.NONE:
+      metrics["intensity"] = self.get_arithmetic_intensity()
     latency_stats = self.calculate_latency_stats(
         times_ms, prefix=constants.TimingDomain.WALL_CLOCK
     )
@@ -256,10 +251,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     return metrics
 
   def get_workload_metadata(self) -> dict[str, Any]:
-    """Return static, timing-invariant workload metadata (e.g., total_flops, intensity)."""
-    return {
-        "intensity": self.get_arithmetic_intensity(),
-    }
+    """Return static, timing-invariant workload metadata (e.g., total_flops, total_bytes_mib)."""
+    return {}
 
   def calculate_latency_stats(
       self, times_ms: list[float], prefix: constants.TimingDomain
@@ -311,32 +304,6 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     """Apply roofline estimation to finalized metrics."""
 
     return roofline.apply_roofline_analysis(self, metrics)
-
-  def get_trace_metrics(self) -> Optional[dict[str, Any]]:
-    """Extract Bottom-Up metrics using jax.experimental.roofline."""
-    try:
-      import jax.experimental.roofline as jax_roofline  # pylint: disable=g-import-not-at-top
-      # We need the inputs to trace the function
-      inputs = self.generate_inputs()
-      # Trace the run_op function
-      # Note: roofline() returns a wrapped function that returns
-      # (out_shape, RooflineResult)
-      roofline_fn = jax_roofline.roofline(self.run_op)
-      _, result = roofline_fn(*inputs)
-
-      return {
-          "flops": result.flops,
-          "hbm_bytes": result.hbm_bytes,
-      }
-    except (ImportError, AttributeError) as e:
-      print(
-          "Warning: jax.experimental.roofline or dependencies not"
-          f" available: {e}"
-      )
-      return None
-    except (TypeError, ValueError, RuntimeError) as e:
-      print(f"Warning: Failed to trace roofline: {e}")
-      return None
 
   def get_compute_dtype(self) -> str:
     """Return the primary data type used for compute math, to determine peak TFLOPS."""
@@ -554,13 +521,13 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       jax.block_until_ready(outputs)
       i += 1
 
+    benchmark_name = self.name
     if self.xprof_config.xprof_timing:
       try:
         jax.profiler.stop_trace()
       except RuntimeError:
         pass
       xprof_base_dir = self.xprof_config.xprof_dir
-      benchmark_name = self.__class__.__name__
       timestamp = int(time.time())
 
       run_id = self.get_run_identifier()
@@ -627,8 +594,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     metrics["actual_runs"] = actual_runs
 
     metadata = BenchmarkMetadata(
-        benchmark_name=self.__class__.__name__,
-        test_name=f"{self.__class__.__name__}_{int(time.time())}",
+        benchmark_name=benchmark_name,
+        test_name=f"{benchmark_name}_{int(time.time())}",
         start_time=start_ts,
         end_time=end_ts,
         params=dataclasses.asdict(self.config)

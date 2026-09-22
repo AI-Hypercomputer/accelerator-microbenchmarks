@@ -13,7 +13,29 @@ if TYPE_CHECKING:
 def apply_roofline_analysis(
     benchmark_instance: "base.BaseBenchmark[Any]", metrics: dict[str, Any]
 ) -> dict[str, Any]:
-  """Apply roofline estimation to finalized metrics."""
+  """Apply roofline estimation to finalized metrics.
+
+  Note on Per-Device vs. Per-Chip Efficiency Invariance:
+    Both `actual` throughput and hardware `peak`/`roofline` limits scale
+    linearly with `hardware_spec.devices_per_chip`. Consequently, roofline
+    efficiency percentages (`(actual / limit) * 100.0`) are mathematically
+    identical at the per-device and per-chip levels:
+      `(actual_per_device / limit_per_device) == (actual_per_chip /
+      limit_per_chip)`
+    Therefore, `<domain>_compute_roofline_efficiency_pct` and
+    `<domain>_memory_roofline_efficiency_pct` apply invariantly to both scopes.
+
+  Args:
+    benchmark_instance: The benchmark instance being analyzed.
+    metrics: Dictionary of finalized benchmark metrics to enrich in place.
+
+  Returns:
+    The enriched metrics dictionary with roofline limits and efficiency keys.
+
+  Raises:
+    KeyError: If the hardware spec is missing peak TFLOPS for the canonical
+      fallback dtype.
+  """
   mode = getattr(
       benchmark_instance, "roofline_mode", constants.RooflineMode.NONE
   )
@@ -25,16 +47,13 @@ def apply_roofline_analysis(
   if mode == constants.RooflineMode.MEMORY_HBM:
     if hw_spec and hw_spec.hbm:
       bw = hw_spec.peak_hbm_bandwidth_per_device
-      metrics["peak_hbm_bw_gb_s"] = bw
+      metrics["peak_hbm_bw_per_device_gb_s"] = bw
       for prefix in constants.TimingDomain:
         actual_bw = metrics.get(f"{prefix}_bandwidth_per_device_gb_s")
         if actual_bw is not None and actual_bw >= 0 and bw > 0:
           metrics[f"{prefix}_memory_roofline_efficiency_pct"] = (
               actual_bw / bw
           ) * 100.0
-      actual_bw = metrics.get("bandwidth_per_device_gb_s")
-      if actual_bw is not None and actual_bw >= 0 and bw > 0:
-        metrics["memory_roofline_efficiency_pct"] = (actual_bw / bw) * 100.0
     return metrics
 
   if mode == constants.RooflineMode.COMPUTE:
@@ -60,25 +79,10 @@ def apply_roofline_analysis(
         )
 
       intensity = benchmark_instance.get_arithmetic_intensity()
-      config = getattr(benchmark_instance, "config", None)
-      use_traced_intensity = (
-          getattr(config, "use_trace_roofline", False) if config else False
-      )
-      if use_traced_intensity:
-        # Derive bottom-up arithmetic intensity by statically tracing the JAX
-        # computation graph via jax.experimental.roofline.
-        trace_stats = benchmark_instance.get_trace_metrics()
-        if trace_stats:
-          metrics["trace_flops"] = trace_stats.get("flops", 0)
-          metrics["trace_hbm_bytes"] = trace_stats.get("hbm_bytes", 0)
-          if metrics["trace_hbm_bytes"] > 0:
-            intensity = metrics["trace_flops"] / metrics["trace_hbm_bytes"]
-            metrics["intensity"] = intensity
-
       bw = hw_spec.peak_hbm_bandwidth_per_device
       roofline_tflops = min(peak_tflops, (intensity * bw) / 1000.0)
-      metrics["roofline_tflops_limit"] = roofline_tflops
-      metrics["peak_hbm_bw_gb_s"] = bw
+      metrics["roofline_tflops_limit_per_device"] = roofline_tflops
+      metrics["peak_hbm_bw_per_device_gb_s"] = bw
       for prefix in constants.TimingDomain:
         actual_tflops = metrics.get(f"{prefix}_tflops_per_device")
         if (
@@ -89,15 +93,6 @@ def apply_roofline_analysis(
           metrics[f"{prefix}_compute_roofline_efficiency_pct"] = (
               actual_tflops / roofline_tflops
           ) * 100.0
-      actual_tflops = metrics.get("tflops_per_device")
-      if (
-          actual_tflops is not None
-          and actual_tflops >= 0
-          and roofline_tflops > 0
-      ):
-        metrics["compute_roofline_efficiency_pct"] = (
-            actual_tflops / roofline_tflops
-        ) * 100.0
     return metrics
 
   return metrics

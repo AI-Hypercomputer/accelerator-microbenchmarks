@@ -185,6 +185,26 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(q, k, v)
 
+  def _get_num_sharded_devices(self) -> int:
+    """Returns number of devices across which query/output heads are partitioned."""
+    if self.mesh is None:
+      return 1
+    mesh_axis = self.mesh.axis_names[0]
+    num_devices = int(self.mesh.shape[mesh_axis])
+    if self.config.num_q_heads % num_devices == 0:
+      return num_devices
+    return 1
+
+  def _get_num_kv_sharded_devices(self) -> int:
+    """Returns number of devices across which K/V heads are partitioned."""
+    if self.mesh is None:
+      return 1
+    mesh_axis = self.mesh.axis_names[0]
+    num_devices = int(self.mesh.shape[mesh_axis])
+    if self.config.num_kv_heads % num_devices == 0:
+      return num_devices
+    return 1
+
   def get_total_bytes(self) -> float:
     batch = self.config.batch
     q_len = self.config.seq_len
@@ -192,49 +212,28 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
     heads_q = self.config.num_q_heads
     heads_kv = self.config.num_kv_heads
     head_dim = self.config.head_dim
-    itemsize = jnp.dtype(jnp.bfloat16).itemsize
+    dtype = utils.parse_dtype(self.config.dtype)
+    itemsize = jnp.dtype(dtype).itemsize
     mode = self.config.mode
+    q_shards = self._get_num_sharded_devices()
+    kv_shards = self._get_num_kv_sharded_devices()
+
+    q_bytes_per_dev = (batch * heads_q * q_len * head_dim * itemsize) / q_shards
+    kv_bytes_per_dev = (
+        batch * heads_kv * kv_len * head_dim * itemsize
+    ) / kv_shards
 
     if mode == AttentionMode.FWD:
-      # Bytes = Load(Q, K, V) + Store(Out)
-      return batch * (
-          (heads_q * q_len * head_dim * itemsize)  # Q
-          + (heads_kv * kv_len * head_dim * itemsize)  # K
-          + (heads_kv * kv_len * head_dim * itemsize)  # V
-          + (heads_q * q_len * head_dim * itemsize)  # Out
-      )
+      # Per-device Bytes = Load(Q_shard, K_shard, V_shard) + Store(Out_shard)
+      return float(2 * q_bytes_per_dev + 2 * kv_bytes_per_dev)
     elif mode == AttentionMode.BWD:
-      # Bytes = Load(Q, K, V, Out, dOut) + Store(dQ, dK, dV)
-      return batch * (
-          2 * (heads_q * q_len * head_dim * itemsize)  # Q + dQ
-          + 2 * (heads_kv * kv_len * head_dim * itemsize)  # K + dK
-          + 2 * (heads_kv * kv_len * head_dim * itemsize)  # V + dV
-          + (heads_q * q_len * head_dim * itemsize)  # Out
-          + (heads_q * q_len * head_dim * itemsize)  # dOut
-      )
+      # Per-device Bytes = Load(Q, K, V, Out, dOut) + Store(dQ, dK, dV)
+      return float(4 * q_bytes_per_dev + 4 * kv_bytes_per_dev)
     else:
       raise ValueError(f"Unknown mode: {mode}")
 
-  def get_arithmetic_intensity(self) -> float:
-    q_len = self.config.seq_len
-    kv_len = q_len
-    heads = self.config.num_q_heads
-    head_dim = self.config.head_dim
-    causal = self.config.causal
-    mode = self.config.mode
-
-    if causal:
-      # (4 * Q * K - 2 * Q * Q) * Heads * HeadDim
-      flops = (4 * q_len * kv_len - 2 * q_len * q_len) * heads * head_dim
-    else:
-      flops = 4 * q_len * kv_len * heads * head_dim
-
-    if mode == AttentionMode.BWD:
-      flops *= 2
-
-    return flops / self.get_total_bytes()
-
   def get_total_flops(self) -> float:
+    batch = self.config.batch
     q_len = self.config.seq_len
     kv_len = q_len
     heads = self.config.num_q_heads
@@ -243,19 +242,33 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
     mode = self.config.mode
 
     if causal:
-      total_flops = (4 * q_len * kv_len - 2 * q_len * q_len) * heads * head_dim
+      global_flops = (
+          batch * (4 * q_len * kv_len - 2 * q_len * q_len) * heads * head_dim
+      )
     else:
-      total_flops = 4 * q_len * kv_len * heads * head_dim
+      global_flops = batch * 4 * q_len * kv_len * heads * head_dim
 
     if mode == AttentionMode.BWD:
-      total_flops *= 2
+      # FlashAttention forward (1.0x) executes 2 matmuls (S = Q @ K^T,
+      # O = P @ V). Because P is not materialized to HBM, backward (vjp_fn)
+      # executes 5 matmuls: 1 rematerialization matmul (S = Q @ K^T) +
+      # 4 gradient matmuls (dP = dO @ V^T, dV = P^T @ dO, dQ = dS @ K,
+      # dK = dS^T @ Q), yielding 5 / 2 = 2.5x forward FLOPs.
+      # Since the timed MARKER scope in setup() wraps both jax.vjp (1.0x fwd)
+      # and vjp_fn (2.5x bwd), total timed FLOPs = (1.0 + 2.5) = 3.5x fwd.
+      fwd_flops_mult = 1.0
+      bwd_recompute_and_grad_flops_mult = 2.5
+      global_flops *= fwd_flops_mult + bwd_recompute_and_grad_flops_mult
 
-    return float(total_flops)
+    return float(global_flops) / self._get_num_sharded_devices()
+
+  def get_arithmetic_intensity(self) -> float:
+    total_bytes = self.get_total_bytes()
+    return self.get_total_flops() / total_bytes if total_bytes > 0 else 0.0
 
   def get_workload_metadata(self) -> dict[str, Any]:
     return {
         "total_flops": self.get_total_flops(),
-        "intensity": self.get_arithmetic_intensity(),
     }
 
   def calculate_throughput_metrics(

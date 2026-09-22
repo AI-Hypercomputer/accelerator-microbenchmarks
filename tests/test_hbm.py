@@ -348,9 +348,9 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         "size",
         "total_bytes_mib",
         "wall_clock_p50_ms",
-        "wall_clock_bandwidth_per_chip_gb_s",
+        "wall_clock_bandwidth_per_device_gb_s",
         "xprof_p50_ms",
-        "xprof_bandwidth_per_chip_gb_s",
+        "xprof_bandwidth_per_device_gb_s",
     ]
     schema_cols = [col for col, _ in hbm.HBMBandwidthBenchmark.REPORT_SCHEMA]
     self.assertEqual(schema_cols, expected_cols)
@@ -369,8 +369,8 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self.assertIn("63", table)
     self.assertIn("134217728", table)
     self.assertIn("256.00", table)
-    self.assertIn("7538.21", table)
-    self.assertIn("7600.00", table)
+    self.assertIn("3769.11", table)
+    self.assertIn("3800.00", table)
     self.assertIn("0.0711", table)
     self.assertIn("0.0654", table)
 
@@ -378,13 +378,13 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     """Verifies that HBMBandwidthBenchmark emits memory roofline metrics and omits compute roofline metrics."""
     self._setup_benchmark("copy")
     result = self.bm.run()
-    self.assertIn("peak_hbm_bw_gb_s", result.metrics)
-    self.assertEqual(result.metrics["peak_hbm_bw_gb_s"], 3690.0)
+    self.assertIn("peak_hbm_bw_per_device_gb_s", result.metrics)
+    self.assertEqual(result.metrics["peak_hbm_bw_per_device_gb_s"], 3690.0)
     self.assertIn("wall_clock_memory_roofline_efficiency_pct", result.metrics)
     self.assertLessEqual(
         result.metrics["wall_clock_memory_roofline_efficiency_pct"], 100.0
     )
-    self.assertNotIn("roofline_tflops_limit", result.metrics)
+    self.assertNotIn("roofline_tflops_limit_per_device", result.metrics)
     self.assertNotIn(
         "wall_clock_compute_roofline_efficiency_pct", result.metrics
     )

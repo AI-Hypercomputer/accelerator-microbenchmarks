@@ -55,9 +55,6 @@ class DummyBenchmark(base.BaseBenchmark):
   def generate_inputs(self, **_params):
     return (jnp.ones((10, 10)),)
 
-  def get_arithmetic_intensity(self, **_params):
-    return 1.0
-
   def get_total_bytes(self, **_params):
     return 400.0
 
@@ -235,19 +232,6 @@ class BaseBenchmarkTest(absltest.TestCase):
     metrics = bm.calculate_metrics([])
     self.assertEqual(metrics["wall_clock_avg_ms"], 0.0)
 
-  @unittest.mock.patch("jax.experimental.roofline.roofline")
-  def test_get_trace_metrics(self, mock_roofline):
-    mock_result = unittest.mock.Mock()
-    mock_result.flops = 1000
-    mock_result.hbm_bytes = 500
-    mock_roofline.return_value = lambda *args: (None, mock_result)
-
-    bm = DummyBenchmark()
-    metrics = bm.get_trace_metrics()
-    self.assertIsNotNone(metrics)
-    self.assertEqual(metrics["flops"], 1000)
-    self.assertEqual(metrics["hbm_bytes"], 500)
-
   def test_run_orchestration(self):
     """Tests the full run orchestration of the BaseBenchmark."""
 
@@ -269,10 +253,23 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIsNone(result.metadata.xprof_config)
 
     # Validate Roofline values are NOT computed by default for NONE mode
-    self.assertNotIn("roofline_tflops_limit", result.metrics)
-    self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
-    self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
-    self.assertNotIn("memory_roofline_efficiency_pct", result.metrics)
+    self.assertNotIn("roofline_tflops_limit_per_device", result.metrics)
+    self.assertNotIn(
+        "wall_clock_compute_roofline_efficiency_pct", result.metrics
+    )
+    self.assertNotIn("peak_hbm_bw_per_device_gb_s", result.metrics)
+    self.assertNotIn(
+        "wall_clock_memory_roofline_efficiency_pct", result.metrics
+    )
+
+  def test_default_get_arithmetic_intensity_raises_not_implemented_error(self):
+    """Tests that BaseBenchmark.get_arithmetic_intensity raises NotImplementedError by default."""
+    bm = DummyBenchmark()
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "DummyBenchmark must implement get_arithmetic_intensity",
+    ):
+      bm.get_arithmetic_intensity()
 
   def test_run_orchestration_with_compute_mode(self):
     """Tests run orchestration when roofline_mode is COMPUTE."""
@@ -280,9 +277,12 @@ class BaseBenchmarkTest(absltest.TestCase):
     class ComputeDummyBenchmark(DummyBenchmark):
       roofline_mode = constants.RooflineMode.COMPUTE
 
+      def get_arithmetic_intensity(self) -> float:
+        return 1.0
+
       def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
         metrics = super().calculate_metrics(times_ms)
-        metrics["tflops_per_device"] = 50.0
+        metrics["wall_clock_tflops_per_device"] = 50.0
         return metrics
 
     params = {
@@ -295,10 +295,12 @@ class BaseBenchmarkTest(absltest.TestCase):
     bm = ComputeDummyBenchmark(config=config, hardware_spec=hw_spec)
     result = bm.run()
 
-    self.assertIn("roofline_tflops_limit", result.metrics)
-    self.assertIn("compute_roofline_efficiency_pct", result.metrics)
-    self.assertIn("peak_hbm_bw_gb_s", result.metrics)
-    self.assertNotIn("memory_roofline_efficiency_pct", result.metrics)
+    self.assertIn("roofline_tflops_limit_per_device", result.metrics)
+    self.assertIn("wall_clock_compute_roofline_efficiency_pct", result.metrics)
+    self.assertIn("peak_hbm_bw_per_device_gb_s", result.metrics)
+    self.assertNotIn(
+        "wall_clock_memory_roofline_efficiency_pct", result.metrics
+    )
 
   @unittest.mock.patch("jax.profiler.trace")
   def test_xprof_naming_with_identifier(self, mock_trace):

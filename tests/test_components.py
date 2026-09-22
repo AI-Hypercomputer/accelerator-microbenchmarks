@@ -1,5 +1,7 @@
 """Unit tests for components.py."""
 
+from unittest import mock
+
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import components
@@ -102,10 +104,10 @@ class ComponentsBenchmarkTest(absltest.TestCase):
     self.bm = components.TransformerLayerMoE(
         config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
-    # flops = 24 * 64 * (256^2) = 1536 * 65536 = 100663296
+    # flops = 20 * 64 * (256^2) = 1280 * 65536 = 83886080
     # bytes = 1638400
-    # intensity = 100663296 / 1638400 = 61.44
-    expected_intensity = 61.44
+    # intensity = 83886080 / 1638400 = 51.2
+    expected_intensity = 51.2
     self.assertAlmostEqual(
         self.bm.get_arithmetic_intensity(), expected_intensity
     )
@@ -121,16 +123,14 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
     # avg_ms = 10.0ms -> avg_latency_s = 0.01s
-    # flops = 100663296 (from above)
-    # tflops_per_sec = (100663296 / 0.01) / 1e12 = 10066329600 / 1e12 = 0.010066
+    # flops = 83886080 (from above)
+    # tflops_per_sec = (83886080 / 0.01) / 1e12 = 0.008388608
     times_ms = [10.0, 10.0, 10.0]
     metrics = self.bm.calculate_metrics(times_ms)
 
     self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
-    self.assertAlmostEqual(metrics["intensity"], 61.44)
-    self.assertAlmostEqual(
-        metrics["wall_clock_tflops_per_device"], 0.0100663296
-    )
+    self.assertAlmostEqual(metrics["intensity"], 51.2)
+    self.assertAlmostEqual(metrics["wall_clock_tflops_per_device"], 0.008388608)
 
   def test_zero_latency_throughput_metrics(self):
     """Verify zero-latency guard returns inf tflops in calculate_throughput_metrics."""
@@ -143,6 +143,73 @@ class ComponentsBenchmarkTest(absltest.TestCase):
         0.0, constants.TimingDomain.WALL_CLOCK
     )
     self.assertEqual(metrics["wall_clock_tflops_per_device"], float("inf"))
+
+  def test_sharding_divisors_and_fallbacks(self):
+    """Verify sharding divisors and PartitionSpecs for mesh=None, sharded, and unsharded configs."""
+    divisible_cfg = components.TransformerLayerParams(model_dim=64, mslen=32)
+    bm_no_mesh = components.TransformerLayerMoE(
+        config=divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=None,
+    )
+    bm_1dev = components.TransformerLayerMoE(
+        config=divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.assertAlmostEqual(
+        bm_no_mesh.get_total_flops(), bm_1dev.get_total_flops()
+    )
+    self.assertAlmostEqual(
+        bm_no_mesh.get_total_bytes(), bm_1dev.get_total_bytes()
+    )
+
+    mock_4dev_mesh = mock.MagicMock(axis_names=("device",), shape={"device": 4})
+    bm_sharded = components.TransformerLayerMoE(
+        config=divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=mock_4dev_mesh,
+    )
+    self.assertAlmostEqual(
+        bm_sharded.get_total_flops(), bm_no_mesh.get_total_flops() / 4
+    )
+    self.assertAlmostEqual(
+        bm_sharded.get_total_bytes(), bm_no_mesh.get_total_bytes() / 4
+    )
+    with (
+        mock.patch.object(jax.sharding, "NamedSharding") as mock_named_sharding,
+        mock.patch.object(jax, "device_put", side_effect=lambda arr, _: arr),
+    ):
+      bm_sharded.generate_inputs()
+      mock_named_sharding.assert_any_call(
+          mock_4dev_mesh, jax.sharding.PartitionSpec(None, "device", None)
+      )
+      mock_named_sharding.assert_any_call(
+          mock_4dev_mesh, jax.sharding.PartitionSpec(None, "device")
+      )
+      mock_named_sharding.assert_any_call(
+          mock_4dev_mesh, jax.sharding.PartitionSpec("device", None)
+      )
+
+    non_divisible_cfg = components.TransformerLayerParams(
+        model_dim=62, mslen=30
+    )
+    bm_unsharded_no_mesh = components.TransformerLayerMoE(
+        config=non_divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=None,
+    )
+    bm_unsharded = components.TransformerLayerMoE(
+        config=non_divisible_cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=mock_4dev_mesh,
+    )
+    self.assertAlmostEqual(
+        bm_unsharded.get_total_flops(), bm_unsharded_no_mesh.get_total_flops()
+    )
+    self.assertAlmostEqual(
+        bm_unsharded.get_total_bytes(), bm_unsharded_no_mesh.get_total_bytes()
+    )
 
 
 class ComponentsParamsValidationTest(parameterized.TestCase):

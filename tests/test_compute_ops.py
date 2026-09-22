@@ -73,7 +73,7 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
         self.bm.get_arithmetic_intensity(), expected_intensity
     )
     metrics = self.bm.calculate_metrics([10.0])
-    self.assertAlmostEqual(metrics["intensity"], expected_intensity)
+    self.assertNotIn("intensity", metrics)
     self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
 
 
