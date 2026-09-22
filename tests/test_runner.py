@@ -27,10 +27,12 @@ class TestRunner(absltest.TestCase):
 
     # Create a dummy op_flags.yaml
     self.test_flags = {
-        "test_op_list": [
-            "--flag_a=true",
-            "--flag_b=123",
-        ],
+        "test_op_flags_only": {
+            "flags": [
+                "--flag_a=true",
+                "--flag_b=123",
+            ],
+        },
         "test_op_dict": {
             "flags": ["--flag_c=false"],
             "env": {
@@ -38,9 +40,11 @@ class TestRunner(absltest.TestCase):
                 "ANOTHER_VAR": "456",
             },
         },
-        "all_reduce": [
-            "--mapped_flag=true",
-        ],
+        "all_reduce": {
+            "flags": [
+                "--mapped_flag=true",
+            ],
+        },
     }
     with open(self.flags_file_path, "w") as f:
       yaml.dump(self.test_flags, f)
@@ -67,8 +71,8 @@ class TestRunner(absltest.TestCase):
           self.flags_file_path,
       )
 
-  def test_set_xla_flags_list_config(self):
-    runner.set_xla_flags([{"name": "test_op_list"}], self.flags_file_path)
+  def test_set_xla_flags_flags_only_config(self):
+    runner.set_xla_flags([{"name": "test_op_flags_only"}], self.flags_file_path)
     self.assertEqual(
         os.environ.get("LIBTPU_INIT_ARGS"), "--flag_a=true --flag_b=123"
     )
@@ -89,8 +93,26 @@ class TestRunner(absltest.TestCase):
     self.assertNotIn("LIBTPU_INIT_ARGS", os.environ)
 
   def test_set_xla_flags_missing_file(self):
-    runner.set_xla_flags([{"name": "test_op_list"}], "non_existent_file.yaml")
+    runner.set_xla_flags(
+        [{"name": "test_op_flags_only"}], "non_existent_file.yaml"
+    )
     self.assertNotIn("LIBTPU_INIT_ARGS", os.environ)
+
+  def test_validate_op_flags_yaml_files(self):
+    """Validates all op_flags YAML files using get_op_flags_and_env."""
+    repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+    op_flags_files = [
+        "src/accelerator_microbenchmarks/op_flags.yaml",
+    ]
+    for rel_path in op_flags_files:
+      flags_path = os.path.join(repo_root, rel_path)
+      with open(flags_path, "r") as f:
+        op_flags = yaml.safe_load(f)
+      for op_name in op_flags:
+        flags, _ = runner.get_op_flags_and_env(
+            [{"name": op_name}], xla_flags_file_path=flags_path
+        )
+        self.assertNotEmpty(flags)
 
   def test_set_xla_flags_host_to_device(self):
     """Verifies that this fix does not break the original google3 path."""
@@ -98,6 +120,49 @@ class TestRunner(absltest.TestCase):
     init_args = os.environ.get("LIBTPU_INIT_ARGS")
     self.assertIsNotNone(init_args)
     self.assertIn("--xla_tpu_dvfs_p_state=7", init_args)
+    self.assertEqual(os.environ.get("TPU_PREMAPPED_BUFFER_SIZE"), "68719476736")
+    self.assertEqual(
+        os.environ.get("TPU_PREMAPPED_BUFFER_TRANSFER_THRESHOLD_BYTES"),
+        "68719476736",
+    )
+
+  def test_get_op_flags_and_env_mapped_and_empty(self):
+    """Verifies name mapping and empty/unknown benchmark handling."""
+    flags_list, env_dict = runner.get_op_flags_and_env(
+        [{"name": "reduce_scatter"}], None
+    )
+    self.assertIn(
+        "--xla_tpu_enable_sparse_core_reduce_scatter_v2=true", flags_list
+    )
+    self.assertEqual(env_dict, {})
+
+    self.assertEqual(
+        runner.get_op_flags_and_env([{"name": ""}], self.flags_file_path),
+        ([], {}),
+    )
+    self.assertEqual(
+        runner.get_op_flags_and_env(
+            [{"name": "unknown_op"}], self.flags_file_path
+        ),
+        ([], {}),
+    )
+
+  def test_get_op_flags_and_env_format_mismatch(self):
+    """Verifies that get_op_flags_and_env raises ValueError on format mismatches."""
+    bad_yaml_path = os.path.join(self.temp_dir.name, "bad_op_flags.yaml")
+    invalid_cases = [
+        (yaml.dump(["--not-a-dict"]), "expected a dict"),
+        (yaml.dump({"all_reduce": ["--legacy-list-flag"]}), "expected a dict"),
+        (yaml.dump({"all_reduce": {"flags": [], "bad": 1}}), "Unexpected keys"),
+        (yaml.dump({"all_reduce": {"flags": "--str"}}), "Invalid 'flags'"),
+        (yaml.dump({"all_reduce": {"env": ["FOO=BAR"]}}), "Invalid 'env'"),
+        ("all_reduce:\n  flags: [\n", "Invalid YAML syntax"),
+    ]
+    for content, expected_err in invalid_cases:
+      with open(bad_yaml_path, "w") as f:
+        f.write(content)
+      with self.assertRaisesRegex(ValueError, expected_err):
+        runner.get_op_flags_and_env([{"name": "all_reduce"}], bad_yaml_path)
 
   def test_set_xla_flags_all_reduce(self):
     """Verifies that all_reduce maps to all_reduce flags in op_flags.yaml."""

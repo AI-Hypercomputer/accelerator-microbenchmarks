@@ -20,11 +20,11 @@ import yaml
 _REPO_ROOT = "third_party/py/accelerator_microbenchmarks"
 
 
-def set_xla_flags(
+def get_op_flags_and_env(
     benchmark_configs: List[dict[str, Any]],
     xla_flags_file_path: str | None = None,
-):
-  """Set env vars based on first benchmark in config and op_flags.yaml."""
+) -> tuple[list[str], dict[str, str]]:
+  """Resolves op_flags.yaml for benchmark configs and returns (flags_list, env_dict)."""
   benchmark_sets = set([conf["name"] for conf in benchmark_configs])
   if not benchmark_sets:
     raise ValueError("No benchmarks in config")
@@ -32,7 +32,10 @@ def set_xla_flags(
     raise ValueError("Multiple benchmarks in config: %s" % benchmark_sets)
   benchmark_name = benchmark_sets.pop()
   if not benchmark_name:
-    return
+    return [], {}
+
+  flags_list: list[str] = []
+  env_dict: dict[str, str] = {}
 
   try:
     if xla_flags_file_path is None:
@@ -44,26 +47,72 @@ def set_xla_flags(
       with open(xla_flags_file_path, "r") as f:
         op_flags = yaml.safe_load(f)
 
+      if not isinstance(op_flags, dict):
+        raise ValueError(
+            f"Invalid format in '{xla_flags_file_path}': expected a dict, got"
+            f" {type(op_flags).__name__}."
+        )
       if benchmark_name in op_flags:
         flags_config = op_flags[benchmark_name]
-        if isinstance(flags_config, list):
-          os.environ["LIBTPU_INIT_ARGS"] = " ".join(flags_config)
-          print(f"Set LIBTPU_INIT_ARGS: {os.environ['LIBTPU_INIT_ARGS']}")
-        elif isinstance(flags_config, dict):
-          if "flags" in flags_config:
-            os.environ["LIBTPU_INIT_ARGS"] = " ".join(flags_config["flags"])
-            print(f"Set LIBTPU_INIT_ARGS: {os.environ['LIBTPU_INIT_ARGS']}")
-          if "env" in flags_config:
-            for k, v in flags_config["env"].items():
-              os.environ[k] = str(v)
-              print(f"Set env {k}: {v}")
+        if not isinstance(flags_config, dict):
+          raise ValueError(
+              f"Invalid format for '{benchmark_name}' in"
+              f" '{xla_flags_file_path}': expected a dict, got"
+              f" {type(flags_config).__name__}."
+          )
+        unexpected_keys = set(flags_config.keys()) - {"flags", "env"}
+        if unexpected_keys:
+          raise ValueError(
+              f"Unexpected keys for '{benchmark_name}' in"
+              f" '{xla_flags_file_path}': {sorted(unexpected_keys)}."
+          )
+        raw_flags = flags_config.get("flags")
+        if raw_flags is not None and not isinstance(raw_flags, list):
+          raise ValueError(
+              f"Invalid 'flags' for '{benchmark_name}' in"
+              f" '{xla_flags_file_path}': expected a list, got"
+              f" {type(raw_flags).__name__}."
+          )
+        raw_env = flags_config.get("env")
+        if raw_env is not None and not isinstance(raw_env, dict):
+          raise ValueError(
+              f"Invalid 'env' for '{benchmark_name}' in"
+              f" '{xla_flags_file_path}': expected a dict, got"
+              f" {type(raw_env).__name__}."
+          )
+        flags_list = [str(flag) for flag in raw_flags or []]
+        env_dict = {str(k): str(v) for k, v in (raw_env or {}).items()}
     else:
       print(
           f"Warning: op_flags.yaml not found at '{xla_flags_file_path}'. "
           "Default LIBTPU_INIT_ARGS will not be loaded."
       )
+  except ValueError:
+    raise
+  except yaml.YAMLError as e:
+    raise ValueError(
+        f"Invalid YAML syntax in '{xla_flags_file_path}': {e}"
+    ) from e
   except Exception as e:
     print(f"Warning: Failed to load op_flags.yaml: {e}")
+
+  return flags_list, env_dict
+
+
+def set_xla_flags(
+    benchmark_configs: List[dict[str, Any]],
+    xla_flags_file_path: str | None = None,
+):
+  """Set env vars based on first benchmark in config and op_flags.yaml."""
+  flags_list, env_dict = get_op_flags_and_env(
+      benchmark_configs, xla_flags_file_path=xla_flags_file_path
+  )
+  if flags_list:
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(flags_list)
+    print(f"Set LIBTPU_INIT_ARGS: {os.environ['LIBTPU_INIT_ARGS']}")
+  for k, v in env_dict.items():
+    os.environ[k] = str(v)
+    print(f"Set env {k}: {v}")
 
   print(f"RUNTIME_CFG: XLA_FLAGS={os.environ.get('XLA_FLAGS', '')}")
   print(
