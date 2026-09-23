@@ -1,0 +1,131 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# ==============================================================================
+# TPUMS GKE Benchmark Job Template
+# ==============================================================================
+# Kubernetes manifest for running single-host and multi-host TPU
+# microbenchmarks on Google Kubernetes Engine (GKE).
+#
+# Quick Start (Single-Host tpu7x 2x2x1):
+#   export WORKLOAD_NAME="tpums-tpu7x-gemm-2x2x1"
+#   export ACCELERATOR_TYPE="tpu7x"
+#   export TOPOLOGY="2x2x1"
+#   export NUM_HOSTS=1
+#   export CHIPS_PER_NODE=4
+#   export CONFIG_PATH="configs/tpu7x/2x2x1/gemm.yaml"
+#   export GCS_OUTPUT_DIR=""  # Optional: e.g. "gs://<bucket>/tpums/${WORKLOAD_NAME}/results"
+#   export GCS_XPROF_DIR=""   # Optional: e.g. "gs://<bucket>/tpums/${WORKLOAD_NAME}/xprof"
+#
+#   envsubst '${WORKLOAD_NAME} ${ACCELERATOR_TYPE} ${TOPOLOGY} ${NUM_HOSTS} ${CHIPS_PER_NODE} ${CONFIG_PATH} ${GCS_OUTPUT_DIR} ${GCS_XPROF_DIR}' \
+#     < templates/gke_job_template.yaml | kubectl apply -f -
+#
+# Cleanup:
+#   kubectl delete job/"${WORKLOAD_NAME}" svc/"${WORKLOAD_NAME}-svc"
+# ==============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${WORKLOAD_NAME}-svc
+  namespace: default
+spec:
+  clusterIP: None
+  selector:
+    job-name: ${WORKLOAD_NAME}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${WORKLOAD_NAME}
+  namespace: default
+spec:
+  completionMode: Indexed
+  parallelism: ${NUM_HOSTS}
+  completions: ${NUM_HOSTS}
+  backoffLimit: 0
+  template:
+    spec:
+      subdomain: ${WORKLOAD_NAME}-svc
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-tpu-accelerator: ${ACCELERATOR_TYPE}
+        cloud.google.com/gke-tpu-topology: ${TOPOLOGY}
+        # Optional: Uncomment to pin to a specific GKE node pool:
+        # cloud.google.com/gke-nodepool: <your-nodepool-name>
+      containers:
+      - name: tpums-worker
+        image: us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest
+        env:
+        - name: JAX_PLATFORMS
+          value: "tpu,cpu"
+        - name: CONFIG_PATH
+          value: "${CONFIG_PATH}"
+        - name: GCS_OUTPUT_DIR
+          value: "${GCS_OUTPUT_DIR}"
+        - name: GCS_XPROF_DIR
+          value: "${GCS_XPROF_DIR}"
+        command:
+        - bash
+        - -c
+        - |
+          set -e
+          exec > >(tee -a /tmp/execution.log) 2>&1
+
+          PROCESS_DIR="process_${JOB_COMPLETION_INDEX:-0}"
+          echo "=== Starting TPUMS Worker (${PROCESS_DIR}, Host: $(hostname)) ==="
+
+          echo "=== Cloning accelerator-microbenchmarks ==="
+          rm -rf /tmp/tpums_repo
+          git clone --depth 1 --branch main \
+            https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git /tmp/tpums_repo
+          cd /tmp/tpums_repo
+
+          echo "=== Installing Package Dependencies ==="
+          pip install --upgrade -e .
+
+          mkdir -p /tmp/results /tmp/tensorboard
+
+          echo "=== Executing Benchmark: ${CONFIG_PATH} ==="
+          set +e
+          tpums benchmark run-config "${CONFIG_PATH}" \
+            --output_dir=/tmp/results \
+            --xprof_dir=/tmp/tensorboard
+          EXIT_CODE=$?
+          set -e
+
+          if [ -n "${GCS_OUTPUT_DIR}" ]; then
+            DEST_OUT="${GCS_OUTPUT_DIR%/}/${PROCESS_DIR}"
+            echo "=== Uploading Benchmark Results to ${DEST_OUT}/ ==="
+            gcloud storage cp /tmp/results/* "${DEST_OUT}/" || true
+            gcloud storage cp /tmp/execution.log "${DEST_OUT}/execution.log" || true
+          else
+            echo "=== GCS_OUTPUT_DIR not set; skipping result upload ==="
+          fi
+
+          if [ -n "${GCS_XPROF_DIR}" ] && [ -d /tmp/tensorboard ] && [ -n "$(ls -A /tmp/tensorboard)" ]; then
+            DEST_XPROF="${GCS_XPROF_DIR%/}/${PROCESS_DIR}"
+            echo "=== Uploading XProf Traces to ${DEST_XPROF}/ ==="
+            gcloud storage cp -r /tmp/tensorboard/* "${DEST_XPROF}/" || true
+          else
+            echo "=== GCS_XPROF_DIR not set or empty; skipping XProf trace upload ==="
+          fi
+
+          echo "=== Finished with exit code ${EXIT_CODE} ==="
+          exit ${EXIT_CODE}
+        resources:
+          requests:
+            google.com/tpu: ${CHIPS_PER_NODE}
+          limits:
+            google.com/tpu: ${CHIPS_PER_NODE}
