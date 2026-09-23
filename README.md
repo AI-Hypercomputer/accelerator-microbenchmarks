@@ -20,7 +20,7 @@
   - [4. Console Output Preview](#4-console-output-preview)
 - [CLI Reference](#cli-reference)
   - [1. Discovery & Environment Inspection](#1-discovery--environment-inspection)
-  - [2. Interactive Single-Benchmark Runs (`tpums benchmark run`)](#2-interactive-single-benchmark-runs-tpums-benchmark-run)
+  - [2. Interactive Benchmark & Sweep Runs (`tpums benchmark run`)](#2-interactive-single-benchmark-runs-tpums-benchmark-run)
   - [3. Config-Driven Suite & Sweep Runs (`tpums benchmark run-config`)](#3-config-driven-suite--sweep-runs-tpums-benchmark-run-config)
   - [4. Common Execution Flags](#4-common-execution-flags)
 - [Configuration & Parameter Sweeps](#configuration-and-sweeps)
@@ -52,7 +52,10 @@
 
 - **Consistent, Reproducible Measurement**: Eliminates measurement noise by automatically handling compilation warmup, device synchronization, and repeatable timing loops.
 - **Hardware-Accurate Roofline Insights**: Captures both host wall-clock and on-device XProf hardware metrics, comparing achieved **TFLOPS** and **GB/s** directly against theoretical hardware limits (**%**).
-- **Flexible Sweeps & Structured Reporting**: Runs single benchmarks or large YAML/CSV parameter sweeps and exports structured CSV and JSON reports for dashboards and regression tracking.
+- **Flexible Sweeps & Structured Reporting**: Runs single benchmarks,
+  interactive CLI parameter sweeps, or large YAML/CSV parameter sweeps and
+  exports structured CSV and JSON reports for dashboards and regression
+  tracking.
 
 <a id="core-capabilities-matrix"></a>
 ### Core Capabilities Matrix
@@ -150,7 +153,7 @@ The `tpums` executable provides a structured resource-action CLI organized into 
   - `tpums benchmark list`
   - `tpums benchmark run <benchmark_name> --help`
 - **Benchmark Execution Modes**:
-  - `tpums benchmark run` (interactive single-benchmark run)
+  - `tpums benchmark run` (interactive single-benchmark or parameter sweep run)
   - `tpums benchmark run-config` (config-driven suite/sweep run)
 
 ```text
@@ -159,7 +162,7 @@ tpums
 │   └── describe                        # Query hardware topology, device count, and versions
 └── benchmark
     ├── list                            # List all registered, production-ready benchmarks
-    ├── run <benchmark_name> [options]  # Mode 1: Run a single benchmark interactively via CLI flags
+    ├── run <benchmark_name> [options]  # Mode 1: Run a single benchmark or interactive parameter sweep via CLI flags
     └── run-config <path.yaml>          # Mode 2: Run a suite or parameter sweep defined in YAML
 ```
 
@@ -181,7 +184,7 @@ tpums benchmark run gemm --help
 ```
 
 <a id="2-interactive-single-benchmark-runs-tpums-benchmark-run"></a>
-### 2. Interactive Single-Benchmark Runs (`tpums benchmark run`)
+### 2. Interactive Benchmark & Sweep Runs (`tpums benchmark run`)
 
 Execute benchmarks with typed arguments directly passed to the command line:
 
@@ -204,6 +207,26 @@ tpums benchmark run device_to_device --xprof_timing --data_size_mib 1024 --direc
 # 6. Multi-Device All-Reduce Collective across a 2x2x2 mesh with 2x2x1 sharding
 tpums benchmark run all_reduce --xprof_timing --mesh_shape 2x2x2 --sharding_strategy 2x2x1 --matrix_dim 8192 --dtype bfloat16 --reduce_op sum
 ```
+
+#### Interactive CLI Parameter Sweeps
+
+Pass multiple space-separated values to any flag in `tpums benchmark run` to
+expand and run their **Cartesian product** in a single invocation:
+
+```bash
+# 1. Numeric + String DType Sweep (HBM: 2 sizes × 2 dtypes = 4 runs)
+tpums benchmark run hbm --size 134217728 268435456 --dtype bfloat16 float32
+
+# 2. Enum + Integer Dimension Sweep (All-Reduce: 2 ops × 2 dims = 4 runs)
+tpums benchmark run all_reduce --reduce_op sum max --matrix_dim 1024 2048
+
+# 3. Boolean + Dimension Sweep (GEMM: 2 m × 2 n × 2 transpose_a = 8 runs)
+tpums benchmark run gemm -m 1024 2048 -n 512 1024 --transpose_a true false
+```
+
+> [!NOTE]
+> CLI sweeps are capped at **1,000 combinations**
+> (`core.config._MAX_COMBINATIONS`).
 
 <a id="3-config-driven-suite--sweep-runs-tpums-benchmark-run-config"></a>
 ### 3. Config-Driven Suite & Sweep Runs (`tpums benchmark run-config`)
@@ -231,7 +254,10 @@ tpums benchmark run-config configs/sample_configs/parameter_sweep.yaml \
 <a id="configuration-and-sweeps"></a>
 ## ⚙️ Configuration & Parameter Sweeps
 
-YAML configuration files allow defining reproducible benchmark suites and automated parameter sweeps across matrix dimensions, data types, and mesh topologies.
+While `tpums benchmark run` supports quick interactive CLI sweeps across
+space-separated flag values, YAML configuration files (`tpums benchmark
+run-config`) allow defining reproducible benchmark suites, geometric/arithmetic
+ranges, and CSV shape tables.
 
 <a id="1-structure-of-a-benchmark-config"></a>
 ### 1. Structure of a Benchmark Config

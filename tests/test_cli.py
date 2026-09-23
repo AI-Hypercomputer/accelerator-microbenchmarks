@@ -13,6 +13,7 @@ from accelerator_microbenchmarks.benchmarks import attention
 from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.benchmarks import device_to_device
 from accelerator_microbenchmarks.benchmarks import hbm
+from accelerator_microbenchmarks.benchmarks import matmul
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
@@ -764,10 +765,10 @@ benchmark:
     self.assertIs(task_config.transpose_b, False)
 
   def test_boolean_flag_accepts_multiple_values(self):
-    """Verifies booleans parse into a list, for future parameter sweeps.
+    """Verifies booleans parse into a list for parameter sweeps.
 
-    `parse_cli_config` currently keeps only the first value, so this asserts at
-    the argparse layer rather than on the resulting config.
+    `parse_cli_configs` expands multi-element lists into a Cartesian product
+    sweep; this test verifies the underlying argparse tokenization directly.
     """
     parser = cli.create_parser()
     args = parser.parse_args(
@@ -789,6 +790,176 @@ benchmark:
     """Verifies that invalid subcommands raise SystemExit."""
     with self.assertRaises(SystemExit):
       cli.run(["invalid_command"])
+
+  @parameterized.named_parameters(
+      (
+          "single_combination",
+          ["benchmark", "run", "gemm", "-m", "512"],
+          [("gemm", matmul.GemmParams(m=512))],
+      ),
+      (
+          "gemm_int_and_bool_sweep",
+          [
+              "benchmark",
+              "run",
+              "gemm",
+              "-m",
+              "1024",
+              "2048",
+              "-n",
+              "512",
+              "1024",
+              "--transpose_a",
+              "true",
+              "false",
+          ],
+          [
+              ("gemm", matmul.GemmParams(m=1024, n=512, transpose_a=True)),
+              ("gemm", matmul.GemmParams(m=1024, n=512, transpose_a=False)),
+              ("gemm", matmul.GemmParams(m=1024, n=1024, transpose_a=True)),
+              ("gemm", matmul.GemmParams(m=1024, n=1024, transpose_a=False)),
+              ("gemm", matmul.GemmParams(m=2048, n=512, transpose_a=True)),
+              ("gemm", matmul.GemmParams(m=2048, n=512, transpose_a=False)),
+              ("gemm", matmul.GemmParams(m=2048, n=1024, transpose_a=True)),
+              ("gemm", matmul.GemmParams(m=2048, n=1024, transpose_a=False)),
+          ],
+      ),
+      (
+          "all_reduce_int_and_enum_sweep",
+          [
+              "benchmark",
+              "run",
+              "all_reduce",
+              "--reduce_op",
+              "sum",
+              "max",
+              "--matrix_dim",
+              "1024",
+              "2048",
+          ],
+          [
+              (
+                  "all_reduce",
+                  collectives.AllReduceParams(
+                      matrix_dim=1024, reduce_op=collectives.ReduceOp.SUM
+                  ),
+              ),
+              (
+                  "all_reduce",
+                  collectives.AllReduceParams(
+                      matrix_dim=1024, reduce_op=collectives.ReduceOp.MAX
+                  ),
+              ),
+              (
+                  "all_reduce",
+                  collectives.AllReduceParams(
+                      matrix_dim=2048, reduce_op=collectives.ReduceOp.SUM
+                  ),
+              ),
+              (
+                  "all_reduce",
+                  collectives.AllReduceParams(
+                      matrix_dim=2048, reduce_op=collectives.ReduceOp.MAX
+                  ),
+              ),
+          ],
+      ),
+      (
+          "device_to_device_int_and_enum_sweep",
+          [
+              "benchmark",
+              "run",
+              "device_to_device",
+              "--direction",
+              "uni",
+              "bi",
+              "--data_size_mib",
+              "512",
+              "1024",
+          ],
+          [
+              (
+                  "device_to_device",
+                  device_to_device.DeviceToDeviceParams(
+                      data_size_mib=512,
+                      direction=device_to_device.TransferDirection.UNI,
+                  ),
+              ),
+              (
+                  "device_to_device",
+                  device_to_device.DeviceToDeviceParams(
+                      data_size_mib=512,
+                      direction=device_to_device.TransferDirection.BI,
+                  ),
+              ),
+              (
+                  "device_to_device",
+                  device_to_device.DeviceToDeviceParams(
+                      data_size_mib=1024,
+                      direction=device_to_device.TransferDirection.UNI,
+                  ),
+              ),
+              (
+                  "device_to_device",
+                  device_to_device.DeviceToDeviceParams(
+                      data_size_mib=1024,
+                      direction=device_to_device.TransferDirection.BI,
+                  ),
+              ),
+          ],
+      ),
+      (
+          "hbm_int_and_str_sweep",
+          [
+              "benchmark",
+              "run",
+              "hbm",
+              "--size",
+              "1024",
+              "2048",
+              "--dtype",
+              "bfloat16",
+              "float32",
+          ],
+          [
+              (
+                  "hbm",
+                  hbm.HBMBandwidthParams(dtype="bfloat16", size=1024),
+              ),
+              (
+                  "hbm",
+                  hbm.HBMBandwidthParams(dtype="bfloat16", size=2048),
+              ),
+              (
+                  "hbm",
+                  hbm.HBMBandwidthParams(dtype="float32", size=1024),
+              ),
+              (
+                  "hbm",
+                  hbm.HBMBandwidthParams(dtype="float32", size=2048),
+              ),
+          ],
+      ),
+  )
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_parameter_sweep(
+      self, argv, expected_tasks, mock_run_benchmarks
+  ):
+    """Verifies `benchmark run` expands single and multi-value flags."""
+    cli.run(argv)
+    mock_run_benchmarks.assert_called_once()
+    self.assertEqual(
+        mock_run_benchmarks.call_args.kwargs["tasks"], expected_tasks
+    )
+
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_sweep_validates_bounds_on_all_combinations(
+      self, mock_run_benchmarks
+  ):
+    """Verifies `benchmark run` raises ValueError if any swept value violates bounds."""
+    with self.assertRaisesRegex(ValueError, "m must be >= 1"):
+      cli.run(["benchmark", "run", "gemm", "-m", "1024", "0"])
+    mock_run_benchmarks.assert_not_called()
 
 
 if __name__ == "__main__":

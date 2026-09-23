@@ -136,6 +136,9 @@ tpums platform describe
 tpums benchmark run hbm --xprof_timing --op_type copy --size 134217728 \
     --dtype bfloat16
 
+# Run an interactive CLI parameter sweep across multiple values (Cartesian product)
+tpums benchmark run hbm --size 134217728 268435456 --dtype bfloat16 float32
+
 # Run a multi-case YAML configuration or parameter sweep
 tpums benchmark run-config configs/sample_configs/parameter_sweep.yaml \
     --xprof_dir /tmp/tensorboard \

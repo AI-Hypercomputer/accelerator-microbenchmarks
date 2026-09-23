@@ -122,11 +122,16 @@ def add_dataclass_arguments(
       )
 
 
-def parse_cli_config(
+def parse_cli_configs(
     config_cls: Type[base.BaseBenchmarkParams],
     parsed_args: argparse.Namespace,
-) -> base.BaseBenchmarkParams:
-  """Builds a BaseBenchmarkParams instance from parsed CLI arguments.
+) -> list[base.BaseBenchmarkParams]:
+  """Builds BaseBenchmarkParams instances from parsed CLI arguments.
+
+  Dataclass scalar defaults populate `base_params`, while explicitly provided
+  CLI flags (parsed as lists via `nargs="+"`) populate `sweep_spec` and are
+  expanded via `config.expand_sweep` into their Cartesian product (capped at
+  core.config._MAX_COMBINATIONS combinations).
 
   Args:
     config_cls: The benchmark configuration dataclass to instantiate.
@@ -134,16 +139,23 @@ def parse_cli_config(
       `add_dataclass_arguments`.
 
   Returns:
-    An instance of `config_cls`.
+    A list of `config_cls` instances covering the Cartesian product of all
+    CLI parameter values.
   """
-  kwargs: dict[str, Any] = {}
+  base_params: dict[str, Any] = {}
+  sweep_spec: dict[str, list[Any]] = {}
+
   for field in dataclasses.fields(config_cls):
     if not field.init or not hasattr(parsed_args, field.name):
       continue
     value = getattr(parsed_args, field.name)
-    ## Does not support multiple values for a single flag.
-    kwargs[field.name] = value[0] if isinstance(value, list) else value
-  return config_cls(**kwargs)
+    if isinstance(value, list):
+      sweep_spec[field.name] = value
+    else:
+      base_params[field.name] = value
+
+  expanded_dicts = config.expand_sweep(base_params, sweep_spec or None)
+  return [config_cls(**params) for params in expanded_dicts]
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -298,9 +310,9 @@ def run(argv: Sequence[str]) -> None:
   # 4. Handle `tpums benchmark run <task> [options]`
   if args.resource == "benchmark" and args.action == "run":
     bench_cls = registry.benchmark_registry.get_benchmark(args.task)
-    task_config = parse_cli_config(bench_cls.Config, args)
+    task_configs = parse_cli_configs(bench_cls.Config, args)
     runner.run_benchmarks(
-        tasks=[(args.task, task_config)],
+        tasks=[(args.task, task_config) for task_config in task_configs],
         output_dir=args.output_dir,
         xprof_timing=args.xprof_timing,
         xprof_dir=args.xprof_dir,
