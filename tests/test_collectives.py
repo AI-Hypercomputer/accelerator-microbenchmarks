@@ -36,7 +36,6 @@ jax.config.update("jax_platform_name", "cpu")
 
 _COLLECTIVES_IGNORED_KEYS: frozenset[str] = frozenset({
     "data_transferred_bytes",
-    "sharding_size",
     "replica_group_type",
     "replica_group_rank",
 })
@@ -470,6 +469,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
     )
     self.assertNotIn("wall_clock_bandwidth_per_device_gb_s", metrics)
+    self.assertNotIn("sharding_size", metrics)
     derived = bm.derive_chip_metrics(dict(metrics))
     self.assertNotIn("wall_clock_bandwidth_per_device_gb_s", derived)
 
@@ -498,6 +498,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     metrics = ag_bm.calculate_metrics([1.0])
     self.assertEqual(metrics["replica_group_type"], expected_group_type)
     self.assertEqual(metrics["replica_group_rank"], expected_rank)
+    self.assertNotIn("sharding_size", metrics)
     self.assertAlmostEqual(
         metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
     )
@@ -795,6 +796,35 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(
         zero_metrics["wall_clock_bandwidth_per_chip_gb_s"], float("inf")
     )
+
+  def test_single_rank_replica_group_returns_zero_bandwidth(self):
+    """Verify calculate_throughput_metrics returns 0.0 bandwidth when replica_group_rank == 1."""
+    devices = np.array(jax.devices()).reshape((2, 2))
+    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
+    config = collectives.AllReduceParams(
+        matrix_dim=64,
+        dtype="bfloat16",
+        mesh_shape="2x2",
+        sharding_strategy="1x1",
+    )
+    bm = collectives.AllReduceBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=mesh,
+    )
+    bm.setup()
+    metadata = bm.get_workload_metadata()
+    self.assertEqual(metadata["replica_group_rank"], 1)
+    self.assertNotIn("sharding_size", metadata)
+    throughput_metrics = bm.calculate_throughput_metrics(
+        1.0, constants.TimingDomain.WALL_CLOCK
+    )
+    self.assertEqual(
+        throughput_metrics["wall_clock_bandwidth_per_chip_gb_s"], 0.0
+    )
+    metrics = bm.calculate_metrics([1.0])
+    self.assertEqual(metrics["wall_clock_bandwidth_per_chip_gb_s"], 0.0)
+    self.assertNotIn("sharding_size", metrics)
 
 
 class CollectivesParamsValidationTest(parameterized.TestCase):

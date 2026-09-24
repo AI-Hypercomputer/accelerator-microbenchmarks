@@ -2,6 +2,7 @@
 
 import dataclasses
 import glob
+import math
 import os
 import re
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
@@ -210,6 +211,27 @@ class BaseCollectiveBenchmark(
 
     return tuple(self.mesh.axis_names)
 
+  def _get_num_sharded_devices(
+      self, sharding_axes: Optional[str | tuple[Any, ...]] = None
+  ) -> int:
+    """Returns the number of devices the input is sharded across.
+
+    Args:
+      sharding_axes: Mesh axis name or tuple of axis names to shard over. If
+        None, computed via `_get_sharding_axes()`.
+
+    Returns:
+      The product of the mesh sizes over `sharding_axes`, or 1 if no axis is
+      sharded.
+    """
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    if sharding_axes is None:
+      sharding_axes = self._get_sharding_axes()
+    if isinstance(sharding_axes, str):
+      return self.mesh.shape[sharding_axes]
+    return math.prod(self.mesh.shape[axis] for axis in sharding_axes)
+
   def _setup_jit_fn(self):
     raise NotImplementedError("Subclasses must implement _setup_jit_fn")
 
@@ -230,15 +252,10 @@ class BaseCollectiveBenchmark(
     dtype = utils.parse_dtype(self.config.dtype)
 
     sharding_axes = self._get_sharding_axes()
-    if isinstance(sharding_axes, str):
-      sharding_size = self.mesh.shape[sharding_axes]
-    else:
-      sharding_size = 1
-      for axis in sharding_axes:
-        sharding_size *= self.mesh.shape[axis]
+    num_sharded_devices = self._get_num_sharded_devices(sharding_axes)
 
     shape, sharding = self._get_input_shape_and_sharding(
-        sharding_size, dim, sharding_axes
+        num_sharded_devices, dim, sharding_axes
     )
 
     key = jax.random.PRNGKey(self.config.seed)
@@ -312,7 +329,7 @@ class BaseCollectiveBenchmark(
     )
 
   def get_workload_metadata(self) -> dict[str, Any]:
-    """Calculate static collective transfer metadata (bytes moved, sharding size, replica group)."""
+    """Calculate static collective transfer metadata (bytes moved, replica group)."""
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
 
@@ -320,13 +337,7 @@ class BaseCollectiveBenchmark(
     dtype = utils.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
 
-    sharding_axes = self._get_sharding_axes()
-    if isinstance(sharding_axes, str):
-      sharding_size = self.mesh.shape[sharding_axes]
-    else:
-      sharding_size = 1
-      for axis in sharding_axes:
-        sharding_size *= self.mesh.shape[axis]
+    num_sharded_devices = self._get_num_sharded_devices()
 
     try:
       first_replica_group = self._extract_first_replica_group_from_hlo_dump()
@@ -347,7 +358,7 @@ class BaseCollectiveBenchmark(
         tf_multiplier = 1
     except Exception as e:
       replica_group_type = "non-parallel"
-      rank = sharding_size
+      rank = num_sharded_devices
       participating_ranks = max(rank - 1, 1)
       tf_multiplier = 1
       print(
@@ -358,14 +369,13 @@ class BaseCollectiveBenchmark(
     data_transferred_bytes, extra_metrics = self._get_transfer_metrics(
         dim=dim,
         itemsize=itemsize,
-        num_devices=sharding_size,
+        num_devices=num_sharded_devices,
         rank=rank,
         participating_ranks=participating_ranks,
         tf_multiplier=tf_multiplier,
     )
     return {
         "data_transferred_bytes": data_transferred_bytes,
-        "sharding_size": sharding_size,
         "replica_group_type": replica_group_type,
         "replica_group_rank": rank,
         **extra_metrics,
@@ -376,7 +386,7 @@ class BaseCollectiveBenchmark(
   ) -> dict[str, Any]:
     metadata = self.get_workload_metadata()
     latency_s = latency_ms / 1000.0
-    if metadata["sharding_size"] > 1:
+    if metadata["replica_group_rank"] > 1:
       if latency_s == 0:
         bandwidth_gb_s = float("inf")
       else:
