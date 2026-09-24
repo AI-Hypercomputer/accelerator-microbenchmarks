@@ -6,4 +6,4 @@ benchmark:
     num_runs: 5
     dtype: "bfloat16"
     op_type: copy
-    size: 268435456 # 512MB
+    num_elements: 268435456 # 512MB

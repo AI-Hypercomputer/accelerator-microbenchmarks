@@ -33,7 +33,7 @@ Every benchmark supports the following baseline execution and profiling paramete
 
 - **Interactive CLI (`tpums benchmark run`)**: Pass any parameter directly as a command-line flag (`bool` parameters take explicit `true` or `false` tokens):
     - **Single Value**: `tpums benchmark run <benchmark_name> --<param> <val>` *(e.g., `--m 4096 --transpose_a true`)*
-    - **Multi-Value Sweep**: `tpums benchmark run <benchmark_name> --<param> <val1> <val2> ...` *(e.g., `--size 134217728 268435456 --transpose_a true false`)*
+    - **Multi-Value Sweep**: `tpums benchmark run <benchmark_name> --<param> <val1> <val2> ...` *(e.g., `--num_elements 134217728 268435456 --transpose_a true false`)*
 - **YAML Config (`tpums benchmark run-config`)**: Configure inside `params:`, `sweep:`, `cases:`, or `cases_from_csv:` blocks.
 
 | Parameter | Type | Default | Description |
@@ -135,7 +135,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 
 - **Operation**: Executes 1D STREAM memory operations on a target local device (`device_id`) to measure High-Bandwidth Memory (HBM) throughput (**GB/s**) and memory roofline efficiency (**%**).
 - **HBM Traffic Calculation (`total_bytes_mib`)**: `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`
-  - **Single-Array Size (`MiB`)**: `(size * dtype_bytes) / (1024 * 1024)` — By default, `size = 134,217,728` (`128 * 1024 * 1024` elements) and `dtype = bfloat16` (`2 bytes`), allocating **`256 MiB` per array**.
+  - **Single-Array Size (`MiB`)**: `(num_elements * dtype_bytes) / (1024 * 1024)` — By default, `num_elements = 134,217,728` (`128 * 1024 * 1024` elements) and `dtype = bfloat16` (`2 bytes`), allocating **`256 MiB` per array**.
   - **Array Transfer Count (Reads + Writes)**: Total full-array HBM reads + writes executed by the kernel (`1` for `read_only`/`write_only`, `2` for `copy`/`scale`, `3` for `add`/`triad`).
   - **Total HBM Traffic (`total_bytes_mib`)**: `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)` — Total HBM traffic moved per iteration (e.g., `2 × 256 MiB = 512 MiB` for `copy`, `3 × 256 MiB = 768 MiB` for `triad`).
 
@@ -155,7 +155,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `op_type` | `str` | `"copy"` | Memory kernel operation (`copy`, `scale`, `add`, `triad`, `read_only`, `write_only`). |
-| `size` | `int` | `134217728` | Number of elements per 1D array (`Single-Array Size (MiB) = (size * dtype_bytes) / (1024 * 1024)`). Default `134,217,728` (`128 * 1024 * 1024` elements) × `2 bytes` (`bfloat16`) = `256 MiB` per array. |
+| `num_elements` | `int` | `134217728` | Number of elements per 1D array (`Single-Array Size (MiB) = (num_elements * dtype_bytes) / (1024 * 1024)`). Default `134,217,728` (`128 * 1024 * 1024` elements) × `2 bytes` (`bfloat16`) = `256 MiB` per array. |
 | `dtype` | `str` | `"bfloat16"` | Element data type (e.g., `bfloat16`, `float32`, `int8`). |
 | `device_id` | `int` | `0` | Target local accelerator device index (`0` by default). |
 

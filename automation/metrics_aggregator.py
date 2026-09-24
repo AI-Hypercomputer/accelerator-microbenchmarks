@@ -109,7 +109,7 @@ CATEGORY_LEADING_COLUMNS: dict[str, tuple[str, ...]] = {
     "hbm": (
         "benchmark",
         "dtype",
-        "matrix_dim",
+        "num_elements",
         "xprof_p50_ms",
         "xprof_bandwidth_per_device_gb_s",
     ),

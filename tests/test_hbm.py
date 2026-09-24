@@ -37,7 +37,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         np.array(jax.devices()), axis_names=("device",)
     )
     self.params = {
-        "size": 1024,
+        "num_elements": 1024,
         "dtype": "bfloat16",
     }
 
@@ -70,15 +70,15 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
       ("write_only", "write_only", 2048, 0, "write_only_dim_2048_dev_0"),
       ("read_alias", "read", 2048, 0, "read_dim_2048_dev_0"),
       ("write_alias", "write", 2048, 0, "write_dim_2048_dev_0"),
-      ("custom_size", "copy", 4096, 0, "copy_dim_4096_dev_0"),
-      ("large_size", "add", 134217728, 0, "add_dim_134217728_dev_0"),
+      ("custom_num_elements", "copy", 4096, 0, "copy_dim_4096_dev_0"),
+      ("large_num_elements", "add", 134217728, 0, "add_dim_134217728_dev_0"),
   )
   def test_get_run_identifier(
-      self, op_type, size, device_id, expected_identifier
+      self, op_type, num_elements, device_id, expected_identifier
   ):
     """Verify run identifier generation for all STREAM ops."""
     config = hbm.HBMBandwidthParams(
-        op_type=op_type, size=size, device_id=device_id
+        op_type=op_type, num_elements=num_elements, device_id=device_id
     )
     self.bm = hbm.HBMBandwidthBenchmark(
         config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
@@ -237,21 +237,21 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
 
   def test_get_total_bytes(self):
     """Verify the byte calculation for 1-input vs 2-input ops."""
-    # Copy/Scale: size 1024 * 2 bytes/element * 2 arrays = 4096 bytes
+    # Copy/Scale: num_elements 1024 * 2 bytes/element * 2 arrays = 4096 bytes
     self._setup_benchmark("copy")
     self.assertAlmostEqual(self.bm.get_total_bytes(), 4096.0)
 
     self._setup_benchmark("scale")
     self.assertAlmostEqual(self.bm.get_total_bytes(), 4096.0)
 
-    # Add/Triad: size 1024 * 2 bytes/element * 3 arrays = 6144 bytes
+    # Add/Triad: num_elements 1024 * 2 bytes/element * 3 arrays = 6144 bytes
     self._setup_benchmark("add")
     self.assertAlmostEqual(self.bm.get_total_bytes(), 6144.0)
 
     self._setup_benchmark("triad")
     self.assertAlmostEqual(self.bm.get_total_bytes(), 6144.0)
 
-    # Read/Write only: size 1024 * 2 bytes/element * 1 array = 2048 bytes
+    # Read/Write only: num_elements 1024 * 2 bytes/element * 1 array = 2048 bytes
     self._setup_benchmark("read_only")
     self.assertAlmostEqual(self.bm.get_total_bytes(), 2048.0)
 
@@ -322,7 +322,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
             start_time="2026-08-18T10:00:00",
             end_time="2026-08-18T10:01:00",
             params={
-                "size": 134217728,
+                "num_elements": 134217728,
                 "dtype": "bfloat16",
                 "op_type": "copy",
                 "device_id": 63,
@@ -345,7 +345,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         "dtype",
         "op_type",
         "device_id",
-        "size",
+        "num_elements",
         "total_bytes_mib",
         "wall_clock_p50_ms",
         "wall_clock_bandwidth_per_device_gb_s",
@@ -399,9 +399,9 @@ class HBMBandwidthParamsValidationTest(parameterized.TestCase):
   """Verifies the bounds declared on HBMBandwidthParams fields."""
 
   @parameterized.parameters(0, -1)
-  def test_non_positive_size_raises_error(self, size):
-    with self.assertRaisesRegex(ValueError, "size must be >= 1"):
-      hbm.HBMBandwidthParams(size=size)
+  def test_non_positive_num_elements_raises_error(self, num_elements):
+    with self.assertRaisesRegex(ValueError, "num_elements must be >= 1"):
+      hbm.HBMBandwidthParams(num_elements=num_elements)
 
   @parameterized.parameters(-1, -5)
   def test_negative_device_id_raises_error(self, device_id):

@@ -123,7 +123,7 @@ tpums platform describe
 Execute an HBM memory bandwidth sweep across multiple array sizes (`256 MiB` to `2048 MiB` total traffic) directly from the command line without writing any configuration files:
 
 ```bash
-tpums benchmark run hbm --xprof_timing --op_type copy --size 67108864 134217728 268435456 536870912 --dtype bfloat16 --device_id 0
+tpums benchmark run hbm --xprof_timing --op_type copy --num_elements 67108864 134217728 268435456 536870912 --dtype bfloat16 --device_id 0
 ```
 
 <a id="4-console-output-preview"></a>
@@ -132,15 +132,15 @@ tpums benchmark run hbm --xprof_timing --op_type copy --size 67108864 134217728 
 TPUMS formats results into a clean, aligned summary banner:
 
 ```text
-========================================================================================================================================================
+==========================================================================================================================================================
 Benchmark Results (HBMBandwidthBenchmark)
-========================================================================================================================================================
-   dtype op_type device_id      size total_bytes_mib wall_clock_p50_ms wall_clock_bandwidth_per_device_gb_s xprof_p50_ms xprof_bandwidth_per_device_gb_s
-bfloat16    copy         0  67108864          256.00            0.2788                               962.86       0.0835                         3214.91
-bfloat16    copy         0 134217728          512.00            0.3596                              1492.96       0.1669                         3216.35
-bfloat16    copy         0 268435456         1024.00            0.4889                              2196.43       0.3316                         3238.06
-bfloat16    copy         0 536870912         2048.00            0.8582                              2502.18       0.6642                         3233.08
-========================================================================================================================================================
+==========================================================================================================================================================
+   dtype op_type device_id num_elements total_bytes_mib wall_clock_p50_ms wall_clock_bandwidth_per_device_gb_s xprof_p50_ms xprof_bandwidth_per_device_gb_s
+bfloat16    copy         0     67108864          256.00            0.2788                               962.86       0.0835                         3214.91
+bfloat16    copy         0    134217728          512.00            0.3596                              1492.96       0.1669                         3216.35
+bfloat16    copy         0    268435456         1024.00            0.4889                              2196.43       0.3316                         3238.06
+bfloat16    copy         0    536870912         2048.00            0.8582                              2502.18       0.6642                         3233.08
+==========================================================================================================================================================
 ```
 
 ---
@@ -192,7 +192,7 @@ Execute benchmarks with typed arguments directly passed to the command line:
 
 ```bash
 # 1. HBM Memory Bandwidth on Device 0 (STREAM copy kernel)
-tpums benchmark run hbm --xprof_timing --op_type copy --size 134217728 --dtype bfloat16 --device_id 0
+tpums benchmark run hbm --xprof_timing --op_type copy --num_elements 134217728 --dtype bfloat16 --device_id 0
 
 # 2. Matrix Multiplication (GEMM 4096 x 4096 x 4096)
 tpums benchmark run gemm --xprof_timing --m 4096 --k 4096 --n 4096 --in_dtype bfloat16 --out_dtype bfloat16
@@ -217,8 +217,8 @@ tpums benchmark run all_reduce --xprof_timing --mesh_shape 2x2x2 --sharding_stra
 Pass multiple space-separated values to any flag in `tpums benchmark run` to expand and run their **Cartesian product** in a single invocation:
 
 ```bash
-# 1. Numeric + String DType Sweep (HBM: 2 sizes × 2 dtypes = 4 runs)
-tpums benchmark run hbm --size 134217728 268435456 --dtype bfloat16 float32
+# 1. Numeric + String DType Sweep (HBM: 2 num_elements × 2 dtypes = 4 runs)
+tpums benchmark run hbm --num_elements 134217728 268435456 --dtype bfloat16 float32
 
 # 2. Enum + Integer Dimension Sweep (All-Reduce: 2 ops × 2 dims = 4 runs)
 tpums benchmark run all_reduce --reduce_op sum max --matrix_dim 1024 2048
@@ -386,7 +386,7 @@ Unlike `cases:` (which runs an explicit list of individual configurations), the 
       dtype: bfloat16
     sweep:
       op_type: ["copy", "scale", "add", "triad"]
-      size:
+      num_elements:
         start: 134217728    # 128M elements (256 MiB per array in bfloat16)
         end: 1073741824     # 1G elements (2 GiB per array in bfloat16)
         multiplier: 2

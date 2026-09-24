@@ -105,14 +105,22 @@ class TestCli(parameterized.TestCase):
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_hbm(self, mock_run_benchmarks):
     """Verifies that `tpums benchmark run hbm` parses args and calls runner."""
-    cli.run(["benchmark", "run", "hbm", "--size", "134217728", "--dtype", "bfloat16"])
+    cli.run([
+        "benchmark",
+        "run",
+        "hbm",
+        "--num_elements",
+        "134217728",
+        "--dtype",
+        "bfloat16",
+    ])
     mock_run_benchmarks.assert_called_once()
     _, kwargs = mock_run_benchmarks.call_args
     tasks = kwargs["tasks"]
     self.assertEqual(len(tasks), 1)
     task_name, task_config = tasks[0]
     self.assertEqual(task_name, "hbm")
-    self.assertEqual(task_config.size, 134217728)
+    self.assertEqual(task_config.num_elements, 134217728)
     self.assertEqual(task_config.dtype, "bfloat16")
 
   @mock.patch.object(runner, "run_benchmarks")
@@ -914,7 +922,7 @@ benchmark:
               "benchmark",
               "run",
               "hbm",
-              "--size",
+              "--num_elements",
               "1024",
               "2048",
               "--dtype",
@@ -924,19 +932,19 @@ benchmark:
           [
               (
                   "hbm",
-                  hbm.HBMBandwidthParams(dtype="bfloat16", size=1024),
+                  hbm.HBMBandwidthParams(dtype="bfloat16", num_elements=1024),
               ),
               (
                   "hbm",
-                  hbm.HBMBandwidthParams(dtype="bfloat16", size=2048),
+                  hbm.HBMBandwidthParams(dtype="bfloat16", num_elements=2048),
               ),
               (
                   "hbm",
-                  hbm.HBMBandwidthParams(dtype="float32", size=1024),
+                  hbm.HBMBandwidthParams(dtype="float32", num_elements=1024),
               ),
               (
                   "hbm",
-                  hbm.HBMBandwidthParams(dtype="float32", size=2048),
+                  hbm.HBMBandwidthParams(dtype="float32", num_elements=2048),
               ),
           ],
       ),

@@ -7,7 +7,7 @@ benchmark:
     dtype: bfloat16
     op_type: copy
   sweep:
-    size:
+    num_elements:
       start: 67108864
       end: 536870912
       multiplier: 2

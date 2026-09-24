@@ -25,7 +25,7 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
     # Use Xprof to pull exact on-device execution time, meaning we don't need
     # massive arrays to dilute python overhead anymore.
     self.params = {
-        "size": 1024 * 1024 * 128,
+        "num_elements": 1024 * 1024 * 128,
         "warmup_tries": 3,
         "num_runs": 10,
     }

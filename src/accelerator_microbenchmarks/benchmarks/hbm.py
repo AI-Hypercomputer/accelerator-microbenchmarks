@@ -103,7 +103,7 @@ class HBMBandwidthParams(base.SingleDtypeBenchmarkParams):
       default=HBMKernelOp.COPY,
       metadata={"help": "HBM kernel operation type."},
   )
-  size: int = dataclasses.field(
+  num_elements: int = dataclasses.field(
       default=134217728,
       metadata={"min": 1, "help": "Number of elements for HBM input arrays."},
   )
@@ -124,7 +124,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
       ("dtype", report.format_str),
       ("op_type", report.format_str),
       ("device_id", report.format_str),
-      ("size", report.format_str),
+      ("num_elements", report.format_str),
       ("total_bytes_mib", report.format_2f),
       ("wall_clock_p50_ms", report.format_4f),
       ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
@@ -177,21 +177,26 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     def hbm_op(*args):
       with jax.named_scope(constants.MARKER):
         if spec.num_inputs == 0:
-          return spec.kernel_fn(args, scalar, (self.config.size,), dtype)
+          return spec.kernel_fn(
+              args, scalar, (self.config.num_elements,), dtype
+          )
         return spec.kernel_fn(args, scalar)
 
     self._jit_fn = hbm_op
 
   def get_run_identifier(self) -> str:
-    return f"{self.config.op_type}_dim_{self.config.size}_dev_{self.config.device_id}"
+    return (
+        f"{self.config.op_type}_dim_{self.config.num_elements}"
+        f"_dev_{self.config.device_id}"
+    )
 
   def get_device_to_measure(self) -> jax.Device:
     return jax.devices()[self.config.device_id]
 
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     assert self.spec is not None
-    # 'size' being the number of elements
-    size = self.config.size
+    # 'num_elements' being the number of elements
+    num_elements = self.config.num_elements
     dtype = utils.parse_dtype(self.config.dtype)
 
     # Force execution on target local device for single-device benchmark
@@ -200,7 +205,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
 
     # Use jit with out_shardings to generate on device to avoid host OOM
     generate_data = jax.jit(
-        lambda k: jax.random.normal(k, (size,), dtype=dtype),
+        lambda k: jax.random.normal(k, (num_elements,), dtype=dtype),
         out_shardings=sharding,
     )
 
@@ -217,16 +222,16 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
 
   def get_total_bytes(self) -> float:
     assert self.spec is not None
-    size = self.config.size
+    num_elements = self.config.num_elements
     dtype = utils.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
 
-    return float(size * itemsize * self.spec.num_arrays)
+    return float(num_elements * itemsize * self.spec.num_arrays)
 
   def get_arithmetic_intensity(self) -> float:
     assert self.spec is not None
-    size = self.config.size
-    flops = float(self.spec.num_flops_per_element * size)
+    num_elements = self.config.num_elements
+    flops = float(self.spec.num_flops_per_element * num_elements)
     bytes_moved = self.get_total_bytes()
     return flops / bytes_moved
 
