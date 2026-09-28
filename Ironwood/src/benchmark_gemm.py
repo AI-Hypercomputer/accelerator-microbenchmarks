@@ -67,6 +67,7 @@ def gemm_multiple_run(
     num_runs: int = 1,
     trace_dir: str = None,
     run_on_local_node: bool = False,
+    report_slowest_device: bool = True,
 ) -> Dict[str, Any]:
     """Benchmarks the OUT<M, N>:BF16 = IN0<M, K> dtype x IN1<N, K>:dtype."""
 
@@ -129,6 +130,7 @@ def gemm_multiple_run(
         tries=num_runs,
         task="gemm_multiple_run",
         trace_dir=trace_dir,
+        report_slowest_device=report_slowest_device,
     )
     return {
         "time_ms_list": time_ms_list,
@@ -142,7 +144,9 @@ def gemm_multiple_run_calculate_metrics(
     dtype: jnp.dtype,
     time_ms_list: list[float],
     run_on_local_node: bool = False,
+    report_slowest_device: bool = True,
 ) -> Dict[str, Any]:
+    del report_slowest_device
     # Calculate FLOPs
     total_flops = 2 * m * k * n  # Total floating-point operations
     device_count = (
