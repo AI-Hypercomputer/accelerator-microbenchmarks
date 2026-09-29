@@ -149,7 +149,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     self.scalar: Any | None = None
 
   def setup(self):
-    num_devices = len(jax.devices())
+    num_devices = len(jax.local_devices())
     if not (0 <= self.config.device_id < num_devices):
       raise ValueError(
           f"Invalid device_id: {self.config.device_id}. Must be in range"
@@ -173,7 +173,6 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     self.scalar = jnp.array(random.uniform(1.1, 10.0), dtype=dtype)
     scalar = self.scalar
 
-    @jax.jit
     def hbm_op(*args):
       with jax.named_scope(constants.MARKER):
         if spec.num_inputs == 0:
@@ -182,7 +181,8 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
           )
         return spec.kernel_fn(args, scalar)
 
-    self._jit_fn = hbm_op
+    sharding = jax.sharding.SingleDeviceSharding(self.get_device_to_measure())
+    self._jit_fn = jax.jit(hbm_op, out_shardings=sharding)
 
   def get_run_identifier(self) -> str:
     return (
@@ -191,7 +191,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     )
 
   def get_device_to_measure(self) -> jax.Device:
-    return jax.devices()[self.config.device_id]
+    return jax.local_devices()[self.config.device_id]
 
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     assert self.spec is not None

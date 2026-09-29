@@ -17,6 +17,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+_NUM_CPU_DEVICES = 8
+
+# Force multiple virtual CPU devices so device_id targeting (device_id != 0)
+# can be tested without TPUs. Must run before the JAX backend is initialized;
+# JAX raises an error if the backend has already been initialized.
+jax.config.update("jax_num_cpu_devices", _NUM_CPU_DEVICES)
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
 
@@ -88,7 +94,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
 
   def test_device_id_validation(self):
     """Verify setup validates device_id is within range of local devices."""
-    num_devices = len(jax.devices())
+    num_devices = len(jax.local_devices())
 
     # Invalid out of range device_id
     config = hbm.HBMBandwidthParams(device_id=num_devices)
@@ -102,14 +108,42 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
 
   def test_get_device_to_measure(self):
     """Verify get_device_to_measure returns targeted local device."""
-    mock_devices = [mock.MagicMock() for _ in range(8)]
-    with mock.patch.object(jax, "devices", return_value=mock_devices):
-      config = hbm.HBMBandwidthParams(device_id=7)
-      bm = hbm.HBMBandwidthBenchmark(
-          config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
-      )
-      bm.setup()
-      self.assertEqual(bm.get_device_to_measure(), mock_devices[7])
+    local_devices = jax.local_devices()
+    self.assertLen(local_devices, _NUM_CPU_DEVICES)
+    self._setup_benchmark(num_elements=64, device_id=7)
+    self.assertEqual(self.bm.get_device_to_measure(), local_devices[7])
+
+  @parameterized.named_parameters(
+      ("copy", "copy"),
+      ("scale", "scale"),
+      ("add", "add"),
+      ("triad", "triad"),
+      ("read_only", "read_only"),
+      ("write_only", "write_only"),
+  )
+  def test_target_device_sharding_all_ops(self, op_type):
+    """All kernels (including 0-input write_only) execute and shard on target device_id."""
+    target_dev_id = len(jax.local_devices()) - 1
+    self.assertGreater(target_dev_id, 0)
+    target_device = jax.local_devices()[target_dev_id]
+    expected_sharding = jax.sharding.SingleDeviceSharding(target_device)
+
+    self._setup_benchmark(
+        op_type=op_type,
+        num_elements=1024,
+        device_id=target_dev_id,
+    )
+    self.assertEqual(self.bm.get_device_to_measure(), target_device)
+
+    inputs = self.bm.generate_inputs()
+    for inp in inputs:
+      self.assertEqual(inp.devices(), {target_device})
+      self.assertEqual(inp.sharding, expected_sharding)
+
+    out = self.bm.run_op(*inputs)
+    out.block_until_ready()
+    self.assertEqual(out.devices(), {target_device})
+    self.assertEqual(out.sharding, expected_sharding)
 
   @parameterized.parameters(
       "copy", "scale", "add", "triad", "read_only", "write_only"

@@ -80,7 +80,15 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
         f"which is below the {_UTILIZATION_THRESHOLD*100:.2f}% threshold.",
     )
 
-  def test_hbm_target_device_execution(self):
+  @parameterized.parameters(
+      ("copy",),
+      ("scale",),
+      ("add",),
+      ("triad",),
+      ("read_only",),
+      ("write_only",),
+  )
+  def test_hbm_target_device_execution(self, op_type: str):
     """Verify HBM bandwidth execution on a targeted device_id."""
     if not jax.devices() or jax.devices()[0].platform != "tpu":
       self.skipTest("This test requires a TPU backend.")
@@ -103,7 +111,7 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
 
     params = dict(
         self.params,
-        op_type="copy",
+        op_type=op_type,
         device_id=target_dev_id,
     )
     config = hbm.HBMBandwidthParams(**params)
@@ -117,10 +125,18 @@ class HBMBandwidthTPUTest(parameterized.TestCase):
     # 1. Verify configured target device on benchmark instance
     self.assertEqual(self.bm.get_device_to_measure(), target_device)
 
-    # 2. Verify input array buffer placement and sharding on the target device
+    # 2. Verify input and output array buffer placement on the target device
     inputs = self.bm.generate_inputs()
     for inp in inputs:
       self.assertIn(target_device, inp.devices())
+    out = self.bm.run_op(*inputs)
+    out.block_until_ready()
+    self.assertIn(
+        target_device,
+        out.devices(),
+        f"Output buffer for {op_type} was placed on {out.devices()} instead"
+        f" of {target_device}",
+    )
 
     result = self.bm.run()
     self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
