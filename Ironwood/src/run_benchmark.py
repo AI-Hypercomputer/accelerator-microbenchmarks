@@ -17,6 +17,7 @@ from benchmark_utils import (
     rename_xla_dump,
     MetricsStatistics,
 )
+from common import enable_single_host_mode
 import jax
 import yaml
 import ray
@@ -132,6 +133,21 @@ dtype_mapping = {
 # Always dump HLOs
 TMP_XLA_DUMP_DIR = "/tmp/microbenchmarks/hlo_graphs"
 os.environ["XLA_FLAGS"] = f"--xla_dump_to={TMP_XLA_DUMP_DIR}"
+
+
+def check_single_host_backend():
+    """Fails if single_host mode did not produce a single-host backend.
+
+    This happens if the TPU backend was initialized before the single-host
+    flags were set, or if a benchmark wrote LIBTPU_INIT_ARGS directly instead
+    of using common.set_libtpu_init_args().
+    """
+    if jax.device_count() != jax.local_device_count():
+        raise RuntimeError(
+            "single_host mode was requested, but the TPU backend was "
+            f"initialized as a {jax.process_count()}-host slice with "
+            f"{jax.device_count()} devices."
+        )
 
 
 def get_benchmark_config(config_path: str) -> Dict[str, Any]:
@@ -344,7 +360,11 @@ def write_to_csv(
     print(f"Metrics written to CSV at {csv_path}.")
 
 
-def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
+def run_single_benchmark(
+    benchmark_config: Dict[str, Any],
+    output_path: str,
+    single_host: bool = False,
+):
     # pylint: disable=inconsistent-quotes
     """Run a single benchmark with one or more configurations."""
     # Extract benchmark details
@@ -384,6 +404,10 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
     benchmark_func, calculate_metrics_func = get_benchmark_functions(
         benchmark_name
     )
+    if single_host:
+        # Benchmark modules overwrite LIBTPU_INIT_ARGS when imported, so the
+        # single-host flags can only be added after the import above.
+        enable_single_host_mode()
 
     print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
 
@@ -404,6 +428,8 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         except Exception as e:  # pylint: disable=broad-except
             print(f"Benchmark func failed: {e}")
             continue
+        if single_host:
+            check_single_host_backend()
         test_end_time = (
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )
@@ -471,6 +497,13 @@ def main(args):
     benchmarks = config.get("benchmarks")
     if not benchmarks or not isinstance(benchmarks, list):
         raise ValueError("Configuration must contain a 'benchmarks' list.")
+    # Run this host as its own single-host slice, even if it belongs to a
+    # multi-host slice. See enable_single_host_mode().
+    single_host = config.get("single_host", False)
+    if not isinstance(single_host, bool):
+        raise ValueError("'single_host' must be a boolean.")
+    if single_host and multithreaded:
+        raise ValueError("'single_host' is not supported with --multithreaded.")
 
     # Clear the tmp dirs.
     if os.path.exists(TMP_XLA_DUMP_DIR):
@@ -500,7 +533,9 @@ def main(args):
             run_benchmark_multithreaded(benchmark_config, output_path)
     else:
         for benchmark_config in benchmarks:
-            run_single_benchmark(benchmark_config, output_path)
+            run_single_benchmark(
+                benchmark_config, output_path, single_host=single_host
+            )
 
 
 def run_benchmark_multithreaded(benchmark_config, output_path):
