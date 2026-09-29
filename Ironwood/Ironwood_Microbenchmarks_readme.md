@@ -213,6 +213,28 @@ Cleanup the job:
 kubectl delete -f tpu7x-4x4x4-micobenchmarks.yaml
 ```
 
+### Running on one host of a multi-host slice
+
+By default, every host of a multi-host slice has to run the benchmark: the TPU
+runtime waits for all hosts to join before any of them can start. To benchmark
+a single host on its own (for example, to check one node's health), set
+`single_host: true` at the top level of the config:
+
+```yaml
+single_host: true
+benchmarks:
+- benchmark_name: gemm_multiple_run
+  benchmark_sweep_params:
+  - {m: 16384, k: 16384, n: 16384, num_runs: 100, dtype: 'bfloat16', run_on_local_node: True}
+```
+
+The host then runs as a standalone 1-host slice using only its local chips, so
+it is only suitable for benchmarks that don't communicate across hosts.
+
+Benchmarks that set `LIBTPU_INIT_ARGS` inside the benchmark function (for
+example the collectives benchmarks) must do so through
+`common.set_libtpu_init_args()`, so that the single-host flags are kept.
+
 ## Microbenchmark scripts
 
 ### Compute

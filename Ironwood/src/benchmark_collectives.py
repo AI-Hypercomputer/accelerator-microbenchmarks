@@ -2,7 +2,6 @@
 
 import json
 import math
-import os
 from typing import Any, Dict
 
 from benchmark_utils import find_sparsecore_usage_from_xplane
@@ -13,6 +12,7 @@ from benchmark_utils import multiple_iteration_timeit_from_trace
 from benchmark_utils import ShardingStrategy
 from benchmark_utils import get_real_dtype_bytes
 from common import MARKER
+from common import set_libtpu_init_args
 import jax
 from jax import core
 from jax import ffi
@@ -337,7 +337,7 @@ def psum_benchmark(
         "--xla_tpu_use_tc_device_shape_on_sc=true",
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
     ]
-    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    set_libtpu_init_args(libtpu_init_args)
     mesh = create_mesh(ici_size, mesh_shape)
     key = jax.random.key(SEED)
     lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
@@ -491,7 +491,7 @@ def psum_scatter_benchmark(
         "--xla_tpu_use_tc_device_shape_on_sc=true",
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
     ]
-    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    set_libtpu_init_args(libtpu_init_args)
     mesh = create_mesh(ici_size, mesh_shape)
 
     sharding_axis = get_sharding_axis(sharding_strategy, mesh)
@@ -613,7 +613,7 @@ def all_gather_benchmark(
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
         "--xla_tpu_scoped_vmem_limit_kib=65536",
     ]
-    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    set_libtpu_init_args(libtpu_init_args)
     mesh = create_mesh(ici_size, mesh_shape)
 
     sharding_axis = get_sharding_axis(sharding_strategy, mesh)
@@ -722,7 +722,7 @@ def all_to_all_benchmark(
         "--xla_jf_debug_level=3",
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
     ]
-    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    set_libtpu_init_args(libtpu_init_args)
     mesh = create_mesh(ici_size, mesh_shape)
     key = jax.random.key(SEED)
     lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
