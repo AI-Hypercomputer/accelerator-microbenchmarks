@@ -16,6 +16,7 @@ from benchmark_utils import (
     maybe_write_metrics_file,
     rename_xla_dump,
     MetricsStatistics,
+    configure_local_node_tpu,
 )
 import jax
 import yaml
@@ -381,6 +382,10 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         for param in benchmark_params:
             if "run_on_local_node" not in param:
                 param["run_on_local_node"] = global_run_on_local_node
+    if global_run_on_local_node or any(
+        p.get("run_on_local_node") for p in benchmark_params if isinstance(p, dict)
+    ):
+        configure_local_node_tpu()
 
     if not benchmark_name:
         raise ValueError("Each benchmark must have a benchmark_name.")
@@ -533,6 +538,8 @@ def main(args):
                 jax.distributed.initialize()
             except Exception as e:
                 print(f"jax.distributed.initialize() failed or not needed: {e}")
+        else:
+            configure_local_node_tpu()
         for benchmark_config in benchmarks:
             run_single_benchmark(benchmark_config, output_path)
 
@@ -570,6 +577,10 @@ def run_benchmark_multithreaded(benchmark_config, output_path):
         for param in benchmark_params:
             if "run_on_local_node" not in param:
                 param["run_on_local_node"] = global_run_on_local_node
+    if global_run_on_local_node or any(
+        p.get("run_on_local_node") for p in benchmark_params if isinstance(p, dict)
+    ):
+        configure_local_node_tpu()
 
     # Get the benchmark function
     benchmark_func, calculate_metrics_func = get_benchmark_functions(

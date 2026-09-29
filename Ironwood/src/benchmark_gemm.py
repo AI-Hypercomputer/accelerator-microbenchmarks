@@ -10,18 +10,21 @@ Considered ops:
 import os
 from typing import Any, Dict
 
-from benchmark_utils import create_mesh
-from benchmark_utils import get_lhs_named_shading
-from benchmark_utils import get_out_sharding
-from benchmark_utils import get_output_named_shading
-from benchmark_utils import get_peak_flops_multiplier
-from benchmark_utils import get_rhs_named_shading
-from benchmark_utils import handle_based_on_sharding
-from benchmark_utils import iteration_timeit
-from benchmark_utils import multiple_iteration_timeit_from_trace
-from benchmark_utils import ShardingStrategy
-from benchmark_utils import str_to_dtype
-from benchmark_utils import unified_flops_metrics
+from benchmark_utils import (
+    configure_local_node_tpu,
+    create_mesh,
+    get_lhs_named_shading,
+    get_out_sharding,
+    get_output_named_shading,
+    get_peak_flops_multiplier,
+    get_rhs_named_shading,
+    handle_based_on_sharding,
+    iteration_timeit,
+    multiple_iteration_timeit_from_trace,
+    ShardingStrategy,
+    str_to_dtype,
+    unified_flops_metrics,
+)
 from common import MARKER
 
 import jax
@@ -29,7 +32,7 @@ from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 
 
-os.environ["LIBTPU_INIT_ARGS"] = (
+_GEMM_LIBTPU_INIT_ARGS = (
     "--xla_tpu_enable_async_collective_fusion=true "
     "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true "
     "--xla_tpu_enable_async_collective_fusion_multiple_steps=true "
@@ -41,6 +44,10 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_vmem_scavenging_mode=NONE "
     "--xla_tpu_dvfs_p_state=7"
+)
+_existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+os.environ["LIBTPU_INIT_ARGS"] = (
+    f"{_existing_libtpu_args} {_GEMM_LIBTPU_INIT_ARGS}".strip()
 )
 
 TRACE_BASE_DIR = None
@@ -79,6 +86,9 @@ def gemm_multiple_run(
                 "ij,jk->ik", x, y, preferred_element_type=jnp.float32
             )
             return acc.astype(jnp.bfloat16)
+
+    if run_on_local_node:
+        configure_local_node_tpu()
 
     mesh = create_mesh(SHARDING_STRATEGY, local_mesh=run_on_local_node)
     lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)
@@ -398,6 +408,9 @@ def gemm(
             scales = scale_m * scale_n
             result_fp32 = acc * scales
             return result_fp32.astype(jnp.bfloat16)
+
+    if run_on_local_node:
+        configure_local_node_tpu()
 
     mesh = create_mesh(SHARDING_STRATEGY, local_mesh=run_on_local_node)
     lhs_sharding = get_lhs_named_shading(mesh, SHARDING_STRATEGY)

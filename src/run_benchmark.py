@@ -12,7 +12,11 @@ import itertools
 import random
 import string
 from typing import Any, Callable, Dict, List, Tuple
-from benchmark_utils import maybe_write_metrics_file, rename_xla_dump
+from benchmark_utils import (
+    maybe_write_metrics_file,
+    rename_xla_dump,
+    configure_local_node_tpu,
+)
 import jax
 import yaml
 import ray
@@ -307,6 +311,10 @@ def run_single_benchmark(benchmark_config: Dict[str, Any]):
         for param in benchmark_params:
             if "run_on_local_node" not in param:
                 param["run_on_local_node"] = global_run_on_local_node
+    if global_run_on_local_node or any(
+        p.get("run_on_local_node") for p in benchmark_params if isinstance(p, dict)
+    ):
+        configure_local_node_tpu()
 
     if not benchmark_name:
         raise ValueError("Each benchmark must have a benchmark_name.")
@@ -448,6 +456,8 @@ def main(config_path: str, multithreaded: bool):
     else:
         if should_initialize_distributed(config):
             jax.distributed.initialize()
+        else:
+            configure_local_node_tpu()
         for benchmark_config in benchmarks:
             run_single_benchmark(benchmark_config)
 
@@ -472,6 +482,10 @@ def run_benchmark_multithreaded(benchmark_config):
         for param in benchmark_params:
             if "run_on_local_node" not in param:
                 param["run_on_local_node"] = global_run_on_local_node
+    if global_run_on_local_node or any(
+        p.get("run_on_local_node") for p in benchmark_params if isinstance(p, dict)
+    ):
+        configure_local_node_tpu()
 
     # Get the benchmark function
     benchmark_func, calculate_metrics_func = get_benchmark_functions(

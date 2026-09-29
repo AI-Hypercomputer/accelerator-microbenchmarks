@@ -33,7 +33,7 @@ from qwix import pallas as qpl
 
 # Set the environment variable for TPU initialization arguments to optimize
 # collective matmul. Setting the flags to false will disable the optimization.
-os.environ["LIBTPU_INIT_ARGS"] = (
+_COMPUTE_LIBTPU_INIT_ARGS = (
     "--xla_tpu_enable_async_collective_fusion=true "
     "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true "
     "--xla_tpu_enable_async_collective_fusion_multiple_steps=true "
@@ -44,6 +44,10 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_tpu_accumulate_into_mrb=true "
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_tpu_dvfs_p_state=7"
+)
+_existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+os.environ["LIBTPU_INIT_ARGS"] = (
+    f"{_existing_libtpu_args} {_COMPUTE_LIBTPU_INIT_ARGS}".strip()
 )
 
 TRACE_BASE_DIR = None

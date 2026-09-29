@@ -10,12 +10,15 @@ from typing import Any, Dict, Tuple, List
 import jax
 import numpy as np
 import contextlib
-from benchmark_utils import MetricsStatistics
+from benchmark_utils import MetricsStatistics, configure_local_node_tpu
 
 libtpu_init_args = [
     "--xla_tpu_dvfs_p_state=7",
 ]
-os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+_existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+os.environ["LIBTPU_INIT_ARGS"] = (
+    f"{_existing_libtpu_args} {' '.join(libtpu_init_args)}".strip()
+)
 # 64 GiB
 os.environ["TPU_PREMAPPED_BUFFER_SIZE"] = "68719476736"
 os.environ["TPU_PREMAPPED_BUFFER_TRANSFER_THRESHOLD_BYTES"] = "68719476736"
@@ -25,8 +28,11 @@ def benchmark_host_device(
     data_size_mib: int,
     num_runs: int = 100,
     trace_dir: str = None,
+    run_on_local_node: bool = True,
 ) -> Dict[str, Any]:
     """Benchmarks H2D/D2H transfer using simple device_put/device_get."""
+    if run_on_local_node:
+        configure_local_node_tpu()
 
     num_elements = 1024 * 1024 * data_size_mib // np.dtype(np.float32).itemsize
 

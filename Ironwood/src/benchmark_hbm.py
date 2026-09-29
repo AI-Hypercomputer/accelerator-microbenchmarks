@@ -3,19 +3,26 @@
 import os
 from typing import Any, Dict, Tuple
 
-from benchmark_utils import get_real_dtype_bytes
-from benchmark_utils import MetricsStatistics
-from benchmark_utils import multiple_iteration_timeit_from_trace
+from benchmark_utils import (
+    configure_local_node_tpu,
+    get_real_dtype_bytes,
+    MetricsStatistics,
+    multiple_iteration_timeit_from_trace,
+)
 from common import MARKER
 
 import jax
 import jax.numpy as jnp
 
 SEED = 0
-os.environ["LIBTPU_INIT_ARGS"] = (
+_HBM_LIBTPU_INIT_ARGS = (
     "--xla_tpu_scoped_vmem_limit_kib=65536 "
     "--xla_jf_bounds_check=false "
     "--xla_tpu_dvfs_p_state=7 "
+)
+_existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+os.environ["LIBTPU_INIT_ARGS"] = (
+    f"{_existing_libtpu_args} {_HBM_LIBTPU_INIT_ARGS}".strip()
 )
 
 
@@ -38,8 +45,11 @@ def single_device_hbm_copy(
     dtype: jnp.dtype,
     num_runs: int = 1,
     trace_dir: str = None,
+    run_on_local_node: bool = True,
 ) -> Dict[str, Any]:
     """Benchmarks HBM with copy(read and write) on a single device."""
+    if run_on_local_node:
+        configure_local_node_tpu()
 
     def f(a):
         with jax.named_scope(MARKER):

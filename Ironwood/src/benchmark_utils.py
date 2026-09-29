@@ -1479,3 +1479,58 @@ def get_peak_flops_multiplier(in_dtype_str: str) -> float:
         raise RuntimeError(
             f"No support for {in_dtype_lower} in setting peak_flops_multiplier."
         )
+
+
+def get_tpu_hal_count() -> int:
+    """Computes the expected HalCount based on environment variables."""
+    import math
+
+    for env_var in ["TPU_HOST_BOUNDS", "TPU_PROCESS_BOUNDS"]:
+        val = os.environ.get(env_var)
+        if val:
+            try:
+                parts = [int(x.strip()) for x in val.split(",") if x.strip()]
+                if parts:
+                    return math.prod(parts)
+            except Exception:
+                pass
+    if os.environ.get("TPU_PROCESS_ADDRESSES"):
+        addrs = [
+            a.strip()
+            for a in os.environ["TPU_PROCESS_ADDRESSES"].split(",")
+            if a.strip()
+        ]
+        if len(addrs) > 1:
+            return len(addrs)
+    if os.environ.get("TPU_TOPOLOGY"):
+        val = os.environ.get("TPU_TOPOLOGY")
+        try:
+            parts = [int(x.strip()) for x in val.split("x") if x.strip()]
+            if parts:
+                import math
+
+                total_chips = math.prod(parts)
+                if total_chips > 4:
+                    return total_chips // 4
+        except Exception:
+            pass
+    return 1
+
+
+def configure_local_node_tpu():
+    """Configures libtpu flags to safely skip slicebuilder for single-node execution."""
+    hal_count = get_tpu_hal_count()
+    flags = [
+        "--deepsea_hal_test_skip_slicebuilder=true",
+        "--deepsea_hal_test_allow_multichip_skip_slicebuilder=true",
+    ]
+    if hal_count > 1:
+        dummy_addrs = ",".join(["localhost:8471"] * hal_count)
+        flags.append(f"--deepsea_slice_builder_worker_addresses={dummy_addrs}")
+    existing = os.environ.get("LIBTPU_INIT_ARGS", "")
+    new_flags = [f for f in flags if f.split("=")[0] not in existing]
+    if new_flags:
+        os.environ["LIBTPU_INIT_ARGS"] = (
+            f"{existing} {' '.join(new_flags)}".strip()
+        )
+

@@ -31,8 +31,9 @@ libtpu_args_str = (
     "--xla_tpu_vmem_scavenging_mode=NONE "
     "--xla_tpu_dvfs_p_state=7"
 )
-os.environ["LIBTPU_INIT_ARGS"] = libtpu_args_str
-print(f"RUNTIME_CFG: LIBTPU_INIT_ARGS={libtpu_args_str}")
+_existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+os.environ["LIBTPU_INIT_ARGS"] = f"{_existing_libtpu_args} {libtpu_args_str}".strip()
+print(f"RUNTIME_CFG: LIBTPU_INIT_ARGS={os.environ['LIBTPU_INIT_ARGS']}")
 
 SHARDING_STRATEGY = ShardingStrategy.NO_SHARDING
 SEED = 0

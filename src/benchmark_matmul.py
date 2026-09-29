@@ -26,7 +26,7 @@ import numpy as np
 # pylint: disable=g-importing-member
 # Set the environment variable for TPU initialization arguments to optimize
 # collective matmul. Setting the flags to false will disable the optimization.
-os.environ["LIBTPU_INIT_ARGS"] = (
+_MATMUL_LIBTPU_INIT_ARGS = (
     "--xla_tpu_enable_async_collective_fusion=true "
     "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true "
     "--xla_tpu_enable_async_collective_fusion_multiple_steps=true "
@@ -34,6 +34,10 @@ os.environ["LIBTPU_INIT_ARGS"] = (
     "--xla_enable_async_all_gather=true "
     "--xla_enable_async_collective_permute=true "
     "--xla_tpu_enable_all_experimental_scheduler_features=true"
+)
+_existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+os.environ["LIBTPU_INIT_ARGS"] = (
+    f"{_existing_libtpu_args} {_MATMUL_LIBTPU_INIT_ARGS}".strip()
 )
 TRACE_BASE_DIR = None
 METRICS_JSONL_DIR = None

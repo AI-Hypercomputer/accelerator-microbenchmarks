@@ -337,7 +337,10 @@ def psum_benchmark(
         "--xla_tpu_use_tc_device_shape_on_sc=true",
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
     ]
-    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    _existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+    os.environ["LIBTPU_INIT_ARGS"] = (
+        f"{_existing_libtpu_args} {' '.join(libtpu_init_args)}".strip()
+    )
     mesh = create_mesh(ici_size, mesh_shape)
     key = jax.random.key(SEED)
     lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)
@@ -491,7 +494,10 @@ def psum_scatter_benchmark(
         "--xla_tpu_use_tc_device_shape_on_sc=true",
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
     ]
-    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    _existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+    os.environ["LIBTPU_INIT_ARGS"] = (
+        f"{_existing_libtpu_args} {' '.join(libtpu_init_args)}".strip()
+    )
     mesh = create_mesh(ici_size, mesh_shape)
 
     sharding_axis = get_sharding_axis(sharding_strategy, mesh)
@@ -613,7 +619,10 @@ def all_gather_benchmark(
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
         "--xla_tpu_scoped_vmem_limit_kib=65536",
     ]
-    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    _existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+    os.environ["LIBTPU_INIT_ARGS"] = (
+        f"{_existing_libtpu_args} {' '.join(libtpu_init_args)}".strip()
+    )
     mesh = create_mesh(ici_size, mesh_shape)
 
     sharding_axis = get_sharding_axis(sharding_strategy, mesh)
@@ -722,7 +731,10 @@ def all_to_all_benchmark(
         "--xla_jf_debug_level=3",
         f"--xla_tpu_dvfs_p_state={GLOBAL_PSTATE}",
     ]
-    os.environ["LIBTPU_INIT_ARGS"] = " ".join(libtpu_init_args)
+    _existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+    os.environ["LIBTPU_INIT_ARGS"] = (
+        f"{_existing_libtpu_args} {' '.join(libtpu_init_args)}".strip()
+    )
     mesh = create_mesh(ici_size, mesh_shape)
     key = jax.random.key(SEED)
     lhs_sharding = get_lhs_named_shading(mesh, GLOBAL_SHARDING_STRATEGY)

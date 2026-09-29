@@ -15,11 +15,15 @@ import jax.sharding
 
 P = jax.sharding.PartitionSpec
 
-os.environ["LIBTPU_INIT_ARGS"] = (
+_SEND_RECV_LIBTPU_INIT_ARGS = (
     "--xla_tpu_collect_sflag_wait_stats_trace=true "
     "--xla_tpu_force_global_barriers=true "
     "--xla_tpu_ragged_all_to_all_max_rdma_size_kib=-1 "
     "--xla_tpu_dvfs_p_state=7 "
+)
+_existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+os.environ["LIBTPU_INIT_ARGS"] = (
+    f"{_existing_libtpu_args} {_SEND_RECV_LIBTPU_INIT_ARGS}".strip()
 )
 
 

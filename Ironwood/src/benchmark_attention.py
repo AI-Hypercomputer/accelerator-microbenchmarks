@@ -15,7 +15,10 @@ import tune_jax
 
 tune_jax.tune_logger.setLevel(logging.ERROR)
 
-os.environ["LIBTPU_INIT_ARGS"] = "--xla_tpu_dvfs_p_state=7"
+_existing_libtpu_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+os.environ["LIBTPU_INIT_ARGS"] = (
+    f"{_existing_libtpu_args} --xla_tpu_dvfs_p_state=7".strip()
+)
 
 
 def generate_qkv_separate_dims(
