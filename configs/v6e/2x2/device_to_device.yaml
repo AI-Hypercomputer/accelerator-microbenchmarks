@@ -1,0 +1,9 @@
+benchmark:
+  name: device_to_device
+  xprof_timing: true
+  params:
+    warmup_tries: 2
+    num_runs: 5
+    dtype: "float32"
+  sweep:
+    data_size_mib: [256]
