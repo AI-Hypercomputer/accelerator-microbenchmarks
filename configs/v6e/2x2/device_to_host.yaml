@@ -6,4 +6,4 @@ benchmark:
     num_runs: 10
     dtype: "float32"
   sweep:
-    data_size_mib: [4096, 8192, 16384]
+    data_size_mib: [4096, 8192]
