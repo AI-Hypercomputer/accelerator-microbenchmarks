@@ -1522,7 +1522,6 @@ def configure_local_node_tpu():
     hal_count = get_tpu_hal_count()
     flags = [
         "--deepsea_hal_test_skip_slicebuilder=true",
-        "--deepsea_hal_test_allow_multichip_skip_slicebuilder=true",
     ]
     if hal_count > 1:
         dummy_addrs = ",".join(["localhost:8471"] * hal_count)
