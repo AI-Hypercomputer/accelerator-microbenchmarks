@@ -179,8 +179,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       np.testing.assert_allclose(np.array(shard.data), expected, rtol=1e-5)
 
   def test_all_gather_with_sharding_strategy(self):
-    devices = np.array(jax.devices()).reshape((2, 2))
-    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
     # Case 1: sharding_strategy = 2x1 (only d_0)
     params_2x1 = {
         "matrix_dim": 64,
@@ -190,7 +188,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     }
     config_2x1 = collectives.CollectivesParams(**params_2x1)
     bm = collectives.AllGatherBenchmark(
-        config=config_2x1, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+        config=config_2x1, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
     bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x1")
@@ -211,7 +209,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     }
     config_2x2 = collectives.CollectivesParams(**params_2x2)
     bm = collectives.AllGatherBenchmark(
-        config=config_2x2, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+        config=config_2x2, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
     bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x2")
@@ -224,8 +222,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(out_2x2.shape, (256, 8, 128))
 
   def test_reduce_scatter_with_sharding_strategy(self):
-    devices = np.array(jax.devices()).reshape((2, 2))
-    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
     # Case 1: sharding_strategy = 2x1 (only d_0)
     params_2x1 = {
         "matrix_dim": 64,
@@ -235,7 +231,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     }
     config_2x1 = collectives.CollectivesParams(**params_2x1)
     bm = collectives.ReduceScatterBenchmark(
-        config=config_2x1, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+        config=config_2x1, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
     bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x1")
@@ -256,7 +252,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     }
     config_2x2 = collectives.CollectivesParams(**params_2x2)
     bm = collectives.ReduceScatterBenchmark(
-        config=config_2x2, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+        config=config_2x2, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
     bm.setup()
     self.assertEqual(bm.sharding_strategy, "2x2")
@@ -270,8 +266,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
 
   def test_all_to_all_with_sharding_strategy(self):
     # Case 1: 2D mesh (V6E_HARDWARE_SPEC)
-    devices_2d = np.array(jax.devices()).reshape((2, 2))
-    mesh_2d = jax.sharding.Mesh(devices_2d, axis_names=("d_0", "d_1"))
     for sharding_strategy, expected_axes in [
         ("2x1", ("d_0",)),
         ("2x2", ("d_0", "d_1")),
@@ -285,7 +279,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       bm_2d = collectives.AllToAllBenchmark(
           config=config_2d,
           hardware_spec=system.V6E_HARDWARE_SPEC,
-          mesh=mesh_2d,
       )
       bm_2d.setup()
       self.assertEqual(bm_2d.sharding_strategy, sharding_strategy)
@@ -296,8 +289,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       self.assertEqual(out_2d.shape, (64, 8, 128))
 
     # Case 2: 3D mesh (TPU7X_HARDWARE_SPEC)
-    devices_3d = np.array(jax.devices()).reshape((2, 2, 1))
-    mesh_3d = jax.sharding.Mesh(devices_3d, axis_names=("d_0", "d_1", "d_2"))
     for sharding_strategy, expected_axes in [
         ("2x1x1", ("d_0",)),
         ("2x2x1", ("d_0", "d_1")),
@@ -311,7 +302,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       bm_3d = collectives.AllToAllBenchmark(
           config=config_3d,
           hardware_spec=system.TPU7X_HARDWARE_SPEC,
-          mesh=mesh_3d,
       )
       bm_3d.setup()
       self.assertEqual(bm_3d.sharding_strategy, sharding_strategy)
@@ -361,11 +351,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       self, benchmark_cls, config, size_metric_key
   ):
     """Guardrail ensuring generated input tensor bytes strictly equal local_size_bytes in transfer metrics."""
-    devices_3d = np.array(jax.devices()).reshape((2, 2, 1))
-    mesh_3d = jax.sharding.Mesh(devices_3d, axis_names=("d_0", "d_1", "d_2"))
-    bm = benchmark_cls(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh_3d
-    )
+    bm = benchmark_cls(config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC)
     bm.setup()
     (data,) = bm.generate_inputs()
     metrics = bm.calculate_metrics([1.0])
@@ -442,7 +428,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
               sharding_strategy="2x2",
           ),
           system.TPU7X_HARDWARE_SPEC,
-          2.097152,
+          4.194304,
       ),
       (
           "all_to_all_v6e",
@@ -460,9 +446,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
   def test_transfer_metrics_calculation(
       self, benchmark_cls, config, hardware_spec, expected_bw
   ):
-    devices = np.array(jax.devices()).reshape((2, 2))
-    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
-    bm = benchmark_cls(config=config, hardware_spec=hardware_spec, mesh=mesh)
+    bm = benchmark_cls(config=config, hardware_spec=hardware_spec)
     bm.setup()
     metrics = bm.calculate_metrics([1.0])
     self.assertAlmostEqual(
@@ -481,8 +465,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       self, sharding_strategy, expected_group_type, expected_rank, expected_bw
   ):
     """Verify parallel vs non-parallel detection directly from mesh device layout without HLO dump files."""
-    devices = np.array(jax.devices()).reshape((2, 2))
-    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
     config = collectives.CollectivesParams(
         matrix_dim=1024,
         dtype="float32",
@@ -492,7 +474,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     ag_bm = collectives.AllGatherBenchmark(
         config=config,
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
-        mesh=mesh,
     )
     ag_bm.setup()
     metrics = ag_bm.calculate_metrics([1.0])
@@ -503,10 +484,88 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
     )
 
-  def test_replica_groups_hlo_parsing(self):
-    devices = np.array(jax.devices()).reshape((2, 2))
-    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
+  @parameterized.named_parameters(
+      (
+          "mesh_parallel_2_chips",
+          "2x1",
+          None,
+          "parallel",
+          2,
+          4194304.0,
+          4.194304,
+      ),
+      (
+          "mesh_non_parallel_2_chips",
+          "2x2",
+          None,
+          "non-parallel",
+          4,
+          4194304.0,
+          4.194304,
+      ),
+      (
+          "hlo_parallel_8_chips",
+          "2x2",
+          "{{0,2,4,6,8,10,12,14},{1,3,5,7,9,11,13,15}}",
+          "parallel",
+          8,
+          7340032.0,
+          7.340032,
+      ),
+      (
+          "hlo_non_parallel_8_chips",
+          "2x2",
+          "{{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}}",
+          "non-parallel",
+          16,
+          7340032.0,
+          7.340032,
+      ),
+  )
+  def test_all_to_all_parallel_vs_non_parallel_transfer_metrics(
+      self,
+      sharding_strategy,
+      replica_groups_str,
+      expected_group_type,
+      expected_rank,
+      expected_bytes,
+      expected_bw,
+  ):
+    """Verify AllToAllBenchmark counts all devices_per_chip cores in both parallel and non-parallel modes."""
+    dump_dir = None
+    if replica_groups_str is not None:
+      dump_dir = self.create_tempdir().full_path
+      with open(os.path.join(dump_dir, "after_optimizations.txt"), "w") as f:
+        f.write(f"HloModule ... replica_groups={replica_groups_str}")
 
+    config = collectives.CollectivesParams(
+        matrix_dim=1024,
+        dtype="float32",
+        mesh_shape="2x2",
+        sharding_strategy=sharding_strategy,
+        xla_dump_dir=dump_dir,
+    )
+    a2a_bm = collectives.AllToAllBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    a2a_bm.setup()
+    self.assertEqual(a2a_bm.hardware_spec.devices_per_chip, 2)
+
+    metadata = a2a_bm.get_workload_metadata()
+    self.assertEqual(metadata["replica_group_type"], expected_group_type)
+    self.assertEqual(metadata["replica_group_rank"], expected_rank)
+    self.assertAlmostEqual(
+        metadata["data_transferred_bytes"], expected_bytes, places=1
+    )
+
+    metrics = a2a_bm.calculate_metrics([1.0])
+    self.assertAlmostEqual(
+        metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
+    )
+
+  def test_replica_groups_hlo_parsing(self):
+    """Verify replica group type and rank parsing from disk HLO dumps."""
     # Parallel replica groups (strided)
     dump_dir_p = self.create_tempdir().full_path
     with open(os.path.join(dump_dir_p, "after_optimizations.txt"), "w") as f:
@@ -520,7 +579,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         xla_dump_dir=dump_dir_p,
     )
     ag_parallel = collectives.AllGatherBenchmark(
-        config=config_parallel, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+        config=config_parallel, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
     ag_parallel.setup()
     metrics_p = ag_parallel.calculate_metrics([1.0])
@@ -540,36 +599,35 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         xla_dump_dir=dump_dir_np,
     )
     ag_non_parallel = collectives.AllGatherBenchmark(
-        config=config_non_parallel, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+        config=config_non_parallel, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
     ag_non_parallel.setup()
     metrics_np = ag_non_parallel.calculate_metrics([1.0])
     self.assertEqual(metrics_np["replica_group_type"], "non-parallel")
     self.assertEqual(metrics_np["replica_group_rank"], 4)
 
-  def test_calculate_metrics_exception_fallback(self):
-    devices = np.array(jax.devices()).reshape((2, 2))
-    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
+    # Malformed HLO dump falls through to mesh-based derivation
+    dump_dir_malformed = self.create_tempdir().full_path
+    with open(
+        os.path.join(dump_dir_malformed, "after_optimizations.txt"), "w"
+    ) as f:
+      f.write("HloModule ... replica_groups={{invalid}}")
 
-    config = collectives.CollectivesParams(
+    config_malformed = collectives.CollectivesParams(
         matrix_dim=1024,
         dtype="float32",
         mesh_shape="2x2",
-        sharding_strategy="2x2",
+        sharding_strategy="2x1",
+        xla_dump_dir=dump_dir_malformed,
     )
-    ag_bm = collectives.AllGatherBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=mesh
+    ag_malformed = collectives.AllGatherBenchmark(
+        config=config_malformed,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
     )
-    ag_bm.setup()
-
-    def mock_extract_raises():
-      raise ValueError("Mocked error")
-
-    ag_bm._extract_first_replica_group_from_hlo_dump = mock_extract_raises
-
-    metrics = ag_bm.calculate_metrics([1.0])
-    self.assertEqual(metrics["replica_group_type"], "non-parallel")
-    self.assertEqual(metrics["replica_group_rank"], 4)
+    ag_malformed.setup()
+    metrics_malformed = ag_malformed.calculate_metrics([1.0])
+    self.assertEqual(metrics_malformed["replica_group_type"], "parallel")
+    self.assertEqual(metrics_malformed["replica_group_rank"], 2)
 
   def test_format_benchmark_table(self):
     """Tests formatting of collective benchmark tables."""
@@ -799,8 +857,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
 
   def test_single_rank_replica_group_returns_zero_bandwidth(self):
     """Verify calculate_throughput_metrics returns 0.0 bandwidth when replica_group_rank == 1."""
-    devices = np.array(jax.devices()).reshape((2, 2))
-    mesh = jax.sharding.Mesh(devices, axis_names=("d_0", "d_1"))
     config = collectives.AllReduceParams(
         matrix_dim=64,
         dtype="bfloat16",
@@ -810,11 +866,11 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm = collectives.AllReduceBenchmark(
         config=config,
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
-        mesh=mesh,
     )
     bm.setup()
     metadata = bm.get_workload_metadata()
     self.assertEqual(metadata["replica_group_rank"], 1)
+    self.assertEqual(metadata["replica_group_type"], "non-parallel")
     self.assertNotIn("sharding_size", metadata)
     throughput_metrics = bm.calculate_throughput_metrics(
         1.0, constants.TimingDomain.WALL_CLOCK

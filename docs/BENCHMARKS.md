@@ -272,13 +272,19 @@ On TPU architectures with two logical devices per physical chip—such as **`tpu
 
 #### Collective Bus Bandwidth Formulas (`data_transferred_bytes`)
 
-Given per-device shard payload $$S$$ (bytes), replica group rank $$R$$ (`replica_group_rank`, devices per ring), external inter-chip peers $$P$$ ($$R - 1$$ for single-device or `parallel` dual-device; $$R - 2$$ for `non-parallel` dual-device), and active rings per physical chip $$C$$ ($$2$$ for `parallel` dual-device; $$1$$ otherwise):
+Given per-device shard payload $$S$$ (bytes), replica group rank $$R$$
+(`replica_group_rank`, devices per ring), external inter-chip peers $$P$$
+($$R - 1$$ for single-device or `parallel` dual-device; $$R - 2$$ for
+`non-parallel` dual-device), active rings per physical chip $$C$$ ($$2$$ for
+`parallel` dual-device; $$1$$ otherwise), and devices per physical chip $$D$$
+(`devices_per_chip`, e.g., $$2$$ for dual-device chips, $$1$$ for
+single-device chips):
 
 | Benchmark | JAX Primitive | Per-Chip Bytes Transferred (`data_transferred_bytes`) |
 | :--- | :--- | :--- |
 | **`all_reduce`** | `jax.lax.psum` / `pmean` / `pmax` / `pmin` | $$2 \times S \times \left(\frac{P}{R}\right) \times C$$ |
 | **`all_gather`** | `jax.lax.all_gather` | $$S \times P \times C$$ |
-| **`all_to_all`** | `jax.lax.all_to_all` | $$S \times \left(\frac{P}{R}\right) \times C$$ |
+| **`all_to_all`** | `jax.lax.all_to_all` | $$S \times \left(\frac{P}{R}\right) \times D$$ |
 
 #### Reported Metrics
 

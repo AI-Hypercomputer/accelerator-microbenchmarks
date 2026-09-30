@@ -317,7 +317,7 @@ class BaseCollectiveBenchmark(
           else set(sharding_axes)
       )
       indexer = tuple(
-          slice(None) if axis in sharding_axes_set else 0
+          slice(None) if axis in sharding_axes_set else slice(0, 1)
           for axis in self.mesh.axis_names
       )
       first_group_devices = self.mesh.devices[indexer].flatten()
@@ -337,39 +337,26 @@ class BaseCollectiveBenchmark(
     dtype = utils.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
 
-    num_sharded_devices = self._get_num_sharded_devices()
+    first_replica_group = self._extract_first_replica_group_from_hlo_dump()
+    rank = len(first_replica_group)
 
-    try:
-      first_replica_group = self._extract_first_replica_group_from_hlo_dump()
-      rank = len(first_replica_group)
-
-      devices_per_chip = self.hardware_spec.devices_per_chip
-      if (
-          devices_per_chip > 1
-          and first_replica_group
-          and all(i % devices_per_chip == 0 for i in first_replica_group)
-      ):
-        replica_group_type = "parallel"
-        participating_ranks = max(rank - 1, 1)
-        tf_multiplier = devices_per_chip
-      else:
-        replica_group_type = "non-parallel"
-        participating_ranks = max(rank - devices_per_chip, 1)
-        tf_multiplier = 1
-    except Exception as e:
-      replica_group_type = "non-parallel"
-      rank = num_sharded_devices
+    devices_per_chip = self.hardware_spec.devices_per_chip
+    if (
+        devices_per_chip > 1
+        and rank > 1
+        and all(i % devices_per_chip == 0 for i in first_replica_group)
+    ):
+      replica_group_type = "parallel"
       participating_ranks = max(rank - 1, 1)
+      tf_multiplier = devices_per_chip
+    else:
+      replica_group_type = "non-parallel"
+      participating_ranks = max(rank - devices_per_chip, 1)
       tf_multiplier = 1
-      print(
-          "Warning: Failed to extract replica group from HLO dump. Falling"
-          f" back to non-parallel replica group. Error: {e}"
-      )
 
     data_transferred_bytes, extra_metrics = self._get_transfer_metrics(
         dim=dim,
         itemsize=itemsize,
-        num_devices=num_sharded_devices,
         rank=rank,
         participating_ranks=participating_ranks,
         tf_multiplier=tf_multiplier,
@@ -405,7 +392,6 @@ class BaseCollectiveBenchmark(
       self,
       dim: int,
       itemsize: int,
-      num_devices: int,
       rank: int = 1,
       participating_ranks: int = 1,
       tf_multiplier: int = 1,
@@ -479,7 +465,6 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
       self,
       dim: int,
       itemsize: int,
-      num_devices: int,
       rank: int = 1,
       participating_ranks: int = 1,
       tf_multiplier: int = 1,
@@ -543,7 +528,6 @@ class AllGatherBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
       self,
       dim: int,
       itemsize: int,
-      num_devices: int,
       rank: int = 1,
       participating_ranks: int = 1,
       tf_multiplier: int = 1,
@@ -595,14 +579,18 @@ class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
       self,
       dim: int,
       itemsize: int,
-      num_devices: int,
       rank: int = 1,
       participating_ranks: int = 1,
       tf_multiplier: int = 1,
   ):
     local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
+    # In All-to-All, every (source_rank -> dest_rank) chunk is distinct, so all
+    # devices_per_chip cores on a chip independently transmit their own outbound
+    # inter-chip data in both parallel and non-parallel replica group modes.
     data_transferred = (
-        local_size_bytes * (participating_ranks / max(rank, 1)) * tf_multiplier
+        local_size_bytes
+        * (participating_ranks / max(rank, 1))
+        * self.hardware_spec.devices_per_chip
     )
     return data_transferred, {
         "shard_size_mib": local_size_bytes / (1024 * 1024)
@@ -649,7 +637,6 @@ class ReduceScatterBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
       self,
       dim: int,
       itemsize: int,
-      num_devices: int,
       rank: int = 1,
       participating_ranks: int = 1,
       tf_multiplier: int = 1,
