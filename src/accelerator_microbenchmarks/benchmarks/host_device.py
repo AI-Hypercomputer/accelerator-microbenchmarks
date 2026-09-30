@@ -7,7 +7,9 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import utils
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -49,11 +51,11 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
     return f"size_{self.config.data_size_mib}mib"
 
   def generate_inputs(self) -> tuple[np.ndarray, ...]:
-    num_elements = self.config.data_size_bytes // np.dtype(np.float32).itemsize
+    dtype = utils.parse_dtype(self.config.dtype)
+    itemsize = jnp.dtype(dtype).itemsize
+    num_elements = self.config.data_size_bytes // itemsize
     column = 128
-    host_data = np.random.normal(size=(num_elements // column, column)).astype(
-        np.float32
-    )
+    host_data = utils.random_bits_array((num_elements // column, column), dtype)
     return (host_data,)
 
   def run_op(self, *args, **kwargs) -> jax.Array:
@@ -109,10 +111,12 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
   device_array: jax.Array
 
   def setup(self):
-    num_elements = self.config.data_size_bytes // np.dtype(np.float32).itemsize
+    dtype = utils.parse_dtype(self.config.dtype)
+    itemsize = jnp.dtype(dtype).itemsize
+    num_elements = self.config.data_size_bytes // itemsize
     column = 128
-    self.host_data = np.random.normal(size=(num_elements // column, column)).astype(
-        np.float32
+    self.host_data = utils.random_bits_array(
+        (num_elements // column, column), dtype
     )
 
   def reset_data(self, arr: jax.Array, **kwargs) -> tuple[jax.Array, ...]:

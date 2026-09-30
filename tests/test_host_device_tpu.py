@@ -9,7 +9,9 @@ from accelerator_microbenchmarks.core import (
     base,
 )
 from accelerator_microbenchmarks.core import system
+from accelerator_microbenchmarks.core import utils
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -76,7 +78,8 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     new_array = new_inputs[0]
     self.assertIsInstance(new_array, jax.Array)
     self.assertFalse(new_array.is_deleted())
-    self.assertEqual(new_array.shape, (8192, 128))
+    self.assertEqual(new_array.shape, (16384, 128))
+    self.assertEqual(new_array.dtype, jnp.bfloat16)
     if not self.is_array_on_tpu(new_array):
       self.fail("New array is not on TPU.")
 
@@ -138,13 +141,15 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     self.bm.setup()
     inputs = self.bm.generate_inputs()
 
-    # 1M elements * size_mib / float32_size (4 bytes)
-    num_elements = (1024 * 1024 * size_mib) // np.dtype(np.float32).itemsize
+    dtype = utils.parse_dtype(config.dtype)
+    itemsize = jnp.dtype(dtype).itemsize
+    num_elements = (1024 * 1024 * size_mib) // itemsize
     expected_shape = (num_elements // 128, 128)
 
     out = self.bm.run_op(*inputs)
     self.assertIsInstance(out, np.ndarray)
     self.assertEqual(out.shape, expected_shape)
+    self.assertEqual(out.dtype, dtype)
 
 
 class HostToDeviceBenchmarkTest(parameterized.TestCase):

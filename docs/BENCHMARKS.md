@@ -185,7 +185,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `data_size_mib` | `int` | `64` | Payload size transferred per iteration in Mebibytes (`1 MiB = 1024 * 1024` bytes). |
-| `dtype` | `str` | `"bfloat16"` | Nominal benchmark data type tag recorded in output reports. |
+| `dtype` | `str` | `"bfloat16"` | Tensor element data type (e.g., `bfloat16`, `float32`, `int8`). |
 
 #### Reported Metrics
 

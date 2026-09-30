@@ -12,13 +12,14 @@ from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
 
 
-class HostToDeviceBenchmarkTest(absltest.TestCase):
+class HostToDeviceBenchmarkTest(parameterized.TestCase):
   """Unit tests for HostToDeviceBenchmark."""
 
   def setUp(self):
@@ -55,16 +56,17 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     self.assertEqual(bm_class, host_device.HostToDeviceBenchmark)
 
   def test_generate_inputs(self):
-    """Verify input shape."""
+    """Verify input shape and default dtype."""
     self._setup_benchmark()
     inputs = self.bm.generate_inputs()
     self.assertLen(inputs, 1)
     host_data = inputs[0]
-    # 4MB of float32 = 1M elements.
-    # 1M elements / 128 = 8192 rows.
-    # Shape should be (8192, 128)
-    self.assertEqual(host_data.shape, (8192, 128))
-    self.assertEqual(host_data.dtype, np.float32)
+    # 4MB of bfloat16 (2 bytes) = 2M elements.
+    # 2M elements / 128 = 16384 rows.
+    # Shape should be (16384, 128)
+    self.assertEqual(host_data.shape, (16384, 128))
+    self.assertEqual(host_data.dtype, jnp.bfloat16)
+    self.assertEqual(host_data.nbytes, self.bm.config.data_size_bytes)
 
   def test_run_op(self):
     """Verify run_op returns a JAX array on device."""
@@ -72,7 +74,47 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     inputs = self.bm.generate_inputs()
     out = self.bm.run_op(*inputs)
     self.assertIsInstance(out, jax.Array)
-    self.assertEqual(out.shape, (8192, 128))
+    self.assertEqual(out.shape, (16384, 128))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+    self.assertEqual(out.nbytes, self.bm.config.data_size_bytes)
+
+  @parameterized.named_parameters(
+      ("bfloat16", "bfloat16", jnp.bfloat16, 2, (16384, 128)),
+      ("float32", "float32", jnp.float32, 4, (8192, 128)),
+      ("float16", "float16", jnp.float16, 2, (16384, 128)),
+      ("int32", "int32", jnp.int32, 4, (8192, 128)),
+      ("int8", "int8", jnp.int8, 1, (32768, 128)),
+      ("float8_e4m3fn", "float8_e4m3fn", jnp.float8_e4m3fn, 1, (32768, 128)),
+      ("float8_e5m2", "float8_e5m2", jnp.float8_e5m2, 1, (32768, 128)),
+  )
+  def test_dtypes_generate_inputs_and_run_op(
+      self, dtype_str, expected_dtype, expected_itemsize, expected_shape
+  ):
+    """Verify generate_inputs and run_op honor config.dtype and preserve payload size."""
+    self._setup_benchmark(dtype=dtype_str)
+    inputs = self.bm.generate_inputs()
+    self.assertLen(inputs, 1)
+    host_data = inputs[0]
+    self.assertIsInstance(host_data, np.ndarray)
+    self.assertEqual(host_data.dtype, expected_dtype)
+    self.assertEqual(host_data.dtype.itemsize, expected_itemsize)
+    self.assertEqual(host_data.shape, expected_shape)
+    self.assertEqual(host_data.nbytes, self.bm.config.data_size_bytes)
+
+    out = self.bm.run_op(*inputs)
+    self.assertIsInstance(out, jax.Array)
+    self.assertEqual(out.dtype, expected_dtype)
+    self.assertEqual(out.dtype.itemsize, expected_itemsize)
+    self.assertEqual(out.shape, expected_shape)
+    self.assertEqual(out.nbytes, self.bm.config.data_size_bytes)
+
+  def test_invalid_dtype_raises_error(self):
+    """Verify generate_inputs raises ValueError for invalid dtype."""
+    with self.assertRaisesRegex(
+        ValueError, "Invalid dtype string: 'invalid_dtype'"
+    ):
+      self._setup_benchmark(dtype="invalid_dtype")
+      self.bm.generate_inputs()
 
   def test_get_total_bytes(self):
     """Verify byte calculation."""
@@ -177,7 +219,7 @@ class HostToDeviceBenchmarkTest(absltest.TestCase):
     )
 
 
-class DeviceToHostBenchmarkTest(absltest.TestCase):
+class DeviceToHostBenchmarkTest(parameterized.TestCase):
   """Unit tests for DeviceToHostBenchmark."""
 
   def setUp(self):
@@ -223,7 +265,9 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
     self.assertLen(inputs, 1)
     device_array = inputs[0]
     self.assertIsInstance(device_array, jax.Array)
-    self.assertEqual(device_array.shape, (8192, 128))
+    self.assertEqual(device_array.shape, (16384, 128))
+    self.assertEqual(device_array.dtype, jnp.bfloat16)
+    self.assertEqual(device_array.nbytes, self.bm.config.data_size_bytes)
 
   def test_run_op(self):
     """Verify run_op returns a numpy array."""
@@ -232,7 +276,46 @@ class DeviceToHostBenchmarkTest(absltest.TestCase):
 
     out = self.bm.run_op(*inputs)
     self.assertIsInstance(out, np.ndarray)
-    self.assertEqual(out.shape, (8192, 128))
+    self.assertEqual(out.shape, (16384, 128))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+    self.assertEqual(out.nbytes, self.bm.config.data_size_bytes)
+
+  @parameterized.named_parameters(
+      ("bfloat16", "bfloat16", jnp.bfloat16, 2, (16384, 128)),
+      ("float32", "float32", jnp.float32, 4, (8192, 128)),
+      ("float16", "float16", jnp.float16, 2, (16384, 128)),
+      ("int32", "int32", jnp.int32, 4, (8192, 128)),
+      ("int8", "int8", jnp.int8, 1, (32768, 128)),
+      ("float8_e4m3fn", "float8_e4m3fn", jnp.float8_e4m3fn, 1, (32768, 128)),
+      ("float8_e5m2", "float8_e5m2", jnp.float8_e5m2, 1, (32768, 128)),
+  )
+  def test_dtypes_generate_inputs_and_run_op(
+      self, dtype_str, expected_dtype, expected_itemsize, expected_shape
+  ):
+    """Verify generate_inputs and run_op honor config.dtype and preserve payload size."""
+    self._setup_benchmark(dtype=dtype_str)
+    inputs = self.bm.generate_inputs()
+    self.assertLen(inputs, 1)
+    device_array = inputs[0]
+    self.assertIsInstance(device_array, jax.Array)
+    self.assertEqual(device_array.dtype, expected_dtype)
+    self.assertEqual(device_array.dtype.itemsize, expected_itemsize)
+    self.assertEqual(device_array.shape, expected_shape)
+    self.assertEqual(device_array.nbytes, self.bm.config.data_size_bytes)
+
+    out = self.bm.run_op(*inputs)
+    self.assertIsInstance(out, np.ndarray)
+    self.assertEqual(out.dtype, expected_dtype)
+    self.assertEqual(out.dtype.itemsize, expected_itemsize)
+    self.assertEqual(out.shape, expected_shape)
+    self.assertEqual(out.nbytes, self.bm.config.data_size_bytes)
+
+  def test_invalid_dtype_raises_error(self):
+    """Verify setup raises ValueError for invalid dtype."""
+    with self.assertRaisesRegex(
+        ValueError, "Invalid dtype string: 'invalid_dtype'"
+    ):
+      self._setup_benchmark(dtype="invalid_dtype")
 
   def test_get_total_bytes(self):
     """Verify byte calculation."""
