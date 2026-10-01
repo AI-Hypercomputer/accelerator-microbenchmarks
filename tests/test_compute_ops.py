@@ -3,6 +3,7 @@
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import compute_ops
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import system
 import jax
@@ -181,7 +182,7 @@ class RoPEBenchmarkTest(absltest.TestCase):
     self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
 
 
-class QuantizationBenchmarkTest(absltest.TestCase):
+class QuantizationBenchmarkTest(parameterized.TestCase):
   """Unit tests for Quantization benchmark."""
 
   def setUp(self):
@@ -219,18 +220,97 @@ class QuantizationBenchmarkTest(absltest.TestCase):
     self.assertEqual(sf.shape, (64, 1))
     self.assertEqual(sf.dtype, jnp.bfloat16)
 
+  @parameterized.named_parameters(
+      (
+          "fp8_bf16_sf",
+          "float8_e4m3fn",
+          "bfloat16",
+          jnp.float8_e4m3fn,
+          jnp.bfloat16,
+          24704.0,
+      ),
+      (
+          "fp4_bf16_sf",
+          "float4_e2m1fn",
+          "bfloat16",
+          jnp.float4_e2m1fn,
+          jnp.bfloat16,
+          20608.0,
+      ),
+      ("int4_bf16_sf", "int4", "bfloat16", jnp.int4, jnp.bfloat16, 20608.0),
+      (
+          "fp8_fp32_sf",
+          "float8_e4m3fn",
+          "float32",
+          jnp.float8_e4m3fn,
+          jnp.float32,
+          24832.0,
+      ),
+  )
+  def test_quant_dtypes_and_bytes(
+      self,
+      quant_dtype,
+      scale_dtype,
+      expected_out_dtype,
+      expected_sf_dtype,
+      expected_bytes,
+  ):
+    """Verifies output dtype, scale dtype, and total bytes across FP8, FP4, and INT4."""
+    config = compute_ops.QuantParams(
+        m=64, n=128, quant_dtype=quant_dtype, scale_dtype=scale_dtype
+    )
+    self.bm = compute_ops.QuantizationBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.bm.setup()
+    (x,) = self.bm.generate_inputs()
+    out, sf = self.bm.run_op(x)
+    self.assertEqual(out.shape, (64, 128))
+    self.assertEqual(out.dtype, expected_out_dtype)
+    self.assertEqual(sf.shape, (64, 1))
+    self.assertEqual(sf.dtype, expected_sf_dtype)
+    self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
+    self.assertEqual(
+        self.bm.get_run_identifier(),
+        f"m_64_n_128_{quant_dtype}_sf_{scale_dtype}",
+    )
+
   def test_get_total_bytes(self):
+    """Verifies default total bytes and derived device bandwidth metrics."""
     params = {"m": 64, "n": 128}
     config = compute_ops.QuantParams(**params)
     self.bm = compute_ops.QuantizationBenchmark(
         config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
-    # Read X (64 * 128 * 2), Write Out (64 * 128 * 1), Write SF (64 * 4)
-    # 16384 + 8192 + 256 = 24832
-    expected_bytes = 24832.0
+    # Read X (64 * 128 * 2), Write Out (64 * 128 * 1), Write SF (64 * 2)
+    # 16384 + 8192 + 128 = 24704
+    expected_bytes = 24704.0
     self.assertAlmostEqual(self.bm.get_total_bytes(), expected_bytes)
     metrics = self.bm.calculate_metrics([10.0])
     self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", metrics)
+    self.assertGreater(metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0)
+
+  def test_calculate_throughput_metrics_zero_latency_warns(self):
+    """Verifies zero/negative latency logs a warning and returns inf bandwidth."""
+    config = compute_ops.QuantParams(m=64, n=128)
+    bm = compute_ops.QuantizationBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    with self.assertLogs(level="WARNING") as cm:
+      metrics = bm.calculate_throughput_metrics(
+          0.0, constants.TimingDomain.WALL_CLOCK
+      )
+    self.assertEqual(
+        metrics["wall_clock_bandwidth_per_device_gb_s"], float("inf")
+    )
+    self.assertTrue(
+        any("Non-positive latency_s" in msg for msg in cm.output)
+    )
 
 
 class AddBenchmarkTest(absltest.TestCase):

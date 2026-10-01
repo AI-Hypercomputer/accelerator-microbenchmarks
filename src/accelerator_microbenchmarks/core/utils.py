@@ -61,3 +61,50 @@ def random_bits_array(
       endpoint=True,
   )
   return words.view(np.uint8)[:nbytes].view(dtype).reshape(shape)
+
+
+def get_dtype_info(dtype_or_str: str | jnp.dtype) -> jnp.finfo | jnp.iinfo:
+  """Returns the jax.numpy finfo or iinfo descriptor for a numeric dtype.
+
+  Args:
+    dtype_or_str: Either a string representation (e.g., 'float8_e4m3fn',
+      'float4_e2m1fn', 'int4', 'bfloat16') or a `jax.numpy` dtype.
+
+  Returns:
+    The corresponding `jnp.finfo` (for floating-point dtypes) or `jnp.iinfo`
+    (for integer dtypes) descriptor.
+
+  Raises:
+    ValueError: If the dtype is not a floating-point or integer numeric type.
+  """
+  dtype = (
+      parse_dtype(dtype_or_str)
+      if isinstance(dtype_or_str, str)
+      else jnp.dtype(dtype_or_str)
+  )
+  if jnp.issubdtype(dtype, jnp.floating):
+    return jnp.finfo(dtype)
+  if jnp.issubdtype(dtype, jnp.integer):
+    return jnp.iinfo(dtype)
+  raise ValueError(f"Unsupported non-numeric dtype: '{dtype}'.")
+
+
+def get_dtype_bytes(dtype_or_str: str | jnp.dtype) -> float:
+  """Returns the physical storage size in bytes per element (`bits / 8.0`).
+
+  Unlike `jnp.dtype(dtype).itemsize` (which reports `1` byte for 4-bit container
+  dtypes such as `int4` and `float4_e2m1fn`), `get_dtype_info().bits / 8.0`
+  returns the exact physical width (`0.5` bytes for 4-bit types).
+
+  Args:
+    dtype_or_str: Either a string representation or a `jax.numpy` dtype.
+
+  Returns:
+    The physical storage size in bytes per element as a float.
+  """
+  return float(get_dtype_info(dtype_or_str).bits) / 8.0
+
+
+def get_dtype_max(dtype_or_str: str | jnp.dtype) -> float:
+  """Returns the maximum representable finite value for a numeric dtype."""
+  return float(get_dtype_info(dtype_or_str).max)

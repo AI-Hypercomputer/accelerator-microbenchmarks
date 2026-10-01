@@ -1,11 +1,13 @@
 """Specialized compute benchmarks for LLM components."""
 
 import dataclasses
+import logging
 from typing import Any
 
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
 
@@ -44,6 +46,8 @@ class RoPEParams(base.SingleDtypeBenchmarkParams):
 
 @dataclasses.dataclass
 class QuantParams(base.SingleDtypeBenchmarkParams):
+  """Parameters for the rowwise quantization microbenchmark."""
+
   m: int = dataclasses.field(
       default=4096,
       metadata={"min": 1, "help": "Matrix dimension M (rows)."},
@@ -51,6 +55,24 @@ class QuantParams(base.SingleDtypeBenchmarkParams):
   n: int = dataclasses.field(
       default=4096,
       metadata={"min": 1, "help": "Matrix dimension N (columns)."},
+  )
+  quant_dtype: str = dataclasses.field(
+      default="float8_e4m3fn",
+      metadata={
+          "help": (
+              "Target quantized data type (e.g., 'float8_e4m3fn',"
+              " 'float4_e2m1fn', 'int4')."
+          )
+      },
+  )
+  scale_dtype: str = dataclasses.field(
+      default="bfloat16",
+      metadata={
+          "help": (
+              "Data type for rowwise scaling factors (e.g., 'bfloat16',"
+              " 'float32')."
+          )
+      },
   )
 
 
@@ -280,31 +302,40 @@ class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
 
 @registry.benchmark_registry.register("quantization", is_experimental=True)
 class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
-  """Rowwise quantization to FP8: OUT = cast_fp8(X / SF)."""
+  """Rowwise quantization: OUT = cast_quant(X * SF)."""
+
   Config = QuantParams
+  derive_chip_bandwidth: bool = True
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.MEMORY_HBM
 
   def setup(self):
+    out_dtype = utils.parse_dtype(self.config.quant_dtype)
+    sf_dtype = utils.parse_dtype(self.config.scale_dtype)
+    q_max = utils.get_dtype_max(out_dtype)
+
     @jax.jit
     def quant_fn(x):
       with jax.named_scope(constants.MARKER):
-        # Rowwise scaling factor: FP8_MAX / amax(row)
-        sf = 448.0 / jnp.max(jnp.abs(x), axis=-1, keepdims=True)
-        out = (x * sf).astype(jnp.float8_e4m3fn)
+        # Rowwise scaling factor: Q_MAX / amax(row)
+        sf = (q_max / jnp.max(jnp.abs(x), axis=-1, keepdims=True)).astype(
+            sf_dtype
+        )
+        out = (x * sf).astype(out_dtype)
         return out, sf
 
     self._jit_fn = quant_fn
 
   def get_run_identifier(self) -> str:
-    m = self.config.m
-    n = self.config.n
-    if m is not None or n is not None:
-      return f"m_{m or 4096}_n_{n or 4096}"
-    return ""
+    return (
+        f"m_{self.config.m}_n_{self.config.n}_"
+        f"{self.config.quant_dtype}_sf_{self.config.scale_dtype}"
+    )
 
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     m, n = self.config.m, self.config.n
+    in_dtype = utils.parse_dtype(self.config.dtype)
     key = jax.random.PRNGKey(0)
-    x = jax.random.normal(key, (m, n), dtype=jnp.bfloat16)
+    x = jax.random.normal(key, (m, n), dtype=in_dtype)
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
     x = jax.device_put(
@@ -322,10 +353,13 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
 
   def get_total_bytes(self) -> float:
     m, n = self.config.m, self.config.n
-    in_itemsize = jnp.dtype(jnp.bfloat16).itemsize
-    out_itemsize = jnp.dtype(jnp.float8_e4m3fn).itemsize
+    in_itemsize = utils.get_dtype_bytes(self.config.dtype)
+    out_itemsize = utils.get_dtype_bytes(self.config.quant_dtype)
+    sf_itemsize = utils.get_dtype_bytes(self.config.scale_dtype)
     # Read X, Write Out, Write SF (rowwise)
-    return (m * n * in_itemsize) + (m * n * out_itemsize) + (m * 4)
+    return float(
+        (m * n * in_itemsize) + (m * n * out_itemsize) + (m * sf_itemsize)
+    )
 
   def get_arithmetic_intensity(self) -> float:
     m, n = self.config.m, self.config.n
@@ -333,10 +367,34 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     # Approximation: 4 flops per element
     return (m * n * 4) / self.get_total_bytes()
 
+  def get_workload_metadata(self) -> dict[str, Any]:
+    total_bytes = self.get_total_bytes()
+    return {
+        "total_bytes_mib": total_bytes / (1024 * 1024),
+        "quant_dtype": self.config.quant_dtype,
+        "scale_dtype": self.config.scale_dtype,
+    }
+
   def calculate_throughput_metrics(
       self, latency_ms: float, prefix: constants.TimingDomain
   ) -> dict[str, Any]:
-    return {}
+    total_bytes = self.get_total_bytes()
+    latency_s = latency_ms / 1000.0
+    if latency_s <= 0:
+      logging.warning(
+          "Non-positive latency_s (%s) encountered for %s in"
+          " QuantizationBenchmark; returning inf bandwidth.",
+          latency_s,
+          prefix,
+      )
+      bandwidth_gb_s = float("inf")
+    else:
+      # X is replicated (PartitionSpec(None, None)), so every device runs the
+      # full [M, N] op and moves total_bytes; do not divide by mesh size.
+      bandwidth_gb_s = (total_bytes / latency_s) / 1e9
+    return {
+        f"{prefix}_bandwidth_per_device_gb_s": bandwidth_gb_s,
+    }
 
 
 @registry.benchmark_registry.register("simple_add", is_experimental=True)

@@ -18,10 +18,13 @@ class UtilsTest(parameterized.TestCase):
       ("float64", "float64", jnp.float64),
       ("int32", "int32", jnp.int32),
       ("int8", "int8", jnp.int8),
+      ("int4", "int4", jnp.int4),
       ("float8_e4m3fn", "float8_e4m3fn", jnp.float8_e4m3fn),
       ("float8_e5m2", "float8_e5m2", jnp.float8_e5m2),
+      ("float4_e2m1fn", "float4_e2m1fn", jnp.float4_e2m1fn),
   )
   def test_parse_dtype_valid(self, dtype_str, expected_dtype):
+    """Verifies that valid dtype strings parse to their expected jnp.dtype."""
     self.assertEqual(utils.parse_dtype(dtype_str), expected_dtype)
 
   @parameterized.named_parameters(
@@ -67,6 +70,24 @@ class UtilsTest(parameterized.TestCase):
     a = utils.random_bits_array((32, 128), jnp.int32)
     b = utils.random_bits_array((32, 128), jnp.int32)
     self.assertFalse(np.array_equal(a, b))
+
+  @parameterized.named_parameters(
+      ("float32_str", "float32", 4.0, float(jnp.finfo(jnp.float32).max)),
+      ("bfloat16_str", "bfloat16", 2.0, float(jnp.finfo(jnp.bfloat16).max)),
+      ("float8_e4m3fn_str", "float8_e4m3fn", 1.0, 448.0),
+      ("float8_e5m2_str", "float8_e5m2", 1.0, 57344.0),
+      ("int8_str", "int8", 1.0, 127.0),
+      ("float4_e2m1fn_str", "float4_e2m1fn", 0.5, 6.0),
+      ("int4_str", "int4", 0.5, 7.0),
+  )
+  def test_get_dtype_bytes_and_max(
+      self, dtype_or_str, expected_bytes, expected_max
+  ):
+    """Verifies bit-width byte calculation and max representable value via finfo/iinfo."""
+    self.assertAlmostEqual(utils.get_dtype_bytes(dtype_or_str), expected_bytes)
+    self.assertAlmostEqual(
+        utils.get_dtype_max(dtype_or_str), expected_max, places=1
+    )
 
 
 if __name__ == "__main__":
