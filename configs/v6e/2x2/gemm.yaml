@@ -6,10 +6,7 @@ benchmark:
     num_runs: 5
     in_dtype: bfloat16
     out_dtype: bfloat16
-  cases:
-    - m: 16384
-      k: 16384
-      n: 16384
-    - m: 32768
-      k: 32768
-      n: 32768
+    k: 4096
+    n: 4096
+  sweep:
+    m: [8192, 16384, 32768]
