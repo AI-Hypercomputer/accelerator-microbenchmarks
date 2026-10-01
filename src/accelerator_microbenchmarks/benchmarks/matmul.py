@@ -113,35 +113,66 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     return hlo_category.strip('"') == "convolution fusion"
 
   def setup(self):
+    if self.mesh is None:
+      self.mesh = self._create_default_mesh()
+    self._rng_key = jax.random.PRNGKey(self.config.seed)
+
     out_dtype = utils.parse_dtype(self.config.out_dtype)
     alpha = self.config.alpha
     beta = self.config.beta
+    spec = jax.sharding.PartitionSpec(None, None)
+    empty_spec = jax.sharding.PartitionSpec()
 
     @jax.jit
     def gemm_fn(a, b, sf0=None, sf1=None, c=None):
-      with jax.named_scope(constants.MARKER):
-        # Standard matmul
-        lhs_contracting_dim = (0,) if self.config.transpose_a else (1,)
-        rhs_contracting_dim = (1,) if self.config.transpose_b else (0,)
-        out = jax.lax.dot_general(
-            a,
-            b,
-            dimension_numbers=(
-                (lhs_contracting_dim, rhs_contracting_dim),
-                ((), ()),
-            ),
-        )
-        if alpha != 1.0:
-          out = out * alpha
-        if c is not None:
-          out = out + (c * beta if beta != 1.0 else c)
-        # Optional rescaling (row-wise scaling factors as requested)
-        if sf0 is not None and sf1 is not None:
-          # Assuming rowwise scaling factor SF0<M, 1> and SF1<1, N>
-          out = out * (sf0 @ sf1)
-        return out.astype(out_dtype)
+      def f(a_shard, b_shard, sf0_shard, sf1_shard, c_shard):
+        with jax.named_scope(constants.MARKER):
+          # Standard matmul with FP32 accumulation (matching main_legacy)
+          lhs_contracting_dim = (0,) if self.config.transpose_a else (1,)
+          rhs_contracting_dim = (1,) if self.config.transpose_b else (0,)
+          out = jax.lax.dot_general(
+              a_shard,
+              b_shard,
+              dimension_numbers=(
+                  (lhs_contracting_dim, rhs_contracting_dim),
+                  ((), ()),
+              ),
+              preferred_element_type=jnp.float32,
+          )
+          if alpha != 1.0:
+            out = out * alpha
+          if c_shard is not None:
+            out = out + (c_shard * beta if beta != 1.0 else c_shard)
+          # Optional rescaling (row-wise scaling factors as requested)
+          if sf0_shard is not None and sf1_shard is not None:
+            # Assuming rowwise scaling factor SF0<M, 1> and SF1<1, N>
+            out = out * (sf0_shard @ sf1_shard)
+          return out.astype(out_dtype)
+
+      return jax.shard_map(
+          f,
+          mesh=self.mesh,
+          in_specs=(
+              spec,
+              spec,
+              spec if sf0 is not None else empty_spec,
+              spec if sf1 is not None else empty_spec,
+              spec if c is not None else empty_spec,
+          ),
+          out_specs=spec,
+          check_vma=False,
+      )(a, b, sf0, sf1, c)
 
     self._jit_fn = gemm_fn
+
+  def reset_data(self, *inputs, **kwargs) -> tuple[Any, ...]:
+    """Regenerates new random data on host and puts it on device per iteration."""
+    for arr in inputs:
+      if isinstance(arr, jax.Array):
+        arr.delete()
+    new_inputs = self.generate_inputs()
+    jax.devices()
+    return new_inputs
 
   def get_run_identifier(self) -> str:
     run_identifier = (
@@ -174,8 +205,9 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     # Resolve dtypes
     in_dtype = utils.parse_dtype(self.config.in_dtype)
 
-    key = jax.random.PRNGKey(self.config.seed)
-    k1, k2, k3, k4, k5 = jax.random.split(key, 5)
+    if getattr(self, "_rng_key", None) is None:
+      self._rng_key = jax.random.PRNGKey(self.config.seed)
+    self._rng_key, k1, k2, k3, k4, k5 = jax.random.split(self._rng_key, 6)
 
     # Data generation in HBM
     # Note: JAX might require intermediate conversion for random.normal if
