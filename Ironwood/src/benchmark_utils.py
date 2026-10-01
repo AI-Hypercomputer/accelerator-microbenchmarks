@@ -158,6 +158,7 @@ def multiple_iteration_timeit_from_trace(
     tries: int = 17,
     task: str = None,
     trace_dir: str = None,
+    report_slowest_device: bool = False,
 ) -> list[float]:
     """
     Time a function with jax.profiler and get the run time from the trace.
@@ -207,11 +208,52 @@ def multiple_iteration_timeit_from_trace(
     if trace_full_dir != tmp_trace_dir:
         # Upload the traces to desired location
         upload_to_storage(trace_dir=trace_full_dir, local_file=tmp_trace_dir)
-    return multiple_iteration_get_metrics_from_trace(trace, task)
+    return multiple_iteration_get_metrics_from_trace(
+        trace, task, report_slowest_device=report_slowest_device
+    )
+
+
+def _get_slowest_device_durations(
+    events: list[dict[str, Any]],
+) -> list[float]:
+    durations_by_pid = defaultdict(list)
+    for e in events:
+        device_duration_ps = e.get("args", {}).get("device_duration_ps")
+        if device_duration_ps is None:
+            continue
+        duration_ms = float(device_duration_ps) / 1e9
+        if duration_ms > 0:
+            durations_by_pid[e["pid"]].append(duration_ms)
+
+    if not durations_by_pid:
+        print("Warning: No device duration found for any device in the trace.")
+        return []
+
+    for pid in sorted(durations_by_pid):
+        durations = durations_by_pid[pid]
+        print(
+            f"PID {pid}: {len(durations)} events, "
+            f"median duration {np.median(durations):.6f} ms"
+        )
+
+    slowest_pid = min(
+        durations_by_pid,
+        key=lambda pid: np.median([1.0 / d for d in durations_by_pid[pid]]),
+    )
+    durations_ms = durations_by_pid[slowest_pid]
+    print(
+        f"Selected slowest device: PID {slowest_pid}, "
+        f"{len(durations_ms)} events, "
+        f"median duration {np.median(durations_ms):.6f} ms"
+    )
+    print(durations_ms)
+    return durations_ms
 
 
 def multiple_iteration_get_metrics_from_trace(
-    trace: dict[str, Any], task: str = None
+    trace: dict[str, Any],
+    task: str = None,
+    report_slowest_device: bool = False,
 ) -> list[float]:
     marker_done_events = []
     for event in trace["traceEvents"]:
@@ -254,6 +296,9 @@ def multiple_iteration_get_metrics_from_trace(
                 "legacy_get_metrics_from_trace_tpu."
             )
         return durations_ms
+
+    if report_slowest_device:
+        return _get_slowest_device_durations(marker_done_events)
 
     min_pid = min([e["pid"] for e in marker_done_events])
     events_from_min_pid = [e for e in marker_done_events if e["pid"] == min_pid]
