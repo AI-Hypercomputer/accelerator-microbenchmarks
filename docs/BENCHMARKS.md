@@ -249,7 +249,10 @@ On TPU architectures with two logical devices per physical chip—such as **`tpu
 
 - **`parallel` Replica Group** (e.g., `[0, 2, 4, 6]` and `[1, 3, 5, 7]`): Logical Device 0 of each chip forms one inter-chip collective ring (`[0, 2, 4, 6]`), while Logical Device 1 of each chip simultaneously forms a second disjoint inter-chip collective ring (`[1, 3, 5, 7]`). Because **both logical devices on every physical chip transmit across external ICI links simultaneously**, each physical chip drives **`C = 2` active rings in parallel**, with **`P = R - 1`** external inter-chip peers per ring of size `R`.
 - **`non-parallel` Replica Group** (e.g., `[0, 1, 2, 3]`): Both logical devices (`0` and `1`) of the **same physical chip** participate in the **same** collective replica group (`C = 1` ring per chip). Because intra-chip communication between Logical Device 0 and Logical Device 1 stays internal to the physical chip rather than traversing external ICI links, each ring of size `R` has **`P = max(R - 2, 1)`** external inter-chip peers.
-- **Reported Metadata**: TPUMS automatically classifies the compiled HLO replica groups and records `replica_group_type` (`"parallel"` or `"non-parallel"`) and `replica_group_rank` (`R`) in the output reports.
+- **Reported Metadata**: TPUMS automatically classifies the first replica group
+  from the JAX mesh by the devices' `core_on_chip` (`"parallel"` iff all
+  devices share one core) and records `replica_group_type` (`"parallel"` or
+  `"non-parallel"`) and `replica_group_rank` (`R`) in the output reports.
 
 **3. Tensor Shape & Per-Device Shard Payload (`matrix_dim` → `shard_size_mib`):**
 
@@ -268,7 +271,6 @@ On TPU architectures with two logical devices per physical chip—such as **`tpu
 | `dtype` | `str` | `"bfloat16"` | All Collectives | Tensor element data type (e.g., `bfloat16`, `float32`). |
 | `reduce_op` | `str` | `"sum"` | `all_reduce` only | Reduction operator applied across active collective dimensions (`"sum"`, `"mean"`, `"max"`, `"min"`). |
 | `seed` | `int` | `0` | All Collectives | PRNG seed for tensor initialization. |
-| `xla_dump_dir` | `Optional[str]` | `None` | All Collectives | Optional directory containing XLA HLO dump files for inspecting compiler `replica_groups`. |
 
 #### Collective Bus Bandwidth Formulas (`data_transferred_bytes`)
 

@@ -4,6 +4,7 @@ import argparse
 import dataclasses
 import io
 import os
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -41,6 +42,12 @@ _COLLECTIVES_IGNORED_KEYS: frozenset[str] = frozenset({
 })
 
 
+@dataclasses.dataclass
+class _MockTpuDevice:
+  id: int
+  core_on_chip: int
+
+
 class CollectivesBenchmarkTest(parameterized.TestCase):
   """Unit tests for collectives.py."""
 
@@ -49,6 +56,21 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     # Create a dummy mesh for testing on CPU
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
+    )
+    # CPU devices lack core_on_chip, so tag each first replica group device
+    # with id % 2 (TPU7x device ids are 2 * chip + core).
+    bm_cls = collectives.BaseCollectiveBenchmark
+    get_devices = bm_cls._get_first_replica_group_devices  # pylint: disable=protected-access
+    self.enter_context(
+        mock.patch.object(
+            bm_cls,
+            "_get_first_replica_group_devices",
+            autospec=True,
+            side_effect=lambda bm: [
+                _MockTpuDevice(id=d.id, core_on_chip=d.id % 2)
+                for d in get_devices(bm)
+            ],
+        )
     )
 
   def test_all_reduce_registered(self):
@@ -504,18 +526,18 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
           4.194304,
       ),
       (
-          "hlo_parallel_8_chips",
+          "parallel_8_chips",
           "2x2",
-          "{{0,2,4,6,8,10,12,14},{1,3,5,7,9,11,13,15}}",
+          [0, 2, 4, 6, 8, 10, 12, 14],
           "parallel",
           8,
           7340032.0,
           7.340032,
       ),
       (
-          "hlo_non_parallel_8_chips",
+          "non_parallel_8_chips",
           "2x2",
-          "{{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}}",
+          list(range(16)),
           "non-parallel",
           16,
           7340032.0,
@@ -525,25 +547,18 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
   def test_all_to_all_parallel_vs_non_parallel_transfer_metrics(
       self,
       sharding_strategy,
-      replica_groups_str,
+      group_ids,
       expected_group_type,
       expected_rank,
       expected_bytes,
       expected_bw,
   ):
     """Verify AllToAllBenchmark counts all devices_per_chip cores in both parallel and non-parallel modes."""
-    dump_dir = None
-    if replica_groups_str is not None:
-      dump_dir = self.create_tempdir().full_path
-      with open(os.path.join(dump_dir, "after_optimizations.txt"), "w") as f:
-        f.write(f"HloModule ... replica_groups={replica_groups_str}")
-
     config = collectives.CollectivesParams(
         matrix_dim=1024,
         dtype="float32",
         mesh_shape="2x2",
         sharding_strategy=sharding_strategy,
-        xla_dump_dir=dump_dir,
     )
     a2a_bm = collectives.AllToAllBenchmark(
         config=config,
@@ -551,6 +566,11 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     )
     a2a_bm.setup()
     self.assertEqual(a2a_bm.hardware_spec.devices_per_chip, 2)
+    if group_ids is not None:
+      # Larger TPU7x replica group than the 4 CPU devices can form.
+      a2a_bm._get_first_replica_group_devices = lambda: [  # pylint: disable=protected-access
+          _MockTpuDevice(id=i, core_on_chip=i % 2) for i in group_ids
+      ]
 
     metadata = a2a_bm.get_workload_metadata()
     self.assertEqual(metadata["replica_group_type"], expected_group_type)
@@ -564,70 +584,96 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
     )
 
-  def test_replica_groups_hlo_parsing(self):
-    """Verify replica group type and rank parsing from disk HLO dumps."""
-    # Parallel replica groups (strided)
-    dump_dir_p = self.create_tempdir().full_path
-    with open(os.path.join(dump_dir_p, "after_optimizations.txt"), "w") as f:
+  def test_replica_groups_ignores_hlo_dump_and_uses_mesh_devices(self):
+    """Verify replica groups are derived from mesh.devices instead of HLO dumps."""
+    devices = np.array(jax.devices()).reshape((2, 2))
+
+    # Even if an HLO dump file exists with 8-element strided logical indices,
+    # _get_first_replica_group_devices derives physical devices
+    # directly from self.mesh.devices[indexer].
+    dump_dir = self.create_tempdir().full_path
+    with open(os.path.join(dump_dir, "after_optimizations.txt"), "w") as f:
       f.write("HloModule ... replica_groups={{0,2,4,6},{1,3,5,7}}")
 
+    # 2x1 sharding on 2x2 mesh ([0, 1], [2, 3]) -> first group is
+    # devices[:, 0] = [0, 2] -> parallel.
     config_parallel = collectives.CollectivesParams(
         matrix_dim=1024,
         dtype="float32",
         mesh_shape="2x2",
-        sharding_strategy="2x2",
-        xla_dump_dir=dump_dir_p,
+        sharding_strategy="2x1",
     )
     ag_parallel = collectives.AllGatherBenchmark(
         config=config_parallel, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
     ag_parallel.setup()
+    self.assertEqual(
+        [d.id for d in ag_parallel._get_first_replica_group_devices()],  # pylint: disable=protected-access
+        [0, 2],
+    )
     metrics_p = ag_parallel.calculate_metrics([1.0])
     self.assertEqual(metrics_p["replica_group_type"], "parallel")
-    self.assertEqual(metrics_p["replica_group_rank"], 4)
+    self.assertEqual(metrics_p["replica_group_rank"], 2)
 
-    # Non-parallel replica groups (contiguous)
-    dump_dir_np = self.create_tempdir().full_path
-    with open(os.path.join(dump_dir_np, "after_optimizations.txt"), "w") as f:
-      f.write("HloModule ... replica_groups={{0,1,2,3},{4,5,6,7}}")
-
-    config_non_parallel = collectives.CollectivesParams(
-        matrix_dim=1024,
-        dtype="float32",
-        mesh_shape="2x2",
-        sharding_strategy="2x2",
-        xla_dump_dir=dump_dir_np,
+    # Reordered mesh where devices[:, 0] has physical IDs [0, 1] -> non-parallel
+    # even when HLO dump file has even logical indices {{0,2},{1,3}}.
+    reordered_devices = np.array(
+        [devices.flat[0], devices.flat[2], devices.flat[1], devices.flat[3]]
+    ).reshape((2, 2))
+    reordered_mesh = jax.sharding.Mesh(
+        reordered_devices, axis_names=("d_0", "d_1")
     )
-    ag_non_parallel = collectives.AllGatherBenchmark(
-        config=config_non_parallel, hardware_spec=system.TPU7X_HARDWARE_SPEC
+    ag_parallel.mesh = reordered_mesh
+    self.assertEqual(
+        [d.id for d in ag_parallel._get_first_replica_group_devices()],  # pylint: disable=protected-access
+        [0, 1],
     )
-    ag_non_parallel.setup()
-    metrics_np = ag_non_parallel.calculate_metrics([1.0])
-    self.assertEqual(metrics_np["replica_group_type"], "non-parallel")
-    self.assertEqual(metrics_np["replica_group_rank"], 4)
+    metrics_logical = ag_parallel.calculate_metrics([1.0])
+    self.assertEqual(metrics_logical["replica_group_type"], "non-parallel")
+    self.assertEqual(metrics_logical["replica_group_rank"], 2)
 
-    # Malformed HLO dump falls through to mesh-based derivation
-    dump_dir_malformed = self.create_tempdir().full_path
-    with open(
-        os.path.join(dump_dir_malformed, "after_optimizations.txt"), "w"
-    ) as f:
-      f.write("HloModule ... replica_groups={{invalid}}")
+  @parameterized.named_parameters(
+      # 2x4x4 misplaced group: ids all even, but half the devices are core 1.
+      (
+          "even_ids_mixed_cores",
+          [0, 2, 4, 6, 8, 10, 12, 14],
+          [0, 0, 0, 0, 1, 1, 1, 1],
+          "non-parallel",
+          6,
+      ),
+      # Mixed-parity ids that all sit on core 0 -> one core per chip.
+      (
+          "mixed_ids_same_core",
+          [0, 4, 8, 12, 1, 5, 9, 13],
+          [0, 0, 0, 0, 0, 0, 0, 0],
+          "parallel",
+          7,
+      ),
+  )
+  def test_replica_group_type_uses_core_on_chip(
+      self, ids, cores, expected_group_type, expected_participating_ranks
+  ):
+    """Verify parallel detection uses core_on_chip rather than id parity."""
+    group = [_MockTpuDevice(id=i, core_on_chip=c) for i, c in zip(ids, cores)]
 
-    config_malformed = collectives.CollectivesParams(
-        matrix_dim=1024,
-        dtype="float32",
-        mesh_shape="2x2",
-        sharding_strategy="2x1",
-        xla_dump_dir=dump_dir_malformed,
-    )
-    ag_malformed = collectives.AllGatherBenchmark(
-        config=config_malformed,
+    config = collectives.CollectivesParams(matrix_dim=1024, dtype="float32")
+    ag_bm = collectives.AllGatherBenchmark(
+        config=config,
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
-    ag_malformed.setup()
-    metrics_malformed = ag_malformed.calculate_metrics([1.0])
-    self.assertEqual(metrics_malformed["replica_group_type"], "parallel")
-    self.assertEqual(metrics_malformed["replica_group_rank"], 2)
+    ag_bm.setup()
+    ag_bm._get_first_replica_group_devices = lambda: group  # pylint: disable=protected-access
+
+    metadata = ag_bm.get_workload_metadata()
+    self.assertEqual(metadata["replica_group_type"], expected_group_type)
+    self.assertLen(ids, metadata["replica_group_rank"])
+    tf_multiplier = 2 if expected_group_type == "parallel" else 1
+    local_bytes = 1024 * collectives._BASE_N * collectives._BASE_K * 4  # pylint: disable=protected-access
+    self.assertEqual(
+        metadata["data_transferred_bytes"],
+        local_bytes * expected_participating_ranks * tf_multiplier,
+    )
 
   def test_format_benchmark_table(self):
     """Tests formatting of collective benchmark tables."""

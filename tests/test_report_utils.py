@@ -31,7 +31,6 @@ DEFAULT_IGNORED_KEYS: frozenset[str] = frozenset({
     "warmup_tries",
     "num_runs",
     "min_duration_s",
-    "xla_dump_dir",
     "seed",
     # Intermediate or redundant metrics
     "wall_clock_avg_ms",

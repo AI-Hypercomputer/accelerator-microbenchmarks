@@ -1,10 +1,7 @@
 """Collective communication benchmarks."""
 
 import dataclasses
-import glob
 import math
-import os
-import re
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
@@ -100,11 +97,6 @@ class CollectivesParams(base.SingleDtypeBenchmarkParams):
   seed: int = dataclasses.field(
       default=0,
       metadata={"min": 0, "help": "Random seed for tensor initialization."},
-  )
-  xla_dump_dir: Optional[str] = dataclasses.field(
-      default=None,
-      metadata={"help": "Directory containing disk-based"
-                        " XLA/HLO compilation dumps."},
   )
 
 
@@ -273,60 +265,22 @@ class BaseCollectiveBenchmark(
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(data)
 
-  def _extract_first_replica_group_from_hlo_dump(self) -> list[int]:
-    """Reads disk-based HLO dump files and extracts the first replica group."""
-    search_dirs = []
-    if self.config.xla_dump_dir:
-      search_dirs.append(self.config.xla_dump_dir)
+  def _get_first_replica_group_devices(self) -> list[jax.Device]:
+    """Returns the devices of the first replica group, derived from the JAX mesh."""
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
 
-    xla_flags = os.environ.get("XLA_FLAGS", "")
-    match = re.search(r"--xla_dump_to=([^ ]+)", xla_flags)
-    if match:
-      search_dirs.append(match.group(1))
-
-    for dump_dir in search_dirs:
-      if not os.path.exists(dump_dir):
-        continue
-      files = glob.glob(
-          os.path.join(dump_dir, "*after_optimizations*.txt")
-      ) + glob.glob(os.path.join(dump_dir, "*.txt"))
-      files.sort(key=os.path.getmtime, reverse=True)
-      for fpath in files:
-        if os.path.isfile(fpath):
-          try:
-            with open(fpath, "r") as f:
-              content = f.read()
-            rg_match = re.search(
-                r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})",
-                content,
-                re.DOTALL,
-            )
-            if rg_match:
-              content_rg = rg_match.group(1)[2:-2]
-              first_group_str = content_rg.split("},{")[0]
-              return [int(x) for x in first_group_str.split(",")]
-          except Exception:
-            pass
-
-    # Derive first replica group directly from mesh layout and sharding axes
-    if self.mesh:
-      sharding_axes = self._get_sharding_axes()
-      sharding_axes_set = (
-          {sharding_axes}
-          if isinstance(sharding_axes, str)
-          else set(sharding_axes)
-      )
-      indexer = tuple(
-          slice(None) if axis in sharding_axes_set else slice(0, 1)
-          for axis in self.mesh.axis_names
-      )
-      first_group_devices = self.mesh.devices[indexer].flatten()
-      return [int(d.id) for d in first_group_devices]
-
-    raise ValueError(
-        "Could not find or parse replica_groups from disk HLO dump files in"
-        f" search directories: {search_dirs}"
+    sharding_axes = self._get_sharding_axes()
+    sharding_axes_set = (
+        {sharding_axes}
+        if isinstance(sharding_axes, str)
+        else set(sharding_axes)
     )
+    indexer = tuple(
+        slice(None) if axis in sharding_axes_set else slice(0, 1)
+        for axis in self.mesh.axis_names
+    )
+    return list(self.mesh.devices[indexer].flatten())
 
   def get_workload_metadata(self) -> dict[str, Any]:
     """Calculate static collective transfer metadata (bytes moved, replica group)."""
@@ -337,14 +291,16 @@ class BaseCollectiveBenchmark(
     dtype = utils.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
 
-    first_replica_group = self._extract_first_replica_group_from_hlo_dump()
-    rank = len(first_replica_group)
+    first_group_devices = self._get_first_replica_group_devices()
+    rank = len(first_group_devices)
 
     devices_per_chip = self.hardware_spec.devices_per_chip
+    # HLO replica_group ids are logical, so decide one-core-per-chip from the
+    # mesh devices' core_on_chip.
     if (
         devices_per_chip > 1
         and rank > 1
-        and all(i % devices_per_chip == 0 for i in first_replica_group)
+        and len({d.core_on_chip for d in first_group_devices}) == 1
     ):
       replica_group_type = "parallel"
       participating_ranks = max(rank - 1, 1)
