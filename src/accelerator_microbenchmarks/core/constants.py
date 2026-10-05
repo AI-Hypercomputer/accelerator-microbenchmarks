@@ -41,3 +41,60 @@ class TimingDomain(enum.StrEnum):
 
   WALL_CLOCK = "wall_clock"
   XPROF = "xprof"
+
+
+class XprofDeviceMode(ParamEnum):
+  """Device aggregation mode when extracting XProf device timings."""
+
+  FIRST_DEVICE = "first_device"
+  MAX_DEVICE = "max_device"
+
+
+# Thermal metric output keys.
+HBM_PEAK_TEMP_C = "hbm_peak_temp_c"
+PEAK_TEMP_C = "peak_temp_c"
+HBM_THROTTLE_PCT = "hbm_throttle_pct"
+THERMAL_THROTTLE_LEVEL = "thermal_throttle_level"
+
+THERMAL_METRIC_KEYS: tuple[str, ...] = (
+    HBM_PEAK_TEMP_C,
+    PEAK_TEMP_C,
+    HBM_THROTTLE_PCT,
+    THERMAL_THROTTLE_LEVEL,
+)
+
+# Soaking execution metric output suffixes and domain-prefixed keys.
+INITIAL_P50_MS = "initial_p50_ms"
+SUSTAINED_P50_MS = "sustained_p50_ms"
+SLOWDOWN_RATIO = "slowdown_ratio"
+
+SOAKING_LATENCY_SUFFIXES: tuple[str, ...] = (
+    INITIAL_P50_MS,
+    SUSTAINED_P50_MS,
+    SLOWDOWN_RATIO,
+)
+
+WALL_CLOCK_INITIAL_P50_MS = f"{TimingDomain.WALL_CLOCK}_{INITIAL_P50_MS}"
+WALL_CLOCK_SUSTAINED_P50_MS = f"{TimingDomain.WALL_CLOCK}_{SUSTAINED_P50_MS}"
+WALL_CLOCK_SLOWDOWN_RATIO = f"{TimingDomain.WALL_CLOCK}_{SLOWDOWN_RATIO}"
+
+XPROF_INITIAL_P50_MS = f"{TimingDomain.XPROF}_{INITIAL_P50_MS}"
+XPROF_SUSTAINED_P50_MS = f"{TimingDomain.XPROF}_{SUSTAINED_P50_MS}"
+XPROF_SLOWDOWN_RATIO = f"{TimingDomain.XPROF}_{SLOWDOWN_RATIO}"
+
+SOAKING_METRIC_KEYS: tuple[str, ...] = (
+    WALL_CLOCK_INITIAL_P50_MS,
+    WALL_CLOCK_SUSTAINED_P50_MS,
+    WALL_CLOCK_SLOWDOWN_RATIO,
+    XPROF_INITIAL_P50_MS,
+    XPROF_SUSTAINED_P50_MS,
+    XPROF_SLOWDOWN_RATIO,
+)
+
+# Canonical XProf stat and timeline names for thermal and throttling telemetry
+# (lowercased for case-insensitive matching against XPlane metadata).
+XPROF_HBM_PEAK_TEMP_STAT = "hbm fw max temperature(c)"
+XPROF_COMPUTE_DIE_PEAK_TEMP_STAT = "compute die fw max temperature(c)"
+XPROF_HBM_THROTTLE_PCT_STAT = "hbm fw throttle(%)"
+XPROF_POWER_THROTTLE_LINE = "power throttle"
+XPROF_THERMAL_THROTTLE_SOURCE = "thermal_throttle"

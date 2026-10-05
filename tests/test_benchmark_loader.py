@@ -25,6 +25,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
         [
             "gemm",
             "gemm_generalized",
+            "gemm_throttling",
             "hbm",
             "hbm_bandwidth",
             "attention_flashed",
@@ -70,6 +71,9 @@ class BenchmarkLoaderTest(absltest.TestCase):
     """Verify that experimental benchmarks are marked as experimental."""
     self.assertTrue(
         registry.benchmark_registry.is_experimental("reduce_scatter")
+    )
+    self.assertTrue(
+        registry.benchmark_registry.is_experimental("gemm_throttling")
     )
 
   def test_all_benchmarks_have_valid_config(self):

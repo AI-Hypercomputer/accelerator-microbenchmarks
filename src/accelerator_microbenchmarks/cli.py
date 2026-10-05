@@ -13,6 +13,7 @@ from absl import flags
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform as core_platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
@@ -240,6 +241,16 @@ def create_parser() -> argparse.ArgumentParser:
         default=False,
         help="Enable XProf trace collection and device timing analysis.",
     )
+    task_parser.add_argument(
+        "--xprof_device_mode",
+        type=str,
+        choices=[m.value for m in constants.XprofDeviceMode],
+        default=constants.XprofDeviceMode.FIRST_DEVICE,
+        help=(
+            "Device aggregation mode for XProf timings ('first_device' or"
+            " 'max_device')."
+        ),
+    )
     add_dataclass_arguments(task_parser, bench_cls.Config)
 
   return parser
@@ -289,11 +300,17 @@ def run(argv: Sequence[str]) -> None:
         if raw_configs
         else False
     )
+    effective_xprof_device_mode = constants.XprofDeviceMode.FIRST_DEVICE
+    if raw_configs:
+      effective_xprof_device_mode = raw_configs[0].get(
+          "xprof_device_mode", constants.XprofDeviceMode.FIRST_DEVICE
+      )
 
     tasks = []
     for raw in raw_configs:
       name = raw.pop("name")
       raw.pop("xprof_timing", None)
+      raw.pop("xprof_device_mode", None)
       bench_cls = registry.benchmark_registry.get_benchmark(name)
       tasks.append((name, bench_cls.Config(**raw)))
 
@@ -301,6 +318,7 @@ def run(argv: Sequence[str]) -> None:
         tasks=tasks,
         output_dir=args.output_dir,
         xprof_timing=effective_xprof_timing,
+        xprof_device_mode=effective_xprof_device_mode,
         xprof_dir=args.xprof_dir,
         config_path=args.config_path,
         xla_flags_file_path=args.xla_flags_file_path,
@@ -315,6 +333,7 @@ def run(argv: Sequence[str]) -> None:
         tasks=[(args.task, task_config) for task_config in task_configs],
         output_dir=args.output_dir,
         xprof_timing=args.xprof_timing,
+        xprof_device_mode=args.xprof_device_mode,
         xprof_dir=args.xprof_dir,
         xla_flags_file_path=args.xla_flags_file_path,
     )

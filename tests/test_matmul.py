@@ -565,5 +565,94 @@ class GemmParamsValidationTest(parameterized.TestCase):
       matmul.GemmParams(**{field: value})
 
 
+class GemmThrottlingBenchmarkTest(parameterized.TestCase):
+  """Unit tests for GemmThrottlingBenchmark."""
+
+  def setUp(self):
+    super().setUp()
+    self._platform_patcher = unittest.mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self._platform_patcher.start()
+    self.addCleanup(self._platform_patcher.stop)
+    self.mock_mesh = jax.sharding.Mesh(
+        np.array(jax.devices()), axis_names=("device",)
+    )
+
+  def _setup_benchmark(self, **kwargs):
+    """Initializes a GemmThrottlingBenchmark instance for testing."""
+    params = {
+        "m": 64,
+        "k": 64,
+        "n": 64,
+        "in_dtype": "bfloat16",
+        "out_dtype": "bfloat16",
+        "min_duration_s": 0.01,
+        "samples_per_run": 5,
+    }
+    params.update(kwargs)
+    config = matmul.GemmThrottlingParams(**params)
+    self.bm = matmul.GemmThrottlingBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.bm.setup()
+
+  def test_benchmark_registered(self):
+    """Verifies that gemm_throttling is registered in the benchmark registry."""
+    bm_class = registry.benchmark_registry.get_benchmark("gemm_throttling")
+    self.assertEqual(bm_class, matmul.GemmThrottlingBenchmark)
+
+  def test_gemm_throttling_params_defaults_and_validation(self):
+    """Verifies GemmThrottlingParams defaults samples_per_run=25 and validates min_duration_s > 0.0."""
+    default_cfg = matmul.GemmThrottlingParams(min_duration_s=120.0)
+    self.assertEqual(default_cfg.min_duration_s, 120.0)
+    self.assertEqual(default_cfg.samples_per_run, 25)
+
+    with self.assertRaisesRegex(
+        ValueError, "min_duration_s must be > 0.0 for soaking benchmarks."
+    ):
+      matmul.GemmThrottlingParams()
+
+    cfg = matmul.GemmThrottlingParams(
+        m=128,
+        k=128,
+        n=128,
+        in_dtype="bfloat16",
+        out_dtype="bfloat16",
+        min_duration_s=60.0,
+        samples_per_run=4,
+    )
+    cases = cfg.expand_test_cases()
+    self.assertLen(cases, 1)
+    self.assertEqual((cases[0].m, cases[0].k, cases[0].n), (128, 128, 128))
+    self.assertEqual(cases[0].min_duration_s, 60.0)
+    self.assertEqual(cases[0].samples_per_run, 4)
+
+    with self.assertRaisesRegex(
+        ValueError, "min_duration_s must be > 0.0 for soaking benchmarks."
+    ):
+      matmul.GemmThrottlingParams(min_duration_s=0.0)
+
+  def test_generate_inputs_and_run_op_replicated(self):
+    """Verifies replicated input generation and matmul execution."""
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
+    self.assertLen(inputs, 4)
+    out = self.bm.run_op(*inputs)
+    self.assertEqual(out.shape, (64, 64))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+
+  def test_schema_coverage(self):
+    """Verifies REPORT_SCHEMA bidirectional contract for GemmThrottlingBenchmark."""
+    self._setup_benchmark()
+    test_report_utils.assert_schema_matches_output(
+        self,
+        self.bm,
+    )
+
+
 if __name__ == "__main__":
   absltest.main()

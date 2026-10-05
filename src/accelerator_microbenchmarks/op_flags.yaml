@@ -97,6 +97,7 @@ tokamax_splash_attention:
     - "--xla_tpu_dvfs_p_state=7"
 
 gemm: *gemm_flags
+gemm_throttling: *gemm_flags
 
 quantization: *gemm_flags
 transpose_quantization: *gemm_flags

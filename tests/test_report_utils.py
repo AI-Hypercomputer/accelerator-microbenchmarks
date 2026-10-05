@@ -6,6 +6,7 @@ from typing import Optional
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import system
 
@@ -31,6 +32,7 @@ DEFAULT_IGNORED_KEYS: frozenset[str] = frozenset({
     "warmup_tries",
     "num_runs",
     "min_duration_s",
+    "samples_per_run",
     "seed",
     # Intermediate or redundant metrics
     "wall_clock_avg_ms",
@@ -41,6 +43,8 @@ DEFAULT_IGNORED_KEYS: frozenset[str] = frozenset({
     "wall_clock_bandwidth_per_device_gb_s",
     "xprof_bandwidth_per_device_gb_s",
     "raw_times_ms",
+    *constants.SOAKING_METRIC_KEYS,
+    *constants.THERMAL_METRIC_KEYS,
     "intensity",
     "peak_hbm_bw_per_device_gb_s",
     "roofline_tflops_limit_per_device",
@@ -64,6 +68,9 @@ DEFAULT_EXTRA_AVAILABLE_KEYS: frozenset[str] = frozenset({
     "xprof_avg_ms",
     "xprof_p90_ms",
     "xprof_std_ms",
+    constants.XPROF_INITIAL_P50_MS,
+    constants.XPROF_SUSTAINED_P50_MS,
+    constants.XPROF_SLOWDOWN_RATIO,
     "xprof_tflops_per_device",
     "xprof_tflops_per_chip",
     "xprof_bandwidth_per_device_gb_s",

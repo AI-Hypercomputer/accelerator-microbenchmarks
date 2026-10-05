@@ -3,6 +3,7 @@
 import dataclasses
 from typing import Any, Callable, Sequence
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
@@ -283,3 +284,33 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     return {
         f"{prefix}_tflops_per_device": tflops_per_sec,
     }
+
+
+@dataclasses.dataclass
+class GemmThrottlingParams(config.SoakingExecutionParamsMixin, GemmParams):
+  """Parameters for GEMM throttling benchmark.
+
+  Inherits soaking window batching (`samples_per_run`) and Phase 2 soak duration
+  validation (`min_duration_s > 0.0`; `num_runs` is not used in soaking mode)
+  from `SoakingExecutionParamsMixin`, `warmup_tries` and `min_duration_s` from
+  `BaseBenchmarkParams`, and matrix shape/dtype parameters from `GemmParams`.
+  """
+
+
+@registry.benchmark_registry.register("gemm_throttling", is_experimental=True)
+class GemmThrottlingBenchmark(GeneralizedGemmBenchmark):
+  """[EXPERIMENTAL] GEMM throttling benchmark with 3-phase soaking execution and XProf thermal metrics."""
+
+  Config = GemmThrottlingParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      tuple(GeneralizedGemmBenchmark.REPORT_SCHEMA)
+      + (
+          (constants.WALL_CLOCK_INITIAL_P50_MS, report.format_4f),
+          (constants.WALL_CLOCK_SUSTAINED_P50_MS, report.format_4f),
+          (constants.WALL_CLOCK_SLOWDOWN_RATIO, report.format_2f),
+          (constants.XPROF_INITIAL_P50_MS, report.format_4f),
+          (constants.XPROF_SUSTAINED_P50_MS, report.format_4f),
+          (constants.XPROF_SLOWDOWN_RATIO, report.format_2f),
+      )
+      + tuple((k, report.format_2f) for k in constants.THERMAL_METRIC_KEYS)
+  )

@@ -16,6 +16,7 @@ dependencies = [
     "pandas",
     "pyyaml",
     "simple_parsing",
+    "tensorflow",
 ]
 
 [project.scripts]

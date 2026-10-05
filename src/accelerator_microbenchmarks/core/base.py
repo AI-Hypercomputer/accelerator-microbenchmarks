@@ -1,7 +1,6 @@
 """Base class for all JAX benchmarks."""
 
 import abc
-import contextlib
 import dataclasses
 import datetime
 import enum
@@ -10,6 +9,7 @@ import time
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
 
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import executor
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
@@ -27,6 +27,7 @@ class XprofConfig:
 
   xprof_timing: bool = False
   xprof_dir: str = "/tmp/tensorboard"
+  device_mode: str = constants.XprofDeviceMode.FIRST_DEVICE
 
 
 @dataclasses.dataclass
@@ -158,6 +159,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
   name: str = ""
   Config = BaseBenchmarkParams
+  is_experimental: bool = False
   DEFAULT_LOCAL_DEVICE_ID: int = 0
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = ()
   # TODO(b/555967269): Redesign and decouple circular dependency between
@@ -187,6 +189,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     self._jit_fn = None
     self._xprof_dir_actual: str = self.xprof_config.xprof_dir
     self._xprof_dir_cns: str = self._xprof_dir_actual
+    self.executor: executor.BaseRunExecutor = executor.create_executor(self)
 
   def _create_default_mesh(self) -> jax.sharding.Mesh:
     """Create a default 1D mesh spanning all available devices."""
@@ -248,6 +251,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
             prefix=constants.TimingDomain.WALL_CLOCK,
         )
     )
+    self.executor.augment_host_metrics(metrics)
     return metrics
 
   def get_workload_metadata(self) -> dict[str, Any]:
@@ -256,38 +260,9 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
   def calculate_latency_stats(
       self, times_ms: list[float], prefix: constants.TimingDomain
-  ) -> dict[str, float]:
+  ) -> dict[str, Any]:
     """Derive statistical latency metrics (avg, p50, p90, std) from raw timing data."""
-    if not times_ms:
-      return {
-          f"{prefix}_avg_ms": 0.0,
-          f"{prefix}_p50_ms": 0.0,
-          f"{prefix}_p90_ms": 0.0,
-          f"{prefix}_std_ms": 0.0,
-      }
-
-    # Filter outliers using Interquartile Range (IQR) if we have enough data
-    # points
-    if len(times_ms) > 3:
-      q1 = np.percentile(times_ms, 25)
-      q3 = np.percentile(times_ms, 75)
-      iqr = q3 - q1
-      lower_bound = q1 - 1.5 * iqr
-      upper_bound = q3 + 1.5 * iqr
-      filtered_times = [t for t in times_ms if lower_bound <= t <= upper_bound]
-
-      # Fallback if filtering removes everything
-      if not filtered_times:
-        filtered_times = times_ms
-    else:
-      filtered_times = times_ms
-
-    return {
-        f"{prefix}_p50_ms": float(np.percentile(filtered_times, 50)),
-        f"{prefix}_p90_ms": float(np.percentile(filtered_times, 90)),
-        f"{prefix}_avg_ms": float(np.mean(filtered_times)),
-        f"{prefix}_std_ms": float(np.std(filtered_times)),
-    }
+    return self.executor.calculate_latency_stats(times_ms, prefix=prefix)
 
   @abc.abstractmethod
   def calculate_throughput_metrics(
@@ -369,16 +344,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
     if should_parse:
       try:
-        local_device_id = (
-            None
-            if self.xprof_target_host_cpu
-            else measured_device.local_hardware_id
-        )
-        durations = profiler.parse_xprof_durations(
-            xprof_dir,
-            self.match_xprof_op_fallback,
-            local_device_id=local_device_id,
-        )
+        durations = self.executor.get_xprof_durations(xprof_dir)
         if durations:
           print(
               f"Using XProf device timings ({len(durations)} runs)"
@@ -432,6 +398,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
           f"{constants.TimingDomain.XPROF}_p90_ms": synced_p90,
           f"{constants.TimingDomain.XPROF}_std_ms": synced_std,
       })
+      self.executor.augment_xprof_metrics(metrics, has_xprof_timings=True)
       metrics.update(
           self.calculate_throughput_metrics(
               latency_ms=synced_p50, prefix=constants.TimingDomain.XPROF
@@ -448,6 +415,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
           f"{constants.TimingDomain.XPROF}_p90_ms": None,
           f"{constants.TimingDomain.XPROF}_std_ms": None,
       })
+      self.executor.augment_xprof_metrics(metrics, has_xprof_timings=False)
       for wall_clock_key, xprof_key in (
           (
               f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_device_gb_s",
@@ -499,6 +467,17 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
   def run(self) -> BenchmarkResult:
     """Standard orchestration flow for a benchmark."""
+    if self.is_experimental:
+      print(
+          "===================================================================="
+      )
+      print(
+          f"[WARNING] Running experimental benchmark '{self.name}'. Metrics"
+          " and API are subject to change."
+      )
+      print(
+          "===================================================================="
+      )
 
     # 0. Initialize mesh if not provided
     if self.mesh is None:
@@ -509,17 +488,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     inputs = self.generate_inputs()
 
     # 2. Warmup & JIT Compilation
-    # Run for at least warmup_tries OR a small duration if specified
-    warmup_start = time.perf_counter()
-    i = 0
-    while i < self.config.warmup_tries or (
-        time.perf_counter() - warmup_start
-        < min(1.0, self.config.min_duration_s / 5)
-    ):
-      inputs = self.reset_data(*inputs)
-      outputs = self.run_op(*inputs)
-      jax.block_until_ready(outputs)
-      i += 1
+    inputs = self.executor.run_warmup(inputs)
 
     benchmark_name = self.name
     if self.xprof_config.xprof_timing:
@@ -549,30 +518,15 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       print(
           f"Collecting xprof trace locally to {local_xprof_dir} across runs..."
       )
-      ctx = jax.profiler.trace(local_xprof_dir, create_perfetto_link=False)
-    else:
-      ctx = contextlib.nullcontext()
 
     start_ts = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
 
     # 3. Measurement Loop
-    raw_times = []
-    actual_runs = 0
     loop_start = time.perf_counter()
-
-    # Ensure we run at least num_runs AND meet the min_duration_s requirement
-    with ctx:
-      while actual_runs < self.config.num_runs or (
-          time.perf_counter() - loop_start < self.config.min_duration_s
-      ):
-        inputs = self.reset_data(*inputs)
-        t0 = time.perf_counter()
-        outputs = self.run_op(*inputs)
-        jax.block_until_ready(outputs)
-        t1 = time.perf_counter()
-        actual_runs += 1
-        if actual_runs < 1000:
-          raw_times.append((t1 - t0) * 1000.0)
+    raw_times, actual_runs = self.executor.execute(
+        inputs,
+        self._xprof_dir_actual if self.xprof_config.xprof_timing else None,
+    )
 
     if self.xprof_config.xprof_timing:
       print("Xprof trace collected.")

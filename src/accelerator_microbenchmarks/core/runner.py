@@ -10,6 +10,7 @@ from typing import Any, List, Optional
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
@@ -142,10 +143,13 @@ def run_benchmarks(
     config_path: Optional[str] = None,
     xla_flags_file_path: Optional[str] = None,
     print_table: bool = True,
+    xprof_device_mode: str = constants.XprofDeviceMode.FIRST_DEVICE,
 ) -> List[base.BenchmarkResult]:
   """Core execution engine for typed benchmark task configurations."""
   xprof_config = base.XprofConfig(
-      xprof_timing=xprof_timing, xprof_dir=xprof_dir
+      xprof_timing=xprof_timing,
+      xprof_dir=xprof_dir,
+      device_mode=xprof_device_mode,
   )
 
   benchmark_loader.load_all_benchmarks()

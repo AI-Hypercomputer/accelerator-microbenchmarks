@@ -969,6 +969,33 @@ benchmark:
       cli.run(["benchmark", "run", "gemm", "-m", "1024", "0"])
     mock_run_benchmarks.assert_not_called()
 
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_config_with_xprof_device_mode(
+      self, mock_run_benchmarks
+  ):
+    """Verifies that xprof_device_mode in YAML or CLI is forwarded to runner.run_benchmarks."""
+    fake_config = self.create_tempfile(content="""
+benchmark:
+  name: gemm_throttling
+  xprof_timing: true
+  xprof_device_mode: max_device
+  params:
+    warmup_tries: 1
+    min_duration_s: 1.0
+""")
+    cli.run(["benchmark", "run-config", fake_config.full_path])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertEqual(kwargs["xprof_device_mode"], "max_device")
+
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_xprof_device_mode(self, mock_run_benchmarks):
+    """Verifies that --xprof_device_mode on benchmark run is forwarded."""
+    cli.run(["benchmark", "run", "gemm", "--xprof_device_mode=max_device"])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertEqual(kwargs["xprof_device_mode"], "max_device")
+
 
 if __name__ == "__main__":
   absltest.main()

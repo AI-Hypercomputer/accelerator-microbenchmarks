@@ -27,6 +27,7 @@ class BenchmarkRegistry:
       if name in self._benchmarks or name in self._aliases:
         raise ValueError(f"Benchmark name '{name}' is already registered.")
       self._benchmarks[name] = benchmark_cls
+      benchmark_cls.is_experimental = is_experimental
 
       if is_experimental:
         self._experimental.add(name)

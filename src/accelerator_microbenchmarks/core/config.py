@@ -5,6 +5,7 @@ import enum
 import itertools
 from typing import Any
 
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import csv_loader
 from accelerator_microbenchmarks.core import model_configs
 import yaml
@@ -18,6 +19,7 @@ class BenchmarkKey(str, enum.Enum):
   CASES_FROM_CSV = "cases_from_csv"
   SWEEP = "sweep"
   XPROF_TIMING = "xprof_timing"
+  XPROF_DEVICE_MODE = "xprof_device_mode"
 
 
 _ALLOWED_BENCHMARK_KEYS = frozenset(BenchmarkKey)
@@ -284,6 +286,20 @@ def load_config(path: str) -> list[dict[str, Any]]:
       )
     base_params["xprof_timing"] = xprof_timing
 
+  xprof_device_mode = benchmark_spec.get(BenchmarkKey.XPROF_DEVICE_MODE)
+  if xprof_device_mode is not None:
+    valid_modes = tuple(m.value for m in constants.XprofDeviceMode)
+    if (
+        not isinstance(xprof_device_mode, str)
+        or xprof_device_mode not in valid_modes
+    ):
+      raise ValueError(
+          f"Expected '{BenchmarkKey.XPROF_DEVICE_MODE.value}' in benchmark"
+          f" '{benchmark_name}' to be one of {list(valid_modes)}, but got"
+          f" '{xprof_device_mode}'."
+      )
+    base_params["xprof_device_mode"] = xprof_device_mode
+
   # Stage 3: Cases (per-case parameter overrides over base_params)
   case_dicts = (
       [{**base_params, **case} for case in cases_list]
@@ -299,3 +315,26 @@ def load_config(path: str) -> list[dict[str, Any]]:
         )
     )
   return case_dicts
+
+
+@dataclasses.dataclass
+class SoakingExecutionParamsMixin:
+  """Mixin for continuous hardware soaking benchmark parameters."""
+
+  samples_per_run: int = dataclasses.field(
+      default=25,
+      metadata={
+          "min": 1,
+          "help": (
+              "Number of back-to-back iterations dispatched per window before"
+              " host `jax.block_until_ready` synchronization across Warmup,"
+              " Phase 1 (`baseline_window`), Phase 2 (`min_duration_s` soak),"
+              " and Phase 3 (`worst_window`)."
+          ),
+      },
+  )
+
+  def __post_init__(self):
+    super().__post_init__()  # pyrefly: ignore[missing-attribute]
+    if self.min_duration_s <= 0.0:  # pyrefly: ignore[missing-attribute]
+      raise ValueError("min_duration_s must be > 0.0 for soaking benchmarks.")

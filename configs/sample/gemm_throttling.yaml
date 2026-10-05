@@ -1,0 +1,36 @@
+# Sample configuration for the GEMM thermal/power throttling benchmark.
+#
+# Chronological Execution Timeline (`SoakingRunExecutor`):
+#   1. Warmup (`warmup_tries`): Executes `warmup_tries` (10) untraced warmup
+#      iterations (chunked up to `samples_per_run`) to complete JIT compilation.
+#   2. Phase 1 - Post-Warmup Cold Baseline (`baseline_window` at t = 0s):
+#      Immediately after warmup, runs 1 traced window of `samples_per_run` (25)
+#      iterations to capture the un-throttled device latency
+#      (`xprof_initial_p50_ms`).
+#   3. Phase 2 - Untraced Thermal Soak (`min_duration_s`): Runs continuous,
+#      untraced chunks of `samples_per_run` (25) iterations until elapsed Phase
+#      2 time >= `min_duration_s` (120.0s) so the accelerator heats up to
+#      thermal steady state without trace flush gaps (`num_runs` is not used in
+#      soaking mode). Wall-clock soaking metrics come exclusively from the first
+#      and last untraced soak chunks (`soak_wall_ms[0]` and `soak_wall_ms[-1]`):
+#      `wall_clock_initial_p50_ms` = the first soak chunk,
+#      `wall_clock_sustained_p50_ms` = the last soak chunk, and
+#      `wall_clock_slowdown_ratio` = sustained / initial.
+#   4. Phase 3 - Post-Soak Worst Window (`worst_window` at t = end of soak):
+#      Runs 1 traced window of `samples_per_run` (25) iterations immediately
+#      after Phase 2 soak to capture post-soak device latency
+#      (`xprof_sustained_p50_ms`, `xprof_slowdown_ratio`) and firmware thermal
+#      telemetry.
+benchmark:
+  name: gemm_throttling
+  xprof_timing: true
+  xprof_device_mode: max_device
+  params:
+    warmup_tries: 10
+    min_duration_s: 120.0
+    in_dtype: bfloat16
+    out_dtype: bfloat16
+    m: 16384
+    k: 16384
+    n: 16384
+    samples_per_run: 25

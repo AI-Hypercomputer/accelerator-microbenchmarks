@@ -1,11 +1,13 @@
 """Unit tests for config.py."""
 
+import dataclasses
 import os
 import tempfile
 from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import csv_loader
 
@@ -493,6 +495,7 @@ benchmark:
     self.assertEqual(config.BenchmarkKey.CASES_FROM_CSV, "cases_from_csv")
     self.assertEqual(config.BenchmarkKey.SWEEP, "sweep")
     self.assertEqual(config.BenchmarkKey.XPROF_TIMING, "xprof_timing")
+    self.assertEqual(config.BenchmarkKey.XPROF_DEVICE_MODE, "xprof_device_mode")
     self.assertEqual(
         {k.value for k in config.BenchmarkKey},
         {
@@ -503,6 +506,7 @@ benchmark:
             "cases_from_csv",
             "sweep",
             "xprof_timing",
+            "xprof_device_mode",
         },
     )
 
@@ -669,6 +673,71 @@ benchmark:
     self.assertNotEmpty(expanded)
     for item in expanded:
       self.assertIn("name", item)
+
+  @parameterized.named_parameters(
+      ("first_device", "xprof_device_mode: first_device\n", "first_device"),
+      ("max_device", "xprof_device_mode: max_device\n", "max_device"),
+      ("omitted", "", None),
+  )
+  def test_load_config_xprof_device_mode(self, mode_snippet, expected):
+    """Verifies that root xprof_device_mode is validated and extracted."""
+    yaml_content = (
+        "benchmark:\n"
+        "  name: gemm_generalized\n"
+        f"{'  ' + mode_snippet if mode_snippet else ''}"
+        "  params:\n"
+        "    warmup_tries: 1\n"
+    )
+    config_path = os.path.join(self.test_dir.name, "config_xprof_mode.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+    expanded = config.load_config(config_path)
+    self.assertEqual(expanded[0].get("xprof_device_mode"), expected)
+
+  def test_load_config_invalid_xprof_device_mode_raises(self):
+    """Verifies invalid xprof_device_mode raises ValueError."""
+    yaml_content = """
+benchmark:
+  name: gemm_generalized
+  xprof_device_mode: bogus_mode
+  params:
+    m: 1024
+"""
+    config_path = os.path.join(self.test_dir.name, "config_bad_xprof_mode.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+    with self.assertRaises(ValueError):
+      config.load_config(config_path)
+
+  def test_soaking_execution_params_mixin_validation(self):
+    """Verifies min_duration_s validation and samples_per_run defaults."""
+
+    @dataclasses.dataclass
+    class DummySoakParams(
+        config.SoakingExecutionParamsMixin, base.BaseBenchmarkParams
+    ):
+      pass
+
+    default_cfg = DummySoakParams(min_duration_s=120.0)
+    self.assertEqual(default_cfg.min_duration_s, 120.0)
+    self.assertEqual(default_cfg.samples_per_run, 25)
+
+    valid_cfg = DummySoakParams(samples_per_run=10, min_duration_s=60.0)
+    self.assertEqual(valid_cfg.samples_per_run, 10)
+    self.assertEqual(valid_cfg.min_duration_s, 60.0)
+
+    with self.assertRaisesRegex(
+        ValueError, "min_duration_s must be > 0.0 for soaking benchmarks."
+    ):
+      DummySoakParams()
+
+    with self.assertRaisesRegex(
+        ValueError, "min_duration_s must be > 0.0 for soaking benchmarks."
+    ):
+      DummySoakParams(min_duration_s=0.0)
+
+    with self.assertRaisesRegex(ValueError, "samples_per_run must be >= 1"):
+      DummySoakParams(min_duration_s=10.0, samples_per_run=0)
 
 
 if __name__ == "__main__":
