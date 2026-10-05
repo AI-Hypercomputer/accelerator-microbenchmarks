@@ -73,11 +73,6 @@ class HostToDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
   def get_total_bytes(self) -> float:
     return float(self.config.data_size_bytes)
 
-  def get_workload_metadata(self) -> dict[str, Any]:
-    return {
-        "total_bytes_mib": float(self.config.data_size_mib),
-    }
-
   def calculate_throughput_metrics(
       self, latency_ms: float, prefix: constants.TimingDomain
   ) -> dict[str, Any]:
@@ -138,11 +133,6 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
 
   def get_total_bytes(self) -> float:
     return float(self.config.data_size_bytes)
-
-  def get_workload_metadata(self) -> dict[str, Any]:
-    return {
-        "total_bytes_mib": float(self.config.data_size_mib),
-    }
 
   def calculate_throughput_metrics(
       self, latency_ms: float, prefix: constants.TimingDomain

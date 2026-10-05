@@ -344,8 +344,9 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         metrics["wall_clock_bandwidth_per_device_gb_s"], expected_bw_gb_s
     )
     self.assertAlmostEqual(
-        metrics["total_bytes_mib"], expected_bytes / (1024 * 1024)
+        metrics["data_size_mib"], expected_bytes / (1024 * 1024)
     )
+    self.assertNotIn("total_bytes_mib", metrics)
 
   def test_format_benchmark_table(self):
     """Tests formatting of HBM bandwidth benchmark tables."""
@@ -365,7 +366,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
-            "total_bytes_mib": 256.00,
+            "data_size_mib": 256.00,
             "wall_clock_p50_ms": 0.07112,
             "wall_clock_bandwidth_per_device_gb_s": 3769.107,
             "wall_clock_bandwidth_per_chip_gb_s": 7538.214,
@@ -380,7 +381,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
         "op_type",
         "device_id",
         "num_elements",
-        "total_bytes_mib",
+        "data_size_mib",
         "wall_clock_p50_ms",
         "wall_clock_bandwidth_per_device_gb_s",
         "xprof_p50_ms",
@@ -403,6 +404,7 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     self.assertIn("63", table)
     self.assertIn("134217728", table)
     self.assertIn("256.00", table)
+    self.assertNotIn("total_bytes_mib", table)
     self.assertIn("3769.11", table)
     self.assertIn("3800.00", table)
     self.assertIn("0.0711", table)

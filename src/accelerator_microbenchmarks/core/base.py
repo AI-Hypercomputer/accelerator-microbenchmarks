@@ -255,7 +255,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     return metrics
 
   def get_workload_metadata(self) -> dict[str, Any]:
-    """Return static, timing-invariant workload metadata (e.g., total_flops, total_bytes_mib)."""
+    """Return static, timing-invariant workload metadata (e.g., total_flops, data_size_mib)."""
     return {}
 
   def calculate_latency_stats(

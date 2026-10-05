@@ -125,7 +125,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
       ("op_type", report.format_str),
       ("device_id", report.format_str),
       ("num_elements", report.format_str),
-      ("total_bytes_mib", report.format_2f),
+      ("data_size_mib", report.format_2f),
       ("wall_clock_p50_ms", report.format_4f),
       ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
@@ -239,7 +239,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     assert self.spec is not None
     total_bytes = self.get_total_bytes()
     return {
-        "total_bytes_mib": total_bytes / (1024 * 1024),
+        "data_size_mib": total_bytes / (1024 * 1024),
         "op_type": self.spec.name,
     }
 

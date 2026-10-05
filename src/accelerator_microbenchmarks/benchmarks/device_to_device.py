@@ -216,15 +216,6 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
     data_factor = 2.0 if is_bi else 1.0
     return float(size_bytes * data_factor)
 
-  def get_workload_metadata(self) -> dict[str, Any]:
-    total_bytes = self.get_total_bytes()
-    return {
-        "total_bytes_mib": total_bytes / (1024 * 1024),
-        "src_device_index": self.config.src_device_index,
-        "dst_device_index": self.config.dst_device_index,
-        "direction": self.config.direction,
-    }
-
   def calculate_throughput_metrics(
       self, latency_ms: float, prefix: constants.TimingDomain
   ) -> dict[str, Any]:

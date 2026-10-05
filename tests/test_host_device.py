@@ -136,7 +136,7 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
         metrics["wall_clock_bandwidth_per_device_gb_s"], 0.4194304
     )
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", metrics)
-    self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
+    self.assertNotIn("total_bytes_mib", metrics)
 
   def test_derive_chip_metrics_no_chip_bandwidth(self):
     """Verify derive_chip_metrics does not derive wall_clock_bandwidth_per_chip_gb_s."""
@@ -214,9 +214,7 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
   def test_schema_coverage(self):
     """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
     self._setup_benchmark()
-    test_report_utils.assert_schema_matches_output(
-        self, self.bm, ignored_keys={"total_bytes_mib"}
-    )
+    test_report_utils.assert_schema_matches_output(self, self.bm)
 
 
 class DeviceToHostBenchmarkTest(parameterized.TestCase):
@@ -334,7 +332,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
         metrics["wall_clock_bandwidth_per_device_gb_s"], 0.4194304
     )
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", metrics)
-    self.assertAlmostEqual(metrics["total_bytes_mib"], 4.0)
+    self.assertNotIn("total_bytes_mib", metrics)
 
   def test_derive_chip_metrics_no_chip_bandwidth(self):
     """Verify derive_chip_metrics does not derive wall_clock_bandwidth_per_chip_gb_s."""
@@ -412,9 +410,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
   def test_schema_coverage(self):
     """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
     self._setup_benchmark()
-    test_report_utils.assert_schema_matches_output(
-        self, self.bm, ignored_keys={"total_bytes_mib"}
-    )
+    test_report_utils.assert_schema_matches_output(self, self.bm)
 
 
 class HostDeviceParamsValidationTest(parameterized.TestCase):

@@ -134,10 +134,10 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 ### 2.2 HBM Memory Bandwidth (`hbm`)
 
 - **Operation**: Executes 1D STREAM memory operations on a target local device (`device_id`) to measure High-Bandwidth Memory (HBM) throughput (**GB/s**) and memory roofline efficiency (**%**).
-- **HBM Traffic Calculation (`total_bytes_mib`)**: `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`
+- **HBM Traffic Calculation (`data_size_mib`)**: `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`
   - **Single-Array Size (`MiB`)**: `(num_elements * dtype_bytes) / (1024 * 1024)` — By default, `num_elements = 134,217,728` (`128 * 1024 * 1024` elements) and `dtype = bfloat16` (`2 bytes`), allocating **`256 MiB` per array**.
   - **Array Transfer Count (Reads + Writes)**: Total full-array HBM reads + writes executed by the kernel (`1` for `read_only`/`write_only`, `2` for `copy`/`scale`, `3` for `add`/`triad`).
-  - **Total HBM Traffic (`total_bytes_mib`)**: `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)` — Total HBM traffic moved per iteration (e.g., `2 × 256 MiB = 512 MiB` for `copy`, `3 × 256 MiB = 768 MiB` for `triad`).
+  - **Total HBM Traffic (`data_size_mib`)**: `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)` — Total HBM traffic moved per iteration (e.g., `2 × 256 MiB = 512 MiB` for `copy`, `3 × 256 MiB = 768 MiB` for `triad`).
 
 #### Supported `op_type` STREAM Kernels
 
@@ -167,7 +167,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 - **Latency (`ms`)**:
   - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
 - **Benchmark Attributes**:
-  - `total_bytes_mib` — Total HBM traffic (`Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`) moved per iteration (`MiB`).
+  - `data_size_mib` — Total HBM traffic (`Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`) moved per iteration (`MiB`).
   - `intensity` — Operational arithmetic intensity (`FLOPs / Byte`).
   - `peak_hbm_bw_per_device_gb_s` — Hardware asymptotic peak HBM bandwidth per logical device (`GB/s`).
 
@@ -194,7 +194,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 - **Latency (`ms`)**:
   - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
 - **Benchmark Attributes**:
-  - `data_size_mib` / `total_bytes_mib` — Payload volume transferred per iteration (`MiB`).
+  - `data_size_mib` — Payload volume transferred per iteration (`MiB`).
 
 ---
 
@@ -221,7 +221,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 - **Benchmark Attributes**:
   - `src_device_index` / `dst_device_index` — Source and destination logical device indices for the measured pair.
   - `direction` — Active transfer direction (`"uni"` or `"bi"`).
-  - `data_size_mib` / `total_bytes_mib` — Payload size per directional stream (`data_size_mib`, `MiB`) and total bytes transferred across the pair (`total_bytes_mib`, equal to `2 * data_size_mib` when `direction == "bi"`).
+  - `data_size_mib` — Payload size per directional stream (`MiB`).
 
 ---
 

@@ -197,9 +197,10 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
         metrics["wall_clock_bandwidth_per_device_gb_s"], 0.1048576
     )
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", metrics)
-    self.assertEqual(metrics["src_device_index"], 0)
-    self.assertEqual(metrics["dst_device_index"], 1)
-    self.assertEqual(metrics["direction"], "uni")
+    self.assertNotIn("src_device_index", metrics)
+    self.assertNotIn("dst_device_index", metrics)
+    self.assertNotIn("direction", metrics)
+    self.assertNotIn("total_bytes_mib", metrics)
 
   def test_derive_chip_metrics_no_chip_bandwidth(self):
     """Verify derive_chip_metrics does not derive wall_clock_bandwidth_per_chip_gb_s."""
@@ -221,8 +222,12 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
     self.assertGreater(
         result.metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0
     )
-    self.assertEqual(result.metrics["src_device_index"], 0)
-    self.assertEqual(result.metrics["dst_device_index"], 1)
+    self.assertEqual(result.metadata.params["src_device_index"], 0)
+    self.assertEqual(result.metadata.params["dst_device_index"], 1)
+    self.assertEqual(result.metadata.params["direction"], "uni")
+    self.assertNotIn("src_device_index", result.metrics)
+    self.assertNotIn("dst_device_index", result.metrics)
+    self.assertNotIn("direction", result.metrics)
     self.assertNotIn("roofline_tflops_limit", result.metrics)
     self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
     self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
@@ -372,9 +377,7 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
   def test_schema_coverage(self):
     """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
     self.bm.setup()
-    test_report_utils.assert_schema_matches_output(
-        self, self.bm, ignored_keys={"total_bytes_mib"}
-    )
+    test_report_utils.assert_schema_matches_output(self, self.bm)
 
   def test_report_formatters_declaration(self):
     """Verifies that DeviceToDeviceBenchmark declares both standard table and matrix formatters."""

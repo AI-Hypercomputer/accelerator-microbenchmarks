@@ -58,7 +58,7 @@ class DeviceToDeviceTPUTest(parameterized.TestCase):
     )
     self.assertIn("wall_clock_avg_ms", result.metrics)
     self.assertGreater(result.metrics["wall_clock_avg_ms"], 0.0)
-    self.assertEqual(result.metrics["direction"], direction)
+    self.assertEqual(result.metadata.params["direction"], direction)
 
   def test_e2e_device_to_device_with_xprof_timing(self):
     """Verify D2D transfer executes with XProf timing enabled on TPU."""
