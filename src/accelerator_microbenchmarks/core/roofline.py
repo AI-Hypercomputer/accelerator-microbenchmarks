@@ -34,7 +34,7 @@ def apply_roofline_analysis(
 
   Raises:
     KeyError: If the hardware spec is missing peak TFLOPS for the canonical
-      fallback dtype.
+      fallback dtype or is marked unsupported (None).
   """
   mode = getattr(
       benchmark_instance, "roofline_mode", constants.RooflineMode.NONE
@@ -59,16 +59,25 @@ def apply_roofline_analysis(
   if mode == constants.RooflineMode.COMPUTE:
     if hw_spec and hw_spec.tflops and hw_spec.hbm:
       dtype = benchmark_instance.get_compute_dtype()
-      if dtype in hw_spec.tflops.peak_tflops_per_device:
-        peak_tflops = hw_spec.tflops.peak_tflops_per_device[dtype]
+      peaks = hw_spec.tflops.peak_tflops_per_device
+      if dtype in peaks:
+        peak_tflops = peaks[dtype]
+        if peak_tflops is None:
+          logging.warning(
+              "dtype '%s' is marked unsupported on %s; skipping compute"
+              " roofline analysis.",
+              dtype,
+              hw_spec.name,
+          )
+          return metrics
       else:
         fallback_dtype = system.DEFAULT_FALLBACK_DTYPE
-        if fallback_dtype not in hw_spec.tflops.peak_tflops_per_device:
+        peak_tflops = peaks.get(fallback_dtype)
+        if peak_tflops is None:
           raise KeyError(
               f"HardwareSpec for '{hw_spec.name}' is invalid: missing peak"
               f" TFLOPS for canonical fallback dtype '{fallback_dtype}'."
           )
-        peak_tflops = hw_spec.tflops.peak_tflops_per_device[fallback_dtype]
         logging.warning(
             "Peak TFLOPS setup is missing for dtype '%s' on %s. "
             "Falling back to canonical '%s' peak TFLOPS (%.1f TFLOPS).",

@@ -15,6 +15,7 @@ V6E_HARDWARE_SPEC = schema.HardwareSpec(
             "float8_e4m3fn": 918.0,
             "int8": 1836.0,
             "int4": 3672.0,
+            "float4_e2m1fn": None,  # Not natively supported on v6e.
         }
     ),
     ici=schema.IciSpec(

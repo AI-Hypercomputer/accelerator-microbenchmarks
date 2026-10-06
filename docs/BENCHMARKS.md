@@ -105,7 +105,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | `m` | `int` | `1024` | Matrix dimension `M` (rows of `op(A)` and output matrix `C_out`). |
 | `k` | `int` | `1024` | Contracting dimension `K` (columns of `op(A)` and rows of `op(B)`). |
 | `n` | `int` | `1024` | Matrix dimension `N` (columns of `op(B)` and output matrix `C_out`). |
-| `in_dtype` | `str` | `"bfloat16"` | Input operand data type (e.g., `bfloat16`, `float8_e4m3fn`, `float32`, `int8`). Selects the hardware peak TFLOPS ceiling for roofline efficiency. |
+| `in_dtype` | `str` | `"bfloat16"` | Input operand data type (e.g., `bfloat16`, `float8_e4m3fn`, `float32`, `int8`). Selects the hardware peak TFLOPS ceiling for roofline efficiency. Dtypes absent from the hardware spec fall back to the `bfloat16` peak; dtypes the spec marks unsupported (`None`) omit compute roofline metrics. |
 | `out_dtype` | `str` | `"bfloat16"` | Output accumulation and result tensor data type (e.g., `bfloat16`, `float32`). |
 | `transpose_a` | `bool` | `False` | Transpose operand matrix `A` prior to multiplication (`shape = (k, m)` when `True`, `(m, k)` when `False`). |
 | `transpose_b` | `bool` | `False` | Transpose operand matrix `B` prior to multiplication (`shape = (n, k)` when `True`, `(k, n)` when `False`). |

@@ -62,8 +62,10 @@ class TflopsSpec:
   """Compute throughput specifications per datatype."""
 
   # Maps dtype string (e.g., 'bfloat16', 'float32', 'int8') to peak TFLOPS
-  # per device (TensorCore).
-  peak_tflops_per_device: dict[str, float]
+  # per device (TensorCore). A value of `None` marks the dtype as natively
+  # unsupported on this hardware, which disables compute-roofline metrics for
+  # it. Dtypes absent from the mapping fall back to `DEFAULT_FALLBACK_DTYPE`.
+  peak_tflops_per_device: dict[str, float | None]
 
 
 @dataclasses.dataclass(frozen=True)

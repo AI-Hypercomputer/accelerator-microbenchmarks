@@ -14,6 +14,7 @@ TPU7X_HARDWARE_SPEC = schema.HardwareSpec(
             "float8_e5m2": 2307.0,
             "float8_e4m3fn": 2307.0,
             "int8": 1153.5,  # Emulated on BF16 datapath
+            "float4_e2m1fn": None,  # Not natively supported on tpu7x.
         }
     ),
     ici=schema.IciSpec(

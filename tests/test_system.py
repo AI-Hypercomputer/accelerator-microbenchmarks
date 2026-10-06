@@ -81,6 +81,11 @@ class SystemTest(absltest.TestCase):
           f"HardwareSpec for {tpu_ver} is missing peak TFLOPS for"
           f" {system.DEFAULT_FALLBACK_DTYPE}",
       )
+      self.assertIsNotNone(
+          hw_spec.tflops.peak_tflops_per_device[system.DEFAULT_FALLBACK_DTYPE],
+          f"HardwareSpec for {tpu_ver} must not mark"
+          f" {system.DEFAULT_FALLBACK_DTYPE} as unsupported",
+      )
     self.assertEqual(system.TpuVersion.TPU7X, "tpu7x")
     self.assertEqual(system.TpuVersion.V6E, "v6e")
 

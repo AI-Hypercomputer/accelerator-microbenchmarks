@@ -375,6 +375,53 @@ class RooflineTest(absltest.TestCase):
     with self.assertRaises(KeyError):
       roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
 
+  def test_apply_roofline_analysis_unsupported_dtype_skips_compute(self):
+    """Verify a `None` peak entry skips compute roofline instead of falling back."""
+    self.mock_benchmark.roofline_mode = constants.RooflineMode.COMPUTE
+    self.mock_benchmark.get_compute_dtype.return_value = "float4_e2m1fn"
+    mock_hw = mock.MagicMock(spec=system.HardwareSpec)
+    mock_hw.name = system.TpuVersion.V6E
+    mock_hw.tflops = system.TflopsSpec(
+        peak_tflops_per_device={
+            system.DEFAULT_FALLBACK_DTYPE: 1000.0,
+            "float4_e2m1fn": None,
+        }
+    )
+    mock_hw.hbm = system.HbmSpec(peak_bw_gb_s=200.0)
+    mock_hw.peak_hbm_bandwidth_per_device = 200.0
+    self.mock_benchmark.hardware_spec = mock_hw
+
+    metrics = {"wall_clock_tflops_per_device": 100.0}
+    with self.assertLogs(level="WARNING") as log_output:
+      res = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+
+    self.assertEqual(res, {"wall_clock_tflops_per_device": 100.0})
+    self.assertNotIn("roofline_tflops_limit_per_device", res)
+    self.assertNotIn("wall_clock_compute_roofline_efficiency_pct", res)
+    self.assertTrue(
+        any("marked unsupported" in log for log in log_output.output)
+    )
+    self.assertFalse(
+        any("Falling back to canonical" in log for log in log_output.output)
+    )
+
+  def test_apply_roofline_analysis_none_fallback_dtype_raises_keyerror(self):
+    """Verify KeyError is raised when the canonical fallback dtype is `None`."""
+    self.mock_benchmark.roofline_mode = constants.RooflineMode.COMPUTE
+    self.mock_benchmark.get_compute_dtype.return_value = "unknown_dtype"
+    mock_hw = mock.MagicMock(spec=system.HardwareSpec)
+    mock_hw.name = system.TpuVersion.TPU7X
+    mock_hw.tflops = system.TflopsSpec(
+        peak_tflops_per_device={system.DEFAULT_FALLBACK_DTYPE: None}
+    )
+    mock_hw.hbm = system.HbmSpec(peak_bw_gb_s=200.0)
+    mock_hw.peak_hbm_bandwidth_per_device = 200.0
+    self.mock_benchmark.hardware_spec = mock_hw
+
+    metrics = {"wall_clock_tflops_per_device": 100.0}
+    with self.assertRaises(KeyError):
+      roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+
 
 if __name__ == "__main__":
   absltest.main()
