@@ -99,7 +99,8 @@ class WorkloadSubmitterTest(parameterized.TestCase):
 
     doc = yaml.safe_load(manifest_yaml)
     self.assertEqual(doc["kind"], "JobSet")
-    self.assertEqual(doc["metadata"]["name"], "tpums-test-01")
+    self.assertEqual(doc["metadata"]["generateName"], "tpums-test-01-")
+    self.assertNotIn("name", doc["metadata"])
     self.assertEqual(
         doc["metadata"]["labels"]["kueue.x-k8s.io/queue-name"],
         "multislice-queue",
@@ -599,8 +600,31 @@ class WorkloadSubmitterTest(parameterized.TestCase):
     self.assertEqual(results[0].topology, "2x2x1")
     self.assertEmpty(manager.active_workloads)
 
+  @mock.patch("subprocess.run")
+  def test_apply_jobset_uses_kubectl_create_and_parses_generated_name(
+      self, mock_subprocess_run
+  ):
+    """Verifies apply_jobset runs kubectl create and parses the generated name."""
+    mock_subprocess_run.return_value = subprocess.CompletedProcess(
+        args=["kubectl", "create", "-f", "-"],
+        returncode=0,
+        stdout="jobset.jobset.x-k8s.io/tpums-2x2x1-gemm-abc12 created\n",
+        stderr="",
+    )
+    generated_name = workload_submitter.apply_jobset("apiVersion: v1\n")
+    self.assertEqual(generated_name, "tpums-2x2x1-gemm-abc12")
+    mock_subprocess_run.assert_called_once_with(
+        ["kubectl", "create", "-f", "-"],
+        input="apiVersion: v1\n",
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
   @mock.patch.object(workload_submitter, "apply_jobset")
   def test_workload_manager_prepare_and_submit(self, mock_apply):
+    """Verifies submit_all re-keys active_workloads by generated JobSet name."""
+    mock_apply.return_value = "tpums-2x2x1-gemm-xyz99"
     cfg_path = pathlib.Path(_CONFIG_DIR) / "2x2x1" / "gemm.yaml"
     manager = workload_submitter.WorkloadManager(dry_run=False)
     dry_run_results = manager.prepare_workloads([cfg_path])
@@ -609,6 +633,12 @@ class WorkloadSubmitterTest(parameterized.TestCase):
 
     manager.submit_all()
     mock_apply.assert_called_once()
+    self.assertIn("tpums-2x2x1-gemm-xyz99", manager.active_workloads)
+    self.assertNotIn("tpums-2x2x1-gemm", manager.active_workloads)
+    wl = manager.active_workloads["tpums-2x2x1-gemm-xyz99"]
+    self.assertEqual(wl.workload_name, "tpums-2x2x1-gemm-xyz99")
+    self.assertTrue(wl.gcs_output_dir.endswith("/tpums-2x2x1-gemm"))
+    self.assertIn("tpums-2x2x1-gemm-xyz99", manager.render_dashboard())
 
   @mock.patch.object(workload_submitter, "delete_jobset")
   def test_workload_manager_cleanup(self, mock_delete):

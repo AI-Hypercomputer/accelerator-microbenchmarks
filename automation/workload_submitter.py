@@ -537,19 +537,23 @@ def generate_jobset_manifest(
   return manifest
 
 
-def apply_jobset(manifest_yaml: str) -> None:
-  """Applies the generated JobSet manifest to the Kubernetes cluster via kubectl."""
+def apply_jobset(manifest_yaml: str) -> Optional[str]:
+  """Creates a JobSet from the manifest on the Kubernetes cluster via kubectl."""
   try:
     proc = subprocess.run(
-        ["kubectl", "apply", "-f", "-"],
+        ["kubectl", "create", "-f", "-"],
         input=manifest_yaml,
         text=True,
         capture_output=True,
         check=True,
     )
-    logging.info("JobSet applied via kubectl: %s", proc.stdout.strip())
+    out = proc.stdout.strip()
+    logging.info("JobSet created via kubectl: %s", out)
+    match = re.search(r"jobset(?:\.[a-z0-9.-]+)?/([^\s]+)", out, re.IGNORECASE)
+    return match.group(1) if match else None
   except FileNotFoundError:
     logging.warning("kubectl binary not found on PATH; skipping apply_jobset.")
+    return None
 
 
 def delete_jobset(workload_name: str, namespace: str) -> None:
@@ -928,7 +932,9 @@ class WorkloadManager:
         "Dispatching %d JobSet(s) in parallel via kubectl...",
         len(self.active_workloads),
     )
-    for name, wl in self.active_workloads.items():
+    updated_workloads: dict[str, ActiveWorkload] = {}
+    for name, wl in list(self.active_workloads.items()):
+      key = name
       try:
         logging.info(
             "Applying JobSet [%s] (%s, %s)...",
@@ -936,12 +942,17 @@ class WorkloadManager:
             wl.config_name,
             wl.topology,
         )
-        apply_jobset(wl.manifest_yaml)
+        generated_name = apply_jobset(wl.manifest_yaml)
+        if isinstance(generated_name, str) and generated_name:
+          wl.workload_name = generated_name
+          key = generated_name
       except Exception as e:  # pylint: disable=broad-exception-caught
         logging.error("Failed to apply JobSet %s: %s", name, e)
         wl.status = "FAILED"
         wl.error_message = str(e)
         wl.terminal = True
+      updated_workloads[key] = wl
+    self.active_workloads = updated_workloads
 
   def update_states(
       self,

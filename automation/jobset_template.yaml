@@ -28,12 +28,12 @@
 #   export GCS_OUTPUT_DIR="gs://<your-gcs-bucket>/tpums/results"
 #   export DECLARED_DURATION="30"
 #   export RESERVATION_NAME="<your-reservation-name>"  # optional
-#   envsubst < jobset_template.yaml | kubectl apply -f -
+#   envsubst < jobset_template.yaml | kubectl create -f -
 #
 apiVersion: jobset.x-k8s.io/v1alpha2
 kind: JobSet
 metadata:
-  name: ${WORKLOAD_NAME}
+  generateName: ${WORKLOAD_NAME}-
   namespace: ${NAMESPACE}
   labels:
     kueue.x-k8s.io/queue-name: ${QUEUE_NAME}
