@@ -111,22 +111,60 @@ def gemm_multiple_run(
     lhs_dtype = dtype
     rhs_dtype = dtype
 
-    key = jax.random.key(SEED)
+    if run_on_local_node:
+        import numpy as np
 
-    def data_generator():
-        """Creates new random data on host and puts it on device."""
-        nonlocal key  # Use and update the outer 'key'
-        key, key_lhs, key_rhs = jax.random.split(key, 3)
+        step_idx = 0
+        mesh_devices = list(mesh.devices.flat)
+        seed_spec = jax.sharding.PartitionSpec(*mesh.axis_names)
+        seed_sharding = jax.sharding.NamedSharding(mesh, seed_spec)
 
-        # Create random data on host
-        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
-        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+        def _gen_local(seed_arr):
+            k = jax.random.key(seed_arr.reshape(-1)[0])
+            k_lhs, k_rhs = jax.random.split(k)
+            lhs = jax.random.normal(k_lhs, lhs_shape).astype(lhs_dtype)
+            rhs = jax.random.normal(k_rhs, rhs_shape).astype(rhs_dtype)
+            return lhs, rhs
 
-        # Put on device (HBM)
-        lhs_device = jax.device_put(lhs_host, lhs_sharding)
-        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+        jit_gen_data = jax.jit(
+            shard_map(
+                _gen_local,
+                mesh,
+                in_specs=seed_spec,
+                out_specs=(lhs_sharding.spec, rhs_sharding.spec),
+                check_rep=False,
+            )
+        )
 
-        return (lhs_device, rhs_device)
+        def data_generator():
+            """Creates new random data on each device locally without cross-chip ICI DMA."""
+            nonlocal step_idx
+            val = np.array([SEED + step_idx], dtype=np.int32).reshape(
+                (1,) * len(mesh.axis_names)
+            )
+            step_idx += 1
+            shards = [jax.device_put(val, d) for d in mesh_devices]
+            seed_dev = jax.make_array_from_single_device_arrays(
+                mesh.devices.shape, seed_sharding, shards
+            )
+            return jit_gen_data(seed_dev)
+    else:
+        key = jax.random.key(SEED)
+
+        def data_generator():
+            """Creates new random data on host and puts it on device."""
+            nonlocal key  # Use and update the outer 'key'
+            key, key_lhs, key_rhs = jax.random.split(key, 3)
+
+            # Create random data on host
+            lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+            rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+
+            # Put on device (HBM)
+            lhs_device = jax.device_put(lhs_host, lhs_sharding)
+            rhs_device = jax.device_put(rhs_host, rhs_sharding)
+
+            return (lhs_device, rhs_device)
 
     # Run the benchmark
 

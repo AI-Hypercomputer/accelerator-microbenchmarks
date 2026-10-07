@@ -411,7 +411,17 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
             datetime.datetime.now(tz=datetime.timezone.utc).isoformat() + "Z"
         )  # "Z" indicates UTC
         try:
-            benchmark_results = benchmark_func(**benchmark_param)
+            benchmark_func_params = inspect.signature(benchmark_func).parameters
+            call_benchmark_param = (
+                benchmark_param
+                if "run_on_local_node" in benchmark_func_params
+                else {
+                    k: v
+                    for k, v in benchmark_param.items()
+                    if k != "run_on_local_node"
+                }
+            )
+            benchmark_results = benchmark_func(**call_benchmark_param)
         except Exception as e:  # pylint: disable=broad-except
             print(f"Benchmark func failed: {e}")
             continue
@@ -440,6 +450,8 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
 
         # Filter out certain parameters from benchmark_param, eg. "num_runs".
         benchmark_params_to_filter = ["num_runs", "trace_dir"]
+        if "run_on_local_node" not in calculate_metrics_params:
+            benchmark_params_to_filter.append("run_on_local_node")
         filtered_benchmark_param = {
             key: value
             for key, value in benchmark_param.items()
@@ -471,16 +483,25 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         write_to_csv(f"{csv_path}/{test_name}.tsv", calculate_metrics_results)
 
 
+LOCAL_NODE_DEFAULT_BENCHMARKS = {
+    "single_device_hbm_copy",
+    "host_device",
+    "single_host_naive_matmul",
+}
+
+
 def should_initialize_distributed(config: Dict[str, Any]) -> bool:
     """Determines whether to call jax.distributed.initialize().
 
     Returns False if run_on_local_node is True at the root config level,
-    at the benchmark level, or in any benchmark parameters.
+    at the benchmark level, in any benchmark parameters, or if all benchmarks
+    default to local-node execution.
     """
     if config.get("run_on_local_node", False):
         return False
     benchmarks = config.get("benchmarks", [])
-    if isinstance(benchmarks, list):
+    if isinstance(benchmarks, list) and benchmarks:
+        all_local_default = True
         for benchmark in benchmarks:
             if isinstance(benchmark, dict):
                 if benchmark.get("run_on_local_node", False):
@@ -491,6 +512,16 @@ def should_initialize_distributed(config: Dict[str, Any]) -> bool:
                 for sweep in benchmark.get("benchmark_sweep_params", []):
                     if isinstance(sweep, dict) and sweep.get("run_on_local_node", False):
                         return False
+                b_name = benchmark.get("benchmark_name")
+                if (
+                    b_name not in LOCAL_NODE_DEFAULT_BENCHMARKS
+                    or benchmark.get("run_on_local_node") is False
+                ):
+                    all_local_default = False
+            else:
+                all_local_default = False
+        if all_local_default:
+            return False
     return True
 
 

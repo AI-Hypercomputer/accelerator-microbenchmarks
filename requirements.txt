@@ -2,7 +2,7 @@ jax[tpu]==0.10.1
 absl-py
 flax==0.12.7
 jaxlib==0.10.1
-libtpu==0.0.41
+libtpu==0.0.49
 numpy
 pandas
 jsonlines

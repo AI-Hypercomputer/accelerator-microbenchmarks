@@ -1518,6 +1518,48 @@ def get_tpu_hal_count() -> int:
 
 
 def configure_local_node_tpu():
-    """Configures local node TPU execution."""
-    pass
+    """Configures local node TPU execution on a single host without slicebuilder."""
+    os.environ["CLOUD_TPU_TASK_ID"] = "0"
+    os.environ["TPU_HOST_BOUNDS"] = "1,1,1"
+    os.environ["TPU_PROCESS_BOUNDS"] = "1,1,1"
+    os.environ.setdefault("TPU_CHIPS_PER_HOST_BOUNDS", "2,2,1")
+    os.environ.setdefault(
+        "TPU_CHIPS_PER_PROCESS_BOUNDS",
+        os.environ["TPU_CHIPS_PER_HOST_BOUNDS"],
+    )
+    os.environ.setdefault("TPU_VISIBLE_DEVICES", "0,1,2,3")
+    os.environ["TPU_SKIP_MDS_QUERY"] = "true"
+    os.environ["TPU_WORKER_ID"] = "0"
+    os.environ["TPU_WORKER_HOSTNAMES"] = "localhost"
+    for var in (
+        "TPU_PROCESS_ADDRESSES",
+        "MEGASCALE_NUM_SLICES",
+        "MEGASCALE_SLICE_ID",
+        "MEGASCALE_COORDINATOR_ADDRESS",
+    ):
+        os.environ.pop(var, None)
+
+    local_flags = [
+        "--deepsea_hal_test_skip_slicebuilder=true",
+        "--deepsea_hal_test_allow_multichip_skip_slicebuilder=true",
+        "--xla_tpu_enable_async_collective_fusion=false",
+        "--xla_tpu_use_enhanced_launch_barrier=false",
+    ]
+    existing_args = (
+        os.environ.get("LIBTPU_INIT_ARGS", "")
+        .replace(
+            "--xla_tpu_enable_async_collective_fusion=true",
+            "--xla_tpu_enable_async_collective_fusion=false",
+        )
+        .replace(
+            "--xla_tpu_use_enhanced_launch_barrier=true",
+            "--xla_tpu_use_enhanced_launch_barrier=false",
+        )
+    )
+    for flag in local_flags:
+        flag_name = flag.split("=")[0]
+        if flag_name not in existing_args:
+            existing_args = f"{existing_args} {flag}".strip()
+    os.environ["LIBTPU_INIT_ARGS"] = existing_args
+
 
