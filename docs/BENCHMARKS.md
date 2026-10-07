@@ -233,7 +233,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 <a id="collective-concepts"></a>
 #### Collective Concepts: `mesh_shape`, `sharding_strategy` & Parallel vs. Non-Parallel Replica Groups
 
-Understanding how TPUMS configures collective meshes and computes per-chip collective bus bandwidth requires three key concepts:
+Understanding how TPUMS configures collective meshes and computes per-chip collective bus bandwidth requires four key concepts:
 
 **1. `mesh_shape` vs. `sharding_strategy` (Logical Mesh vs. Active Collective Axes):**
 
@@ -261,11 +261,35 @@ On TPU architectures with two logical devices per physical chip—such as **`tpu
     - **1. Per-Device Shard Payload (`S`, in `Bytes`)**: `S = matrix_dim * 8 * 128 * dtype_bytes`
     - **2. Reported Shard Size (`shard_size_mib`, in `MiB`)**: `S / (1024 * 1024)` — With `dtype: bfloat16` (`2` bytes per element), `matrix_dim: 1024` produces **`2.00 MiB`** per device; `matrix_dim: 8192` produces **`16.00 MiB`** per device.
 
+**4. Mesh Device Placement (`device_placement`):**
+
+`device_placement` controls which physical device lands at each coordinate of
+the `mesh_shape` logical mesh. It only takes effect when `mesh_shape` is set.
+Because replica groups are derived from mesh coordinates, the placement changes
+which devices exchange data in each collective and therefore the communication
+paths the traffic takes.
+
+- **`mesh_utils`** *(default)*: Uses
+  `jax.experimental.mesh_utils.create_device_mesh(mesh_shape, devices=jax.devices())`,
+  which assigns devices based on their physical topology coordinates.
+- **`id_sorted`**: Sorts `jax.devices()` by ascending `device.id` and reshapes
+  them into `mesh_shape`
+  (`np.asarray(sorted(jax.devices(), key=lambda d: d.id)).reshape(mesh_shape)`).
+- **When to use `id_sorted`**: Because the resulting replica-group device order
+  differs from `mesh_utils`, `id_sorted` can yield higher collective bandwidth
+  on some full-chip mesh shapes (e.g., `all_gather` on TPU v7x `2x2x2`). If
+  bandwidth on a given topology looks lower than expected, benchmark both
+  placements and compare.
+- **Caveat**: `id_sorted` ignores physical topology and may map logical axes
+  across physical ones on non-standard or sub-mesh shapes. Prefer the default
+  `mesh_utils` for those cases.
+
 #### Parameters
 
 | Parameter | Type | Default | Applies To | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `mesh_shape` | `Optional[str]` | `None` | All Collectives | Logical TPU mesh dimensions formatted as `'DxDyDz'` or `'DxDy'` (e.g., `"2x2x1"`, `"2x4x4"`, `"4x4"`). Defaults to a 1D mesh over all devices if `None`. |
+| `device_placement` | `str` | `"mesh_utils"` | All Collectives | Mesh device placement: `"mesh_utils"` (topology-aware `create_device_mesh`) or `"id_sorted"` (sorted ascending by `device.id`). Ignored when `mesh_shape` is `None`. See [Mesh Device Placement](#collective-concepts). |
 | `sharding_strategy` | `Optional[str]` | `None` | All Collectives | Axis participation pattern matching the dimensionality of `mesh_shape` (e.g., `"2x2x1"`). Dimensions with value `> 1` participate in the collective; defaults to all mesh dimensions if `None`. |
 | `matrix_dim` | `int` | `1024` | All Collectives | Leading dimension of the per-device tensor `(matrix_dim, 8, 128)`. |
 | `dtype` | `str` | `"bfloat16"` | All Collectives | Tensor element data type (e.g., `bfloat16`, `float32`). |

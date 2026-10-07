@@ -6,6 +6,7 @@ benchmark:
     num_runs: 5
     dtype: bfloat16
     mesh_shape: 4x2x2
+    device_placement: id_sorted
   sweep:
     sharding_strategy: ["4x2x1", "4x2x2"]
     matrix_dim: [8192, 16384, 32768]

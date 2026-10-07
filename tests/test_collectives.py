@@ -689,6 +689,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
                 "reduce_op": "sum",
                 "sharding_strategy": "2x2x1",
                 "dtype": "bfloat16",
+                "device_placement": collectives.DevicePlacement.ID_SORTED,
             },
             platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
@@ -706,6 +707,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "dtype",
         "reduce_op",
         "mesh_shape",
+        "device_placement",
         "sharding_strategy",
         "matrix_dim",
         "shard_size_mib",
@@ -732,6 +734,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertIn("sum", table_ar)
     self.assertIn("2x2x2", table_ar)
     self.assertIn("2x2x1", table_ar)
+    self.assertIn("id_sorted", table_ar)
     self.assertIn("4096", table_ar)
     self.assertIn("32.00", table_ar)
     self.assertIn("350.12", table_ar)
@@ -766,6 +769,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     expected_a2a_cols = [
         "dtype",
         "mesh_shape",
+        "device_placement",
         "sharding_strategy",
         "matrix_dim",
         "shard_size_mib",
@@ -928,6 +932,61 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(metrics["wall_clock_bandwidth_per_chip_gb_s"], 0.0)
     self.assertNotIn("sharding_size", metrics)
 
+  def test_default_device_placement_uses_mesh_utils(self):
+    """Verify default device_placement builds the mesh via mesh_utils."""
+    config = collectives.CollectivesParams(
+        matrix_dim=64,
+        dtype="bfloat16",
+        mesh_shape="2x2",
+        sharding_strategy="2x2",
+    )
+    self.assertEqual(
+        config.device_placement, collectives.DevicePlacement.MESH_UTILS
+    )
+    bm = collectives.AllGatherBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+    )
+    with mock.patch.object(
+        collectives.mesh_utils,
+        "create_device_mesh",
+        wraps=collectives.mesh_utils.create_device_mesh,
+    ) as mock_create:
+      bm.setup()
+    mock_create.assert_called_once_with([2, 2], devices=jax.devices())
+    self.assertEqual(bm.mesh.devices.shape, (2, 2))
+
+  @parameterized.named_parameters(
+      ("full_mesh", "2x2", (256, 8, 128)),
+      ("sub_axis", "2x1", (128, 8, 128)),
+  )
+  def test_id_sorted_device_placement_builds_sorted_mesh(
+      self, sharding_strategy, expected_out_shape
+  ):
+    """Verify id_sorted builds the mesh from devices sorted ascending by id."""
+    config = collectives.CollectivesParams(
+        matrix_dim=64,
+        dtype="bfloat16",
+        mesh_shape="2x2",
+        sharding_strategy=sharding_strategy,
+        device_placement="id_sorted",
+    )
+    bm = collectives.AllGatherBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+    )
+    with mock.patch.object(
+        collectives.mesh_utils, "create_device_mesh"
+    ) as mock_create:
+      bm.setup()
+    mock_create.assert_not_called()
+
+    self.assertEqual(bm.mesh.devices.shape, (2, 2))
+    flat_ids = [d.id for d in bm.mesh.devices.flatten()]
+    self.assertEqual(flat_ids, sorted(d.id for d in jax.devices()))
+
+    (data,) = bm.generate_inputs()
+    out = bm.run_op(data)
+    self.assertEqual(out.shape, expected_out_shape)
+
 
 class CollectivesParamsValidationTest(parameterized.TestCase):
   """Verifies the bounds declared on CollectivesParams fields."""
@@ -949,6 +1008,21 @@ class CollectivesParamsValidationTest(parameterized.TestCase):
   def test_invalid_reduce_op_raises_error(self):
     with self.assertRaisesRegex(ValueError, "Invalid reduce_op 'unsupported'"):
       collectives.AllReduceParams(reduce_op="unsupported")
+
+  @parameterized.named_parameters(
+      ("mesh_utils", "mesh_utils", collectives.DevicePlacement.MESH_UTILS),
+      ("id_sorted", "id_sorted", collectives.DevicePlacement.ID_SORTED),
+  )
+  def test_device_placement_coerces_to_enum(self, raw, expected):
+    """Verify YAML string values are coerced into DevicePlacement members."""
+    params = collectives.CollectivesParams(device_placement=raw)
+    self.assertEqual(params.device_placement, expected)
+    self.assertIsInstance(params.device_placement, collectives.DevicePlacement)
+    self.assertEqual(dataclasses.asdict(params)["device_placement"], raw)
+
+  def test_invalid_device_placement_raises_error(self):
+    with self.assertRaisesRegex(ValueError, "Invalid device_placement 'bogus'"):
+      collectives.CollectivesParams(device_placement="bogus")
 
   @parameterized.named_parameters(
       (op.name.lower(), op.value) for op in collectives.ReduceOp

@@ -15,6 +15,7 @@ from jax import ffi
 from jax.experimental import mesh_utils
 from jax.interpreters import mlir
 import jax.numpy as jnp
+import numpy as np
 
 _BASE_N = 8
 _BASE_K = 128
@@ -72,12 +73,28 @@ _REDUCE_OP_MAP: dict[ReduceOp, Callable[..., Any]] = {
 }
 
 
+class DevicePlacement(constants.ParamEnum):
+  """Device placement strategies used when building the collective mesh."""
+
+  MESH_UTILS = "mesh_utils"
+  ID_SORTED = "id_sorted"
+
+
 @dataclasses.dataclass
 class CollectivesParams(base.SingleDtypeBenchmarkParams):
   mesh_shape: Optional[str] = dataclasses.field(
       default=None,
       metadata={"help": "Logical TPU mesh shape string"
                         " (e.g. '2x4x4', '2x2x1')."},
+  )
+  device_placement: DevicePlacement = dataclasses.field(
+      default=DevicePlacement.MESH_UTILS,
+      metadata={
+          "help": (
+              "Mesh device placement: 'mesh_utils' (topology-aware) or"
+              " 'id_sorted' (sorted by device id)."
+          )
+      },
   )
   sharding_strategy: Optional[str] = dataclasses.field(
       default=None,
@@ -121,6 +138,7 @@ class BaseCollectiveBenchmark(
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("mesh_shape", report.format_str),
+      ("device_placement", report.format_str),
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
       ("shard_size_mib", report.format_2f),
@@ -145,15 +163,21 @@ class BaseCollectiveBenchmark(
     )
     self.sharding_strategy = None
 
+  def _build_mesh_devices(self, mesh_shape: list[int]) -> np.ndarray:
+    """Returns the mesh device array per `config.device_placement`."""
+    if self.config.device_placement == DevicePlacement.ID_SORTED:
+      return np.asarray(sorted(jax.devices(), key=lambda d: d.id)).reshape(
+          mesh_shape
+      )
+    return mesh_utils.create_device_mesh(mesh_shape, devices=jax.devices())
+
   def setup(self):
     mesh_shape_str = self.config.mesh_shape
     if mesh_shape_str is not None:
       try:
         mesh_shape = [int(i) for i in mesh_shape_str.split("x")]
         axis_names = tuple(f"d_{i}" for i in range(len(mesh_shape)))
-        mesh_devices = mesh_utils.create_device_mesh(
-            mesh_shape, devices=jax.devices()
-        )
+        mesh_devices = self._build_mesh_devices(mesh_shape)
         self.mesh = jax.sharding.Mesh(mesh_devices, axis_names)
       except (ValueError, RuntimeError) as e:
         print(
@@ -364,6 +388,7 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
       ("dtype", report.format_str),
       ("reduce_op", report.format_str),
       ("mesh_shape", report.format_str),
+      ("device_placement", report.format_str),
       ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
       ("shard_size_mib", report.format_2f),
