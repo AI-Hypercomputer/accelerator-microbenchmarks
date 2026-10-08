@@ -60,9 +60,10 @@ def configure_single_host_tpu():
         "--xla_tpu_use_enhanced_launch_barrier=true",
         "--xla_tpu_use_enhanced_launch_barrier=false",
     )
+    existing_flag_names = {f.split("=")[0] for f in existing_args.split()}
     for flag in local_flags:
         flag_name = flag.split("=")[0]
-        if flag_name not in existing_args:
+        if flag_name not in existing_flag_names:
             existing_args = f"{existing_args} {flag}".strip()
     os.environ["LIBTPU_INIT_ARGS"] = existing_args
 
