@@ -29,6 +29,36 @@ import jax.extend
 from tensorflow.tsl.profiler.protobuf import xplane_pb2
 
 
+def configure_local_node_tpu():
+    """Configures local node TPU execution on a single host without slicebuilder."""
+    os.environ["TPU_HOST_BOUNDS"] = "1,1,1"
+    os.environ["TPU_SKIP_MDS_QUERY"] = "true"
+    os.environ["TPU_WORKER_ID"] = "0"
+    os.environ["TPU_WORKER_HOSTNAMES"] = "localhost"
+    local_flags = [
+        "--deepsea_hal_test_skip_slicebuilder=true",
+        "--deepsea_hal_test_allow_multichip_skip_slicebuilder=true",
+        "--xla_tpu_enable_async_collective_fusion=false",
+        "--xla_tpu_use_enhanced_launch_barrier=false",
+    ]
+    existing_args = (
+        os.environ.get("LIBTPU_INIT_ARGS", "")
+        .replace(
+            "--xla_tpu_enable_async_collective_fusion=true",
+            "--xla_tpu_enable_async_collective_fusion=false",
+        )
+        .replace(
+            "--xla_tpu_use_enhanced_launch_barrier=true",
+            "--xla_tpu_use_enhanced_launch_barrier=false",
+        )
+    )
+    for flag in local_flags:
+        flag_name = flag.split("=")[0]
+        if flag_name not in existing_args:
+            existing_args = f"{existing_args} {flag}".strip()
+    os.environ["LIBTPU_INIT_ARGS"] = existing_args
+
+
 def get_real_dtype_bytes(dtype) -> float:
     """Returns the real byte size of a dtype, handling sub-byte types."""
     try:
@@ -1024,6 +1054,9 @@ def rename_xla_dump(
             )
             continue
 
+        if os.path.isdir(original_filepath):
+            continue
+
         # Copy the renamed files to desired location
         if is_local_directory_path(dest_xla_dump_dir):
             try:
@@ -1108,6 +1141,9 @@ def extract_hlo_features_from_file(
     rg_match = re.search(
         r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL
     )
+    mesh_rg_match = re.search(
+        r"replica_groups=(mesh\[([^\]]+)\]\s*\{([^}]+)\})", content
+    )
     if rg_match:
         replica_groups_str = rg_match.group(1)
         try:
@@ -1117,6 +1153,17 @@ def extract_hlo_features_from_file(
         except ValueError as e:
             print(f"Could not parse replica_groups in hlo_text: {e}")
             first_replica_group = None
+    elif mesh_rg_match:
+        replica_groups_str = mesh_rg_match.group(1)
+        dims = {
+            k: int(v)
+            for k, v in re.findall(r"'([^']+)'=(\d+)", mesh_rg_match.group(2))
+        }
+        axes = re.findall(r"'([^']+)'", mesh_rg_match.group(3))
+        group_size = 1
+        for axis in axes:
+            group_size *= dims.get(axis, 1)
+        first_replica_group = list(range(group_size))
     else:
         print(f"Could not find replica_groups in {hlo_file_path}.")
 
