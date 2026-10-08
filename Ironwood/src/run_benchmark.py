@@ -13,7 +13,7 @@ import random
 import string
 from typing import Any, Callable, Dict, List, Tuple
 from benchmark_utils import (
-    configure_local_node_tpu,
+    configure_single_host_tpu,
     maybe_write_metrics_file,
     rename_xla_dump,
     MetricsStatistics,
@@ -376,12 +376,6 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
         for param in benchmark_params:
             if "topology" not in param:
                 param["topology"] = global_topology
-    # Inject run_on_local_node from config if present in benchmark_config
-    global_run_on_local_node = benchmark_config.get("run_on_local_node")
-    if global_run_on_local_node is not None:
-        for param in benchmark_params:
-            if "run_on_local_node" not in param:
-                param["run_on_local_node"] = global_run_on_local_node
 
     if not benchmark_name:
         raise ValueError("Each benchmark must have a benchmark_name.")
@@ -391,8 +385,12 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
     benchmark_func, calculate_metrics_func = get_benchmark_functions(
         benchmark_name
     )
-    if benchmark_config.get("run_on_local_node", False):
-        configure_local_node_tpu()
+    # `single_host_tpu_init` is a benchmark-level flag (not a sweep param) because
+    # libtpu is initialized once per process. It must run after the benchmark
+    # module import above (which sets LIBTPU_INIT_ARGS) and before the first
+    # JAX device call.
+    if benchmark_config.get("single_host_tpu_init", False):
+        configure_single_host_tpu()
 
     print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
 

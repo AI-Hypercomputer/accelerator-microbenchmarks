@@ -25,7 +25,6 @@ def benchmark_host_device(
     data_size_mib: int,
     num_runs: int = 100,
     trace_dir: str = None,
-    run_on_local_node: bool = False,  # pylint: disable=unused-argument
 ) -> Dict[str, Any]:
     """Benchmarks H2D/D2H transfer using simple device_put/device_get."""
 
@@ -106,7 +105,6 @@ def benchmark_host_device_calculate_metrics(
     data_size_mib: int,
     h2d_bandwidth_ms: List[float],
     d2h_bandwidth_ms: List[float],
-    run_on_local_node: bool = False,  # pylint: disable=unused-argument
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Calculates metrics for Host-Device transfer."""
     params = locals().items()

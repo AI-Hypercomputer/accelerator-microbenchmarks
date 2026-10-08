@@ -29,8 +29,14 @@ import jax.extend
 from tensorflow.tsl.profiler.protobuf import xplane_pb2
 
 
-def configure_local_node_tpu():
-    """Configures local node TPU execution on a single host without slicebuilder."""
+def configure_single_host_tpu():
+    """Initializes libtpu as a standalone single host inside a multi-host slice.
+
+    Process-wide and must be called before the first JAX device call. Enabled
+    via the benchmark-level `single_host_tpu_init` config key. Forces a 1-host
+    topology, skips SliceBuilder/tpunetd (leaving slice ICI routing untouched),
+    and disables cross-chip XLA launch barriers and continuation fusion.
+    """
     os.environ["TPU_HOST_BOUNDS"] = "1,1,1"
     os.environ["TPU_SKIP_MDS_QUERY"] = "true"
     os.environ["TPU_WORKER_ID"] = "0"
