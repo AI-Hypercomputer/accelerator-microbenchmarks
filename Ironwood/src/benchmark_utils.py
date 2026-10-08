@@ -35,7 +35,7 @@ def configure_single_host_tpu():
     Process-wide and must be called before the first JAX device call. Enabled
     via the benchmark-level `single_host_tpu_init` config key. Forces a 1-host
     topology, skips SliceBuilder/tpunetd (leaving slice ICI routing untouched),
-    and disables cross-chip XLA launch barriers and continuation fusion.
+    and disables the cross-host XLA launch barrier.
     """
     os.environ["TPU_HOST_BOUNDS"] = "1,1,1"
     os.environ["TPU_SKIP_MDS_QUERY"] = "true"
@@ -44,19 +44,11 @@ def configure_single_host_tpu():
     local_flags = [
         "--deepsea_hal_test_skip_slicebuilder=true",
         "--deepsea_hal_test_allow_multichip_skip_slicebuilder=true",
-        "--xla_tpu_enable_async_collective_fusion=false",
         "--xla_tpu_use_enhanced_launch_barrier=false",
     ]
-    existing_args = (
-        os.environ.get("LIBTPU_INIT_ARGS", "")
-        .replace(
-            "--xla_tpu_enable_async_collective_fusion=true",
-            "--xla_tpu_enable_async_collective_fusion=false",
-        )
-        .replace(
-            "--xla_tpu_use_enhanced_launch_barrier=true",
-            "--xla_tpu_use_enhanced_launch_barrier=false",
-        )
+    existing_args = os.environ.get("LIBTPU_INIT_ARGS", "").replace(
+        "--xla_tpu_use_enhanced_launch_barrier=true",
+        "--xla_tpu_use_enhanced_launch_barrier=false",
     )
     for flag in local_flags:
         flag_name = flag.split("=")[0]
