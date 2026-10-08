@@ -63,6 +63,18 @@ def configure_single_host_tpu():
         if flag_name not in existing_args:
             existing_args = f"{existing_args} {flag}".strip()
     os.environ["LIBTPU_INIT_ARGS"] = existing_args
+    print(
+        "single_host_tpu_init: TPU_HOST_BOUNDS=%s TPU_SKIP_MDS_QUERY=%s "
+        "TPU_WORKER_ID=%s TPU_WORKER_HOSTNAMES=%s LIBTPU_INIT_ARGS=%r"
+        % (
+            os.environ["TPU_HOST_BOUNDS"],
+            os.environ["TPU_SKIP_MDS_QUERY"],
+            os.environ["TPU_WORKER_ID"],
+            os.environ["TPU_WORKER_HOSTNAMES"],
+            os.environ["LIBTPU_INIT_ARGS"],
+        ),
+        flush=True,
+    )
 
 
 def get_real_dtype_bytes(dtype) -> float:
