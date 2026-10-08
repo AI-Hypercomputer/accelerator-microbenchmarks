@@ -29,6 +29,14 @@ import jax.extend
 from tensorflow.tsl.profiler.protobuf import xplane_pb2
 
 
+_single_host_tpu_init = False
+
+
+def is_single_host_tpu_init() -> bool:
+    """Returns True if configure_single_host_tpu() was applied in this process."""
+    return _single_host_tpu_init
+
+
 def configure_single_host_tpu():
     """Initializes libtpu as a standalone single host inside a multi-host slice.
 
@@ -37,6 +45,8 @@ def configure_single_host_tpu():
     topology, skips SliceBuilder/tpunetd (leaving slice ICI routing untouched),
     and disables the cross-host XLA launch barrier.
     """
+    global _single_host_tpu_init
+    _single_host_tpu_init = True
     os.environ["TPU_HOST_BOUNDS"] = "1,1,1"
     os.environ["TPU_SKIP_MDS_QUERY"] = "true"
     os.environ["TPU_WORKER_ID"] = "0"
@@ -55,18 +65,6 @@ def configure_single_host_tpu():
         if flag_name not in existing_args:
             existing_args = f"{existing_args} {flag}".strip()
     os.environ["LIBTPU_INIT_ARGS"] = existing_args
-    print(
-        "single_host_tpu_init: TPU_HOST_BOUNDS=%s TPU_SKIP_MDS_QUERY=%s "
-        "TPU_WORKER_ID=%s TPU_WORKER_HOSTNAMES=%s LIBTPU_INIT_ARGS=%r"
-        % (
-            os.environ["TPU_HOST_BOUNDS"],
-            os.environ["TPU_SKIP_MDS_QUERY"],
-            os.environ["TPU_WORKER_ID"],
-            os.environ["TPU_WORKER_HOSTNAMES"],
-            os.environ["LIBTPU_INIT_ARGS"],
-        ),
-        flush=True,
-    )
 
 
 def get_real_dtype_bytes(dtype) -> float:

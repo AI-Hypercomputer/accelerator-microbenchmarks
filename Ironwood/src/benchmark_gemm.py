@@ -17,6 +17,7 @@ from benchmark_utils import get_output_named_shading
 from benchmark_utils import get_peak_flops_multiplier
 from benchmark_utils import get_rhs_named_shading
 from benchmark_utils import handle_based_on_sharding
+from benchmark_utils import is_single_host_tpu_init
 from benchmark_utils import iteration_timeit
 from benchmark_utils import multiple_iteration_timeit_from_trace
 from benchmark_utils import ShardingStrategy
@@ -101,7 +102,7 @@ def gemm_multiple_run(
     lhs_dtype = dtype
     rhs_dtype = dtype
 
-    if run_on_local_node:
+    if is_single_host_tpu_init():
         key = jax.device_put(jax.random.key(SEED), jax.devices("cpu")[0])
         mesh_devices = list(mesh.devices.flat)
 

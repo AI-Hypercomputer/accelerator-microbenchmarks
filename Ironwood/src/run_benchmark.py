@@ -385,10 +385,6 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
     benchmark_func, calculate_metrics_func = get_benchmark_functions(
         benchmark_name
     )
-    # `single_host_tpu_init` is a benchmark-level flag (not a sweep param) because
-    # libtpu is initialized once per process. It must run after the benchmark
-    # module import above (which sets LIBTPU_INIT_ARGS) and before the first
-    # JAX device call.
     if benchmark_config.get("single_host_tpu_init", False):
         configure_single_host_tpu()
 
