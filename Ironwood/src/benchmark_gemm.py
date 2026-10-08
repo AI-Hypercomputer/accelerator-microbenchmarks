@@ -17,6 +17,7 @@ from benchmark_utils import get_output_named_shading
 from benchmark_utils import get_peak_flops_multiplier
 from benchmark_utils import get_rhs_named_shading
 from benchmark_utils import handle_based_on_sharding
+from benchmark_utils import is_single_host_tpu_init
 from benchmark_utils import iteration_timeit
 from benchmark_utils import multiple_iteration_timeit_from_trace
 from benchmark_utils import ShardingStrategy
@@ -30,8 +31,7 @@ import jax.numpy as jnp
 
 
 os.environ["LIBTPU_INIT_ARGS"] = (
-    "--xla_tpu_enable_async_collective_fusion=true "
-    "--xla_tpu_enable_async_collective_fusion_fuse_all_gather=true "
+    "--xla_tpu_enable_async_collective_fusion=false "
     "--xla_tpu_enable_async_collective_fusion_multiple_steps=true "
     "--xla_tpu_overlap_compute_collective_tc=true "
     "--xla_enable_async_all_gather=true "
@@ -102,22 +102,53 @@ def gemm_multiple_run(
     lhs_dtype = dtype
     rhs_dtype = dtype
 
-    key = jax.random.key(SEED)
+    if is_single_host_tpu_init():
+        key = jax.device_put(jax.random.key(SEED), jax.devices("cpu")[0])
+        mesh_devices = list(mesh.devices.flat)
 
-    def data_generator():
-        """Creates new random data on host and puts it on device."""
-        nonlocal key  # Use and update the outer 'key'
-        key, key_lhs, key_rhs = jax.random.split(key, 3)
+        def data_generator():
+            """Generates random data independently on each local device."""
+            nonlocal key
+            key, key_lhs, key_rhs = jax.random.split(key, 3)
+            lhs_device = jax.make_array_from_single_device_arrays(
+                lhs_shape,
+                lhs_sharding,
+                [
+                    jax.random.normal(
+                        jax.device_put(key_lhs, d), lhs_shape, dtype=lhs_dtype
+                    )
+                    for d in mesh_devices
+                ],
+            )
+            rhs_device = jax.make_array_from_single_device_arrays(
+                rhs_shape,
+                rhs_sharding,
+                [
+                    jax.random.normal(
+                        jax.device_put(key_rhs, d), rhs_shape, dtype=rhs_dtype
+                    )
+                    for d in mesh_devices
+                ],
+            )
+            return (lhs_device, rhs_device)
 
-        # Create random data on host
-        lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
-        rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+    else:
+        key = jax.random.key(SEED)
 
-        # Put on device (HBM)
-        lhs_device = jax.device_put(lhs_host, lhs_sharding)
-        rhs_device = jax.device_put(rhs_host, rhs_sharding)
+        def data_generator():
+            """Creates new random data on host and puts it on device."""
+            nonlocal key  # Use and update the outer 'key'
+            key, key_lhs, key_rhs = jax.random.split(key, 3)
 
-        return (lhs_device, rhs_device)
+            # Create random data on host
+            lhs_host = jax.random.normal(key_lhs, lhs_shape).astype(lhs_dtype)
+            rhs_host = jax.random.normal(key_rhs, rhs_shape).astype(rhs_dtype)
+
+            # Put on device (HBM)
+            lhs_device = jax.device_put(lhs_host, lhs_sharding)
+            rhs_device = jax.device_put(rhs_host, rhs_sharding)
+
+            return (lhs_device, rhs_device)
 
     # Run the benchmark
 

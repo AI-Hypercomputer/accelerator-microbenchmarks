@@ -13,6 +13,7 @@ import random
 import string
 from typing import Any, Callable, Dict, List, Tuple
 from benchmark_utils import (
+    configure_single_host_tpu,
     maybe_write_metrics_file,
     rename_xla_dump,
     MetricsStatistics,
@@ -384,6 +385,8 @@ def run_single_benchmark(benchmark_config: Dict[str, Any], output_path: str):
     benchmark_func, calculate_metrics_func = get_benchmark_functions(
         benchmark_name
     )
+    if benchmark_config.get("single_host_tpu_init", False):
+        configure_single_host_tpu()
 
     print(f"\n{'=' * 30}Starting benchmark '{benchmark_name}'{'=' * 30}\n")
 

@@ -29,6 +29,47 @@ import jax.extend
 from tensorflow.tsl.profiler.protobuf import xplane_pb2
 
 
+_single_host_tpu_init = False
+
+
+def is_single_host_tpu_init() -> bool:
+    """Returns True if configure_single_host_tpu() ran in this process."""
+    return _single_host_tpu_init
+
+
+def configure_single_host_tpu():
+    """Initializes libtpu as a standalone single host inside a multi-host slice.
+
+    Process-wide and must be called before the first JAX device call. Enabled
+    via the benchmark-level `single_host_tpu_init` config key. Forces a 1-host
+    topology, skips SliceBuilder/tpunetd (leaving slice ICI routing untouched),
+    and disables the cross-host XLA launch barrier.
+    """
+    global _single_host_tpu_init
+    _single_host_tpu_init = True
+    os.environ["TPU_HOST_BOUNDS"] = "1,1,1"
+    os.environ["TPU_SKIP_MDS_QUERY"] = "true"
+    os.environ["TPU_WORKER_ID"] = "0"
+    os.environ["TPU_WORKER_HOSTNAMES"] = "localhost"
+    local_flags = [
+        "--deepsea_hal_test_skip_slicebuilder=true",
+        "--deepsea_hal_test_allow_multichip_skip_slicebuilder=true",
+        "--xla_tpu_use_enhanced_launch_barrier=false",
+    ]
+    existing_args = os.environ.get("LIBTPU_INIT_ARGS", "").replace(
+        "--xla_tpu_use_enhanced_launch_barrier=true",
+        "--xla_tpu_use_enhanced_launch_barrier=false",
+    )
+    existing_flag_names = {
+        f.split("=", maxsplit=1)[0] for f in existing_args.split()
+    }
+    for flag in local_flags:
+        flag_name = flag.split("=", maxsplit=1)[0]
+        if flag_name not in existing_flag_names:
+            existing_args = f"{existing_args} {flag}".strip()
+    os.environ["LIBTPU_INIT_ARGS"] = existing_args
+
+
 def get_real_dtype_bytes(dtype) -> float:
     """Returns the real byte size of a dtype, handling sub-byte types."""
     try:
@@ -1024,6 +1065,9 @@ def rename_xla_dump(
             )
             continue
 
+        if os.path.isdir(original_filepath):
+            continue
+
         # Copy the renamed files to desired location
         if is_local_directory_path(dest_xla_dump_dir):
             try:
@@ -1108,6 +1152,9 @@ def extract_hlo_features_from_file(
     rg_match = re.search(
         r"replica_groups=({{[0-9,]+(?:},{[0-9,]+)*}})", content, re.DOTALL
     )
+    mesh_rg_match = re.search(
+        r"replica_groups=(mesh\[([^\]]+)\]\s*\{([^}]+)\})", content
+    )
     if rg_match:
         replica_groups_str = rg_match.group(1)
         try:
@@ -1117,6 +1164,17 @@ def extract_hlo_features_from_file(
         except ValueError as e:
             print(f"Could not parse replica_groups in hlo_text: {e}")
             first_replica_group = None
+    elif mesh_rg_match:
+        replica_groups_str = mesh_rg_match.group(1)
+        dims = {
+            k: int(v)
+            for k, v in re.findall(r"'([^']+)'=(\d+)", mesh_rg_match.group(2))
+        }
+        axes = re.findall(r"'([^']+)'", mesh_rg_match.group(3))
+        group_size = 1
+        for axis in axes:
+            group_size *= dims.get(axis, 1)
+        first_replica_group = list(range(group_size))
     else:
         print(f"Could not find replica_groups in {hlo_file_path}.")
 
@@ -1240,7 +1298,7 @@ def handle_based_on_sharding(
 
 def create_mesh(strategy: ShardingStrategy, local_mesh: bool = False) -> Mesh:
     """Creates a mesh.
-    
+
     Args:
         strategy: The sharding strategy to apply.
         local_mesh: If True, restricts the mesh to local devices.
