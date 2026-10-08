@@ -33,7 +33,7 @@ _single_host_tpu_init = False
 
 
 def is_single_host_tpu_init() -> bool:
-    """Returns True if configure_single_host_tpu() was applied in this process."""
+    """Returns True if configure_single_host_tpu() ran in this process."""
     return _single_host_tpu_init
 
 
@@ -60,9 +60,11 @@ def configure_single_host_tpu():
         "--xla_tpu_use_enhanced_launch_barrier=true",
         "--xla_tpu_use_enhanced_launch_barrier=false",
     )
-    existing_flag_names = {f.split("=")[0] for f in existing_args.split()}
+    existing_flag_names = {
+        f.split("=", maxsplit=1)[0] for f in existing_args.split()
+    }
     for flag in local_flags:
-        flag_name = flag.split("=")[0]
+        flag_name = flag.split("=", maxsplit=1)[0]
         if flag_name not in existing_flag_names:
             existing_args = f"{existing_args} {flag}".strip()
     os.environ["LIBTPU_INIT_ARGS"] = existing_args
@@ -1296,7 +1298,7 @@ def handle_based_on_sharding(
 
 def create_mesh(strategy: ShardingStrategy, local_mesh: bool = False) -> Mesh:
     """Creates a mesh.
-    
+
     Args:
         strategy: The sharding strategy to apply.
         local_mesh: If True, restricts the mesh to local devices.
