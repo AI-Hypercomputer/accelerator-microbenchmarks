@@ -99,16 +99,16 @@ class SoakingBenchmarkTest(absltest.TestCase):
     # Without IQR removal, average of [1, 1, 1, 1, 100] is 20.8
     self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 20.8, places=4)
     self.assertAlmostEqual(
-        metrics[constants.WALL_CLOCK_INITIAL_P50_MS], 1.0, places=4
+        metrics[constants.WALL_CLOCK_PRE_SOAKING_P50_MS], 1.0, places=4
     )
     self.assertAlmostEqual(
-        metrics[constants.WALL_CLOCK_SUSTAINED_P50_MS], 100.0, places=4
+        metrics[constants.WALL_CLOCK_POST_SOAKING_P50_MS], 100.0, places=4
     )
     self.assertAlmostEqual(
         metrics[constants.WALL_CLOCK_SLOWDOWN_RATIO], 100.0, places=4
     )
-    self.assertNotIn(constants.XPROF_INITIAL_P50_MS, metrics)
-    self.assertNotIn(constants.XPROF_SUSTAINED_P50_MS, metrics)
+    self.assertNotIn(constants.XPROF_PRE_SOAKING_P50_MS, metrics)
+    self.assertNotIn(constants.XPROF_POST_SOAKING_P50_MS, metrics)
     self.assertNotIn(constants.XPROF_SLOWDOWN_RATIO, metrics)
 
   def test_base_executor_warmup_and_iqr_boundary(self):
@@ -136,8 +136,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
     bm = SoakingDummyBenchmark(config=cfg)
     metrics = bm.calculate_metrics([])
     for key in (
-        constants.WALL_CLOCK_INITIAL_P50_MS,
-        constants.WALL_CLOCK_SUSTAINED_P50_MS,
+        constants.WALL_CLOCK_PRE_SOAKING_P50_MS,
+        constants.WALL_CLOCK_POST_SOAKING_P50_MS,
         constants.WALL_CLOCK_SLOWDOWN_RATIO,
         *constants.THERMAL_METRIC_KEYS,
     ):
@@ -146,10 +146,19 @@ class SoakingBenchmarkTest(absltest.TestCase):
   def test_base_benchmark_calculate_metrics_integrates_thermal_keys(self):
     """Verifies end-to-end integration of thermal keys in calculate_metrics."""
     data_path = os.path.join(
-        os.path.dirname(__file__), "data", "bbc8_thermal.xplane.pb"
+        os.path.dirname(__file__), "data", "tpu7x_fw_counters.xplane.pb"
     )
     with tempfile.TemporaryDirectory() as tmpdir:
-      shutil.copy(data_path, os.path.join(tmpdir, "bbc8_thermal.xplane.pb"))
+      worst_dir = os.path.join(tmpdir, "worst_window")
+      os.makedirs(worst_dir)
+      shutil.copy(
+          data_path, os.path.join(worst_dir, "tpu7x_fw_counters.xplane.pb")
+      )
+      baseline_dir = os.path.join(tmpdir, "baseline_window")
+      os.makedirs(baseline_dir)
+      shutil.copy(
+          data_path, os.path.join(baseline_dir, "tpu7x_fw_counters.xplane.pb")
+      )
       bench = SoakingDummyBenchmark(
           config=SoakingDummyParams(min_duration_s=1.0)
       )
@@ -158,10 +167,12 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     for key in constants.THERMAL_METRIC_KEYS:
       self.assertIn(key, metrics)
-    self.assertEqual(metrics["thermal_throttle_level"], 12.0)
-    self.assertEqual(metrics["hbm_peak_temp_c"], 68.5)
-    self.assertEqual(metrics["peak_temp_c"], 74.2)
-    self.assertEqual(metrics["hbm_throttle_pct"], 64.1)
+    self.assertEqual(metrics["hbm_peak_temp_c"], 40.0)
+    self.assertAlmostEqual(
+        metrics["vdd_core_power_mean_w"], 352.5091138564901, places=4
+    )
+    self.assertIsNone(metrics["peak_temp_c"])
+    self.assertEqual(metrics["hbm_throttle_time_pct"], 0.0)
 
   @unittest.mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
@@ -289,9 +300,13 @@ class SoakingBenchmarkTest(absltest.TestCase):
       )
     self.assertEqual(bm.executor.first_window_xprof_duration, [1.0])
     self.assertEqual(bm.executor.last_window_xprof_duration, [2.5])
-    self.assertEqual(bm.executor.xprof_durations, [1.0, 2.5])
-    self.assertAlmostEqual(res.metrics["xprof_initial_p50_ms"], 1.0, places=4)
-    self.assertAlmostEqual(res.metrics["xprof_sustained_p50_ms"], 2.5, places=4)
+    self.assertEqual(bm.executor.xprof_durations, [2.5])
+    self.assertAlmostEqual(
+        res.metrics["xprof_pre_soaking_p50_ms"], 1.0, places=4
+    )
+    self.assertAlmostEqual(
+        res.metrics["xprof_post_soaking_p50_ms"], 2.5, places=4
+    )
     self.assertAlmostEqual(res.metrics["xprof_slowdown_ratio"], 2.5, places=4)
 
     # Also verify non-positive synced_p50 passes has_xprof_timings=False.
@@ -306,8 +321,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
         ),
     ):
       fallback_metrics = bm._apply_xprof_timing_and_sync({})  # pylint: disable=protected-access
-    self.assertIsNone(fallback_metrics[constants.XPROF_INITIAL_P50_MS])
-    self.assertIsNone(fallback_metrics[constants.XPROF_SUSTAINED_P50_MS])
+    self.assertIsNone(fallback_metrics[constants.XPROF_PRE_SOAKING_P50_MS])
+    self.assertIsNone(fallback_metrics[constants.XPROF_POST_SOAKING_P50_MS])
     self.assertIsNone(fallback_metrics[constants.XPROF_SLOWDOWN_RATIO])
 
   def test_soaking_execute_phases_and_chunk_accounting(self):
@@ -409,7 +424,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
     self.assertGreaterEqual(raw_times[-1], delay_s * 1000.0)
 
   def test_wall_clock_soaking_stats_derived_from_untraced_soak_chunks(self):
-    """Verifies wall-clock initial/sustained p50 use first vs last soak chunk and ignore Phase 1/3 windows.
+    """Verifies wall-clock pre_soaking/post_soaking p50 use first vs last soak chunk and ignore Phase 1/3 windows.
 
     On fast clock-skip throttling hosts the traced `worst_window` can read
     un-throttled after a profiler-init gap, so the wall-clock slowdown must be
@@ -426,10 +441,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
     times_ms = [9.0] + soak + [9.0]
     metrics = bm.calculate_metrics(times_ms)
     self.assertAlmostEqual(
-        metrics[constants.WALL_CLOCK_INITIAL_P50_MS], 10.0, places=4
+        metrics[constants.WALL_CLOCK_PRE_SOAKING_P50_MS], 10.0, places=4
     )
     self.assertAlmostEqual(
-        metrics[constants.WALL_CLOCK_SUSTAINED_P50_MS], 12.0, places=4
+        metrics[constants.WALL_CLOCK_POST_SOAKING_P50_MS], 12.0, places=4
     )
     self.assertAlmostEqual(
         metrics[constants.WALL_CLOCK_SLOWDOWN_RATIO], 1.2, places=4

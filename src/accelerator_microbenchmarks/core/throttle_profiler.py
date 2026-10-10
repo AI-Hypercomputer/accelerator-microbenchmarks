@@ -1,80 +1,156 @@
 """Thermal telemetry and throttling XPlane profiler for JAX benchmarks."""
 
-import dataclasses
-import math
+import collections
+from collections.abc import Callable, Iterable, Mapping
 import os
 import re
-import struct
+from typing import Any
 
 from accelerator_microbenchmarks.core import constants
 
 import os
 from tensorflow.tsl.profiler.protobuf import xplane_pb2  # pylint: disable=g-direct-tensorflow-import
 
-_DEVICE_PLANE_RE = re.compile(r"^/device:TPU:\d+")
-_POWER_THROTTLE_EVENT_RE = re.compile(
-    r"^(\d+(?:\.\d+)?)\s*(?:\(\s*([a-z0-9_]+)\s*\))?$",
-    re.IGNORECASE,
-)
+_DEVICE_PLANE_RE = re.compile(r"^/device:TPU:\d+$")
+_CORE_ID_SUFFIX_RE = re.compile(r"\s+\d+$")
+_PS_PER_NS = 1000
+
+_HBM_THROTTLE_SERIES = "hbm_throttle"
+_VDD_CORE_THROTTLE_SERIES = "vdd_core_throttle"
+_VDD_CORE_POWER_SERIES = "vdd_core_power"
+_HBM_POWER_SERIES = "hbm_power"
+_PSTATE_SERIES = "pstate"
+
+_EVENT_PEAK_KEYS: Mapping[str, str] = {
+    constants.XPROF_HBM_PEAK_TEMP_STAT: constants.HBM_PEAK_TEMP_C,
+    constants.XPROF_COMPUTE_DIE_PEAK_TEMP_STAT: constants.PEAK_TEMP_C,
+}
+
+_EVENT_SERIES: Mapping[str, str] = {
+    constants.XPROF_HBM_THROTTLE_PCT_STAT: _HBM_THROTTLE_SERIES,
+    constants.XPROF_VDD_CORE_THROTTLE_PCT_STAT: _VDD_CORE_THROTTLE_SERIES,
+    constants.XPROF_VDD_CORE_POWER_PL1_STAT: _VDD_CORE_POWER_SERIES,
+    constants.XPROF_HBM_POWER_PL1_STAT: _HBM_POWER_SERIES,
+    constants.XPROF_PSTATE_EVENT: _PSTATE_SERIES,
+}
+
+_PLANE_STAT_KEYS: Mapping[str, str] = {
+    constants.XPROF_HBM_PEAK_TEMP_STAT: constants.HBM_PEAK_TEMP_C,
+    constants.XPROF_COMPUTE_DIE_PEAK_TEMP_STAT: constants.PEAK_TEMP_C,
+}
+_MIN_AGGREGATED_KEYS = frozenset({constants.PSTATE_MIN})
 
 
-def _classify_thermal_metric(name: str) -> str | None:
-  """Maps an XPlane event or plane-stat name to a canonical THERMAL_METRIC_KEY."""
-  norm = name.strip().lower()
-  if norm == constants.XPROF_HBM_PEAK_TEMP_STAT:
-    return constants.HBM_PEAK_TEMP_C
-  if norm == constants.XPROF_COMPUTE_DIE_PEAK_TEMP_STAT:
-    return constants.PEAK_TEMP_C
-  if norm == constants.XPROF_HBM_THROTTLE_PCT_STAT:
-    return constants.HBM_THROTTLE_PCT
-  if norm == constants.THERMAL_THROTTLE_LEVEL:
-    return constants.THERMAL_THROTTLE_LEVEL
+def _normalize_name(name: str) -> str:
+  """Normalizes a name by lowercasing, stripping, and removing core ID suffixes."""
+  return _CORE_ID_SUFFIX_RE.sub("", name.strip().lower())
+
+
+def _window(
+    intervals: list[tuple[int, int, float]],
+    kernel_span: tuple[int | None, int | None],
+) -> tuple[int, int] | None:
+  """Returns the time window of the given intervals."""
+  if kernel_span[0] is not None and kernel_span[1] is not None:
+    return kernel_span[0], kernel_span[1]
+  if intervals:
+    lo = min(iv[0] for iv in intervals)
+    hi = max(iv[1] for iv in intervals)
+    return (lo, hi) if hi > lo else None
   return None
 
 
-def _parse_thermal_throttle_level(event_name: str) -> float | None:
-  """Parses a 'Power Throttle' XLine event name into a thermal throttle level.
-
-  XProf PowerThrottleSubscriber emits events named `"0"` for unthrottled
-  intervals and `"<level> (<source>)"` (e.g. `"12 (THERMAL_THROTTLE)"` or
-  `"8 (LDIDT_DROOP_THROTTLE)"`) for active cycle-skip arbitration intervals.
-
-  Args:
-    event_name: Event metadata name on the `"Power Throttle"` XLine.
-
-  Returns:
-    Float throttle level if the event is unthrottled (`0.0`) or attributable to
-    `THERMAL_THROTTLE`, or `None` for non-thermal throttle sources.
-  """
-  match = _POWER_THROTTLE_EVENT_RE.match(event_name.strip())
-  if match is None:
+def _time_pct(
+    intervals: list[tuple[int, int, float]],
+    kernel_span: tuple[int | None, int | None],
+    predicate: Callable[[float], bool],
+) -> float | None:
+  """Calculates the time percentage of a series of intervals."""
+  bounds = _window(intervals, kernel_span)
+  if bounds is None:
     return None
-  level = float(match.group(1))
-  source = match.group(2)
-  if source is None:
-    return 0.0 if level == 0.0 else None
-  if source.strip().lower() == constants.XPROF_THERMAL_THROTTLE_SOURCE:
-    return level
+  lo, hi = bounds
+  covered = active = 0
+  for start_ps, end_ps, val in intervals:
+    overlap = max(0, min(end_ps, hi) - max(start_ps, lo))
+    covered += overlap
+    if predicate(val):
+      active += overlap
+  return 100.0 * active / covered if covered > 0 else None
+
+
+def _time_weighted_mean(
+    intervals: list[tuple[int, int, float]],
+    kernel_span: tuple[int | None, int | None],
+) -> float | None:
+  """Calculates the time-weighted mean of a series of intervals."""
+  bounds = _window(intervals, kernel_span)
+  if bounds is None:
+    return None
+  lo, hi = bounds
+  covered = 0
+  weighted = 0.0
+  for start_ps, end_ps, val in intervals:
+    overlap = max(0, min(end_ps, hi) - max(start_ps, lo))
+    covered += overlap
+    weighted += val * overlap
+  return weighted / covered if covered > 0 else None
+
+
+def _pstate_stats(
+    intervals: list[tuple[int, int, float]],
+    kernel_span: tuple[int | None, int | None],
+) -> tuple[float | None, float | None, int | None]:
+  """Calculates the min, max, and number of changes for pstate."""
+  intervals = sorted(intervals, key=lambda iv: iv[0])
+  bounds = _window(intervals, kernel_span)
+  if bounds is not None:
+    lo, hi = bounds
+    earlier = [iv for iv in intervals if iv[0] < lo]
+    inside = [iv for iv in intervals if lo <= iv[0] <= hi]
+    intervals = earlier[-1:] + inside
+  if not intervals:
+    return None, None, None
+  ordered = [iv[2] for iv in intervals]
+  changes = sum(1 for prev, cur in zip(ordered, ordered[1:]) if prev != cur)
+  return float(min(ordered)), float(max(ordered)), changes
+
+
+def _is_positive(value: float) -> bool:
+  return value > 0.0
+
+
+def _peak_temp_source(
+    peak_temp_c: float | None, hbm_peak_temp_c: float | None
+) -> str | None:
+  """Determines the source of the peak temperature."""
+  if peak_temp_c is not None:
+    return constants.PEAK_TEMP_SOURCE_COMPUTE_DIE
+  if hbm_peak_temp_c is not None:
+    return constants.PEAK_TEMP_SOURCE_HBM
   return None
 
 
-@dataclasses.dataclass(frozen=True)
-class ThermalMetrics:
-  """Structured TPU thermal telemetry and throttling metrics."""
-
-  hbm_peak_temp_c: float | None = None
-  peak_temp_c: float | None = None
-  hbm_throttle_pct: float | None = None
-  thermal_throttle_level: float | None = None
-
-  def to_dict(self) -> dict[str, float | None]:
-    """Returns thermal metrics as a dictionary keyed by THERMAL_METRIC_KEYS."""
-    return {
-        constants.HBM_PEAK_TEMP_C: self.hbm_peak_temp_c,
-        constants.PEAK_TEMP_C: self.peak_temp_c,
-        constants.HBM_THROTTLE_PCT: self.hbm_throttle_pct,
-        constants.THERMAL_THROTTLE_LEVEL: self.thermal_throttle_level,
-    }
+def aggregate_thermal_metrics(
+    per_device: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+  """Aggregates thermal metrics across multiple devices."""
+  values: dict[str, list[Any]] = collections.defaultdict(list)
+  for metrics in per_device:
+    for key, value in metrics.items():
+      if value is not None and key != constants.PEAK_TEMP_SOURCE:
+        values[key].append(value)
+  aggregated: dict[str, Any] = {
+      key: min(vals) if key in _MIN_AGGREGATED_KEYS else max(vals)
+      for key, vals in values.items()
+  }
+  aggregated[constants.PEAK_TEMP_SOURCE] = _peak_temp_source(
+      aggregated.get(constants.PEAK_TEMP_C),
+      aggregated.get(constants.HBM_PEAK_TEMP_C),
+  )
+  for key in constants.THERMAL_METRIC_KEYS:
+    aggregated.setdefault(key, None)
+  return aggregated
 
 
 class XprofThermalProfiler:
@@ -95,15 +171,19 @@ class XprofThermalProfiler:
     self.xspace = xspace
 
   @staticmethod
-  def _decode_packed_double(raw: bytes) -> float | None:
-    """Decodes a 64-bit IEEE-754 double from XStat bytes_value."""
-    if len(raw) < 8 or (len(raw) > 8 and (raw[-9] & 0x07) != 1):
+  def _requested_pstate() -> int | None:
+    """Extracts the requested pstate from the LIBTPU_INIT_ARGS."""
+    matches = re.findall(
+        rf"(?:^|\s){re.escape(constants.LIBTPU_DVFS_P_STATE_FLAG)}[=\s]+(-?\d+)",
+        os.environ.get("LIBTPU_INIT_ARGS", ""),
+    )
+    if not matches:
       return None
-    val = float(struct.unpack("<d", raw[-8:])[0])
-    return val if math.isfinite(val) else None
+    pstate = int(matches[-1])
+    return pstate if pstate >= 0 else None
 
-  @classmethod
-  def _extract_numeric_stat(cls, stat: xplane_pb2.XStat) -> float | None:
+  @staticmethod
+  def _extract_numeric_stat(stat: xplane_pb2.XStat) -> float | None:
     """Extracts a float from a numeric or packed-double XStat protobuf field.
 
     Args:
@@ -115,9 +195,32 @@ class XprofThermalProfiler:
     value_field = stat.WhichOneof("value")
     if value_field in ("double_value", "int64_value", "uint64_value"):
       return float(getattr(stat, value_field))
-    if value_field == "bytes_value":
-      return cls._decode_packed_double(stat.bytes_value)
     return None
+
+  @classmethod
+  def parse_soaking_windows(
+      cls, baseline_dir: str, worst_dir: str
+  ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parses thermal metrics for baseline and worst-case soaking windows."""
+
+    post_soaking_per_device = cls(worst_dir).parse_per_device_metrics()
+    pre_soaking_per_device = cls(baseline_dir).parse_per_device_metrics()
+    post_soaking = aggregate_thermal_metrics(post_soaking_per_device.values())
+    pre_soaking = aggregate_thermal_metrics(pre_soaking_per_device.values())
+    metrics = dict(post_soaking)
+    metrics[constants.HBM_PEAK_TEMP_C_PRE_SOAKING] = pre_soaking.get(
+        constants.HBM_PEAK_TEMP_C
+    )
+    metrics[constants.PEAK_TEMP_C_PRE_SOAKING] = pre_soaking.get(
+        constants.PEAK_TEMP_C
+    )
+    metrics[constants.PSTATE_REQUESTED] = cls._requested_pstate()
+    details = {
+        constants.THERMAL_PER_DEVICE: post_soaking_per_device,
+        constants.THERMAL_PER_DEVICE_PRE_SOAKING: pre_soaking_per_device,
+        constants.THERMAL_PRE_SOAKING: pre_soaking,
+    }
+    return metrics, details
 
   @classmethod
   def _extract_event_value(
@@ -135,113 +238,146 @@ class XprofThermalProfiler:
         return val
     return None
 
-  def _extract_from_xspace(self, space: xplane_pb2.XSpace) -> dict[str, float]:
-    """Extracts thermal metrics from a single parsed XSpace proto object.
-
-    Args:
-      space: Parsed XSpace protobuf message.
-
-    Returns:
-      Dictionary of extracted thermal metric names to float values.
-    """
-    samples: dict[str, list[float]] = {
-        k: [] for k in constants.THERMAL_METRIC_KEYS
+  def _collect_plane(
+      self, plane: xplane_pb2.XPlane, samples: dict[str, Any]
+  ) -> None:
+    """Collects metrics from a single XPlane plane."""
+    smeta = {
+        meta_id: meta.name for meta_id, meta in plane.stat_metadata.items()
+    }
+    emeta = {
+        meta_id: meta.name for meta_id, meta in plane.event_metadata.items()
     }
 
-    for plane in space.planes:
-      if _DEVICE_PLANE_RE.match(plane.name) is None:
-        continue
-      smeta = {
-          meta_id: meta.name for meta_id, meta in plane.stat_metadata.items()
-      }
-      emeta = {
-          meta_id: meta.name for meta_id, meta in plane.event_metadata.items()
-      }
+    for stat in plane.stats:
+      metric_key = _PLANE_STAT_KEYS.get(
+          _normalize_name(smeta.get(stat.metadata_id, ""))
+      )
+      if metric_key is not None:
+        val = self._extract_numeric_stat(stat)
+        if val is not None:
+          samples["peaks"][metric_key].append(val)
 
-      # 1. Plane-level summary stats (keyed by stat_metadata.name)
-      for stat in plane.stats:
-        metric_key = _classify_thermal_metric(smeta.get(stat.metadata_id, ""))
-        if metric_key is not None:
-          val = self._extract_numeric_stat(stat)
-          if val is not None:
-            samples[metric_key].append(val)
+    for line in plane.lines:
+      line_name = line.name.strip().lower()
+      line_start_ps = line.timestamp_ns * _PS_PER_NS
+      for event in line.events:
+        start_ps = line_start_ps + event.offset_ps
+        end_ps = start_ps + event.duration_ps
+        event_name = emeta.get(event.metadata_id, "")
+        if line_name == constants.XPROF_XLA_OPS_LINE:
+          if end_ps > start_ps:
+            kstart, kend = samples["kernel_span"]
+            samples["kernel_span"] = (
+                start_ps if kstart is None else min(kstart, start_ps),
+                end_ps if kend is None else max(kend, end_ps),
+            )
+          continue
+        canonical = _normalize_name(event_name)
+        peak_key = _EVENT_PEAK_KEYS.get(canonical)
+        series = _EVENT_SERIES.get(canonical)
+        if peak_key is None and series is None:
+          continue
+        val = self._extract_event_value(event, smeta)
+        if val is None:
+          continue
+        if peak_key is not None:
+          samples["peaks"][peak_key].append(val)
+        if series is not None:
+          samples["series"][series].append((start_ps, end_ps, val))
 
-      # 2. Timeline counter/telemetry events (keyed by line and event_metadata)
-      for line in plane.lines:
-        is_power_throttle_line = (
-            line.name.strip().lower() == constants.XPROF_POWER_THROTTLE_LINE
-        )
-        for event in line.events:
-          event_name = emeta.get(event.metadata_id, "")
-          if is_power_throttle_line:
-            level = _parse_thermal_throttle_level(event_name)
-            if level is not None:
-              samples[constants.THERMAL_THROTTLE_LEVEL].append(level)
-            continue
-          metric_key = _classify_thermal_metric(event_name)
-          if metric_key is not None:
-            val = self._extract_event_value(event, smeta)
-            if val is not None:
-              samples[metric_key].append(val)
-
-    result = {k: float(max(vals)) for k, vals in samples.items() if vals}
-    if (
-        constants.PEAK_TEMP_C not in result
-        and constants.HBM_PEAK_TEMP_C in result
-    ):
-      result[constants.PEAK_TEMP_C] = result[constants.HBM_PEAK_TEMP_C]
-    return result
-
-  def parse_metrics(self) -> ThermalMetrics:
-    """Parses XPlane traces into a structured ThermalMetrics instance."""
-    spaces: list[xplane_pb2.XSpace] = []
+  def _load_spaces(self) -> list[xplane_pb2.XSpace]:
+    """Loads XSpace protos from the XProf directory or a pre-parsed XSpace."""
     if self.xspace is not None:
-      spaces.append(self.xspace)
-    elif self.xprof_dir and os.path.exists(self.xprof_dir):
-      for root, _, files in os.walk(self.xprof_dir):
-        for file in files:
-          if file.endswith(".xplane.pb"):
-            xplane_path = os.path.join(root, file)
-            try:
-              with open(xplane_path, "rb") as f:
-                space = xplane_pb2.XSpace()
-                space.ParseFromString(f.read())
-              spaces.append(space)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-              print(f"Warning: Failed to read XPlane {xplane_path}: {e}")
+      return [self.xspace]
+    spaces: list[xplane_pb2.XSpace] = []
+    if not self.xprof_dir or not os.path.exists(self.xprof_dir):
+      return spaces
+    xplane_paths = []
+    for root, _, files in os.walk(self.xprof_dir):
+      for file in files:
+        if file.endswith(".xplane.pb"):
+          xplane_paths.append(os.path.join(root, file))
+    for xplane_path in sorted(xplane_paths):
+      try:
+        with open(xplane_path, "rb") as f:
+          space = xplane_pb2.XSpace()
+          space.ParseFromString(f.read())
+        spaces.append(space)
+      except Exception:  # pylint: disable=broad-exception-caught
+        pass
+    return spaces
 
-    aggregated: dict[str, list[float]] = {
-        k: [] for k in constants.THERMAL_METRIC_KEYS
-    }
-    for space in spaces:
-      extracted = self._extract_from_xspace(space)
-      for k, val in extracted.items():
-        if k in aggregated:
-          aggregated[k].append(val)
-
-    return ThermalMetrics(
-        hbm_peak_temp_c=(
-            float(max(aggregated[constants.HBM_PEAK_TEMP_C]))
-            if aggregated[constants.HBM_PEAK_TEMP_C]
-            else None
-        ),
-        peak_temp_c=(
-            float(max(aggregated[constants.PEAK_TEMP_C]))
-            if aggregated[constants.PEAK_TEMP_C]
-            else None
-        ),
-        hbm_throttle_pct=(
-            float(max(aggregated[constants.HBM_THROTTLE_PCT]))
-            if aggregated[constants.HBM_THROTTLE_PCT]
-            else None
-        ),
-        thermal_throttle_level=(
-            float(max(aggregated[constants.THERMAL_THROTTLE_LEVEL]))
-            if aggregated[constants.THERMAL_THROTTLE_LEVEL]
-            else None
-        ),
+  def parse_per_device_metrics(self) -> dict[str, dict[str, Any]]:
+    """Parses thermal metrics for each device in the XProf traces."""
+    samples: dict[str, dict[str, Any]] = collections.defaultdict(
+        lambda: {
+            "peaks": collections.defaultdict(list),
+            "series": collections.defaultdict(list),
+            "kernel_span": (None, None),
+        }
     )
+    spaces = self._load_spaces()
+    multiple_hosts = len(spaces) > 1
+    for i, space in enumerate(spaces):
+      for plane in space.planes:
+        if _DEVICE_PLANE_RE.match(plane.name) is None:
+          continue
+        key = f"host{i}:{plane.name}" if multiple_hosts else plane.name
+        self._collect_plane(plane, samples[key])
 
-  def parse(self) -> dict[str, float | None]:
+    def to_metrics(s: dict[str, Any]) -> dict[str, Any]:
+      vdd_core = _time_weighted_mean(
+          s["series"][_VDD_CORE_POWER_SERIES], s["kernel_span"]
+      )
+      hbm_core = _time_weighted_mean(
+          s["series"][_HBM_POWER_SERIES], s["kernel_span"]
+      )
+      p_min, p_max, p_changes = _pstate_stats(
+          s["series"][_PSTATE_SERIES], s["kernel_span"]
+      )
+      hbm_peak = max(
+          s["peaks"].get(constants.HBM_PEAK_TEMP_C) or [None],
+          key=lambda x: x if x is not None else float("-inf"),
+      )
+      peak_c = max(
+          s["peaks"].get(constants.PEAK_TEMP_C) or [None],
+          key=lambda x: x if x is not None else float("-inf"),
+      )
+      return {
+          constants.HBM_PEAK_TEMP_C: (
+              float(hbm_peak) if hbm_peak is not None else None
+          ),
+          constants.PEAK_TEMP_C: float(peak_c) if peak_c is not None else None,
+          constants.PEAK_TEMP_SOURCE: _peak_temp_source(peak_c, hbm_peak),
+          constants.HBM_THROTTLE_TIME_PCT: _time_pct(
+              s["series"][_HBM_THROTTLE_SERIES], s["kernel_span"], _is_positive
+          ),
+          constants.HBM_THROTTLE_MEAN_PCT: _time_weighted_mean(
+              s["series"][_HBM_THROTTLE_SERIES], s["kernel_span"]
+          ),
+          constants.VDD_CORE_THROTTLE_TIME_PCT: _time_pct(
+              s["series"][_VDD_CORE_THROTTLE_SERIES],
+              s["kernel_span"],
+              _is_positive,
+          ),
+          constants.VDD_CORE_THROTTLE_MEAN_PCT: _time_weighted_mean(
+              s["series"][_VDD_CORE_THROTTLE_SERIES], s["kernel_span"]
+          ),
+          constants.VDD_CORE_POWER_MEAN_W: vdd_core,
+          constants.HBM_POWER_MEAN_W: hbm_core,
+          constants.TOTAL_POWER_MEAN_W: (
+              vdd_core + hbm_core
+              if vdd_core is not None and hbm_core is not None
+              else None
+          ),
+          constants.PSTATE_MIN: p_min,
+          constants.PSTATE_MAX: p_max,
+          constants.PSTATE_CHANGES: p_changes,
+      }
+
+    return {name: to_metrics(s) for name, s in sorted(samples.items())}
+
+  def parse(self) -> dict[str, Any]:
     """Parses XPlane traces and returns a dictionary keyed by THERMAL_METRIC_KEYS."""
-    return self.parse_metrics().to_dict()
+    return aggregate_thermal_metrics(self.parse_per_device_metrics().values())

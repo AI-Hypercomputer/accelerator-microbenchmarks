@@ -15,6 +15,7 @@ This guide provides the reference for **TPUMS (TPU Microbenchmark Suite)** param
   - [1.2 Throughput & Bandwidth Metric Conventions (`<timing_domain>_<metric_type>_<hardware_scope>`)](#per-device-vs-per-chip-scaling)
 - [2. Per-Benchmark Parameter & Metric Specifications](#2-per-benchmark-parameter--metric-specifications)
   - [2.1 Matrix Multiplication (`gemm`)](#21-matrix-multiplication-gemm)
+    - [2.1.1 GEMM Throttling (`gemm_throttling`) [experimental]](#211-gemm-throttling-gemm_throttling-experimental)
   - [2.2 HBM Memory Bandwidth (`hbm`)](#22-hbm-memory-bandwidth-hbm)
   - [2.3 Host I/O Bandwidth (`host_to_device`, `device_to_host`)](#23-host-io-bandwidth-host_to_device-device_to_host)
   - [2.4 Inter-Chip Interconnect (`device_to_device`)](#24-inter-chip-interconnect-device_to_device)
@@ -127,6 +128,28 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
   - `intensity` — Operational arithmetic intensity (`FLOPs / Byte`).
   - `roofline_tflops_limit_per_device` — Theoretical compute roofline ceiling per logical device (`TFLOPS`).
   - `peak_hbm_bw_per_device_gb_s` — Hardware asymptotic peak HBM bandwidth per logical device (`GB/s`).
+
+<a id="211-gemm-throttling-gemm_throttling-experimental"></a>
+#### 2.1.1 GEMM Throttling (`gemm_throttling`) [experimental]
+
+Evaluates thermal steady-state performance and power throttling by soaking the
+accelerator (`min_duration_s`) and measuring the degradation between the
+`pre_soaking` and `post_soaking` windows, alongside device firmware telemetry.
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `min_duration_s` | `float` | *(required)* | Duration of the untraced continuous thermal soak (Phase 2) in seconds. |
+| `samples_per_run` | `int` | `25` | Number of iterations per execution chunk. |
+
+| New Metric | Description |
+| :--- | :--- |
+| `*_pre_soaking_p50_ms`, `*_post_soaking_p50_ms`, `*_slowdown_ratio` | Steady-state degradation (latency and ratio). Sourced from traced windows (XProf) or untraced Phase 2 boundary chunks (Wall-Clock). |
+| `*_pre_soaking_tflops_per_device`, `*_post_soaking_tflops_per_device` | Steady-state throughput degradation. |
+| `hbm_peak_temp_c`, `peak_temp_c`, `peak_temp_source` | Post-soak peak temperature (°C) and sensor source. |
+| `hbm_throttle_time_pct`, `vdd_core_throttle_time_pct` | Percentage of post-soak window time where throttling was active. |
+| `hbm_throttle_mean_pct`, `vdd_core_throttle_mean_pct` | Time-weighted mean throttle percentage during the post-soak window. |
+| `vdd_core_power_mean_w`, `hbm_power_mean_w`, `total_power_mean_w` | Time-weighted mean power level 1 meter readings (W). |
+| `pstate_min`, `pstate_max`, `pstate_changes`, `pstate_requested` | Observed and requested DVFS P-state statistics. |
 
 ---
 

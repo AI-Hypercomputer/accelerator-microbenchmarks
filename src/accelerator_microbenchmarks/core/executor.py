@@ -187,19 +187,20 @@ class SoakingRunExecutor(BaseRunExecutor):
        iterations per chunk) until `warmup_tries` iterations have elapsed.
     2. Phase 1 — Post-Warmup Baseline (`baseline_window` at `t = 0s`): Executes
        1 traced window of `samples_per_run` iterations immediately after warmup
-       to capture post-warmup baseline device latency (`xprof_initial_p50_ms`).
+       to capture post-warmup baseline device latency
+       (`xprof_pre_soaking_p50_ms`).
     3. Phase 2 — Untraced Thermal Soak (`min_duration_s` > 0.0): Executes
        continuous, untraced chunks of `samples_per_run` iterations until elapsed
        Phase 2 time `>= min_duration_s` to drive the accelerator to thermal
        steady state without `jax.profiler.trace` flush gaps (`num_runs` is not
        used in soaking mode). Wall-clock soaking metrics
-       (`wall_clock_initial_p50_ms`, `wall_clock_sustained_p50_ms`,
+       (`wall_clock_pre_soaking_p50_ms`, `wall_clock_post_soaking_p50_ms`,
        `wall_clock_slowdown_ratio`) are derived exclusively from the first and
        last untraced soak chunks (`soak_wall_ms[0]` and `soak_wall_ms[-1]`).
     4. Phase 3 — Post-Soak Worst Window (`worst_window` at `t = end of soak`):
        Executes 1 traced window (`worst_window`) of `samples_per_run` iterations
        immediately after Phase 2 soak to capture post-soak device latency
-       (`xprof_sustained_p50_ms`) and firmware thermal telemetry.
+       (`xprof_post_soaking_p50_ms`) and firmware thermal telemetry.
   """
 
   def __init__(self, benchmark: Any):
@@ -373,9 +374,7 @@ class SoakingRunExecutor(BaseRunExecutor):
     self.last_window_xprof_duration = self._extract_window_durations(
         worst_dir, target_device_id=self._target_device_id
     )
-    self.xprof_durations = (
-        self.first_window_xprof_duration + self.last_window_xprof_duration
-    )
+    self.xprof_durations = list(self.last_window_xprof_duration)
     return list(self.xprof_durations)
 
   def calculate_latency_stats(
@@ -388,7 +387,7 @@ class SoakingRunExecutor(BaseRunExecutor):
         stats[f"{prefix}_{suffix}"] = None
       return stats
 
-    # Wall-clock initial/sustained windows are sourced from the first and last
+    # Wall-clock pre_soaking/post_soaking windows are from the first and last
     # untraced Phase 2 soak chunks (each averaging `samples_per_run` iterations,
     # matching XProf's first-window vs last-window definition). The traced
     # Phase 1/3 windows are excluded because `worst_window` can read
@@ -399,48 +398,74 @@ class SoakingRunExecutor(BaseRunExecutor):
       phase_times = self.soak_wall_ms
     else:
       phase_times = times_ms
-    initial_p50_ms = float(phase_times[0])
-    sustained_p50_ms = float(phase_times[-1])
+    pre_soaking_p50_ms = float(phase_times[0])
+    post_soaking_p50_ms = float(phase_times[-1])
 
     slowdown_ratio = (
-        sustained_p50_ms / initial_p50_ms if initial_p50_ms > 0 else 1.0
+        post_soaking_p50_ms / pre_soaking_p50_ms
+        if pre_soaking_p50_ms > 0
+        else 1.0
     )
     stats.update({
-        f"{prefix}_{constants.INITIAL_P50_MS}": initial_p50_ms,
-        f"{prefix}_{constants.SUSTAINED_P50_MS}": sustained_p50_ms,
+        f"{prefix}_{constants.PRE_SOAKING_P50_MS}": pre_soaking_p50_ms,
+        f"{prefix}_{constants.POST_SOAKING_P50_MS}": post_soaking_p50_ms,
         f"{prefix}_{constants.SLOWDOWN_RATIO}": slowdown_ratio,
     })
     return stats
 
   def augment_host_metrics(self, metrics: dict[str, Any]) -> None:
-    """Merges XProf thermal telemetry into the host metrics dictionary."""
-    local_xprof_dir = self.benchmark._xprof_dir_actual  # pylint: disable=protected-access
-    metrics.update(
-        throttle_profiler.XprofThermalProfiler(
-            xprof_dir=local_xprof_dir or ""
-        ).parse()
+    """Merges per-window firmware telemetry."""
+    local_xprof_dir = self.benchmark._xprof_dir_actual or ""  # pylint: disable=protected-access
+
+    baseline_dir = ""
+    worst_dir = ""
+    if local_xprof_dir:
+      baseline_dir = os.path.join(
+          local_xprof_dir, _BASELINE_TRACE_WINDOW_SUBDIR
+      )
+      worst_dir = os.path.join(local_xprof_dir, _WORST_TRACE_WINDOW_SUBDIR)
+
+    thermal_metrics, self._result_details = (
+        throttle_profiler.XprofThermalProfiler.parse_soaking_windows(
+            baseline_dir=baseline_dir,
+            worst_dir=worst_dir,
+        )
     )
+    metrics.update(thermal_metrics)
 
   def augment_xprof_metrics(
       self,
       metrics: dict[str, Any],
       has_xprof_timings: bool = True,
   ) -> None:
-    """Computes soaking XProf latency metrics (`initial_p50_ms`, `sustained_p50_ms`, `slowdown_ratio`)."""
-    if (
-        not has_xprof_timings
-        or not self.first_window_xprof_duration
-        or not self.last_window_xprof_duration
-    ):
-      for suffix in constants.SOAKING_LATENCY_SUFFIXES:
-        metrics[f"{constants.TimingDomain.XPROF}_{suffix}"] = None
-      return
-    init_p50 = float(np.percentile(self.first_window_xprof_duration, 50))
-    sust_p50 = float(np.percentile(self.last_window_xprof_duration, 50))
-    ratio = sust_p50 / init_p50 if init_p50 > 0 else 1.0
-    metrics[constants.XPROF_INITIAL_P50_MS] = init_p50
-    metrics[constants.XPROF_SUSTAINED_P50_MS] = sust_p50
+    """Computes soaking XProf latency (`pre_soaking_p50_ms`, `post_soaking_p50_ms`, `slowdown_ratio`).
+
+    Each window is reported independently, so a window without XProf
+    durations does not hide the other one; the slowdown ratio needs both.
+
+    Args:
+      metrics: Metrics dictionary updated in place.
+      has_xprof_timings: Whether XProf durations are usable at all.
+    """
+
+    def window_p50(durations: Sequence[float]) -> Optional[float]:
+      if not durations:
+        return None
+      p50 = float(np.percentile(durations, 50))
+      return p50 if p50 > 0 else None
+
+    pre_soak_p50 = window_p50(self.first_window_xprof_duration)
+    post_soak_p50 = window_p50(self.last_window_xprof_duration)
+    ratio = None
+    if pre_soak_p50 is not None and post_soak_p50 is not None:
+      ratio = post_soak_p50 / pre_soak_p50 if pre_soak_p50 > 0 else 1.0
+    metrics[constants.XPROF_PRE_SOAKING_P50_MS] = pre_soak_p50
+    metrics[constants.XPROF_POST_SOAKING_P50_MS] = post_soak_p50
     metrics[constants.XPROF_SLOWDOWN_RATIO] = ratio
+
+  def get_result_details(self) -> dict[str, Any]:
+    """Returns per-device telemetry of both trace windows."""
+    return dict(getattr(self, "_result_details", {}))
 
 
 def create_executor(benchmark: Any) -> BaseRunExecutor:

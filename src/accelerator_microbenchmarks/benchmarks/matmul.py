@@ -305,12 +305,66 @@ class GemmThrottlingBenchmark(GeneralizedGemmBenchmark):
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       tuple(GeneralizedGemmBenchmark.REPORT_SCHEMA)
       + (
-          (constants.WALL_CLOCK_INITIAL_P50_MS, report.format_4f),
-          (constants.WALL_CLOCK_SUSTAINED_P50_MS, report.format_4f),
+          (constants.WALL_CLOCK_PRE_SOAKING_P50_MS, report.format_4f),
+          (constants.WALL_CLOCK_POST_SOAKING_P50_MS, report.format_4f),
           (constants.WALL_CLOCK_SLOWDOWN_RATIO, report.format_2f),
-          (constants.XPROF_INITIAL_P50_MS, report.format_4f),
-          (constants.XPROF_SUSTAINED_P50_MS, report.format_4f),
+          (
+              constants.WALL_CLOCK_PRE_SOAKING_TFLOPS_PER_DEVICE,
+              report.format_2f,
+          ),
+          (
+              constants.WALL_CLOCK_POST_SOAKING_TFLOPS_PER_DEVICE,
+              report.format_2f,
+          ),
+          (constants.XPROF_PRE_SOAKING_P50_MS, report.format_4f),
+          (constants.XPROF_POST_SOAKING_P50_MS, report.format_4f),
           (constants.XPROF_SLOWDOWN_RATIO, report.format_2f),
+          (constants.XPROF_PRE_SOAKING_TFLOPS_PER_DEVICE, report.format_2f),
+          (constants.XPROF_POST_SOAKING_TFLOPS_PER_DEVICE, report.format_2f),
       )
-      + tuple((k, report.format_2f) for k in constants.THERMAL_METRIC_KEYS)
+      + tuple(
+          (k, report.format_2f)
+          for k in constants.THERMAL_PRE_SOAKING_METRIC_KEYS
+      )
+      + tuple(
+          (k, report.format_2f)
+          for k in constants.THERMAL_METRIC_KEYS
+          if k != constants.PEAK_TEMP_SOURCE
+      )
+      + (
+          (constants.PEAK_TEMP_SOURCE, report.format_str),
+          (constants.PSTATE_REQUESTED, report.format_str),
+      )
   )
+
+  def derive_chip_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
+    metrics = super().derive_chip_metrics(metrics)
+    total_flops = self.get_total_flops()
+
+    for domain in (
+        constants.TimingDomain.WALL_CLOCK,
+        constants.TimingDomain.XPROF,
+    ):
+      pre_ms = metrics.get(f"{domain}_{constants.PRE_SOAKING_P50_MS}")
+      if pre_ms is not None:
+        pre_tflops = (
+            (total_flops / (pre_ms / 1000.0)) / 1e12
+            if pre_ms > 0
+            else float("inf")
+        )
+        metrics[f"{domain}_{constants.PRE_SOAKING}_tflops_per_device"] = (
+            pre_tflops
+        )
+
+      post_ms = metrics.get(f"{domain}_{constants.POST_SOAKING_P50_MS}")
+      if post_ms is not None:
+        post_tflops = (
+            (total_flops / (post_ms / 1000.0)) / 1e12
+            if post_ms > 0
+            else float("inf")
+        )
+        metrics[f"{domain}_{constants.POST_SOAKING}_tflops_per_device"] = (
+            post_tflops
+        )
+
+    return metrics
