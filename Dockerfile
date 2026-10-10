@@ -16,10 +16,15 @@ WORKDIR /app/accelerator-microbenchmarks
 COPY . .
 
 # Install dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt -f https://storage.googleapis.com/jax-releases/libtpu_releases.html && \
     pip install --no-cache-dir tpu-info && \
-    rm -rf /usr/local/lib/python3.12/site-packages/ray/jars
+    pip install --no-cache-dir --upgrade setuptools && \
+    rm -rf /usr/lib/google-cloud-sdk/platform/bundledpythonunix \
+           /usr/local/lib/python3.12/site-packages/ray/jars \
+           /usr/local/lib/python3.12/site-packages/flaxlib_src && \
+    (find / \( -name "pip-*.whl" -o -name "setuptools-*.whl" \) -delete 2>/dev/null || true)
 
 # Verify that the benchmark script can be run
 RUN python Ironwood/src/run_benchmark.py --help
