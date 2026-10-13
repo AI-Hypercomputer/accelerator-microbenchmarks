@@ -74,6 +74,15 @@ class QuantParams(base.SingleDtypeBenchmarkParams):
           )
       },
   )
+  transpose: bool = dataclasses.field(
+      default=False,
+      metadata={
+          "help": (
+              "Quantize the transpose of X: OUT<N, M> = cast(X^T * SF) with"
+              " one scaling factor per column of X (SF<N>, amax over M)."
+          )
+      },
+  )
 
 
 @dataclasses.dataclass
@@ -302,7 +311,12 @@ class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
 
 @registry.benchmark_registry.register("quantization", is_experimental=True)
 class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
-  """Rowwise quantization: OUT = cast_quant(X * SF)."""
+  """Rowwise quantization: OUT = cast_quant(X * SF).
+
+  With `transpose=True`, quantizes X^T instead (the legacy
+  `transpose_quantization` benchmark): OUT<N, M> = cast_quant(X^T * SF), where
+  SF<N> holds one scaling factor per column of X (amax over M).
+  """
 
   Config = QuantParams
   derive_chip_bandwidth: bool = True
@@ -312,10 +326,13 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     out_dtype = utils.parse_dtype(self.config.quant_dtype)
     sf_dtype = utils.parse_dtype(self.config.scale_dtype)
     q_max = utils.get_dtype_max(out_dtype)
+    transpose = self.config.transpose
 
     @jax.jit
     def quant_fn(x):
       with jax.named_scope(constants.MARKER):
+        if transpose:
+          x = x.T
         # Rowwise scaling factor: Q_MAX / amax(row)
         sf = (q_max / jnp.max(jnp.abs(x), axis=-1, keepdims=True)).astype(
             sf_dtype
@@ -326,10 +343,13 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     self._jit_fn = quant_fn
 
   def get_run_identifier(self) -> str:
-    return (
+    identifier = (
         f"m_{self.config.m}_n_{self.config.n}_"
         f"{self.config.quant_dtype}_sf_{self.config.scale_dtype}"
     )
+    if self.config.transpose:
+      identifier += "_transpose"
+    return identifier
 
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     m, n = self.config.m, self.config.n
@@ -356,9 +376,13 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     in_itemsize = utils.get_dtype_bytes(self.config.dtype)
     out_itemsize = utils.get_dtype_bytes(self.config.quant_dtype)
     sf_itemsize = utils.get_dtype_bytes(self.config.scale_dtype)
-    # Read X, Write Out, Write SF (rowwise)
+    # One scaling factor per output row: M rows, or N rows when transposed.
+    num_scales = n if self.config.transpose else m
+    # Read X, Write Out, Write SF
     return float(
-        (m * n * in_itemsize) + (m * n * out_itemsize) + (m * sf_itemsize)
+        (m * n * in_itemsize)
+        + (m * n * out_itemsize)
+        + (num_scales * sf_itemsize)
     )
 
   def get_arithmetic_intensity(self) -> float:

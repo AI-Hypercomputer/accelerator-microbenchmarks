@@ -293,6 +293,100 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
     self.assertIn("wall_clock_bandwidth_per_device_gb_s", metrics)
     self.assertGreater(metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0)
 
+  @parameterized.named_parameters(
+      ("fp8_bf16_sf", "float8_e4m3fn", "bfloat16"),
+      ("fp4_bf16_sf", "float4_e2m1fn", "bfloat16"),
+      ("int4_bf16_sf", "int4", "bfloat16"),
+      ("fp8_fp32_sf", "float8_e4m3fn", "float32"),
+      ("int4_fp32_sf", "int4", "float32"),
+  )
+  def test_transpose_matches_rowwise_quantize_of_transposed_input(
+      self, quant_dtype, scale_dtype
+  ):
+    """Verifies transpose=True on X equals transpose=False on X^T."""
+    bm_t = compute_ops.QuantizationBenchmark(
+        config=compute_ops.QuantParams(
+            m=64,
+            n=128,
+            quant_dtype=quant_dtype,
+            scale_dtype=scale_dtype,
+            transpose=True,
+        ),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    bm_t.setup()
+    (x,) = bm_t.generate_inputs()
+    out_t, sf_t = bm_t.run_op(x)
+    self.assertEqual(out_t.shape, (128, 64))
+    self.assertEqual(out_t.dtype, jnp.dtype(quant_dtype))
+    self.assertEqual(sf_t.shape, (128, 1))
+    self.assertEqual(sf_t.dtype, jnp.dtype(scale_dtype))
+
+    bm_ref = compute_ops.QuantizationBenchmark(
+        config=compute_ops.QuantParams(
+            m=128, n=64, quant_dtype=quant_dtype, scale_dtype=scale_dtype
+        ),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    bm_ref.setup()
+    out_ref, sf_ref = bm_ref.run_op(x.T)
+    np.testing.assert_array_equal(
+        np.asarray(out_t, dtype=np.float32),
+        np.asarray(out_ref, dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(sf_t, dtype=np.float32),
+        np.asarray(sf_ref, dtype=np.float32),
+    )
+
+  @parameterized.named_parameters(
+      # Read X (64 * 128 * 2) + Write Out (64 * 128 * 1) + Write SF (128 * 2)
+      # 16384 + 8192 + 256 = 24832
+      ("fp8_bf16_sf", "float8_e4m3fn", "bfloat16", 24832.0),
+      # 16384 + 8192 + (128 * 4) = 25088
+      ("fp8_fp32_sf", "float8_e4m3fn", "float32", 25088.0),
+      # 16384 + (64 * 128 * 0.5) + (128 * 2) = 20736
+      ("int4_bf16_sf", "int4", "bfloat16", 20736.0),
+  )
+  def test_transpose_total_bytes_identifier_and_metadata(
+      self, quant_dtype, scale_dtype, expected_bytes
+  ):
+    """Verifies N-length scales in bytes, the identifier suffix, and metadata."""
+    bm = compute_ops.QuantizationBenchmark(
+        config=compute_ops.QuantParams(
+            m=64,
+            n=128,
+            quant_dtype=quant_dtype,
+            scale_dtype=scale_dtype,
+            transpose=True,
+        ),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.assertAlmostEqual(bm.get_total_bytes(), expected_bytes)
+    self.assertEqual(
+        bm.get_run_identifier(),
+        f"m_64_n_128_{quant_dtype}_sf_{scale_dtype}_transpose",
+    )
+    metadata = bm.get_workload_metadata()
+    self.assertAlmostEqual(
+        metadata["total_bytes_mib"], expected_bytes / (1024 * 1024)
+    )
+
+  def test_transpose_defaults_to_false(self):
+    """Verifies the default keeps the non-transposed identifier."""
+    bm = compute_ops.QuantizationBenchmark(
+        config=compute_ops.QuantParams(m=64, n=128),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.assertFalse(bm.config.transpose)
+    self.assertEqual(
+        bm.get_run_identifier(), "m_64_n_128_float8_e4m3fn_sf_bfloat16"
+    )
+
   def test_calculate_throughput_metrics_zero_latency_warns(self):
     """Verifies zero/negative latency logs a warning and returns inf bandwidth."""
     config = compute_ops.QuantParams(m=64, n=128)
