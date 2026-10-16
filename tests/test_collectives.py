@@ -41,6 +41,72 @@ _COLLECTIVES_IGNORED_KEYS: frozenset[str] = frozenset({
     "replica_group_rank",
 })
 
+# Default and metadata of every collective param field, keyed by field name.
+# Compared by name only, so it does not pin the dataclass field order.
+_HEAD_FIELD_SPEC: dict[str, tuple[object, dict[str, object]]] = {
+    "warmup_tries": (
+        10,
+        {"min": 0, "help": "Number of warmup iterations before measurement."},
+    ),
+    "num_runs": (
+        10,
+        {"min": 0, "help": "Number of measurement iterations."},
+    ),
+    "min_duration_s": (
+        0.0,
+        {
+            "min": 0.0,
+            "help": (
+                "Minimum measurement duration in seconds. Also runs warmup for"
+                " at least min_duration_s / 5 (capped at 1.0s)."
+            ),
+        },
+    ),
+    "dtype": (
+        "bfloat16",
+        {"help": "Data type for tensor operations (e.g. bfloat16, float32)."},
+    ),
+    "matrix_dim": (
+        1024,
+        {
+            "min": 1,
+            "help": (
+                "Dimension size for sharded collective matrices. Actual matrix"
+                " size will be (matrix_dim, 8, 128)."
+            ),
+        },
+    ),
+    "seed": (
+        0,
+        {"min": 0, "help": "Random seed for tensor initialization."},
+    ),
+    "mesh_shape": (
+        None,
+        {"help": "Logical TPU mesh shape string (e.g. '2x4x4', '2x2x1')."},
+    ),
+    "device_placement": (
+        collectives.DevicePlacement.MESH_UTILS,
+        {
+            "help": (
+                "Mesh device placement: 'mesh_utils' (topology-aware) or"
+                " 'id_sorted' (sorted by device id)."
+            )
+        },
+    ),
+    "sharding_strategy": (
+        None,
+        {
+            "help": (
+                "Device axis sharding strategy string (e.g. '2x2x2', '2x2x1')."
+            )
+        },
+    ),
+    "reduce_op": (
+        collectives.ReduceOp.SUM,
+        {"help": "Reduction operation."},
+    ),
+}
+
 
 @dataclasses.dataclass
 class _MockTpuDevice:
@@ -101,14 +167,21 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     )
     self.assertEqual(bm.get_run_identifier(), "dim_1024_op_max")
 
+  def test_dcn_all_reduce_registered(self):
+    """Verify that dcn_all_reduce is correctly registered with DcnAllReduceParams."""
+    bm_class = registry.benchmark_registry.get_benchmark("dcn_all_reduce")
+    self.assertEqual(bm_class, collectives.DcnAllReduceBenchmark)
+    self.assertEqual(bm_class.Config, collectives.DcnAllReduceParams)
+
   def test_all_gather_registered(self):
     """Verify that the benchmark is correctly registered."""
     bm_class = registry.benchmark_registry.get_benchmark("all_gather")
     self.assertEqual(bm_class, collectives.AllGatherBenchmark)
+    self.assertEqual(bm_class.Config, collectives.IciCollectivesParams)
 
   def test_all_gather_match_xprof_op_fallback(self):
     """Test that match_xprof_op_fallback correctly identifies async-done events."""
-    config = collectives.CollectivesParams(matrix_dim=64)
+    config = collectives.IciCollectivesParams(matrix_dim=64)
     bm = collectives.AllGatherBenchmark(
         config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
@@ -125,11 +198,13 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     """Verify that the benchmark is correctly registered."""
     bm_class = registry.benchmark_registry.get_benchmark("all_to_all")
     self.assertEqual(bm_class, collectives.AllToAllBenchmark)
+    self.assertEqual(bm_class.Config, collectives.IciCollectivesParams)
 
   def test_reduce_scatter_registered(self):
     """Verify that the benchmark is correctly registered."""
     bm_class = registry.benchmark_registry.get_benchmark("reduce_scatter")
     self.assertEqual(bm_class, collectives.ReduceScatterBenchmark)
+    self.assertEqual(bm_class.Config, collectives.IciCollectivesParams)
 
   def test_all_reduce_generate_inputs(self):
     """Verify input generation for all_reduce."""
@@ -152,7 +227,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "matrix_dim": 64,
         "dtype": "bfloat16",
     }
-    config = collectives.CollectivesParams(**params)
+    config = collectives.IciCollectivesParams(**params)
     bm = collectives.AllGatherBenchmark(
         config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
@@ -167,7 +242,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "matrix_dim": 64,
         "dtype": "bfloat16",
     }
-    config = collectives.CollectivesParams(**params)
+    config = collectives.IciCollectivesParams(**params)
     bm = collectives.AllToAllBenchmark(
         config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
@@ -208,7 +283,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "mesh_shape": "2x2",
         "sharding_strategy": "2x1",
     }
-    config_2x1 = collectives.CollectivesParams(**params_2x1)
+    config_2x1 = collectives.IciCollectivesParams(**params_2x1)
     bm = collectives.AllGatherBenchmark(
         config=config_2x1, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
@@ -229,7 +304,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "mesh_shape": "2x2",
         "sharding_strategy": "2x2",
     }
-    config_2x2 = collectives.CollectivesParams(**params_2x2)
+    config_2x2 = collectives.IciCollectivesParams(**params_2x2)
     bm = collectives.AllGatherBenchmark(
         config=config_2x2, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
@@ -251,7 +326,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "mesh_shape": "2x2",
         "sharding_strategy": "2x1",
     }
-    config_2x1 = collectives.CollectivesParams(**params_2x1)
+    config_2x1 = collectives.IciCollectivesParams(**params_2x1)
     bm = collectives.ReduceScatterBenchmark(
         config=config_2x1, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
@@ -272,7 +347,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "mesh_shape": "2x2",
         "sharding_strategy": "2x2",
     }
-    config_2x2 = collectives.CollectivesParams(**params_2x2)
+    config_2x2 = collectives.IciCollectivesParams(**params_2x2)
     bm = collectives.ReduceScatterBenchmark(
         config=config_2x2, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
@@ -292,7 +367,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         ("2x1", ("d_0",)),
         ("2x2", ("d_0", "d_1")),
     ]:
-      config_2d = collectives.CollectivesParams(
+      config_2d = collectives.IciCollectivesParams(
           matrix_dim=64,
           dtype="bfloat16",
           mesh_shape="2x2",
@@ -315,7 +390,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         ("2x1x1", ("d_0",)),
         ("2x2x1", ("d_0", "d_1")),
     ]:
-      config_3d = collectives.CollectivesParams(
+      config_3d = collectives.IciCollectivesParams(
           matrix_dim=64,
           dtype="bfloat16",
           mesh_shape="2x2x1",
@@ -337,7 +412,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       (
           "all_gather",
           collectives.AllGatherBenchmark,
-          collectives.CollectivesParams(
+          collectives.IciCollectivesParams(
               matrix_dim=1024,
               dtype="float32",
               mesh_shape="2x2x1",
@@ -360,7 +435,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       (
           "all_to_all",
           collectives.AllToAllBenchmark,
-          collectives.CollectivesParams(
+          collectives.IciCollectivesParams(
               matrix_dim=1024,
               dtype="float32",
               mesh_shape="2x2x1",
@@ -393,7 +468,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       (
           "all_gather_tpu7x",
           collectives.AllGatherBenchmark,
-          collectives.CollectivesParams(
+          collectives.IciCollectivesParams(
               matrix_dim=1024,
               dtype="float32",
               mesh_shape="2x2",
@@ -405,7 +480,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       (
           "all_gather_v6e",
           collectives.AllGatherBenchmark,
-          collectives.CollectivesParams(
+          collectives.IciCollectivesParams(
               matrix_dim=1024,
               dtype="float32",
               mesh_shape="2x2",
@@ -443,7 +518,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       (
           "all_to_all_tpu7x",
           collectives.AllToAllBenchmark,
-          collectives.CollectivesParams(
+          collectives.IciCollectivesParams(
               matrix_dim=1024,
               dtype="float32",
               mesh_shape="2x2",
@@ -455,7 +530,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       (
           "all_to_all_v6e",
           collectives.AllToAllBenchmark,
-          collectives.CollectivesParams(
+          collectives.IciCollectivesParams(
               matrix_dim=1024,
               dtype="float32",
               mesh_shape="2x2",
@@ -487,7 +562,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       self, sharding_strategy, expected_group_type, expected_rank, expected_bw
   ):
     """Verify parallel vs non-parallel detection directly from mesh device layout without HLO dump files."""
-    config = collectives.CollectivesParams(
+    config = collectives.IciCollectivesParams(
         matrix_dim=1024,
         dtype="float32",
         mesh_shape="2x2",
@@ -554,7 +629,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       expected_bw,
   ):
     """Verify AllToAllBenchmark counts all devices_per_chip cores in both parallel and non-parallel modes."""
-    config = collectives.CollectivesParams(
+    config = collectives.IciCollectivesParams(
         matrix_dim=1024,
         dtype="float32",
         mesh_shape="2x2",
@@ -597,7 +672,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
 
     # 2x1 sharding on 2x2 mesh ([0, 1], [2, 3]) -> first group is
     # devices[:, 0] = [0, 2] -> parallel.
-    config_parallel = collectives.CollectivesParams(
+    config_parallel = collectives.IciCollectivesParams(
         matrix_dim=1024,
         dtype="float32",
         mesh_shape="2x2",
@@ -656,7 +731,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     """Verify parallel detection uses core_on_chip rather than id parity."""
     group = [_MockTpuDevice(id=i, core_on_chip=c) for i, c in zip(ids, cores)]
 
-    config = collectives.CollectivesParams(matrix_dim=1024, dtype="float32")
+    config = collectives.IciCollectivesParams(matrix_dim=1024, dtype="float32")
     ag_bm = collectives.AllGatherBenchmark(
         config=config,
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
@@ -814,12 +889,97 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
     )
 
+  def test_dcn_all_reduce_schema_coverage(self):
+    """Verify DcnAllReduceBenchmark REPORT_SCHEMA, execution, and output keys."""
+    params = {"matrix_dim": 64, "dtype": "float32"}
+    config = collectives.DcnAllReduceParams(**params)
+    bm = collectives.DcnAllReduceBenchmark(
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+    )
+    dcn_mesh = jax.sharding.Mesh(
+        np.array(jax.devices()).reshape((2, 2)), ("dcn", "ici")
+    )
+    mock_devices = [
+        mock.Mock(
+            id=i,
+            coords=(i // 2, 0, 0),
+            core_on_chip=i % 2,
+            slice_index=i // 2,
+        )
+        for i in range(4)
+    ]
+    with (
+        mock.patch.object(jax, "devices", return_value=mock_devices),
+        mock.patch.object(jax.sharding, "Mesh", return_value=dcn_mesh),
+    ):
+      bm.setup()
+    (data,) = bm.generate_inputs()
+    self.assertEqual(data.shape, (64, 8, 128))
+    out = bm.run_op(data)
+    self.assertEqual(out.shape, (64, 8, 128))
+    expected = 2.0 * np.array(data)
+    for shard in out.addressable_shards:
+      np.testing.assert_allclose(np.array(shard.data), expected, rtol=1e-5)
+    test_report_utils.assert_schema_matches_output(
+        self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
+    )
+    metrics = bm.derive_chip_metrics(bm.calculate_metrics([1.0]))
+    expected_gbps = (
+        bm.get_total_bytes() * 8.0 * jax.local_device_count() / (0.001 * 1e9)
+    )
+    self.assertAlmostEqual(
+        metrics["wall_clock_bandwidth_per_host_gbps"], expected_gbps
+    )
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", metrics)
+
+  def test_dcn_setup_single_slice_raises_error(self):
+    """Verify DcnCollectiveBenchmark.setup rejects fewer than 2 slices."""
+    bm = collectives.DcnAllReduceBenchmark(
+        config=collectives.DcnAllReduceParams(matrix_dim=64, dtype="float32"),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    # Default CPU devices do not have slice_index -> treated as slice 0 only.
+    with self.assertRaisesRegex(
+        ValueError, "requires at least 2 slices for DCN collectives"
+    ):
+      bm.setup()
+
+    # Single-slice TPU devices all having slice_index=0.
+    single_slice_devices = [
+        mock.Mock(id=i, coords=(i, 0, 0), core_on_chip=0, slice_index=0)
+        for i in range(4)
+    ]
+    with mock.patch.object(jax, "devices", return_value=single_slice_devices):
+      with self.assertRaisesRegex(
+          ValueError, "requires at least 2 slices for DCN collectives"
+      ):
+        bm.setup()
+
+  def test_dcn_setup_unequal_slice_device_counts_raises_error(self):
+    """Verify DcnCollectiveBenchmark.setup rejects slices with different device counts."""
+    bm = collectives.DcnAllReduceBenchmark(
+        config=collectives.DcnAllReduceParams(matrix_dim=64, dtype="float32"),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    mismatched_devices = [
+        mock.Mock(id=0, coords=(0, 0, 0), core_on_chip=0, slice_index=0),
+        mock.Mock(id=1, coords=(0, 0, 0), core_on_chip=1, slice_index=0),
+        mock.Mock(id=2, coords=(0, 0, 0), core_on_chip=0, slice_index=1),
+    ]
+    with mock.patch.object(jax, "devices", return_value=mismatched_devices):
+      with self.assertRaisesRegex(
+          ValueError, "All slices must have the same number of devices"
+      ):
+        bm.setup()
+
   def test_all_gather_schema_coverage(self):
     """Verify AllGatherBenchmark REPORT_SCHEMA matches output keys."""
     params = {"matrix_dim": 64, "dtype": "bfloat16"}
-    config = collectives.CollectivesParams(**params)
+    config = collectives.IciCollectivesParams(**params)
     bm = collectives.AllGatherBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     bm.setup()
     test_report_utils.assert_schema_matches_output(
@@ -829,9 +989,11 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
   def test_all_to_all_schema_coverage(self):
     """Verify AllToAllBenchmark REPORT_SCHEMA matches output keys."""
     params = {"matrix_dim": 64, "dtype": "bfloat16"}
-    config = collectives.CollectivesParams(**params)
+    config = collectives.IciCollectivesParams(**params)
     bm = collectives.AllToAllBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     bm.setup()
     test_report_utils.assert_schema_matches_output(
@@ -841,28 +1003,78 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
   def test_reduce_scatter_schema_coverage(self):
     """Verify ReduceScatterBenchmark REPORT_SCHEMA matches output keys."""
     params = {"matrix_dim": 64, "dtype": "bfloat16"}
-    config = collectives.CollectivesParams(**params)
+    config = collectives.IciCollectivesParams(**params)
     bm = collectives.ReduceScatterBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     bm.setup()
     test_report_utils.assert_schema_matches_output(
         self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
     )
 
-  def test_collectives_params_hierarchy(self):
-    """Verify inheritance and field segregation between CollectivesParams and AllReduceParams."""
-    self.assertTrue(
-        issubclass(collectives.AllReduceParams, collectives.CollectivesParams)
+  @parameterized.named_parameters(
+      (
+          "collectives",
+          collectives.CollectivesParams,
+          base.SingleDtypeBenchmarkParams,
+          (),
+          {"matrix_dim", "seed"},
+      ),
+      (
+          "ici_collectives",
+          collectives.IciCollectivesParams,
+          collectives.CollectivesParams,
+          (),
+          {"mesh_shape", "device_placement", "sharding_strategy"},
+      ),
+      (
+          "dcn_collectives",
+          collectives.DcnCollectivesParams,
+          collectives.CollectivesParams,
+          (),
+          set(),
+      ),
+      (
+          "all_reduce",
+          collectives.AllReduceParams,
+          collectives.IciCollectivesParams,
+          (collectives.AllReduceParamsMixin,),
+          {"reduce_op"},
+      ),
+      (
+          "dcn_all_reduce",
+          collectives.DcnAllReduceParams,
+          collectives.DcnCollectivesParams,
+          (collectives.AllReduceParamsMixin,),
+          {"reduce_op"},
+      ),
+  )
+  def test_collectives_params_hierarchy(
+      self, param_cls, parent_cls, mixins, expected_new_fields
+  ):
+    """Verify inheritance and field segregation across collective params."""
+    for base_cls in (parent_cls, *mixins):
+      self.assertTrue(issubclass(param_cls, base_cls))
+    parent_fields = {f.name for f in dataclasses.fields(parent_cls)}
+    actual_fields = {f.name for f in dataclasses.fields(param_cls)}
+    self.assertEqual(actual_fields, parent_fields | expected_new_fields)
+    self.assertFalse(
+        issubclass(collectives.AllReduceParamsMixin, base.BaseBenchmarkParams)
     )
-    self.assertTrue(
-        issubclass(collectives.CollectivesParams, base.BaseBenchmarkParams)
+    self.assertEqual(
+        [f.name for f in dataclasses.fields(collectives.AllReduceParamsMixin)],
+        ["reduce_op"],
     )
-
-    all_reduce_fields = {
-        f.name for f in dataclasses.fields(collectives.AllReduceParams)
-    }
-    self.assertIn("reduce_op", all_reduce_fields)
+    self.assertEqual(
+        collectives.AllReduceParams.__mro__[1:3],
+        (collectives.AllReduceParamsMixin, collectives.IciCollectivesParams),
+    )
+    self.assertEqual(
+        collectives.DcnAllReduceParams.__mro__[1:3],
+        (collectives.AllReduceParamsMixin, collectives.DcnCollectivesParams),
+    )
 
   def test_collectives_skips_hbm_roofline_analysis(self):
     """Verify that collectives skip HBM roofline analysis to avoid miscomparing ICI with HBM."""
@@ -934,7 +1146,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
 
   def test_default_device_placement_uses_mesh_utils(self):
     """Verify default device_placement builds the mesh via mesh_utils."""
-    config = collectives.CollectivesParams(
+    config = collectives.IciCollectivesParams(
         matrix_dim=64,
         dtype="bfloat16",
         mesh_shape="2x2",
@@ -963,7 +1175,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       self, sharding_strategy, expected_out_shape
   ):
     """Verify id_sorted builds the mesh from devices sorted ascending by id."""
-    config = collectives.CollectivesParams(
+    config = collectives.IciCollectivesParams(
         matrix_dim=64,
         dtype="bfloat16",
         mesh_shape="2x2",
@@ -986,6 +1198,197 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     (data,) = bm.generate_inputs()
     out = bm.run_op(data)
     self.assertEqual(out.shape, expected_out_shape)
+
+  def test_all_reduce_lowering_has_marker(self):
+    """Verify the all-reduce op is lowered inside the MARKER named scope."""
+    config = collectives.AllReduceParams(matrix_dim=64, dtype="float32")
+    bm = collectives.AllReduceBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    bm.setup()
+    (x,) = bm.generate_inputs()
+    lowered_text = bm._jit_fn.lower(x).as_text(debug_info=True)  # pylint: disable=protected-access
+    self.assertIn("MARKER!!!", lowered_text)
+
+  @parameterized.named_parameters(
+      (
+          "base",
+          collectives.BaseCollectiveBenchmark,
+          (base.BaseBenchmark,),
+          collectives.CollectivesParams,
+      ),
+      (
+          "ici_base",
+          collectives.IciCollectiveBenchmark,
+          (collectives.BaseCollectiveBenchmark,),
+          collectives.IciCollectivesParams,
+      ),
+      (
+          "dcn_base",
+          collectives.DcnCollectiveBenchmark,
+          (collectives.BaseCollectiveBenchmark,),
+          collectives.DcnCollectivesParams,
+      ),
+      (
+          "all_gather",
+          collectives.AllGatherBenchmark,
+          (collectives.IciCollectiveBenchmark,),
+          collectives.IciCollectivesParams,
+      ),
+      (
+          "all_to_all",
+          collectives.AllToAllBenchmark,
+          (collectives.IciCollectiveBenchmark,),
+          collectives.IciCollectivesParams,
+      ),
+      (
+          "reduce_scatter",
+          collectives.ReduceScatterBenchmark,
+          (collectives.IciCollectiveBenchmark,),
+          collectives.IciCollectivesParams,
+      ),
+      (
+          "all_reduce",
+          collectives.AllReduceBenchmark,
+          (collectives.AllReduceOpMixin, collectives.IciCollectiveBenchmark),
+          collectives.AllReduceParams,
+      ),
+      (
+          "dcn_all_reduce",
+          collectives.DcnAllReduceBenchmark,
+          (collectives.AllReduceOpMixin, collectives.DcnCollectiveBenchmark),
+          collectives.DcnAllReduceParams,
+      ),
+  )
+  def test_collective_benchmark_hierarchy(
+      self, bm_cls, expected_bases, expected_config
+  ):
+    """Verify the topology-neutral base, ICI/DCN bases, and the op mixin."""
+    self.assertEqual(
+        bm_cls.__mro__[1 : 1 + len(expected_bases)], expected_bases
+    )
+    self.assertIs(bm_cls.Config, expected_config)
+    self.assertNotIn(
+        "REPORT_SCHEMA", vars(collectives.BaseCollectiveBenchmark)
+    )
+
+  @parameterized.named_parameters(
+      (
+          "all_gather",
+          collectives.AllGatherBenchmark,
+          [
+              "dtype",
+              "mesh_shape",
+              "device_placement",
+              "sharding_strategy",
+              "matrix_dim",
+              "shard_size_mib",
+              "wall_clock_p50_ms",
+              "wall_clock_bandwidth_per_chip_gb_s",
+              "xprof_p50_ms",
+              "xprof_bandwidth_per_chip_gb_s",
+          ],
+      ),
+      (
+          "all_to_all",
+          collectives.AllToAllBenchmark,
+          [
+              "dtype",
+              "mesh_shape",
+              "device_placement",
+              "sharding_strategy",
+              "matrix_dim",
+              "shard_size_mib",
+              "wall_clock_p50_ms",
+              "wall_clock_bandwidth_per_chip_gb_s",
+              "xprof_p50_ms",
+              "xprof_bandwidth_per_chip_gb_s",
+          ],
+      ),
+      (
+          "reduce_scatter",
+          collectives.ReduceScatterBenchmark,
+          [
+              "dtype",
+              "mesh_shape",
+              "device_placement",
+              "sharding_strategy",
+              "matrix_dim",
+              "shard_size_mib",
+              "wall_clock_p50_ms",
+              "wall_clock_bandwidth_per_chip_gb_s",
+              "xprof_p50_ms",
+              "xprof_bandwidth_per_chip_gb_s",
+          ],
+      ),
+      (
+          "all_reduce",
+          collectives.AllReduceBenchmark,
+          [
+              "dtype",
+              "reduce_op",
+              "mesh_shape",
+              "device_placement",
+              "sharding_strategy",
+              "matrix_dim",
+              "shard_size_mib",
+              "wall_clock_p50_ms",
+              "wall_clock_bandwidth_per_chip_gb_s",
+              "xprof_p50_ms",
+              "xprof_bandwidth_per_chip_gb_s",
+          ],
+      ),
+      (
+          "dcn_all_reduce",
+          collectives.DcnAllReduceBenchmark,
+          [
+              "dtype",
+              "reduce_op",
+              "matrix_dim",
+              "shard_size_mib",
+              "wall_clock_p50_ms",
+              "wall_clock_bandwidth_per_host_gbps",
+              "xprof_p50_ms",
+              "xprof_bandwidth_per_host_gbps",
+          ],
+      ),
+  )
+  def test_report_schema_columns(self, bm_cls, expected_cols):
+    """Verify the REPORT_SCHEMA columns of every registered collective."""
+    self.assertEqual([col for col, _ in bm_cls.REPORT_SCHEMA], expected_cols)
+
+  @parameterized.named_parameters(
+      ("all_gather", collectives.AllGatherBenchmark),
+      ("all_to_all", collectives.AllToAllBenchmark),
+      ("reduce_scatter", collectives.ReduceScatterBenchmark),
+  )
+  def test_get_run_identifier(self, bm_cls):
+    """Verify non-all-reduce collectives use the dim_<matrix_dim> identifier."""
+    bm = bm_cls(
+        config=collectives.IciCollectivesParams(matrix_dim=64),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.assertEqual(bm.get_run_identifier(), "dim_64")
+
+  def test_all_reduce_op_mixin_requires_reduce_op_config(self):
+    """Verify AllReduceOpMixin rejects a config without AllReduceParamsMixin."""
+
+    class _Bad(
+        collectives.AllReduceOpMixin[collectives.IciCollectivesParams],
+        collectives.IciCollectiveBenchmark[collectives.IciCollectivesParams],
+    ):
+      pass
+
+    bm = _Bad(
+        config=collectives.IciCollectivesParams(matrix_dim=64),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    with self.assertRaises(TypeError):
+      bm._get_reduce_op()  # pylint: disable=protected-access
 
 
 class CollectivesParamsValidationTest(parameterized.TestCase):
@@ -1015,14 +1418,50 @@ class CollectivesParamsValidationTest(parameterized.TestCase):
   )
   def test_device_placement_coerces_to_enum(self, raw, expected):
     """Verify YAML string values are coerced into DevicePlacement members."""
-    params = collectives.CollectivesParams(device_placement=raw)
+    params = collectives.IciCollectivesParams(device_placement=raw)
     self.assertEqual(params.device_placement, expected)
     self.assertIsInstance(params.device_placement, collectives.DevicePlacement)
     self.assertEqual(dataclasses.asdict(params)["device_placement"], raw)
 
   def test_invalid_device_placement_raises_error(self):
     with self.assertRaisesRegex(ValueError, "Invalid device_placement 'bogus'"):
-      collectives.CollectivesParams(device_placement="bogus")
+      collectives.IciCollectivesParams(device_placement="bogus")
+
+  @parameterized.parameters(
+      "mesh_shape", "device_placement", "sharding_strategy"
+  )
+  def test_api_change_collectives_params_rejects_mesh_fields(self, field):
+    """Verify ICI mesh fields live on IciCollectivesParams only."""
+    with self.assertRaises(TypeError):
+      collectives.CollectivesParams(**{field: "2x2"})
+
+  @parameterized.named_parameters(
+      ("all_reduce", collectives.AllReduceParams, frozenset()),
+      ("ici", collectives.IciCollectivesParams, frozenset({"reduce_op"})),
+      (
+          "dcn_all_reduce",
+          collectives.DcnAllReduceParams,
+          frozenset({"mesh_shape", "device_placement", "sharding_strategy"}),
+      ),
+      (
+          "dcn",
+          collectives.DcnCollectivesParams,
+          frozenset({
+              "mesh_shape",
+              "device_placement",
+              "sharding_strategy",
+              "reduce_op",
+          }),
+      ),
+  )
+  def test_field_defaults_and_help_unchanged(self, params_cls, excluded):
+    """Verify every collective field keeps its default and metadata, by name."""
+    fields = {f.name: f for f in dataclasses.fields(params_cls)}
+    self.assertEqual(set(fields), set(_HEAD_FIELD_SPEC) - excluded)
+    for name, field in fields.items():
+      default, metadata = _HEAD_FIELD_SPEC[name]
+      self.assertEqual(field.default, default, msg=name)
+      self.assertEqual(dict(field.metadata), metadata, msg=name)
 
   @parameterized.named_parameters(
       (op.name.lower(), op.value) for op in collectives.ReduceOp

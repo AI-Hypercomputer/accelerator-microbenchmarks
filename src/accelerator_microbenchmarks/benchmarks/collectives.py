@@ -82,25 +82,8 @@ class DevicePlacement(constants.ParamEnum):
 
 @dataclasses.dataclass
 class CollectivesParams(base.SingleDtypeBenchmarkParams):
-  mesh_shape: Optional[str] = dataclasses.field(
-      default=None,
-      metadata={"help": "Logical TPU mesh shape string"
-                        " (e.g. '2x4x4', '2x2x1')."},
-  )
-  device_placement: DevicePlacement = dataclasses.field(
-      default=DevicePlacement.MESH_UTILS,
-      metadata={
-          "help": (
-              "Mesh device placement: 'mesh_utils' (topology-aware) or"
-              " 'id_sorted' (sorted by device id)."
-          )
-      },
-  )
-  sharding_strategy: Optional[str] = dataclasses.field(
-      default=None,
-      metadata={"help": "Device axis sharding strategy string"
-                        " (e.g. '2x2x2', '2x2x1')."},
-  )
+  """Topology-neutral parameters shared by all collective benchmarks."""
+
   matrix_dim: int = dataclasses.field(
       default=1024,
       metadata={
@@ -118,7 +101,43 @@ class CollectivesParams(base.SingleDtypeBenchmarkParams):
 
 
 @dataclasses.dataclass
-class AllReduceParams(CollectivesParams):
+class IciCollectivesParams(CollectivesParams):
+  """Parameters for collectives over the ICI mesh of a single slice."""
+
+  mesh_shape: Optional[str] = dataclasses.field(
+      default=None,
+      metadata={
+          "help": "Logical TPU mesh shape string (e.g. '2x4x4', '2x2x1')."
+      },
+  )
+  device_placement: DevicePlacement = dataclasses.field(
+      default=DevicePlacement.MESH_UTILS,
+      metadata={
+          "help": (
+              "Mesh device placement: 'mesh_utils' (topology-aware) or"
+              " 'id_sorted' (sorted by device id)."
+          )
+      },
+  )
+  sharding_strategy: Optional[str] = dataclasses.field(
+      default=None,
+      metadata={
+          "help": (
+              "Device axis sharding strategy string (e.g. '2x2x2', '2x2x1')."
+          )
+      },
+  )
+
+
+@dataclasses.dataclass
+class DcnCollectivesParams(CollectivesParams):
+  """Parameters for DCN collective benchmarks."""
+
+
+@dataclasses.dataclass
+class AllReduceParamsMixin:
+  """All-reduce parameters, reusable with any topology params class."""
+
   reduce_op: ReduceOp = dataclasses.field(
       default=ReduceOp.SUM,
       metadata={
@@ -126,71 +145,34 @@ class AllReduceParams(CollectivesParams):
       },
   )
 
+
+@dataclasses.dataclass
+class AllReduceParams(AllReduceParamsMixin, IciCollectivesParams):
+  """Parameters for the ICI all-reduce benchmark."""
+
+
+@dataclasses.dataclass
+class DcnAllReduceParams(AllReduceParamsMixin, DcnCollectivesParams):
+  """Parameters for DCN all-reduce collective benchmarks."""
+
+
 TCollectiveConfig = TypeVar("TCollectiveConfig", bound=CollectivesParams)
+TIciConfig = TypeVar("TIciConfig", bound=IciCollectivesParams)
+TDcnConfig = TypeVar("TDcnConfig", bound=DcnCollectivesParams)
 
 
 class BaseCollectiveBenchmark(
     base.BaseBenchmark[TCollectiveConfig], Generic[TCollectiveConfig]
 ):
-  """Base class for all collective communication benchmarks."""
+  """Base class for all collective communication benchmarks.
+
+  Holds the topology-neutral logic: input generation, run_op, replica-group
+  slicing of the mesh and total bytes. A topology base builds `self.mesh` in
+  `setup()` and implements `_get_sharding_axes()`, `get_workload_metadata()`
+  and `calculate_throughput_metrics()`.
+  """
 
   Config = CollectivesParams
-  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
-      ("dtype", report.format_str),
-      ("mesh_shape", report.format_str),
-      ("device_placement", report.format_str),
-      ("sharding_strategy", report.format_str),
-      ("matrix_dim", report.format_str),
-      ("shard_size_mib", report.format_2f),
-      ("wall_clock_p50_ms", report.format_4f),
-      ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
-      ("xprof_p50_ms", report.format_4f),
-      ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
-  )
-
-  def __init__(
-      self,
-      config: TCollectiveConfig,
-      hardware_spec: system.HardwareSpec,
-      mesh: Optional[jax.sharding.Mesh] = None,
-      xprof_config: Optional[base.XprofConfig] = None,
-  ):
-    super().__init__(
-        config=config,
-        hardware_spec=hardware_spec,
-        mesh=mesh,
-        xprof_config=xprof_config,
-    )
-    self.sharding_strategy = None
-
-  def _build_mesh_devices(self, mesh_shape: list[int]) -> np.ndarray:
-    """Returns the mesh device array per `config.device_placement`."""
-    if self.config.device_placement == DevicePlacement.ID_SORTED:
-      return np.asarray(sorted(jax.devices(), key=lambda d: d.id)).reshape(
-          mesh_shape
-      )
-    return mesh_utils.create_device_mesh(mesh_shape, devices=jax.devices())
-
-  def setup(self):
-    mesh_shape_str = self.config.mesh_shape
-    if mesh_shape_str is not None:
-      try:
-        mesh_shape = [int(i) for i in mesh_shape_str.split("x")]
-        axis_names = tuple(f"d_{i}" for i in range(len(mesh_shape)))
-        mesh_devices = self._build_mesh_devices(mesh_shape)
-        self.mesh = jax.sharding.Mesh(mesh_devices, axis_names)
-      except (ValueError, RuntimeError) as e:
-        print(
-            f"Warning: Invalid mesh_shape '{mesh_shape_str}'. Falling back to"
-            f" original mesh. Error: {e}"
-        )
-
-    if self.mesh is None:
-      raise ValueError("Mesh not initialized.")
-
-    self.sharding_strategy = self.config.sharding_strategy
-
-    self._setup_jit_fn()
 
   def get_run_identifier(self) -> str:
     dim = self.config.matrix_dim
@@ -198,34 +180,8 @@ class BaseCollectiveBenchmark(
       return f"dim_{dim}"
     return ""
 
-  def _get_sharding_axes(self):
-    if self.mesh is None:
-      raise ValueError("Mesh not initialized.")
-    if self.mesh.axis_names[0] == "device":
-      return self.mesh.axis_names[0]
-
-    if self.sharding_strategy is not None:
-      try:
-        sharding_dims = [int(i) for i in self.sharding_strategy.split("x")]
-        if len(sharding_dims) != len(self.mesh.shape):
-          raise ValueError(
-              f"sharding_strategy '{self.sharding_strategy}' length does not"
-              f" match mesh shape '{self.mesh.shape}'"
-          )
-        sharding_axes = tuple(
-            name
-            for i, name in enumerate(self.mesh.axis_names)
-            if sharding_dims[i] > 1
-        )
-        return sharding_axes
-      except Exception as e:
-        print(
-            "Warning: Failed to parse sharding_strategy"
-            f" '{self.sharding_strategy}'. Falling back to all mesh axes."
-            f" Error: {e}"
-        )
-
-    return tuple(self.mesh.axis_names)
+  def _get_sharding_axes(self) -> str | tuple[Any, ...]:
+    raise NotImplementedError("Subclasses must implement _get_sharding_axes")
 
   def _get_num_sharded_devices(
       self, sharding_axes: Optional[str | tuple[Any, ...]] = None
@@ -306,6 +262,112 @@ class BaseCollectiveBenchmark(
     )
     return list(self.mesh.devices[indexer].flatten())
 
+  def get_total_bytes(self) -> float:
+    return float(self.get_workload_metadata()["data_transferred_bytes"])
+
+  def _get_transfer_metrics(
+      self,
+      dim: int,
+      itemsize: int,
+      rank: int = 1,
+      participating_ranks: int = 1,
+      tf_multiplier: int = 1,
+  ) -> tuple[float, dict[str, float]]:
+    raise NotImplementedError("Subclasses must implement _get_transfer_metrics")
+
+
+class IciCollectiveBenchmark(
+    BaseCollectiveBenchmark[TIciConfig], Generic[TIciConfig]
+):
+  """Base class for collectives over the ICI mesh of a single slice."""
+
+  Config = IciCollectivesParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("mesh_shape", report.format_str),
+      ("device_placement", report.format_str),
+      ("sharding_strategy", report.format_str),
+      ("matrix_dim", report.format_str),
+      ("shard_size_mib", report.format_2f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
+      ("xprof_p50_ms", report.format_4f),
+      ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
+  )
+
+  def __init__(
+      self,
+      config: TIciConfig,
+      hardware_spec: system.HardwareSpec,
+      mesh: Optional[jax.sharding.Mesh] = None,
+      xprof_config: Optional[base.XprofConfig] = None,
+  ):
+    super().__init__(
+        config=config,
+        hardware_spec=hardware_spec,
+        mesh=mesh,
+        xprof_config=xprof_config,
+    )
+    self.sharding_strategy = None
+
+  def _build_mesh_devices(self, mesh_shape: list[int]) -> np.ndarray:
+    """Returns the mesh device array per `config.device_placement`."""
+    if self.config.device_placement == DevicePlacement.ID_SORTED:
+      return np.asarray(sorted(jax.devices(), key=lambda d: d.id)).reshape(
+          mesh_shape
+      )
+    return mesh_utils.create_device_mesh(mesh_shape, devices=jax.devices())
+
+  def setup(self):
+    mesh_shape_str = self.config.mesh_shape
+    if mesh_shape_str is not None:
+      try:
+        mesh_shape = [int(i) for i in mesh_shape_str.split("x")]
+        axis_names = tuple(f"d_{i}" for i in range(len(mesh_shape)))
+        mesh_devices = self._build_mesh_devices(mesh_shape)
+        self.mesh = jax.sharding.Mesh(mesh_devices, axis_names)
+      except (ValueError, RuntimeError) as e:
+        print(
+            f"Warning: Invalid mesh_shape '{mesh_shape_str}'. Falling back to"
+            f" original mesh. Error: {e}"
+        )
+
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+
+    self.sharding_strategy = self.config.sharding_strategy
+
+    self._setup_jit_fn()
+
+  def _get_sharding_axes(self):
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    if self.mesh.axis_names[0] == "device":
+      return self.mesh.axis_names[0]
+
+    if self.sharding_strategy is not None:
+      try:
+        sharding_dims = [int(i) for i in self.sharding_strategy.split("x")]
+        if len(sharding_dims) != len(self.mesh.shape):
+          raise ValueError(
+              f"sharding_strategy '{self.sharding_strategy}' length does not"
+              f" match mesh shape '{self.mesh.shape}'"
+          )
+        sharding_axes = tuple(
+            name
+            for i, name in enumerate(self.mesh.axis_names)
+            if sharding_dims[i] > 1
+        )
+        return sharding_axes
+      except Exception as e:
+        print(
+            "Warning: Failed to parse sharding_strategy"
+            f" '{self.sharding_strategy}'. Falling back to all mesh axes."
+            f" Error: {e}"
+        )
+
+    return tuple(self.mesh.axis_names)
+
   def get_workload_metadata(self) -> dict[str, Any]:
     """Calculate static collective transfer metadata (bytes moved, replica group)."""
     if self.mesh is None:
@@ -365,51 +427,132 @@ class BaseCollectiveBenchmark(
         f"{prefix}_bandwidth_per_chip_gb_s": bandwidth_gb_s,
     }
 
-  def get_total_bytes(self) -> float:
-    return float(self.get_workload_metadata()["data_transferred_bytes"])
 
-  def _get_transfer_metrics(
-      self,
-      dim: int,
-      itemsize: int,
-      rank: int = 1,
-      participating_ranks: int = 1,
-      tf_multiplier: int = 1,
-  ) -> tuple[float, dict[str, float]]:
-    raise NotImplementedError("Subclasses must implement _get_transfer_metrics")
+class DcnCollectiveBenchmark(
+    BaseCollectiveBenchmark[TDcnConfig], Generic[TDcnConfig]
+):
+  """Base class for collectives over the DCN mesh across slices."""
 
-
-@registry.benchmark_registry.register("all_reduce")
-class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
-  """Benchmarks latency and bandwidth of all-reduce collective ops across devices."""
-
-  Config = AllReduceParams
+  Config = DcnCollectivesParams
+  derive_chip_bandwidth: bool = False
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
-      ("reduce_op", report.format_str),
-      ("mesh_shape", report.format_str),
-      ("device_placement", report.format_str),
-      ("sharding_strategy", report.format_str),
       ("matrix_dim", report.format_str),
       ("shard_size_mib", report.format_2f),
       ("wall_clock_p50_ms", report.format_4f),
-      ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
+      ("wall_clock_bandwidth_per_host_gbps", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
-      ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
+      ("xprof_bandwidth_per_host_gbps", report.format_2f),
   )
 
   def setup(self):
-    op = self.config.reduce_op
+    devices = jax.devices()
+    device_key = lambda d: (*d.coords, int(d.core_on_chip))
+    slice_ids = sorted({getattr(d, "slice_index", 0) for d in devices})
+    if len(slice_ids) < 2:
+      raise ValueError(
+          f"{type(self).__name__} requires at least 2 slices for DCN "
+          f"collectives, but found {len(slice_ids)} slice(s) "
+          f"(slice_ids={slice_ids})."
+      )
+    slices = [
+        sorted(
+            [d for d in devices if getattr(d, "slice_index", 0) == sid],
+            key=device_key,
+        )
+        for sid in slice_ids
+    ]
+    slice_counts = {sid: len(s) for sid, s in zip(slice_ids, slices)}
+    if len(set(slice_counts.values())) > 1:
+      raise ValueError(
+          "All slices must have the same number of devices, but got "
+          f"per-slice device counts: {slice_counts}."
+      )
+    self.mesh = jax.sharding.Mesh(
+        np.array(slices, dtype=object), ("dcn", "ici")
+    )
+    self._setup_jit_fn()
+
+  def _get_sharding_axes(self):
+    return "dcn"
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    """Calculate static DCN collective transfer metadata."""
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+
+    dim = self.config.matrix_dim
+    dtype = utils.parse_dtype(self.config.dtype)
+    itemsize = jnp.dtype(dtype).itemsize
+
+    rank = len(self._get_first_replica_group_devices())
+    participating_ranks = max(rank - 1, 1)
+
+    data_transferred_bytes, extra_metrics = self._get_transfer_metrics(
+        dim=dim,
+        itemsize=itemsize,
+        rank=rank,
+        participating_ranks=participating_ranks,
+        tf_multiplier=1,
+    )
+    return {
+        "data_transferred_bytes": data_transferred_bytes,
+        "replica_group_rank": rank,
+        **extra_metrics,
+    }
+
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    latency_s = latency_ms / 1000.0
+    per_device_gbps = self.get_total_bytes() * 8.0 / (latency_s * 1e9)
+    return {
+        f"{prefix}_bandwidth_per_host_gbps": (
+            per_device_gbps * jax.local_device_count()
+        ),
+    }
+
+
+class AllReduceOpMixin(
+    BaseCollectiveBenchmark[TCollectiveConfig], Generic[TCollectiveConfig]
+):
+  """All-reduce op logic shared by any topology base.
+
+  Provides reduce_op validation, the run identifier, the replicated input,
+  the jitted all-reduce and its transfer bytes. List it before the topology
+  base, whose config must include `AllReduceParamsMixin`. The topology base
+  builds `self.mesh` in `setup()`, returns its collective axes from
+  `_get_sharding_axes()` and passes rank, participating ranks and the
+  transfer multiplier to `_get_transfer_metrics()` from its own
+  `get_workload_metadata()`.
+
+  `_setup_jit_fn()` always wraps the op in the MARKER named scope and
+  `zero_crop`, with no hook to change either. Until such a hook exists, a
+  non-ICI topology must override `_setup_jit_fn()` itself; the rest of this
+  mixin is reusable as is.
+  """
+
+  def _get_reduce_op(self) -> ReduceOp:
+    config = self.config
+    if not isinstance(config, AllReduceParamsMixin):
+      raise TypeError(
+          f"{type(self).__name__} requires a config that subclasses"
+          f" AllReduceParamsMixin, got {type(config).__name__}."
+      )
+    return config.reduce_op
+
+  def setup(self):
+    op = self._get_reduce_op()
     if op not in _REDUCE_OP_MAP:
       raise ValueError(
-          f"Invalid reduce_op '{self.config.reduce_op}'. "
+          f"Invalid reduce_op '{op}'. "
           f"Must be one of {ReduceOp.supported_options_str()}"
       )
     super().setup()
 
   def get_run_identifier(self) -> str:
     dim = self.config.matrix_dim
-    op = self.config.reduce_op
+    op = self._get_reduce_op()
     return f"dim_{dim}_op_{op}"
 
   def _get_input_shape_and_sharding(
@@ -423,7 +566,7 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
-    op_fn = _REDUCE_OP_MAP[self.config.reduce_op]
+    op_fn = _REDUCE_OP_MAP[self._get_reduce_op()]
 
     @jax.jit
     def all_reduce_sharded(x):
@@ -460,8 +603,69 @@ class AllReduceBenchmark(BaseCollectiveBenchmark[AllReduceParams]):
     return data_transferred, {"shard_size_mib": local_size_bytes / (1024 * 1024)}
 
 
+@registry.benchmark_registry.register("all_reduce")
+class AllReduceBenchmark(
+    AllReduceOpMixin[AllReduceParams], IciCollectiveBenchmark[AllReduceParams]
+):
+  """Benchmarks latency and bandwidth of all-reduce collective ops across devices."""
+
+  Config = AllReduceParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("reduce_op", report.format_str),
+      ("mesh_shape", report.format_str),
+      ("device_placement", report.format_str),
+      ("sharding_strategy", report.format_str),
+      ("matrix_dim", report.format_str),
+      ("shard_size_mib", report.format_2f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
+      ("xprof_p50_ms", report.format_4f),
+      ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
+  )
+
+
+@registry.benchmark_registry.register("dcn_all_reduce")
+class DcnAllReduceBenchmark(
+    AllReduceOpMixin[DcnAllReduceParams],
+    DcnCollectiveBenchmark[DcnAllReduceParams],
+):
+  """Benchmarks multi-slice DCN AllReduce latency and bandwidth."""
+
+  Config = DcnAllReduceParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("dtype", report.format_str),
+      ("reduce_op", report.format_str),
+      ("matrix_dim", report.format_str),
+      ("shard_size_mib", report.format_2f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_bandwidth_per_host_gbps", report.format_2f),
+      ("xprof_p50_ms", report.format_4f),
+      ("xprof_bandwidth_per_host_gbps", report.format_2f),
+  )
+
+  def _setup_jit_fn(self):
+    sharding_axes = self._get_sharding_axes()
+    op_fn = _REDUCE_OP_MAP[self._get_reduce_op()]
+
+    @jax.jit
+    def all_reduce_sharded(x):
+      def f(a):
+        return op_fn(a, axis_name=sharding_axes)
+
+      return jax.shard_map(
+          f,
+          mesh=self.mesh,
+          in_specs=jax.sharding.PartitionSpec(None, None, None),
+          out_specs=jax.sharding.PartitionSpec(None, None, None),
+          check_vma=False,
+      )(x)
+
+    self._jit_fn = all_reduce_sharded
+
+
 @registry.benchmark_registry.register("all_gather")
-class AllGatherBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
+class AllGatherBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
   """Benchmarks the latency and bandwidth of jax.lax.all_gather across devices."""
 
   def match_xprof_op_fallback(self, event: dict[str, Any]) -> bool:
@@ -519,7 +723,7 @@ class AllGatherBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
 
 
 @registry.benchmark_registry.register("all_to_all")
-class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
+class AllToAllBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
   """Benchmarks the latency and bandwidth of jax.lax.all_to_all across devices."""
 
   def _setup_jit_fn(self):
@@ -579,7 +783,7 @@ class AllToAllBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
 
 
 @registry.benchmark_registry.register("reduce_scatter", is_experimental=True)
-class ReduceScatterBenchmark(BaseCollectiveBenchmark[CollectivesParams]):
+class ReduceScatterBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
   """[EXPERIMENTAL] Benchmarks the latency and bandwidth of jax.lax.psum_scatter across devices."""
 
   def _setup_jit_fn(self):

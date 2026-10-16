@@ -31,6 +31,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "hbm_bandwidth",
             "attention_flashed",
             "all_reduce",
+            "dcn_all_reduce",
             "all_to_all",
             "reduce_scatter",
             "all_gather",
@@ -47,7 +48,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
     )
 
   def test_primary_stable_tasks(self):
-    """Verify that the 8 primary stable tasks are returned by default."""
+    """Verify that the primary stable tasks are returned by default."""
     primary_tasks = registry.benchmark_registry.list_benchmark_names(
         include_experimental=False, include_aliases=False
     )
@@ -57,6 +58,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "gemm",
             "hbm",
             "all_reduce",
+            "dcn_all_reduce",
             "all_gather",
             "all_to_all",
             "device_to_device",

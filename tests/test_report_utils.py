@@ -77,6 +77,7 @@ DEFAULT_EXTRA_AVAILABLE_KEYS: frozenset[str] = frozenset({
     "xprof_tflops_per_chip",
     "xprof_bandwidth_per_device_gb_s",
     "xprof_bandwidth_per_chip_gb_s",
+    "xprof_bandwidth_per_host_gbps",
     "wall_clock_tflops_per_chip",
     "wall_clock_bandwidth_per_chip_gb_s",
 })

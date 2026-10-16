@@ -98,7 +98,7 @@ class AllGatherTpuTest(parameterized.TestCase):
         "warmup_tries": 1,
         "num_runs": 2,
     }
-    config = collectives.CollectivesParams(**params)
+    config = collectives.IciCollectivesParams(**params)
 
     # Use mock.patch on jax.named_scope to run code without the marker scope
     with mock.patch.object(

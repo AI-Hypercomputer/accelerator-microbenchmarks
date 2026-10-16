@@ -1,0 +1,11 @@
+benchmark:
+  name: dcn_all_reduce
+  xprof_timing: false
+  params:
+    warmup_tries: 20
+    num_runs: 100
+    dtype: bfloat16
+    reduce_op: sum
+  sweep:
+    matrix_dim: [32768, 65536, 131072, 262144, 524288]
+

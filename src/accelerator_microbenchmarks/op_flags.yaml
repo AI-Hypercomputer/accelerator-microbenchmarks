@@ -37,6 +37,15 @@ all_reduce:
     - "--xla_tpu_use_tc_device_shape_on_sc=true"
     - "--xla_tpu_dvfs_p_state=7"
 
+dcn_all_reduce:
+  flags:
+    - "--xla_tpu_use_enhanced_launch_barrier=true"
+    - "--xla_tpu_prefer_async_allgather_to_allreduce=true"
+    - "--xla_tpu_data_parallel_opt_different_sized_ops=true"
+    - "--xla_tpu_enable_data_parallel_all_reduce_opt=true"
+    - "--megascale_max_reduction_shard_size=16777216"
+    - "--xla_tpu_use_megascale_host_reduction=false"
+
 reduce_scatter:
   flags:
     - "--xla_jf_debug_level=3"

@@ -426,6 +426,10 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
               f"{constants.TimingDomain.XPROF}_bandwidth_per_chip_gb_s",
           ),
           (
+              f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_host_gbps",
+              f"{constants.TimingDomain.XPROF}_bandwidth_per_host_gbps",
+          ),
+          (
               f"{constants.TimingDomain.WALL_CLOCK}_tflops_per_device",
               f"{constants.TimingDomain.XPROF}_tflops_per_device",
           ),
