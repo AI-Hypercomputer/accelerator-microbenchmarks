@@ -89,12 +89,31 @@ def get_dtype_info(dtype_or_str: str | jnp.dtype) -> jnp.finfo | jnp.iinfo:
   raise ValueError(f"Unsupported non-numeric dtype: '{dtype}'.")
 
 
+def get_dtype_bits(dtype_or_str: str | jnp.dtype) -> int:
+  """Returns the physical element width in bits of a numeric dtype.
+
+  Unlike `jnp.dtype(dtype).itemsize * 8` (which reports `8` bits for 4-bit
+  container dtypes such as `int4` and `float4_e2m1fn`), this returns the exact
+  physical width (`4` bits for 4-bit types).
+
+  Args:
+    dtype_or_str: Either a string representation or a `jax.numpy` dtype.
+
+  Returns:
+    The number of bits per element.
+
+  Raises:
+    ValueError: If the dtype is not a floating-point or integer numeric type.
+  """
+  return int(get_dtype_info(dtype_or_str).bits)
+
+
 def get_dtype_bytes(dtype_or_str: str | jnp.dtype) -> float:
   """Returns the physical storage size in bytes per element (`bits / 8.0`).
 
   Unlike `jnp.dtype(dtype).itemsize` (which reports `1` byte for 4-bit container
-  dtypes such as `int4` and `float4_e2m1fn`), `get_dtype_info().bits / 8.0`
-  returns the exact physical width (`0.5` bytes for 4-bit types).
+  dtypes such as `int4` and `float4_e2m1fn`), `get_dtype_bits() / 8.0` returns
+  the exact physical width (`0.5` bytes for 4-bit types).
 
   Args:
     dtype_or_str: Either a string representation or a `jax.numpy` dtype.
@@ -102,7 +121,7 @@ def get_dtype_bytes(dtype_or_str: str | jnp.dtype) -> float:
   Returns:
     The physical storage size in bytes per element as a float.
   """
-  return float(get_dtype_info(dtype_or_str).bits) / 8.0
+  return get_dtype_bits(dtype_or_str) / 8.0
 
 
 def get_dtype_max(dtype_or_str: str | jnp.dtype) -> float:

@@ -89,6 +89,30 @@ class UtilsTest(parameterized.TestCase):
         utils.get_dtype_max(dtype_or_str), expected_max, places=1
     )
 
+  @parameterized.named_parameters(
+      ("float32_str", "float32", 32),
+      ("bfloat16_dtype", jnp.bfloat16, 16),
+      ("float8_e4m3fn_str", "float8_e4m3fn", 8),
+      ("int8_dtype", jnp.int8, 8),
+      # Sub-byte dtypes have itemsize 1 but are 4 bits wide.
+      ("int4_str", "int4", 4),
+      ("float4_e2m1fn_dtype", jnp.float4_e2m1fn, 4),
+  )
+  def test_get_dtype_bits(self, dtype_or_str, expected_bits):
+    """Verifies the physical bit width, including sub-byte dtypes."""
+    bits = utils.get_dtype_bits(dtype_or_str)
+    self.assertIsInstance(bits, int)
+    self.assertEqual(bits, expected_bits)
+
+  @parameterized.named_parameters(
+      ("bool", jnp.bool_),
+      ("complex64", jnp.complex64),
+  )
+  def test_get_dtype_bits_rejects_non_numeric_dtypes(self, dtype):
+    """Verifies non-numeric dtypes raise ValueError."""
+    with self.assertRaisesRegex(ValueError, "Unsupported non-numeric dtype"):
+      utils.get_dtype_bits(dtype)
+
 
 if __name__ == "__main__":
   absltest.main()

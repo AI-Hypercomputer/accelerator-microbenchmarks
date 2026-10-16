@@ -16,6 +16,7 @@ This guide provides the reference for **TPUMS (TPU Microbenchmark Suite)** param
 - [2. Per-Benchmark Parameter & Metric Specifications](#2-per-benchmark-parameter--metric-specifications)
   - [2.1 Matrix Multiplication (`gemm`)](#21-matrix-multiplication-gemm)
     - [2.1.1 GEMM Throttling (`gemm_throttling`) [experimental]](#211-gemm-throttling-gemm_throttling-experimental)
+    - [2.1.2 Chained Matrix Multiplication & Determinism Check (`gemm_chained`) [experimental]](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental)
   - [2.2 HBM Memory Bandwidth (`hbm`)](#22-hbm-memory-bandwidth-hbm)
   - [2.3 Host I/O Bandwidth (`host_to_device`, `device_to_host`)](#23-host-io-bandwidth-host_to_device-device_to_host)
   - [2.4 Inter-Chip Interconnect (`device_to_device`)](#24-inter-chip-interconnect-device_to_device)
@@ -150,6 +151,46 @@ accelerator (`min_duration_s`) and measuring the degradation between the
 | `hbm_throttle_mean_pct`, `vdd_core_throttle_mean_pct` | Time-weighted mean throttle percentage during the post-soak window. |
 | `vdd_core_power_mean_w`, `hbm_power_mean_w`, `total_power_mean_w` | Time-weighted mean power level 1 meter readings (W). |
 | `pstate_min`, `pstate_max`, `pstate_changes`, `pstate_requested` | Observed and requested DVFS P-state statistics. |
+
+<a id="212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental"></a>
+#### 2.1.2 Chained Matrix Multiplication & Determinism Check (`gemm_chained`) [experimental]
+
+Runs the same deterministic chain of `chain_length` matmuls
+($$X_{t+1} = X_t \times B$$, square `B`, no collectives) on every device, then
+compares a bit-exact, position-weighted checksum of each device's final `X`
+within each host and across the slice to find miscomputing chips. Each device
+generates its own `X_0` and `B` from `seed` (no copies between devices), so a
+fault during input generation only affects that device. Only the chain is timed;
+the checksum is computed after the measurement loop.
+`total_flops = chain_length × 2 × M × K²`.
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `m` | `int` | `1024` | Matrix dimension `M` (rows of `X`). |
+| `k` | `int` | `1024` | Matrix dimension `K` (columns of `X`; `B` is `K × K`). |
+| `in_dtype` | `str` | `"bfloat16"` | Input operand data type of each matmul. |
+| `out_dtype` | `str` | `"bfloat16"` | Data type of `X` after each matmul. |
+| `seed` | `int` | `0` | PRNG seed for initializing `X_0` and `B`. |
+| `chain_length` | `int` | `1` | Number of chained matmuls per run (minimum `1`). |
+
+`in_dtype` and `out_dtype` must be 8/16/32-bit floats. Unlike `gemm`, there is
+no `n`, `transpose_a`, `transpose_b`, `alpha`, `beta`, or `use_scaling_factors`.
+
+| New Metric | Description |
+| :--- | :--- |
+| `global_checksum_match` | **The check passed iff `True`.** `False` if any two devices disagree; `None` if it cannot be decided (fewer than 2 devices, a missing device, or every device degenerate). |
+| `intra_host_checksum_match` | Same rule over this host's devices. |
+| `checksum` | Non-degenerate checksum held by more than half of the devices, or `None`. |
+| `diverging_devices` | `[]` unless two devices disagree; then the devices that differ from `checksum`, or every device if `checksum` is `None`. |
+| `all_devices_valid_checksum` | Every device reported a checksum and none is degenerate (`inf`/`NaN` or all zeros). |
+| `device_checksums` | This host's per-device checksums. |
+
+**Limits**:
+
+- Only the final timed run's chain is checksummed; warmup and earlier timed runs are not checked, so increasing `num_runs` does not add coverage.
+- Not an HBM scan (`X` and `B` stay at fixed addresses); one shape and dtype covers a subset of MXU datapaths, so sweep for broader coverage.
+- Choose `chain_length` so values stay finite; `inf`/`NaN` or all-zero results never pass.
+- Golden-reference comparison and collective/H2D/D2H integrity are out of scope.
 
 ---
 

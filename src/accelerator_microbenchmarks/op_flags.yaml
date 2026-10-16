@@ -98,6 +98,7 @@ tokamax_splash_attention:
 
 gemm: *gemm_flags
 gemm_throttling: *gemm_flags
+gemm_chained: *gemm_flags
 
 quantization: *gemm_flags
 transpose_quantization: *gemm_flags

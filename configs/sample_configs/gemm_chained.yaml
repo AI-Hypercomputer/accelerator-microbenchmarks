@@ -1,0 +1,18 @@
+# Sample configuration for the chained GEMM determinism benchmark.
+#
+# Runs a deterministic chain of `chain_length` back-to-back matrix
+# multiplications (`X <- X @ B`) independently on every device, computes a
+# position-weighted 64-bit checksum per device, and compares checksums
+# within each host and across the slice to identify any miscomputing chip.
+benchmark:
+  name: gemm_chained
+  xprof_timing: true
+  params:
+    warmup_tries: 2
+    num_runs: 5
+    in_dtype: bfloat16
+    out_dtype: bfloat16
+    m: 8192
+    k: 8192
+    chain_length: 100
+    seed: 0

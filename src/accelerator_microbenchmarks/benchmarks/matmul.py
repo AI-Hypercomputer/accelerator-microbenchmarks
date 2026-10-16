@@ -1,8 +1,9 @@
 """Matrix multiplication and GEMM benchmarks including FP8 support."""
 
 import dataclasses
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Optional, Sequence
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import checksum
 from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
@@ -367,4 +368,229 @@ class GemmThrottlingBenchmark(GeneralizedGemmBenchmark):
             post_tflops
         )
 
+    return metrics
+
+
+@dataclasses.dataclass
+class GemmChainedParams(base.BaseBenchmarkParams):
+  """Configuration parameters for chained GEMM determinism benchmark.
+
+  Only the parameters of the chain `X <- X @ B` are exposed: X is M x K and B is
+  a square K x K matrix, so there is no separate N.
+  """
+
+  m: int = dataclasses.field(
+      default=1024,
+      metadata={"min": 1, "help": "Matrix dimension M (rows of X)."},
+  )
+  k: int = dataclasses.field(
+      default=1024,
+      metadata={
+          "min": 1,
+          "help": "Matrix dimension K (columns of X; B is K x K).",
+      },
+  )
+  in_dtype: str = dataclasses.field(
+      default="bfloat16",
+      metadata={
+          "help": (
+              "Input operand data type of each matmul (e.g. float8_e4m3fn,"
+              " bfloat16)."
+          )
+      },
+  )
+  out_dtype: str = dataclasses.field(
+      default="bfloat16",
+      metadata={"help": "Data type of X after each matmul (e.g. bfloat16)."},
+  )
+  seed: int = dataclasses.field(
+      default=0,
+      metadata={"min": 0, "help": "Random seed for X and B initialization."},
+  )
+  chain_length: int = dataclasses.field(
+      default=1,
+      metadata={
+          "min": 1,
+          "help": "Number of sequential matrix multiplications in the chain.",
+      },
+  )
+
+  def __post_init__(self):
+    super().__post_init__()
+    for name in ("in_dtype", "out_dtype"):
+      dtype_str = getattr(self, name)
+      dtype = jnp.dtype(utils.parse_dtype(dtype_str))
+      # Integer dtypes are rejected: B ~ N(0, 1) / sqrt(k) truncates to all
+      # zeros, so the chain collapses to 0 and every device trivially matches.
+      # The element width must also be supported by the checksum.
+      if not (
+          jnp.issubdtype(dtype, jnp.floating)
+          and checksum.is_checksummable_dtype(dtype)
+      ):
+        raise ValueError(
+            f"gemm_chained requires a floating-point {name} with a bit width"
+            f" in {checksum.SUPPORTED_BITS}, got {dtype_str!r}."
+        )
+
+
+def make_inputs_fn(
+    mesh: jax.sharding.Mesh,
+    m: int,
+    k: int,
+    in_dtype: Any,
+    seed: int,
+):
+  """Returns the jitted `() -> (x0, b)` that generates the chain's inputs.
+
+  X0 (M x K) and B (K x K, scaled by 1/sqrt(K)) are seeded Gaussians cast to
+  `in_dtype` and replicated over `mesh`. Every device generates its own replica,
+  from a PRNG key built inside the jitted function: nothing is computed on one
+  device and copied to the others, so a fault during input generation only
+  affects the faulty device's checksum.
+  """
+  replicated = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+
+  def inputs_fn():
+    k1, k2 = jax.random.split(jax.random.PRNGKey(seed), 2)
+    x0 = jax.random.normal(k1, (m, k)).astype(in_dtype)
+    b = (jax.random.normal(k2, (k, k)) / jnp.sqrt(jnp.float32(k))).astype(
+        in_dtype
+    )
+    return x0, b
+
+  return jax.jit(inputs_fn, out_shardings=(replicated, replicated))
+
+
+def make_chain_fn(
+    mesh: jax.sharding.Mesh,
+    chain_length: int,
+    in_dtype: Any,
+    out_dtype: Any,
+):
+  """Returns the jitted chain `(x0, b) -> X`, i.e. the timed `run_op`.
+
+  Every device of `mesh` runs, on its own replicas and without collectives,
+  `chain_length` steps of `X <- dot(X.astype(in_dtype), b).astype(out_dtype)`
+  under the MARKER scope. Block `d` of X along axis 0 is the final X of mesh
+  device `d`, i.e. the layout `checksum.make_checksum_fn` takes.
+
+  Raises:
+    ValueError: If `chain_length` < 1.
+  """
+  if chain_length < 1:
+    raise ValueError(f"chain_length must be >= 1, got {chain_length}.")
+  pspec = jax.sharding.PartitionSpec
+
+  def per_device(x0, b):
+
+    def step(_, x):
+      return jax.lax.dot_general(
+          x.astype(in_dtype), b, dimension_numbers=(((1,), (0,)), ((), ()))
+      ).astype(out_dtype)
+
+    with jax.named_scope(constants.MARKER):
+      return jax.lax.fori_loop(0, chain_length, step, x0.astype(out_dtype))
+
+  @jax.jit
+  def chain_fn(x0, b):
+    return jax.shard_map(
+        per_device,
+        mesh=mesh,
+        in_specs=(pspec(), pspec()),
+        out_specs=pspec(tuple(mesh.axis_names)),
+        check_vma=False,
+    )(x0, b)
+
+  return chain_fn
+
+
+@registry.benchmark_registry.register("gemm_chained", is_experimental=True)
+class GemmChainedBenchmark(GeneralizedGemmBenchmark):
+  """[EXPERIMENTAL] Chained GEMM determinism benchmark with cross-host per-device checksum comparison."""
+
+  # Runtime: the params dataclass the CLI / YAML loader instantiates.
+  Config = GemmChainedParams
+  # Type-only: `self.config` is a `GemmChainedParams`, not a `GemmParams`.
+  config: GemmChainedParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("in_dtype", report.format_str),
+      ("out_dtype", report.format_str),
+      ("m", report.format_str),
+      ("k", report.format_str),
+      ("chain_length", report.format_str),
+      (checksum.ALL_DEVICES_VALID_CHECKSUM, report.format_str),
+      (checksum.INTRA_HOST_CHECKSUM_MATCH, report.format_str),
+      (checksum.GLOBAL_CHECKSUM_MATCH, report.format_str),
+      ("total_flops", report.format_2f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_tflops_per_chip", report.format_2f),
+      ("xprof_p50_ms", report.format_4f),
+      ("xprof_tflops_per_chip", report.format_2f),
+  )
+
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._checksum_fn: Optional[Callable[[jax.Array], jax.Array]] = None
+    self._last_x: Optional[jax.Array] = None
+
+  def setup(self):
+    assert self.mesh is not None, "Mesh not initialized."
+    in_dtype = utils.parse_dtype(self.config.in_dtype)
+    out_dtype = utils.parse_dtype(self.config.out_dtype)
+    self._jit_fn = make_chain_fn(
+        mesh=self.mesh,
+        chain_length=self.config.chain_length,
+        in_dtype=in_dtype,
+        out_dtype=out_dtype,
+    )
+    self._checksum_fn = checksum.make_checksum_fn(self.mesh)
+
+  def get_run_identifier(self) -> str:
+    return (
+        f"m_{self.config.m}_k_{self.config.k}_"
+        f"{self.config.in_dtype}_to_{self.config.out_dtype}_"
+        f"chain_{self.config.chain_length}"
+    )
+
+  def generate_inputs(self) -> tuple[Any, ...]:
+    assert self.mesh is not None, "Mesh not initialized."
+    inputs_fn = make_inputs_fn(
+        mesh=self.mesh,
+        m=self.config.m,
+        k=self.config.k,
+        in_dtype=utils.parse_dtype(self.config.in_dtype),
+        seed=self.config.seed,
+    )
+    return inputs_fn()
+
+  def run_op(self, *args) -> jax.Array:
+    assert self._jit_fn is not None
+    # Timed: runs only the chain. Keep a handle to each device's final X (no
+    # sync, no readback); it is checksummed after the timed loop.
+    self._last_x = self._jit_fn(*args)
+    return self._last_x
+
+  def get_total_bytes(self) -> float:
+    m, k = self.config.m, self.config.k
+    in_itemsize = jnp.dtype(utils.parse_dtype(self.config.in_dtype)).itemsize
+    out_itemsize = jnp.dtype(utils.parse_dtype(self.config.out_dtype)).itemsize
+    # Per step: load X (M x K) and B (K x K), store X (M x K).
+    step_bytes = (m * k + k * k) * in_itemsize + m * k * out_itemsize
+    return float(self.config.chain_length * step_bytes)
+
+  def get_total_flops(self) -> float:
+    m, k = self.config.m, self.config.k
+    return float(self.config.chain_length * 2 * m * k * k)
+
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    metrics = super().calculate_metrics(times_ms)
+    assert self._checksum_fn is not None and self.mesh is not None
+    metrics.update(
+        checksum.gather_and_compare_checksums(
+            self._last_x, self._checksum_fn, self.mesh
+        )
+    )
+    # Release the last chain's final X so it does not stay in HBM until this
+    # benchmark object is garbage collected.
+    self._last_x = None
     return metrics
