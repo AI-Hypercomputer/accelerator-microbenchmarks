@@ -197,11 +197,12 @@ tpums benchmark run hbm --xprof_timing --op_type copy --num_elements 134217728 -
 # 2. Matrix Multiplication (GEMM 4096 x 4096 x 4096)
 tpums benchmark run gemm --xprof_timing --m 4096 --k 4096 --n 4096 --in_dtype bfloat16 --out_dtype bfloat16
 
-# 3. Host-to-Device (PCIe) Transfer Latency & Bandwidth
-tpums benchmark run host_to_device --xprof_timing --data_size_mib 256 --dtype bfloat16
+# 3. Host-to-Device (PCIe) Transfer Latency & Bandwidth on device 0 via tpu-sync
+#    (--transfer_backend jax|tpu_sync; --local_device -1 uses all local devices)
+tpums benchmark run host_to_device --xprof_timing --data_size_mib 256 --dtype bfloat16 --transfer_backend tpu_sync --local_device 0
 
-# 4. Device-to-Host (PCIe) Transfer Latency & Bandwidth
-tpums benchmark run device_to_host --xprof_timing --data_size_mib 256 --dtype bfloat16
+# 4. Device-to-Host (PCIe) Transfer Latency & Bandwidth on all local devices
+tpums benchmark run device_to_host --xprof_timing --data_size_mib 256 --dtype bfloat16 --transfer_backend tpu_sync --local_device -1
 
 # 5. Device-to-Device (ICI) point-to-point transfer across all pairs
 tpums benchmark run device_to_device --xprof_timing --data_size_mib 1024 --direction uni --dtype bfloat16

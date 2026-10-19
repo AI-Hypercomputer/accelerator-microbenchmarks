@@ -17,6 +17,7 @@ dependencies = [
     "pyyaml",
     "simple_parsing",
     "tensorflow",
+    "tpu-sync-jax==0.0.1.dev20261015075725",
 ]
 
 [project.scripts]

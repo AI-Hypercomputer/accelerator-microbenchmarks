@@ -205,6 +205,16 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     # Mesh creation is deferred to the run method.
     pass
 
+  def teardown(self) -> None:
+    """Release resources acquired in setup() (e.g. pinned host buffers).
+
+    Called by run() after every run, including when the run raises, so
+    resources held by one sweep point are released before the next sweep
+    point's benchmark instance calls setup(). Implementations must be
+    idempotent and safe to call before setup().
+    """
+    pass
+
   def reset_data(self, *inputs, **kwargs) -> tuple[jax.Array, ...]:
     """Reset data for the next run."""
     return inputs
@@ -485,7 +495,20 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     return metrics
 
   def run(self) -> BenchmarkResult:
-    """Standard orchestration flow for a benchmark."""
+    """Standard orchestration flow for a benchmark.
+
+    Always calls teardown() afterwards, even if the run raises.
+
+    Returns:
+      The consolidated BenchmarkResult of the run.
+    """
+    try:
+      return self._run()
+    finally:
+      self.teardown()
+
+  def _run(self) -> BenchmarkResult:
+    """Runs setup, warmup, measurement, and metric finalization."""
     if self.is_experimental:
       print(
           "===================================================================="
