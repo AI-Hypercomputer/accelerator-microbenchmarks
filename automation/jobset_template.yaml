@@ -1,32 +1,40 @@
 # ==============================================================================
 # Generic Parameterized JobSet Template for TPUMS Workloads on GKE TPU Clusters
-# TODO: Support running on v6e in the future.
+# Supports both TPU tpu7x and TPU v6e.
 # ==============================================================================
 #
-# Topology Reference Guide:
-# ------------------------------------------------------------------------------
-# | Topology | Chips | Hosts (Parallelism/Completions) | Placement Policy                         |
-# |----------|-------|---------------------------------|------------------------------------------|
-# | 2x2x1    | 4     | 1                               | (none required for single-host)          |
-# | 2x2x2    | 8     | 2                               | tpu7x-16-2x2x2-placement-policy          |
-# | 2x4x4    | 32    | 8                               | tpu7x-64-2x4x4-placement-policy          |
-# | 4x4x4    | 64    | 16                              | tpu7x-128-4x4x4-placement-policy         |
-# | 4x4x8    | 128   | 32                              | tpu7x-256-4x4x8-placement-policy         |
-# ------------------------------------------------------------------------------
+# Topology Reference (computed by automation/utils.py compute_topology_info):
+#   chips = product of topology dims (tpu7x: 3D, v6e: 2D)
+#   hosts (PARALLELISM/COMPLETIONS) = chips / min(4, chips)
+#   multi-host placement policy =
+#     <accelerator>-<chips * cores_per_chip>-<topology>-placement-policy
+#     (cores_per_chip: tpu7x=2, v6e=1)
+#   e.g. tpu7x 2x2x1 -> 1 host; tpu7x 4x4x4 -> 16 hosts,
+#   tpu7x-128-4x4x4-placement-policy; v6e 2x2 -> 1 host; v6e 4x4 -> 4 hosts,
+#   v6e-16-4x4-placement-policy.
+#   Full per-topology sizing tables: docs/GKE.md.
+#
+# NOTE: workload_submitter.generate_jobset_manifest regex-matches the commented
+# placement-policy / reservation-name lines under nodeSelector to fill in or
+# drop them; keep their wording intact when editing.
 #
 # Usage with envsubst:
 #   export WORKLOAD_NAME="tpums-bench"
 #   export NAMESPACE="default"
 #   export QUEUE_NAME="multislice-queue"
 #   export PRIORITY_CLASS="medium"
+#   export ACCELERATOR="tpu7x"  # REQUIRED: "tpu7x" or "tpu-v6e-slice"
 #   export TOPOLOGY="2x2x1"
+#   export EXCLUSIVE_TOPOLOGY="kubernetes.io/hostname"  # or "cloud.google.com/gke-nodepool" for multi-host
 #   export PARALLELISM="1"
 #   export COMPLETIONS="1"
 #   export CHIPS_PER_NODE="4"
 #   export DOCKER_IMAGE="us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest"
 #   export CONFIG_PATH="configs/tpu7x/2x2x1/gemm.yaml"
+#   export GIT_BRANCH="main"
 #   export GCS_OUTPUT_DIR="gs://<your-gcs-bucket>/tpums/results"
 #   export DECLARED_DURATION="30"
+#   export UPLOAD_TRACE="false"
 #   export RESERVATION_NAME="<your-reservation-name>"  # optional
 #   envsubst < jobset_template.yaml | kubectl create -f -
 #
@@ -58,6 +66,8 @@ spec:
           parallelism: ${PARALLELISM}
           completions: ${COMPLETIONS}
           backoffLimit: 0
+          # Sets JOB_COMPLETION_INDEX per pod (JobSet's default, made explicit).
+          completionMode: Indexed
           template:
             metadata:
               labels:
@@ -74,9 +84,9 @@ spec:
                   operator: "Exists"
                   effect: "NoSchedule"
               nodeSelector:
-                cloud.google.com/gke-tpu-accelerator: tpu7x
+                cloud.google.com/gke-tpu-accelerator: ${ACCELERATOR}
                 cloud.google.com/gke-tpu-topology: ${TOPOLOGY}
-                # For multi-node (e.g. 2x2x2, 2x4x4, 4x4x4), specify the placement policy:
+                # For multi-node (e.g. 2x2x2, 2x4, 4x4x4, 4x4), specify the placement policy:
                 # cloud.google.com/placement-policy-name: ${PLACEMENT_POLICY}
                 # Optional GCE reservation name when running on reserved capacity:
                 # cloud.google.com/reservation-name: ${RESERVATION_NAME}
@@ -125,7 +135,7 @@ spec:
                       export HOME=/tmp
                       cd /tmp
 
-                      echo "=== [TPUMS Workload] Multi-Node JAX Environment Setup ==="
+                      echo "=== [TPUMS Workload] JAX Environment Setup ==="
                       printenv
 
                       echo "=== Cloning accelerator-microbenchmarks repository (branch: ${GIT_BRANCH}) ==="
@@ -142,24 +152,28 @@ spec:
                       uv pip install .
 
                       echo "=== Executing Benchmark: ${CONFIG_PATH} ==="
-                      mkdir -p /tmp/results
                       rm -rf /tmp/tensorboard
 
                       tpums benchmark run-config "${CONFIG_PATH}" \
                         --output_dir=/tmp/results \
                         --xprof_dir=/tmp/tensorboard 2>&1 | tee /tmp/execution.log
 
-                      echo "=== Exporting Results to GCS ==="
+                      echo "=== Exporting Results to GCS (worker ${JOB_COMPLETION_INDEX:-0}) ==="
                       if [ "${UPLOAD_TRACE}" = "true" ] && [ -d /tmp/tensorboard ]; then
                         echo "Uploading TensorBoard / XLA traces to GCS..."
                         gcloud storage cp -r /tmp/tensorboard "${GCS_OUTPUT_DIR}/tensorboard" || true
                       fi
 
-                      if [ -d /tmp/results ]; then
+                      # Every worker writes the same /tmp/results files (summary.csv,
+                      # detailed.json, git_commit.txt), so only worker 0 publishes them:
+                      # concurrent writes to one GCS object race and get rate-limited.
+                      # Logs differ per worker, so each one keeps its own. Keep the
+                      # literal ${JOB_COMPLETION_INDEX:-0} form: envsubst leaves it as is.
+                      gcloud storage cp /tmp/execution.log "${GCS_OUTPUT_DIR}/execution_${JOB_COMPLETION_INDEX:-0}.log" || true
+                      if [ "${JOB_COMPLETION_INDEX:-0}" = "0" ]; then
                         tar czf /tmp/tpums_results.tar.gz -C /tmp results execution.log || true
                         gcloud storage cp /tmp/tpums_results.tar.gz "${GCS_OUTPUT_DIR}/" || true
-                        gcloud storage cp /tmp/results/* "${GCS_OUTPUT_DIR}/" || true
-                        gcloud storage cp /tmp/execution.log "${GCS_OUTPUT_DIR}/execution.log" || true
+                        gcloud storage cp /tmp/results/* "${GCS_OUTPUT_DIR}/"
                       fi
 
                       echo "=== [TPUMS Workload] Benchmark Completed Successfully ==="

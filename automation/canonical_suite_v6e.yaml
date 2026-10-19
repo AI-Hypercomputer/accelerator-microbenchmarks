@@ -1,0 +1,23 @@
+# Canonical benchmark configurations for TPUMS nightly automation on GKE TPU v6e.
+# Collectives run at 4x4 (4 nodes, 16 chips) and 2x2 (1 node, 4 chips). Single-host microbenchmarks run at 2x2 (1 node, 4 chips).
+
+suite_name: canonical_v6e_default
+description: Default nightly benchmark suite for TPU v6e clusters
+
+configs:
+  # 4x4 Multi-node Collectives (4 nodes, 16 chips)
+  - configs/v6e/4x4/all_gather.yaml
+  - configs/v6e/4x4/all_reduce.yaml
+  - configs/v6e/4x4/all_to_all.yaml
+
+  # 2x2 Single-node Collectives (1 node, 4 chips)
+  - configs/v6e/2x2/all_gather.yaml
+  - configs/v6e/2x2/all_reduce.yaml
+  - configs/v6e/2x2/all_to_all.yaml
+
+  # 2x2 Single-node Microbenchmarks (1 node, 4 chips)
+  - configs/v6e/2x2/gemm.yaml
+  - configs/v6e/2x2/hbm.yaml
+  - configs/v6e/2x2/host_to_device.yaml
+  - configs/v6e/2x2/device_to_host.yaml
+  - configs/v6e/2x2/device_to_device.yaml

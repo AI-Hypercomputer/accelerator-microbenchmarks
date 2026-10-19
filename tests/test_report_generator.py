@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 The TPUMS Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,37 +17,36 @@
 import json
 import os
 import subprocess
-import tempfile
-import time
 from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from automation import metrics_aggregator
 from automation import report_generator
+from automation import utils
 from automation import workload_submitter
-import yaml
+
+
+def _result(**overrides):
+  """Builds a successful tpu7x 2x2x1 BenchmarkResult with field overrides."""
+  fields = dict(
+      workload_name="tpums-2x2x1-gemm",
+      config_name="gemm",
+      config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
+      topology="2x2x1",
+      status="SUCCESS",
+      duration_seconds=0.0,
+      gcs_artifact_path="gs://bucket/date/tpums-2x2x1-gemm",
+  )
+  fields.update(overrides)
+  return workload_submitter.BenchmarkResult(**fields)
 
 
 class ReportGeneratorTest(parameterized.TestCase):
+  """Tests for report_generator Markdown/HTML rendering."""
 
   def test_format_consolidated_report(self):
-    result = workload_submitter.BenchmarkResult(
-        workload_name="tpums-gemm-01",
-        config_name="gemm",
-        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
-        topology="2x2x1",
-        status="SUCCESS",
-        duration_seconds=120.5,
-        gcs_artifact_path="gs://test-bucket/daily/gemm",
-        metrics=[{
-            "m": 2048,
-            "k": 2048,
-            "n": 2048,
-            "tflops_per_device": "240.5",
-            "step_time_ms_avg": "1.25",
-            "warmup_tries": "10",
-        }],
-    )
+    """Markdown and HTML reports include tables and metadata."""
+    result = _result(duration_seconds=120.5)
     categorized = {
         "gemm": [{
             "m": 2048,
@@ -142,14 +140,15 @@ class ReportGeneratorTest(parameterized.TestCase):
     self.assertIn("🔧 libtpu:", report_html)
     self.assertIn("0.0.46.1", report_html)
     self.assertIn("warmup_tries", report_html)
+    self.assertNotIn("badge", report_html)
 
   def test_fetch_environment_metadata_mocked(self):
+    """Versions come from detailed.json; git_commit from git_commit.txt."""
     mock_detailed_json = json.dumps([{
         "metadata": {
             "platform_info": {
                 "jax_version": "0.11.1",
                 "libtpu_version": "0.0.46.1",
-                "git_commit": "abcdef1234567890",
             }
         }
     }])
@@ -157,34 +156,179 @@ class ReportGeneratorTest(parameterized.TestCase):
       mock_run.side_effect = [
           mock.Mock(returncode=0, stdout="gs://bucket/date/wl/detailed.json\n"),
           mock.Mock(returncode=0, stdout=mock_detailed_json),
+          mock.Mock(
+              returncode=0, stdout="gs://bucket/date/wl/git_commit.txt\n"
+          ),
+          mock.Mock(returncode=0, stdout="abcdef1234567890\n"),
       ]
       env = report_generator.fetch_environment_metadata(
           gcs_bucket="gs://bucket", date_str="2026-08-27"
       )
-      self.assertEqual(env["jax_version"], "0.11.1")
-      self.assertEqual(env["libtpu_version"], "0.0.46.1")
-      self.assertEqual(env["git_commit"], "abcdef1234567890")
+    self.assertEqual(env[utils.ENV_JAX_VERSION], "0.11.1")
+    self.assertEqual(env[utils.ENV_LIBTPU_VERSION], "0.0.46.1")
+    self.assertEqual(env[utils.ENV_GIT_COMMIT], "abcdef1234567890")
+    # A single URL: a multi-URL `ls` fails if any URL matches nothing.
+    self.assertEqual(
+        mock_run.call_args_list[2].args[0],
+        ["gcloud", "storage", "ls", "gs://bucket/2026-08-27/*/git_commit.txt"],
+    )
+
+  def test_fetch_environment_metadata_without_git_commit_leaves_it_empty(self):
+    """No git_commit.txt on GCS leaves git_commit empty (no remote lookup)."""
+    no_match = "One or more URLs matched no objects."
+    with mock.patch("subprocess.run") as mock_run:
+      mock_run.side_effect = [
+          mock.Mock(returncode=1, stdout="", stderr=no_match),
+          mock.Mock(returncode=1, stdout="", stderr=no_match),
+      ]  # A 3rd call (e.g. `git ls-remote`) would raise StopIteration.
+      with self.assertLogs(level="WARNING") as logs:
+        env = report_generator.fetch_environment_metadata(
+            gcs_bucket="gs://bucket", date_str="2026-08-27"
+        )
+    self.assertIsNone(env[utils.ENV_GIT_COMMIT])
+    self.assertEqual(mock_run.call_count, 2)
+    self.assertIn("matched no objects", "\n".join(logs.output))
+
+  def test_generate_and_publish_report_normalizes_discovered_results(self):
+    """Results discovered on GCS are converted to BenchmarkResult."""
+    discovered = [{
+        "workload_name": "tpums-2x2x1-gemm",
+        "config_name": "tpums-2x2x1-gemm",
+        "gcs_artifact_path": "gs://bucket/2026-08-27/tpums-2x2x1-gemm",
+        "topology": "2x2x1",
+        "status": "SUCCESS",
+        "metrics": [{"m": "1"}],
+    }]
+    out = self.create_tempfile("report.md").full_path
+    with mock.patch.object(
+        report_generator, "fetch_aggregated_csv_results", return_value={}
+    ), mock.patch.object(
+        report_generator.metrics_aggregator,
+        "discover_and_fetch_gcs_results",
+        return_value=discovered,
+    ), mock.patch.object(
+        report_generator,
+        "fetch_environment_metadata",
+        return_value=dict.fromkeys((
+            utils.ENV_GIT_COMMIT,
+            utils.ENV_JAX_VERSION,
+            utils.ENV_LIBTPU_VERSION,
+        )),
+    ) as mock_env, mock.patch(
+        "subprocess.run", return_value=mock.Mock(returncode=0, stderr="")
+    ):
+      report_md, _ = report_generator.generate_and_publish_report(
+          results=[],
+          gcs_bucket="gs://bucket",
+          date_str="2026-08-27",
+          output_file=out,
+      )
+    self.assertIn("JobSets: 1/1 Succeeded", report_md)
+    (passed,) = mock_env.call_args.kwargs["results"]
+    self.assertIsInstance(passed, workload_submitter.BenchmarkResult)
+    self.assertEqual(passed.topology, "2x2x1")
+    self.assertEqual(passed.metrics, [{"m": "1"}])
+
+  def test_generate_and_publish_report_raises_on_upload_failure(self):
+    """Failed report uploads raise after the local files are written."""
+    out = self.create_tempfile("report.md").full_path
+    with mock.patch(
+        "subprocess.run",
+        return_value=mock.Mock(returncode=1, stderr="denied"),
+    ) as mock_run:
+      with self.assertRaisesRegex(RuntimeError, "Markdown, HTML preview"):
+        report_generator.generate_and_publish_report(
+            results=[_result()],
+            categorized_metrics={"gemm": [{"m": "1"}]},
+            gcs_bucket="gs://bucket",
+            date_str="2026-08-27",
+            output_file=out,
+            git_commit="abc",
+            jax_version="0.11.1",
+            libtpu_version="0.0.46.1",
+        )
+    self.assertEqual(mock_run.call_count, 2)  # Only the two `cp` calls.
+    self.assertTrue(os.path.exists(out))
+    self.assertTrue(os.path.exists(os.path.splitext(out)[0] + ".html"))
+
+  def test_fetch_environment_metadata_timeout_skips_value(self):
+    """A hung metadata lookup is skipped instead of failing the report."""
+    with mock.patch(
+        "subprocess.run",
+        side_effect=subprocess.TimeoutExpired("gcloud", 300),
+    ):
+      with self.assertLogs(level="WARNING"):
+        env = report_generator.fetch_environment_metadata(
+            gcs_bucket="gs://bucket", date_str="2026-08-27"
+        )
+    self.assertEqual(env, dict.fromkeys(env))
+
+  def test_fetch_environment_metadata_skips_unparseable_detailed_json(self):
+    """Malformed detailed.json is logged and skipped."""
+    with mock.patch("subprocess.run") as mock_run:
+      mock_run.side_effect = [
+          mock.Mock(returncode=0, stdout="gs://bucket/d/wl/detailed.json\n"),
+          mock.Mock(returncode=0, stdout="not json"),
+          mock.Mock(
+              returncode=1,
+              stdout="",
+              stderr="One or more URLs matched no objects.",
+          ),  # ls */git_commit.txt
+      ]
+      with self.assertLogs(level="WARNING") as logs:
+        env = report_generator.fetch_environment_metadata(
+            gcs_bucket="gs://bucket", date_str="2026-08-27"
+        )
+    self.assertIsNone(env[utils.ENV_JAX_VERSION])
+    self.assertIn("Skipping unparseable", "\n".join(logs.output))
+
+  def test_fetch_aggregated_csv_results_logs_unreadable_category(self):
+    """An unreadable category CSV is logged; readable ones still render."""
+    with mock.patch("subprocess.run") as mock_run:
+      mock_run.side_effect = [
+          mock.Mock(
+              returncode=0,
+              stdout=(
+                  "gs://b/d/aggregated_results/gemm.csv\n"
+                  "gs://b/d/aggregated_results/hbm.csv\n"
+              ),
+              stderr="",
+          ),
+          mock.Mock(returncode=0, stdout="m,k\n1,2\n", stderr=""),
+          mock.Mock(returncode=1, stdout="", stderr="denied"),
+      ]
+      with self.assertLogs(level="ERROR") as logs:
+        categorized = report_generator.fetch_aggregated_csv_results(
+            "gs://b", "d"
+        )
+    self.assertEqual(categorized, {"gemm": [{"m": "1", "k": "2"}]})
+    self.assertIn("hbm.csv", "\n".join(logs.output))
+
+  def test_generate_and_publish_report_dry_run_skips_network(self):
+    with mock.patch("subprocess.run") as mock_run:
+      report_md, _ = report_generator.generate_and_publish_report(
+          results=[_result(status="DRY_RUN")],
+          gcs_bucket="gs://bucket",
+          dry_run=True,
+      )
+    mock_run.assert_not_called()
+    self.assertIn("JobSets: 1 Planned", report_md)
+
+  def test_generate_and_publish_report_requires_gcs_bucket(self):
+    with self.assertRaises(ValueError):
+      report_generator.generate_and_publish_report(
+          results=[_result()],
+          gcs_bucket="",
+          dry_run=False,
+      )
 
   def test_format_consolidated_report_host_device(self):
-    result = workload_submitter.BenchmarkResult(
-        workload_name="tpums-h2d-01",
-        config_name="host_to_device",
-        config_rel_path="configs/tpu7x/2x2x1/host_to_device.yaml",
-        topology="2x2x1",
-        status="SUCCESS",
-        duration_seconds=30.0,
-        gcs_artifact_path="gs://test-bucket/daily/h2d",
-        metrics=[{
-            "data_size_mib": "4096",
-            "num_runs": "10",
-            "bandwidth_per_device_gb_s": "28.5",
-            "time_ms_avg": "145.0",
-        }],
-    )
+    """Host-device tables render leading columns first."""
+    result = _result(duration_seconds=30.0)
     categorized = {
         "host_device": [
             {
-                "data_size_mib": "4096",
+                "data_size_mib": "4096.0",
                 "dtype": "float32",
                 "num_runs": "10",
                 "bandwidth_per_device_gb_s": "28.5",
@@ -193,7 +337,7 @@ class ReportGeneratorTest(parameterized.TestCase):
                 "time_ms_p90": "146.0",
             },
             {
-                "data_size_mib": "4096",
+                "data_size_mib": "4096.0",
                 "dtype": "float32",
                 "num_runs": "10",
                 "bandwidth_per_device_gb_s": "32.1",
@@ -212,6 +356,7 @@ class ReportGeneratorTest(parameterized.TestCase):
         "| dtype | data_size_mib | num_runs | bandwidth_per_device_gb_s |",
         report_md,
     )
+    self.assertIn("4096.0", report_md)
     self.assertIn("28.5", report_md)
     self.assertIn("32.1", report_md)
 
@@ -221,22 +366,25 @@ class ReportGeneratorTest(parameterized.TestCase):
     )
     self.assertIn("Host-to-Device (H2D / D2H)", report_html)
     self.assertIn("<th>dtype</th>", report_html)
+    self.assertIn("<th>data_size_mib</th>", report_html)
     self.assertIn("<td>float32</td>", report_html)
+    self.assertIn("<td>4096.0</td>", report_html)
     self.assertIn("bandwidth_per_device_gb_s", report_html)
     self.assertIn("28.5", report_html)
     self.assertIn("32.1", report_html)
 
   def test_format_d2d_pairwise_matrix(self):
+    """D2D rows become an N x N bandwidth matrix."""
     rows = [
         {
             "src_device_index": "0",
             "dst_device_index": "1",
-            "bandwidth_per_device_gb_s": "85.5",
+            "wall_clock_bandwidth_per_device_gb_s": "85.5",
         },
         {
             "src_device_index": "1",
             "dst_device_index": "0",
-            "bandwidth_per_device_gb_s": "86.2",
+            "wall_clock_bandwidth_per_device_gb_s": "86.2",
         },
     ]
     matrix_data = report_generator.format_d2d_pairwise_matrix(rows)
@@ -246,202 +394,86 @@ class ReportGeneratorTest(parameterized.TestCase):
     self.assertEqual(matrix_rows[0], ["-", "85.50"])
     self.assertEqual(matrix_rows[1], ["86.20", "-"])
 
-  def test_format_consolidated_report_and_html_device_to_device(self):
-    result = workload_submitter.BenchmarkResult(
-        workload_name="tpums-2x2x1-device-to-device",
-        config_name="device_to_device",
-        config_rel_path="configs/tpu7x/2x2x1/device_to_device.yaml",
-        topology="2x2x1",
-        status="SUCCESS",
-        duration_seconds=42.0,
-        gcs_artifact_path="gs://bucket/date/tpums-2x2x1-device-to-device",
-    )
-    categorized = {
-        "device_to_device": [
-            {
-                "dtype": "float32",
-                "direction": "uni",
-                "src_device_index": 0,
-                "dst_device_index": 1,
-                "data_size_mib": "256",
-                "num_runs": "5",
-                "bandwidth_per_device_gb_s": "85.50",
-                "time_ms_avg": "3.14",
-                "time_ms_p50": "3.10",
-                "time_ms_p90": "3.20",
-                "xprof_p50_ms": "3.08",
-            },
-            {
-                "dtype": "float32",
-                "direction": "uni",
-                "src_device_index": 1,
-                "dst_device_index": 0,
-                "data_size_mib": "256",
-                "num_runs": "5",
-                "bandwidth_per_device_gb_s": "86.20",
-                "time_ms_avg": "3.12",
-                "time_ms_p50": "3.08",
-                "time_ms_p90": "3.18",
-                "xprof_p50_ms": "3.05",
-            },
-        ]
-    }
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="xprof_bandwidth",
+          extra_cols=(
+              {
+                  "wall_clock_bandwidth_per_device_gb_s": "269.95",
+                  "xprof_bandwidth_per_device_gb_s": "678.02",
+              },
+              {
+                  "wall_clock_bandwidth_per_device_gb_s": "268.50",
+                  "xprof_bandwidth_per_device_gb_s": "677.10",
+              },
+          ),
+          wall_clock_title=False,
+          values=("678.02", "677.10"),
+      ),
+      dict(
+          testcase_name="wall_clock_fallback",
+          extra_cols=(
+              {"wall_clock_bandwidth_per_device_gb_s": "269.95"},
+              {"wall_clock_bandwidth_per_device_gb_s": "268.50"},
+          ),
+          wall_clock_title=True,
+          values=("269.95", "268.50"),
+      ),
+  )
+  def test_format_reports_device_to_device(
+      self, extra_cols, wall_clock_title, values
+  ):
+    """D2D renders a pairwise matrix plus a collapsible raw table."""
+    rows = [
+        {
+            "dtype": "float32",
+            "direction": "uni",
+            "src_device_index": src,
+            "dst_device_index": 1 - src,
+            "data_size_mib": "256",
+            "num_runs": "5",
+            **cols,
+        }
+        for src, cols in enumerate(extra_cols)
+    ]
+    categorized = {"device_to_device": rows}
     report_md = report_generator.format_consolidated_report(
-        [result], categorized_metrics=categorized
+        [_result()], categorized_metrics=categorized
     )
-    self.assertIn("Device-to-Device (D2D) (Wall Clock Time)", report_md)
-    self.assertIn("Pairwise Bandwidth Matrix (GB/s)", report_md)
-    self.assertIn("<details>", report_md)
-    self.assertIn(
-        "<summary>View Raw Device-to-Device Transfer Table (2 rows)</summary>",
-        report_md,
-    )
-    self.assertIn(
-        "| dtype | xprof_p50_ms | direction | src_device_index |"
-        " dst_device_index | data_size_mib | num_runs |"
-        " bandwidth_per_device_gb_s |",
-        report_md,
-    )
-    self.assertIn("D0", report_md)
-    self.assertIn("D1", report_md)
-    self.assertIn("85.50", report_md)
-    self.assertIn("86.20", report_md)
-
     report_html = report_generator.generate_html_report(
-        [result], categorized_metrics=categorized
+        [_result()], categorized_metrics=categorized
     )
-    self.assertIn("Device-to-Device (D2D) (Wall Clock Time)", report_html)
-    self.assertIn("matrix-container", report_html)
-    self.assertIn("Pairwise Bandwidth Matrix (GB/s)", report_html)
-    self.assertIn("matrix-table", report_html)
+    for report in (report_md, report_html):
+      self.assertIn("Device-to-Device (D2D)", report)
+      self.assertEqual("(Wall Clock Time)" in report, wall_clock_title)
+      self.assertIn("Pairwise Bandwidth Matrix (GB/s)", report)
+      self.assertIn("View Raw Device-to-Device Transfer Table (2 rows)", report)
+      for value in values:
+        self.assertIn(value, report)
+    # D2D leading columns come first, in schema order.
+    self.assertIn(
+        "| dtype | direction | src_device_index | dst_device_index |"
+        " data_size_mib |",
+        report_md,
+    )
     self.assertIn('<details class="d2d-details">', report_html)
-    self.assertIn(
-        "View Raw Device-to-Device Transfer Table (2 rows)</summary>",
-        report_html,
-    )
-    self.assertIn("85.50", report_html)
-    self.assertIn("86.20", report_html)
+    self.assertIn("matrix-table", report_html)
 
-  def test_format_consolidated_report_and_html_device_to_device_domain_prefixed(
-      self,
-  ):
-    result = workload_submitter.BenchmarkResult(
-        workload_name="tpums-2x2x1-device-to-device",
-        config_name="device_to_device",
-        config_rel_path="configs/tpu7x/2x2x1/device_to_device.yaml",
-        topology="2x2x1",
-        status="SUCCESS",
-        duration_seconds=42.0,
-        gcs_artifact_path="gs://bucket/date/tpums-2x2x1-device-to-device",
-    )
-    categorized = {
-        "device_to_device": [
-            {
-                "dtype": "float32",
-                "direction": "uni",
-                "src_device_index": 0,
-                "dst_device_index": 1,
-                "data_size_mib": "256",
-                "num_runs": "5",
-                "wall_clock_p50_ms": "0.9944",
-                "wall_clock_bandwidth_per_device_gb_s": "269.95",
-                "xprof_p50_ms": "0.3959",
-                "xprof_bandwidth_per_device_gb_s": "678.02",
-            },
-            {
-                "dtype": "float32",
-                "direction": "uni",
-                "src_device_index": 1,
-                "dst_device_index": 0,
-                "data_size_mib": "256",
-                "num_runs": "5",
-                "wall_clock_p50_ms": "0.9980",
-                "wall_clock_bandwidth_per_device_gb_s": "268.50",
-                "xprof_p50_ms": "0.3965",
-                "xprof_bandwidth_per_device_gb_s": "677.10",
-            },
-        ]
-    }
+  def test_reports_treat_all_empty_categories_as_no_metrics(self):
+    """Empty per-category lists (dry-run / all failed) render the fallback."""
+    empty = {cat: [] for cat in metrics_aggregator.SUPPORTED_CATEGORIES}
     report_md = report_generator.format_consolidated_report(
-        [result], categorized_metrics=categorized
+        [_result()], categorized_metrics=empty
     )
-    self.assertIn("Device-to-Device (D2D)", report_md)
-    self.assertNotIn("Wall Clock Time", report_md)
-    self.assertIn("Pairwise Bandwidth Matrix (GB/s)", report_md)
-    self.assertIn("678.02", report_md)
-    self.assertIn("677.10", report_md)
-
+    self.assertIn("*No aggregated metric tables available.*", report_md)
     report_html = report_generator.generate_html_report(
-        [result], categorized_metrics=categorized
+        [_result()], categorized_metrics=empty
     )
-    self.assertIn("Device-to-Device (D2D)", report_html)
-    self.assertNotIn("Wall Clock Time", report_html)
-    self.assertIn("Pairwise Bandwidth Matrix (GB/s)", report_html)
-    self.assertIn("678.02", report_html)
-    self.assertIn("677.10", report_html)
-
-  def test_format_consolidated_report_and_html_device_to_device_wall_clock_fallback(
-      self,
-  ):
-    result = workload_submitter.BenchmarkResult(
-        workload_name="tpums-2x2x1-device-to-device",
-        config_name="device_to_device",
-        config_rel_path="configs/tpu7x/2x2x1/device_to_device.yaml",
-        topology="2x2x1",
-        status="SUCCESS",
-        duration_seconds=42.0,
-        gcs_artifact_path="gs://bucket/date/tpums-2x2x1-device-to-device",
-    )
-    categorized = {
-        "device_to_device": [
-            {
-                "dtype": "float32",
-                "direction": "uni",
-                "src_device_index": 0,
-                "dst_device_index": 1,
-                "data_size_mib": "256",
-                "num_runs": "5",
-                "wall_clock_p50_ms": "0.9944",
-                "wall_clock_bandwidth_per_device_gb_s": "269.95",
-            },
-            {
-                "dtype": "float32",
-                "direction": "uni",
-                "src_device_index": 1,
-                "dst_device_index": 0,
-                "data_size_mib": "256",
-                "num_runs": "5",
-                "wall_clock_p50_ms": "0.9980",
-                "wall_clock_bandwidth_per_device_gb_s": "268.50",
-            },
-        ]
-    }
-    report_md = report_generator.format_consolidated_report(
-        [result], categorized_metrics=categorized
-    )
-    self.assertIn("Device-to-Device (D2D) (Wall Clock Time)", report_md)
-    self.assertIn("Pairwise Bandwidth Matrix (GB/s)", report_md)
-    self.assertIn("269.95", report_md)
-    self.assertIn("268.50", report_md)
-
-    report_html = report_generator.generate_html_report(
-        [result], categorized_metrics=categorized
-    )
-    self.assertIn("Device-to-Device (D2D) (Wall Clock Time)", report_html)
-    self.assertIn("Pairwise Bandwidth Matrix (GB/s)", report_html)
-    self.assertIn("269.95", report_html)
-    self.assertIn("268.50", report_html)
+    self.assertNotIn("Aggregated Benchmark Metrics", report_html)
 
   def test_generate_html_report_dry_run_zero_failures(self):
-    dry_run_result = workload_submitter.BenchmarkResult(
-        workload_name="tpums-2x2x1-gemm",
-        config_name="gemm",
-        config_rel_path="configs/tpu7x/2x2x1/gemm.yaml",
-        topology="2x2x1",
-        status="DRY_RUN",
-        duration_seconds=0.0,
-        gcs_artifact_path="",
-    )
+    """Dry-run results are not counted as failures."""
+    dry_run_result = _result(status="DRY_RUN")
     html_report = report_generator.generate_html_report([dry_run_result])
     # Total should be 1, but Failed JobSets must be 0, not 1
     self.assertIn(
@@ -458,24 +490,8 @@ class ReportGeneratorTest(parameterized.TestCase):
 
   def test_generate_html_report_total_suite_duration_uses_max_not_sum(self):
     results = [
-        workload_submitter.BenchmarkResult(
-            workload_name="tpums-4x4x4-all-gather",
-            config_name="all_gather",
-            config_rel_path="configs/tpu7x/4x4x4/all_gather.yaml",
-            topology="4x4x4",
-            status="SUCCESS",
-            duration_seconds=120.0,
-            gcs_artifact_path="gs://bucket/date/tpums-4x4x4-all-gather",
-        ),
-        workload_submitter.BenchmarkResult(
-            workload_name="tpums-2x2x1-device-to-device",
-            config_name="device_to_device",
-            config_rel_path="configs/tpu7x/2x2x1/device_to_device.yaml",
-            topology="2x2x1",
-            status="SUCCESS",
-            duration_seconds=300.0,
-            gcs_artifact_path="gs://bucket/date/tpums-2x2x1-device-to-device",
-        ),
+        _result(duration_seconds=120.0),
+        _result(duration_seconds=300.0),
     ]
     html_report = report_generator.generate_html_report(results)
     self.assertIn(

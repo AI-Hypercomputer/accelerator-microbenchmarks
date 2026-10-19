@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 The TPUMS Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,54 +18,18 @@ Categorizes results strictly via the directory and file paths in the GCS bucket,
 standardized across benchmark categories.
 """
 
+import argparse
 from collections.abc import Sequence
 import csv
 import datetime
 import io
+import itertools
 import logging
-import os
-import re
 import subprocess
 import sys
 from typing import Any, Optional
 
-DEFAULT_GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
-
-DEFAULT_TOPOLOGY = "2x2x1"
-
-# Matches a TPU topology such as "2x2x1" or "4x4x8" delimited by a non-digit
-# boundary, so "2x2x16" is never truncated to "2x2x1".
-_TOPOLOGY_RE = re.compile(r"(?<!\d)(\d+x\d+x\d+)(?!\d)")
-
-
-def format_gcs_uri(bucket: str, *subpaths: str) -> str:
-  clean = bucket.rstrip("/")
-  base = clean if clean.startswith("gs://") else f"gs://{clean}"
-  if not subpaths:
-    return base
-  return f"{base}/{'/'.join(subpaths)}"
-
-
-def infer_topology_from_gcs_path(*candidates: str) -> str:
-  """Extracts the TPU topology from a workload name or GCS path.
-
-  Args:
-    *candidates: Strings to scan, in priority order (e.g. workload name then
-      full GCS path).
-
-  Returns:
-    The first topology found, or DEFAULT_TOPOLOGY if none match.
-  """
-  for candidate in candidates:
-    match = _TOPOLOGY_RE.search(str(candidate))
-    if match:
-      return match.group(1)
-  logging.warning(
-      "Could not infer topology from %s; defaulting to %s.",
-      " or ".join(repr(c) for c in candidates),
-      DEFAULT_TOPOLOGY,
-  )
-  return DEFAULT_TOPOLOGY
+from automation import utils
 
 
 def verify_gcs_bucket_accessible(gcs_bucket: str) -> None:
@@ -78,12 +41,14 @@ def verify_gcs_bucket_accessible(gcs_bucket: str) -> None:
   Raises:
     RuntimeError: If the bucket cannot be listed.
   """
-  bucket_uri = format_gcs_uri(gcs_bucket)
+  bucket_uri = utils.format_gcs_uri(gcs_bucket)
   proc = subprocess.run(
       ["gcloud", "storage", "ls", bucket_uri],
       capture_output=True,
       text=True,
       check=False,
+      stdin=subprocess.DEVNULL,
+      timeout=utils.CLI_TIMEOUT_SECONDS,
   )
   if proc.returncode != 0:
     raise RuntimeError(
@@ -92,7 +57,8 @@ def verify_gcs_bucket_accessible(gcs_bucket: str) -> None:
     )
 
 
-# Leading cross-workload discriminator and metric columns placed before raw CSV columns.
+# Cross-workload discriminator and metric columns placed before the remaining
+# raw summary.csv columns.
 CATEGORY_LEADING_COLUMNS: dict[str, tuple[str, ...]] = {
     "collectives": (
         "topology",
@@ -110,20 +76,24 @@ CATEGORY_LEADING_COLUMNS: dict[str, tuple[str, ...]] = {
         "benchmark",
         "dtype",
         "num_elements",
+        "data_size_mib",
         "xprof_p50_ms",
         "xprof_bandwidth_per_device_gb_s",
     ),
     "host_device": (
         "benchmark",
         "dtype",
-        "matrix_dim",
+        "data_size_mib",
         "xprof_p50_ms",
         "xprof_bandwidth_per_device_gb_s",
     ),
     "device_to_device": (
         "benchmark",
         "dtype",
-        "matrix_dim",
+        "direction",
+        "src_device_index",
+        "dst_device_index",
+        "data_size_mib",
         "xprof_p50_ms",
         "xprof_bandwidth_per_device_gb_s",
     ),
@@ -172,6 +142,24 @@ SUPPORTED_CATEGORIES: tuple[str, ...] = tuple(
 )
 
 
+def ordered_columns(category: str, rows: Sequence[dict[str, Any]]) -> list[str]:
+  """Returns the union of row keys: category leading columns first, then the rest.
+
+  Args:
+    category: Report category key in `CATEGORY_LEADING_COLUMNS`.
+    rows: Metric rows; trailing columns keep their first-seen order.
+
+  Returns:
+    Column names.
+  """
+  discovered = list(dict.fromkeys(itertools.chain.from_iterable(rows)))
+  # .get(): report categories come from GCS CSV names and may be unknown.
+  leading = [
+      c for c in CATEGORY_LEADING_COLUMNS.get(category, ()) if c in discovered
+  ]
+  return leading + [c for c in discovered if c not in leading]
+
+
 def infer_category_from_path(gcs_or_file_path: str) -> Optional[str]:
   """Categorizes results purely through directory and file path in GCS."""
   path_lower = (
@@ -184,17 +172,31 @@ def infer_category_from_path(gcs_or_file_path: str) -> Optional[str]:
 
 
 def normalize_row(
-    row: dict[str, Any], category: str, topology: str = DEFAULT_TOPOLOGY
+    row: dict[str, Any], category: str, topology: Optional[str] = None
 ) -> dict[str, Any]:
-  """Injects cross-workload aggregation columns not present in per-benchmark summary.csv."""
+  """Returns a copy of `row` ready for aggregation.
+
+  Drops the internal `_source_path` key, fills in a missing collectives
+  `topology` from `topology`, and casts D2D device indices to int.
+
+  Args:
+    row: Raw summary.csv row.
+    category: Report category of the row.
+    topology: Result-level topology, if known.
+
+  Returns:
+    The normalized row.
+  """
   norm = dict(row)
+  norm.pop("_source_path", None)
 
   if category == "collectives":
-    norm.setdefault("topology", topology)
+    if topology:
+      norm.setdefault("topology", topology)
 
   elif category == "device_to_device":
     for dev_col in ("src_device_index", "dst_device_index"):
-      if dev_col in norm and norm[dev_col] is not None and norm[dev_col] != "":
+      if norm.get(dev_col) not in (None, ""):
         try:
           norm[dev_col] = int(float(norm[dev_col]))
         except (ValueError, TypeError):
@@ -203,82 +205,59 @@ def normalize_row(
   return norm
 
 
-def _parse_gcs_metric_file(m_file: str) -> list[dict[str, Any]]:
-  """Helper to download and parse a single CSV/TSV file from GCS."""
+# The only per-workload metrics file written by `tpums benchmark run-config`.
+_SUMMARY_CSV = "summary.csv"
+
+
+def fetch_gcs_raw_metrics(gcs_output_dir: str) -> list[dict[str, Any]]:
+  """Downloads and parses the summary.csv of a workload output directory."""
+  m_file = utils.format_gcs_uri(gcs_output_dir, _SUMMARY_CSV)
   proc = subprocess.run(
       ["gcloud", "storage", "cat", m_file],
       capture_output=True,
       text=True,
       check=False,
+      stdin=subprocess.DEVNULL,
+      timeout=utils.CLI_TIMEOUT_SECONDS,
   )
-  if proc.returncode != 0 or not proc.stdout.strip():
+  if proc.returncode != 0:
+    logging.warning(
+        "Could not read %s (gcloud exit %d): %s",
+        m_file,
+        proc.returncode,
+        (proc.stderr or "").strip() or "<no stderr>",
+    )
     return []
-  delimiter = "\t" if m_file.endswith(".tsv") else ","
-  reader = csv.DictReader(io.StringIO(proc.stdout), delimiter=delimiter)
-  rows = []
-  for r in reader:
-    d = dict(r)
-    d["_source_path"] = m_file
-    rows.append(d)
-  return rows
-
-
-def fetch_gcs_raw_metrics(gcs_output_dir: str) -> list[dict[str, Any]]:
-  """Downloads and parses metric CSV/TSVs directly for a workload output directory."""
-  clean_dir = gcs_output_dir.rstrip("/")
-  res = subprocess.run(
-      ["gcloud", "storage", "ls", f"{clean_dir}/*"],
-      capture_output=True,
-      text=True,
-      check=False,
-  )
-  if res.returncode != 0 or not res.stdout.strip():
+  if not proc.stdout.strip():
     return []
-
-  metric_files = [
-      line.strip()
-      for line in res.stdout.strip().splitlines()
-      if (line.strip().endswith(".csv") or line.strip().endswith(".tsv"))
-      and not line.strip().endswith("/")
-  ]
-  all_rows = []
-  for mf in metric_files:
-    all_rows.extend(_parse_gcs_metric_file(mf))
-  return all_rows
+  reader = csv.DictReader(io.StringIO(proc.stdout))
+  return [dict(r, _source_path=m_file) for r in reader]
 
 
 def discover_and_fetch_gcs_results(
     gcs_base: str, date_str: str
 ) -> list[dict[str, Any]]:
-  """Discovers all workload metric files on GCS in a fast single pass."""
-  clean_base = gcs_base.rstrip("/")
-  if clean_base and not clean_base.startswith("gs://"):
-    clean_base = f"gs://{clean_base}"
-  target_prefix = f"{clean_base}/{date_str}" if date_str else clean_base
-
-  metric_files = []
-  for pattern in [
-      f"{target_prefix}/*/summary.csv",
-      f"{target_prefix}/*/*.csv",
-      f"{target_prefix}/*/*.tsv",
-  ]:
-    res = subprocess.run(
-        ["gcloud", "storage", "ls", pattern],
-        capture_output=True,
-        text=True,
-        check=False,
+  """Discovers all workload summary.csv files on GCS in a single listing."""
+  target_prefix = utils.format_gcs_uri(gcs_base, date_str)
+  res = subprocess.run(
+      ["gcloud", "storage", "ls", f"{target_prefix}/*/{_SUMMARY_CSV}"],
+      capture_output=True,
+      text=True,
+      check=False,
+      stdin=subprocess.DEVNULL,
+      timeout=utils.CLI_TIMEOUT_SECONDS,
+  )
+  if res.returncode != 0:
+    # Also covers "matched no objects"; stderr tells it apart from auth errors.
+    logging.warning(
+        "Could not list %s/*/%s (gcloud exit %d): %s",
+        target_prefix,
+        _SUMMARY_CSV,
+        res.returncode,
+        (res.stderr or "").strip() or "<no stderr>",
     )
-    if res.returncode == 0 and res.stdout.strip():
-      for line in res.stdout.strip().splitlines():
-        line_clean = line.strip()
-        if (
-            line_clean
-            and not line_clean.endswith("/")
-            and "/tensorboard/" not in line_clean
-            and "/aggregated_results/" not in line_clean
-            and line_clean not in metric_files
-        ):
-          metric_files.append(line_clean)
+    return []
+  metric_files = res.stdout.split()
 
   if not metric_files:
     logging.warning("No metric files found on GCS under %s", target_prefix)
@@ -286,22 +265,23 @@ def discover_and_fetch_gcs_results(
 
   discovered = []
   for mf in metric_files:
-    parts = mf.split("/")
-    wl_name = parts[-2] if len(parts) >= 2 else parts[-1]
-    if wl_name in ("aggregated_results", "daily_benchmarks"):
+    wl_name = mf.split("/")[-2]
+    try:
+      topo = utils.extract_topology(wl_name, mf)
+    except ValueError as e:
+      logging.warning("Skipping metric file %s: %s", mf, e)
       continue
 
-    topo = infer_topology_from_gcs_path(wl_name, mf)
-
-    rows = _parse_gcs_metric_file(mf)
-    if rows:
+    gcs_artifact_path = mf.rsplit("/", 1)[0]
+    metrics = fetch_gcs_raw_metrics(gcs_artifact_path)
+    if metrics:
       discovered.append({
           "workload_name": wl_name,
           "config_name": wl_name,
-          "gcs_artifact_path": mf.rsplit("/", 1)[0],
+          "gcs_artifact_path": gcs_artifact_path,
           "topology": topo,
           "status": "SUCCESS",
-          "metrics": rows,
+          "metrics": metrics,
       })
 
   logging.info(
@@ -328,7 +308,7 @@ def aggregate_and_upload_category_results(
   if not date_str:
     date_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
-  if not raw_results and not dry_run and gcs_bucket:
+  if not raw_results and not dry_run:
     raw_results = discover_and_fetch_gcs_results(gcs_bucket, date_str=date_str)
 
   categorized: dict[str, list[dict[str, Any]]] = {
@@ -337,31 +317,22 @@ def aggregate_and_upload_category_results(
 
   for r in raw_results:
     metrics = r.get("metrics", [])
-    topology = r.get("topology", DEFAULT_TOPOLOGY)
-    gcs_path = (
-        r.get("gcs_artifact_path", "")
-        or r.get("workload_name", "")
-        or r.get("config_name", "")
-    )
+    topology = r.get("topology")
 
     for row in metrics:
-      source_path = row.get("_source_path") or gcs_path
+      # Set on every row by fetch_gcs_raw_metrics().
+      source_path = row["_source_path"]
       cat = infer_category_from_path(source_path)
-      if cat is None or cat not in SUPPORTED_CATEGORIES:
+      if cat is None:
         logging.warning(
             "Unknown or unmapped category for path '%s'; skipping row.",
             source_path,
         )
         continue
       norm_row = normalize_row(row, category=cat, topology=topology)
-      norm_row.pop("_source_path", None)
-
-      leading_cols = CATEGORY_LEADING_COLUMNS.get(cat, ())
-      ordered_keys = [k for k in leading_cols if k in norm_row] + [
-          k for k in norm_row if k not in leading_cols
-      ]
-      filtered_row = {k: norm_row[k] for k in ordered_keys}
-      categorized[cat].append(filtered_row)
+      categorized[cat].append(
+          {k: norm_row[k] for k in ordered_columns(cat, [norm_row])}
+      )
 
   if dry_run:
     print(
@@ -369,98 +340,90 @@ def aggregate_and_upload_category_results(
         " (CSV-Derived Schema)]"
     )
     for cat in SUPPORTED_CATEGORIES:
-      sample_gcs = format_gcs_uri(
+      sample_gcs = utils.format_gcs_uri(
           gcs_bucket,
           date_str,
           "aggregated_results",
           f"{cat}.csv",
       )
-      rows = categorized.get(cat, [])
+      rows = categorized[cat]
       cols = (
-          list(rows[0].keys())
-          if rows
-          else list(CATEGORY_LEADING_COLUMNS.get(cat, ()))
+          list(rows[0].keys()) if rows else list(CATEGORY_LEADING_COLUMNS[cat])
       )
       cols_preview = f" (Columns: {', '.join(cols[:6])}...)" if cols else ""
       print(f"* Category '{cat:<15}' -> {sample_gcs}{cols_preview}")
     print()
     return categorized
 
-  if gcs_bucket:
-    upload_failures: list[str] = []
-    for cat, rows in categorized.items():
-      if not rows:
-        continue
-      leading_schema = CATEGORY_LEADING_COLUMNS.get(cat, ())
-      seen_cols: set[str] = set()
-      discovered_cols: list[str] = []
-      for r_dict in rows:
-        for k in r_dict.keys():
-          if k not in seen_cols:
-            seen_cols.add(k)
-            discovered_cols.append(k)
-      leading_cols = [c for c in leading_schema if c in seen_cols]
-      trailing_cols = [c for c in discovered_cols if c not in leading_cols]
-      available_cols = leading_cols + trailing_cols or list(rows[0].keys())
+  upload_failures: list[str] = []
+  for cat, rows in categorized.items():
+    if not rows:
+      continue
+    csv_buffer = io.StringIO()
+    writer = csv.DictWriter(
+        csv_buffer,
+        fieldnames=ordered_columns(cat, rows),
+        extrasaction="ignore",
+    )
+    writer.writeheader()
+    writer.writerows(rows)
 
-      csv_buffer = io.StringIO()
-      writer = csv.DictWriter(
-          csv_buffer,
-          fieldnames=available_cols,
-          delimiter=",",
-          extrasaction="ignore",
-      )
-      writer.writeheader()
-      for r_dict in rows:
-        writer.writerow(r_dict)
-
-      local_tmp_path = f"/tmp/tpums_aggregated_{cat}.csv"
-      with open(local_tmp_path, "w", encoding="utf-8") as f:
-        f.write(csv_buffer.getvalue())
-
-      gcs_uri = format_gcs_uri(
-          gcs_bucket, date_str, "aggregated_results", f"{cat}.csv"
-      )
+    gcs_uri = utils.format_gcs_uri(
+        gcs_bucket, date_str, "aggregated_results", f"{cat}.csv"
+    )
+    # Stream from stdin: a fixed local temp file would race when the tpu7x
+    # and v6e nightly pipelines run concurrently on the same host.
+    try:
       proc = subprocess.run(
-          ["gcloud", "storage", "cp", local_tmp_path, gcs_uri],
+          ["gcloud", "storage", "cp", "-", gcs_uri],
+          input=csv_buffer.getvalue(),
           capture_output=True,
           text=True,
           check=False,
+          timeout=utils.CLI_TIMEOUT_SECONDS,
       )
-      if proc.returncode == 0:
-        logging.info(
-            "Saved aggregated %s CSV (%d rows) to %s", cat, len(rows), gcs_uri
-        )
-      else:
-        upload_failures.append(cat)
-        logging.error(
-            "Failed to upload aggregated %s CSV (%d rows) to %s (gcloud exit"
-            " %d): %s",
-            cat,
-            len(rows),
-            gcs_uri,
-            proc.returncode,
-            proc.stderr.strip() or "<no stderr>",
-        )
+    except subprocess.TimeoutExpired as e:
+      # Keep uploading the remaining categories; raise once at the end.
+      upload_failures.append(cat)
+      logging.error(
+          "Timed out uploading aggregated %s CSV to %s after %ss.",
+          cat,
+          gcs_uri,
+          e.timeout,
+      )
+      continue
+    if proc.returncode == 0:
+      logging.info(
+          "Saved aggregated %s CSV (%d rows) to %s", cat, len(rows), gcs_uri
+      )
+    else:
+      upload_failures.append(cat)
+      logging.error(
+          "Failed to upload aggregated %s CSV (%d rows) to %s (gcloud exit"
+          " %d): %s",
+          cat,
+          len(rows),
+          gcs_uri,
+          proc.returncode,
+          proc.stderr.strip() or "<no stderr>",
+      )
 
-    if upload_failures:
-      raise RuntimeError(
-          "Failed to upload aggregated CSVs for categories: "
-          + ", ".join(sorted(upload_failures))
-      )
+  if upload_failures:
+    raise RuntimeError(
+        "Failed to upload aggregated CSVs for categories: "
+        + ", ".join(sorted(upload_failures))
+    )
 
   return categorized
 
 
 def main(argv: Sequence[str]) -> None:
-  import argparse  # pylint: disable=g-import-not-at-top
-
   parser = argparse.ArgumentParser(
       description="Aggregate TPUMS benchmark metrics by GCS path."
   )
   parser.add_argument(
       "--gcs-bucket",
-      default=DEFAULT_GCS_BUCKET,
+      default=utils.DEFAULT_GCS_BUCKET,
       help="GCS bucket/prefix for metrics.",
   )
   parser.add_argument(

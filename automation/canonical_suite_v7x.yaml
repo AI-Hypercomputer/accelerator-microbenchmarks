@@ -1,8 +1,8 @@
-# Canonical benchmark configurations for TPUMS nightly automation on GKE TPU v7x.
+# Canonical benchmark configurations for TPUMS nightly automation on GKE TPU tpu7x.
 # Collectives run at 4x4x4 (16 nodes, 64 chips) and 2x2x1 (1 node, 4 chips). Single-host microbenchmarks run at 2x2x1 (1 node, 4 chips).
 
-suite_name: canonical_7x_default
-description: Default nightly benchmark suite for TPU v7x clusters
+suite_name: canonical_tpu7x_default
+description: Default nightly benchmark suite for TPU tpu7x clusters
 
 configs:
   # 4x4x4 Multi-node Collectives (16 nodes, 64 chips)

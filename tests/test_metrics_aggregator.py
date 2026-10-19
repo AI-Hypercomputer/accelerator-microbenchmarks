@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 The TPUMS Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,31 +14,26 @@
 
 """Unit tests for TPUMS metrics_aggregator module."""
 
-import json
-import os
 import subprocess
-import tempfile
-import time
 from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from automation import metrics_aggregator
-import yaml
 
 
 class MetricsAggregatorTest(parameterized.TestCase):
+  """Tests for metrics_aggregator categorization and upload."""
 
   def test_aggregate_category_results(self):
+    """Rows are categorized by path with leading columns first."""
     raw_data = [
         {
             "topology": "2x2x1",
-            "gcs_artifact_path": (
-                "gs://test-bucket/2026-08-27/tpums-2x2x1-gemm"
-            ),
+            "gcs_artifact_path": "gs://test-bucket/2026-08-27/tpums-2x2x1-gemm",
             "config_name": "gemm",
             "metrics": [{
                 "_source_path": (
-                    "gs://test-bucket/2026-08-27/tpums-2x2x1-gemm/gemm.tsv"
+                    "gs://test-bucket/2026-08-27/tpums-2x2x1-gemm/summary.csv"
                 ),
                 "m": 2048,
                 "n": 2048,
@@ -61,7 +55,7 @@ class MetricsAggregatorTest(parameterized.TestCase):
             "config_name": "all_reduce",
             "metrics": [{
                 "_source_path": (
-                    "gs://test-bucket/2026-08-27/tpums-2x2x2-all-reduce/collectives/all_reduce.tsv"
+                    "gs://test-bucket/2026-08-27/tpums-2x2x2-all-reduce/summary.csv"
                 ),
                 "mesh_shape": "16x4x2",
                 "sharding_strategy": "16x4x1",
@@ -137,43 +131,47 @@ class MetricsAggregatorTest(parameterized.TestCase):
         ],
     )
 
-  def test_infer_category_host_device(self):
+  @parameterized.named_parameters(
+      ("h2d_config", "configs/tpu7x/2x2x1/host_to_device.yaml", "host_device"),
+      ("d2h_config", "configs/tpu7x/2x2x1/device_to_host.yaml", "host_device"),
+      (
+          "h2d_gcs",
+          "gs://bucket/date/tpums-2x2x1-host-to-device/summary.csv",
+          "host_device",
+      ),
+      (
+          "d2h_gcs",
+          "gs://bucket/date/tpums-2x2x1-device-to-host/summary.csv",
+          "host_device",
+      ),
+      (
+          "d2d_gcs_hyphens",
+          "gs://bucket/daily/tpums-2x2x1-device-to-device/summary.csv",
+          "device_to_device",
+      ),
+      (
+          "d2d_local",
+          "/tmp/results/device_to_device/summary.csv",
+          "device_to_device",
+      ),
+      ("v6e_collectives", "configs/v6e/2x4/all_gather.yaml", "collectives"),
+      ("v6e_gemm", "configs/v6e/2x2/gemm.yaml", "gemm"),
+      ("v6e_d2d", "configs/v6e/2x2/device_to_device.yaml", "device_to_device"),
+      (
+          "unknown_workload",
+          "gs://bucket/date/tpums-unknown-workload/summary.csv",
+          None,
+      ),
+      ("unrecognized_file", "unrecognized_path.csv", None),
+  )
+  def test_infer_category_from_path(self, path, expected):
+    """Categories come from path fragments; hyphens match underscores."""
     self.assertEqual(
-        metrics_aggregator.infer_category_from_path(
-            "configs/tpu7x/2x2x1/host_to_device.yaml"
-        ),
-        "host_device",
-    )
-    self.assertEqual(
-        metrics_aggregator.infer_category_from_path(
-            "configs/tpu7x/2x2x1/device_to_host.yaml"
-        ),
-        "host_device",
-    )
-    self.assertEqual(
-        metrics_aggregator.infer_category_from_path(
-            "gs://bucket/date/tpums-2x2x1-host-to-device/summary.csv"
-        ),
-        "host_device",
-    )
-    self.assertEqual(
-        metrics_aggregator.infer_category_from_path(
-            "gs://bucket/date/tpums-2x2x1-device-to-host/summary.csv"
-        ),
-        "host_device",
-    )
-
-  def test_infer_category_fallback_none(self):
-    self.assertIsNone(
-        metrics_aggregator.infer_category_from_path(
-            "gs://bucket/date/tpums-unknown-workload/summary.csv"
-        )
-    )
-    self.assertIsNone(
-        metrics_aggregator.infer_category_from_path("unrecognized_path.csv")
+        metrics_aggregator.infer_category_from_path(path), expected
     )
 
   def test_aggregate_skips_none_category(self):
+    """Rows from unrecognized paths are dropped."""
     raw_data = [{
         "topology": "2x2x1",
         "gcs_artifact_path": "gs://bucket/date/unknown-workload",
@@ -192,90 +190,50 @@ class MetricsAggregatorTest(parameterized.TestCase):
     for unused_cat, rows in categorized.items():
       self.assertEmpty(rows)
 
-  def test_normalize_row_host_device(self):
-    h2d_row = {
-        "benchmark": "HostToDeviceBenchmark",
-        "data_size_mib": "4096",
-        "dtype": "float32",
-        "bandwidth_per_device_gb_s": "28.5",
-        "avg_ms": "145.0",
-        "p50_ms": "144.5",
-        "p90_ms": "146.0",
-        "num_runs": "10",
-    }
-    norm_h2d = metrics_aggregator.normalize_row(h2d_row, category="host_device")
-    self.assertNotIn("transfer_type", norm_h2d)
-    self.assertEqual(norm_h2d["dtype"], "float32")
-    self.assertEqual(norm_h2d["bandwidth_per_device_gb_s"], "28.5")
-    self.assertEqual(norm_h2d["data_size_mib"], "4096")
-    self.assertEqual(norm_h2d["p50_ms"], "144.5")
-
-    d2h_row = {
-        "benchmark": "DeviceToHostBenchmark",
-        "data_size_mib": "8192",
-        "dtype": "bfloat16",
-        "bandwidth_per_device_gb_s": "32.1",
-        "avg_ms": "260.0",
-        "p50_ms": "259.0",
-        "p90_ms": "262.0",
-        "num_runs": "10",
-    }
-    norm_d2h = metrics_aggregator.normalize_row(d2h_row, category="host_device")
-    self.assertNotIn("transfer_type", norm_d2h)
-    self.assertEqual(norm_d2h["dtype"], "bfloat16")
-    self.assertEqual(norm_d2h["bandwidth_per_device_gb_s"], "32.1")
-    self.assertEqual(norm_d2h["data_size_mib"], "8192")
-    self.assertEqual(norm_d2h["p50_ms"], "259.0")
+  @parameterized.named_parameters(
+      (
+          "host_device",
+          "host_device",
+          {"benchmark": "HostToDeviceBenchmark", "data_size_mib": "4096"},
+      ),
+      (
+          "hbm",
+          "hbm",
+          {"benchmark": "HBMBandwidthBenchmark", "p50_ms": "0.85"},
+      ),
+      (
+          "gemm",
+          "gemm",
+          {"benchmark": "GemmBenchmark", "tflops_per_device": "1089.4"},
+      ),
+  )
+  def test_normalize_row_passthrough(self, category, row):
+    """Other categories are copied unchanged, minus `_source_path`."""
+    norm = metrics_aggregator.normalize_row(
+        {**row, "_source_path": "gs://b/d/wl/summary.csv"}, category=category
+    )
+    self.assertEqual(norm, row)
 
   def test_normalize_row_collectives(self):
-    coll_row = {
-        "benchmark": "all_reduce",
-        "mesh_shape": "16x4x2",
-        "sharding_strategy": "16x4x1",
-        "matrix_dim": "1000",
-        "shard_size_mib": "512.0",
-        "bandwidth_per_chip_gb_s": "380.0",
-        "p50_ms": "1.31",
-    }
-    norm = metrics_aggregator.normalize_row(
-        coll_row, category="collectives", topology="4x4x4"
+    """Result-level topology fills a missing column but never overrides it."""
+    row = {"benchmark": "AllGatherBenchmark", "p50_ms": "12.0"}
+    self.assertEqual(
+        metrics_aggregator.normalize_row(row, "collectives", topology="4x4x4"),
+        {**row, "topology": "4x4x4"},
     )
-    self.assertEqual(norm["topology"], "4x4x4")
-    self.assertEqual(norm["mesh_shape"], "16x4x2")
-    self.assertEqual(norm["sharding_strategy"], "16x4x1")
-    self.assertEqual(norm["matrix_dim"], "1000")
-    self.assertEqual(norm["shard_size_mib"], "512.0")
-    self.assertEqual(norm["p50_ms"], "1.31")
-    self.assertEqual(norm["bandwidth_per_chip_gb_s"], "380.0")
-    self.assertNotIn("op_type", norm)
-
-    a2a_row = {
-        "benchmark": "all_to_all",
-        "mesh_shape": "2x2x2",
-        "sharding_strategy": "2x2x1",
-        "matrix_dim": "8192",
-        "shard_size_mib": "64.0",
-        "bandwidth_per_chip_gb_s": "350.0",
-        "p50_ms": "0.5",
-    }
-    norm_a2a = metrics_aggregator.normalize_row(
-        a2a_row, category="collectives", topology="2x2x2"
+    self.assertEqual(
+        metrics_aggregator.normalize_row(
+            {**row, "topology": "2x2x2"}, "collectives", topology="4x4x4"
+        )["topology"],
+        "2x2x2",
     )
-    self.assertEqual(norm_a2a["topology"], "2x2x2")
-    self.assertEqual(norm_a2a["shard_size_mib"], "64.0")
-    self.assertNotIn("op_type", norm_a2a)
-
-  def test_infer_category_from_path_device_to_device(self):
-    paths = [
-        "gs://test-bucket/daily/tpums-2x2x1-device-to-device/summary.csv",
-        "/tmp/results/device_to_device/metrics.tsv",
-        "gs://bucket/date/tpums-2x2x1-device_to_device/summary.csv",
-    ]
-    for p in paths:
-      cat = metrics_aggregator.infer_category_from_path(p)
-      self.assertEqual(cat, "device_to_device", f"Failed for {p}")
+    # No topology column is injected when topology is unknown.
+    self.assertNotIn(
+        "topology", metrics_aggregator.normalize_row(row, "collectives")
+    )
 
   def test_normalize_row_device_to_device(self):
+    """D2D device indices are cast to int."""
     raw = {
         "benchmark": "device_to_device",
         "dtype": "float32",
@@ -291,164 +249,10 @@ class MetricsAggregatorTest(parameterized.TestCase):
         "num_runs": "5",
     }
     norm = metrics_aggregator.normalize_row(raw, category="device_to_device")
-    self.assertEqual(norm["dtype"], "float32")
-    self.assertEqual(norm["direction"], "uni")
-    self.assertEqual(norm["src_device_index"], 0)
-    self.assertEqual(norm["dst_device_index"], 1)
-    self.assertEqual(norm["data_size_mib"], "256")
-    self.assertEqual(norm["bandwidth_per_device_gb_s"], "85.5")
-    self.assertEqual(norm["p50_ms"], "3.10")
-    self.assertEqual(norm["xprof_p50_ms"], "3.08")
-    self.assertEqual(norm["num_runs"], "5")
-
-  def test_normalize_row_scoped_schema(self):
-    norm_col = metrics_aggregator.normalize_row(
-        {
-            "benchmark": "AllGatherBenchmark",
-            "bandwidth_per_chip_gb_s": "550.5",
-            "p50_ms": "12.0",
-        },
-        "collectives",
-        topology="4x4x4",
-    )
-    self.assertEqual(norm_col["topology"], "4x4x4")
-    self.assertNotIn("op_type", norm_col)
-    self.assertEqual(norm_col["bandwidth_per_chip_gb_s"], "550.5")
-    self.assertEqual(norm_col["p50_ms"], "12.0")
-
-    norm_hbm = metrics_aggregator.normalize_row(
-        {
-            "benchmark": "HbmBandwidthBenchmark",
-            "bandwidth_per_device_gb_s": "3232.0",
-            "bandwidth_per_chip_gb_s": "6464.0",
-            "p50_ms": "0.85",
-        },
-        "hbm",
-    )
-    self.assertEqual(norm_hbm["bandwidth_per_device_gb_s"], "3232.0")
-    self.assertEqual(norm_hbm["bandwidth_per_chip_gb_s"], "6464.0")
-    self.assertEqual(norm_hbm["p50_ms"], "0.85")
-
-    norm_gemm = metrics_aggregator.normalize_row(
-        {
-            "benchmark": "GemmBenchmark",
-            "tflops_per_device": "1089.4",
-            "tflops_per_chip": "2178.8",
-            "p50_ms": "1.53",
-        },
-        "gemm",
-    )
-    self.assertEqual(norm_gemm["tflops_per_device"], "1089.4")
-    self.assertEqual(norm_gemm["tflops_per_chip"], "2178.8")
-    self.assertEqual(norm_gemm["p50_ms"], "1.53")
-
-    norm_h2d = metrics_aggregator.normalize_row(
-        {
-            "benchmark": "HostToDeviceBenchmark",
-            "bandwidth_per_device_gb_s": "30.86",
-            "p50_ms": "150.0",
-        },
-        "host_device",
-    )
-    self.assertNotIn("transfer_type", norm_h2d)
-    self.assertEqual(norm_h2d["bandwidth_per_device_gb_s"], "30.86")
-    self.assertEqual(norm_h2d["p50_ms"], "150.0")
-
-    norm_d2d = metrics_aggregator.normalize_row(
-        {
-            "benchmark": "DeviceToDeviceBenchmark",
-            "src_device_index": "0",
-            "dst_device_index": "1",
-            "bandwidth_per_device_gb_s": "679.5",
-            "p50_ms": "0.97",
-        },
-        "device_to_device",
-    )
-    self.assertEqual(norm_d2d["src_device_index"], 0)
-    self.assertEqual(norm_d2d["dst_device_index"], 1)
-    self.assertEqual(norm_d2d["bandwidth_per_device_gb_s"], "679.5")
-    self.assertEqual(norm_d2d["p50_ms"], "0.97")
-
-  def test_csv_columns_preserved_with_leading_discriminators(self):
-    self.assertIn("collectives", metrics_aggregator.SUPPORTED_CATEGORIES)
+    # Only the device indices are cast to int; other columns pass through.
     self.assertEqual(
-        metrics_aggregator.CATEGORY_LEADING_COLUMNS["collectives"],
-        (
-            "topology",
-            "mesh_shape",
-            "sharding_strategy",
-            "benchmark",
-            "dtype",
-            "matrix_dim",
-            "replica_group_rank",
-            "shard_size_mib",
-            "xprof_p50_ms",
-            "xprof_bandwidth_per_chip_gb_s",
-        ),
+        norm, {**raw, "src_device_index": 0, "dst_device_index": 1}
     )
-
-    # Verify aggregation preserves all summary.csv columns verbatim (except _source_path)
-    raw_data = [{
-        "topology": "2x2x1",
-        "gcs_artifact_path": "gs://bucket/date/tpums-2x2x1-gemm",
-        "config_name": "gemm",
-        "metrics": [{
-            "_source_path": "gs://bucket/date/tpums-2x2x1-gemm/summary.csv",
-            "m": 2048,
-            "n": 2048,
-            "k": 2048,
-            "in_dtype": "bf16",
-            "out_dtype": "bf16",
-            "p50_ms": "1.25",
-            "python_version": "3.12.14",
-            "xprof_dir": "/tmp/tensorboard",
-            "warmup_tries": "10",
-        }],
-    }]
-    categorized = metrics_aggregator.aggregate_and_upload_category_results(
-        raw_results=raw_data,
-        gcs_bucket="test-bucket",
-        date_str="2026-08-27",
-        dry_run=True,
-    )
-    row = categorized["gemm"][0]
-    self.assertEqual(
-        list(row.keys())[:5],
-        ["in_dtype", "out_dtype", "m", "k", "n"],
-    )
-    self.assertEqual(row["m"], 2048)
-    self.assertEqual(row["p50_ms"], "1.25")
-    self.assertEqual(row["python_version"], "3.12.14")
-    self.assertEqual(row["xprof_dir"], "/tmp/tensorboard")
-    self.assertEqual(row["warmup_tries"], "10")
-    self.assertNotIn("_source_path", row)
-
-  def test_infer_topology_from_gcs_path(self):
-    self.assertEqual(
-        metrics_aggregator.infer_topology_from_gcs_path(
-            "tpums-4x4x8-all-reduce", "gs://b/d/tpums-4x4x8-all-reduce/s.csv"
-        ),
-        "4x4x8",
-    )
-    # The workload name wins over the full path.
-    self.assertEqual(
-        metrics_aggregator.infer_topology_from_gcs_path(
-            "tpums-2x2x2-all-gather", "gs://b/2x2x1/x/summary.csv"
-        ),
-        "2x2x2",
-    )
-
-  def test_infer_topology_from_gcs_path_not_truncated_by_prefix(self):
-    # The old substring scan matched "2x2x1" inside "2x2x16".
-    self.assertEqual(
-        metrics_aggregator.infer_topology_from_gcs_path("tpums-2x2x16-a2a"),
-        "2x2x16",
-    )
-
-  def test_infer_topology_from_gcs_path_defaults_with_warning(self):
-    with self.assertLogs(level="WARNING"):
-      topo = metrics_aggregator.infer_topology_from_gcs_path("no-topo-here")
-    self.assertEqual(topo, metrics_aggregator.DEFAULT_TOPOLOGY)
 
   def test_aggregate_requires_gcs_bucket(self):
     with self.assertRaises(ValueError):
@@ -459,7 +263,52 @@ class MetricsAggregatorTest(parameterized.TestCase):
           dry_run=False,
       )
 
+  def test_ordered_columns(self):
+    """Leading columns come first, then the rest in first-seen order."""
+    rows = [
+        {"extra": 1, "dtype": "bf16"},
+        {"benchmark": "hbm", "later": 2},
+    ]
+    self.assertEqual(
+        metrics_aggregator.ordered_columns("hbm", rows),
+        ["benchmark", "dtype", "extra", "later"],
+    )
+
+  def test_aggregate_uploads_csv_via_stdin(self):
+    """Aggregated CSVs stream to gcloud via stdin, not /tmp."""
+    raw_data = [{
+        "topology": "2x2x1",
+        "metrics": [{
+            "_source_path": "gs://bucket/date/tpums-2x2x1-gemm/summary.csv",
+            "m": 2048,
+            "benchmark": "gemm",
+        }],
+    }]
+    ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+    with mock.patch.object(subprocess, "run", return_value=ok) as mock_run:
+      metrics_aggregator.aggregate_and_upload_category_results(
+          raw_results=raw_data,
+          gcs_bucket="test-bucket",
+          date_str="2026-09-14",
+          dry_run=False,
+      )
+    mock_run.assert_called_once()
+    self.assertEqual(
+        mock_run.call_args.args[0],
+        [
+            "gcloud",
+            "storage",
+            "cp",
+            "-",
+            "gs://test-bucket/2026-09-14/aggregated_results/gemm.csv",
+        ],
+    )
+    self.assertEqual(
+        mock_run.call_args.kwargs["input"], "benchmark,m\r\ngemm,2048\r\n"
+    )
+
   def test_aggregate_raises_and_logs_on_upload_failure(self):
+    """Upload failures are logged with stderr and raised."""
     raw_data = [{
         "workload_name": "tpums-2x2x1-gemm",
         "topology": "2x2x1",
@@ -482,6 +331,83 @@ class MetricsAggregatorTest(parameterized.TestCase):
               dry_run=False,
           )
     self.assertIn("AccessDeniedException", "\n".join(logs.output))
+
+  def test_aggregate_upload_timeout_continues_then_raises(self):
+    """A hung category upload doesn't block the others; it raises at the end."""
+    raw_data = [{
+        "workload_name": "wl",
+        "topology": "2x2x1",
+        "metrics": [
+            {"_source_path": "gs://b/d/tpums-2x2x1-gemm/summary.csv", "m": 1},
+            {"_source_path": "gs://b/d/tpums-2x2x1-hbm/summary.csv", "x": 2},
+        ],
+    }]
+    ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+    with mock.patch.object(
+        subprocess,
+        "run",
+        side_effect=[subprocess.TimeoutExpired("gcloud", 300), ok],
+    ) as mock_run:
+      with self.assertLogs(level="ERROR"):
+        with self.assertRaisesRegex(RuntimeError, "Failed to upload"):
+          metrics_aggregator.aggregate_and_upload_category_results(
+              raw_results=raw_data,
+              gcs_bucket="test-bucket",
+              date_str="2026-09-14",
+              dry_run=False,
+          )
+    self.assertEqual(mock_run.call_count, 2)
+
+  def test_fetch_gcs_raw_metrics_logs_unreadable_summary(self):
+    """A missing or unreadable summary.csv is logged, not silently empty."""
+    failed = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr="NotFoundException"
+    )
+    with mock.patch.object(subprocess, "run", return_value=failed):
+      with self.assertLogs(level="WARNING") as logs:
+        rows = metrics_aggregator.fetch_gcs_raw_metrics("gs://b/d/wl")
+    self.assertEmpty(rows)
+    self.assertIn("NotFoundException", "\n".join(logs.output))
+
+  def test_discover_skips_metric_files_without_topology(self):
+    """GCS dirs without a topology are skipped, not labeled 2x2x1."""
+    good = "gs://b/2026-09-14/tpums-4x4-all-gather/summary.csv"
+    bad = "gs://b/2026-09-14/scratch-dir/summary.csv"
+
+    def fake_run(cmd, **unused_kwargs):
+      if cmd[2] == "ls":
+        out = f"{good}\n{bad}\n" if cmd[3].endswith("summary.csv") else ""
+      else:  # gcloud storage cat <file>
+        out = "benchmark,xprof_p50_ms\nall_gather,1.0\n"
+      return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    with mock.patch.object(subprocess, "run", side_effect=fake_run):
+      with self.assertLogs(level="WARNING") as logs:
+        discovered = metrics_aggregator.discover_and_fetch_gcs_results(
+            "gs://b", "2026-09-14"
+        )
+    self.assertLen(discovered, 1)
+    self.assertEqual(discovered[0]["topology"], "4x4")
+    self.assertEqual(discovered[0]["workload_name"], "tpums-4x4-all-gather")
+    self.assertIn("scratch-dir", "\n".join(logs.output))
+
+  def test_discover_logs_gcloud_ls_failure(self):
+    """Non-zero gcloud storage ls exit logs exit code and stderr."""
+    failed = subprocess.CompletedProcess(
+        args=["gcloud", "storage", "ls"],
+        returncode=1,
+        stdout="",
+        stderr="AccessDeniedException: 403",
+    )
+    with mock.patch.object(subprocess, "run", return_value=failed):
+      with self.assertLogs(level="WARNING") as logs:
+        discovered = metrics_aggregator.discover_and_fetch_gcs_results(
+            "gs://b", "2026-09-14"
+        )
+    self.assertEmpty(discovered)
+    output = "\n".join(logs.output)
+    self.assertIn("exit 1", output)
+    self.assertIn("AccessDeniedException", output)
 
 
 if __name__ == "__main__":

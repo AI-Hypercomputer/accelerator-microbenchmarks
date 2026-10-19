@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 The TPUMS Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +21,7 @@ and generates:
   2. A modern, styled HTML preview report.
 """
 
+import argparse
 from collections.abc import Sequence
 import csv
 import datetime
@@ -30,25 +30,16 @@ import io
 import json
 import logging
 import os
-import pathlib
 import subprocess
 import sys
 from typing import Any, Optional
 
-_REPO_ROOT = str(pathlib.Path(__file__).parent.parent.resolve())
-_THIRD_PARTY_PY = str(pathlib.Path(__file__).parent.parent.parent.resolve())
-for p in [_REPO_ROOT, _THIRD_PARTY_PY]:
-  if p not in sys.path:
-    sys.path.insert(0, p)
+from automation import metrics_aggregator
+from automation import utils
+from automation import workload_submitter
 
-from automation import constants
-from automation.metrics_aggregator import CATEGORY_LEADING_COLUMNS
-
-DEFAULT_CLUSTER = os.environ.get("CLUSTER", "")
-DEFAULT_PROJECT = os.environ.get("PROJECT", "")
-DEFAULT_REGION = os.environ.get("REGION", "us-central1")
-DEFAULT_NAMESPACE = os.environ.get("NAMESPACE", "default")
-DEFAULT_GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
+DEFAULT_OUTPUT_REPORT = "/tmp/tpums_daily_report.md"
+_REPO_URL = "https://github.com/AI-Hypercomputer/accelerator-microbenchmarks"
 
 CATEGORY_TITLES = {
     "collectives": (
@@ -77,6 +68,68 @@ CATEGORY_TITLES = {
 }
 
 
+def count_statuses(
+    results: Sequence[workload_submitter.BenchmarkResult],
+) -> tuple[int, int]:
+  """Returns (succeeded, failed) JobSet counts."""
+  statuses = [r.status for r in results]
+  return statuses.count("SUCCESS"), sum(
+      s in utils.FAILED_STATUSES for s in statuses
+  )
+
+
+def _markdown_table(
+    headers: Sequence[str], rows: Sequence[dict[str, Any]]
+) -> list[str]:
+  """Renders `rows` as Markdown pipe-table lines."""
+  return [
+      "| " + " | ".join(headers) + " |",
+      "| " + " | ".join(["---"] * len(headers)) + " |",
+      *(
+          "| " + " | ".join(str(row.get(h, "")) for h in headers) + " |"
+          for row in rows
+      ),
+  ]
+
+
+def _html_table(
+    headers: Sequence[str],
+    rows: Sequence[dict[str, Any]],
+    pad: str,
+    style: str = "",
+) -> list[str]:
+  """Renders `rows` as a `table-container` <div> wrapping an HTML <table>.
+
+  Args:
+    headers: Column names, in display order.
+    rows: Rows to render; missing cells are blank.
+    pad: Indentation of the wrapper <div>; the table is nested 2 spaces in.
+    style: Optional inline style for the wrapper <div>.
+
+  Returns:
+    HTML lines.
+  """
+  style_attr = f' style="{style}"' if style else ""
+  inner = pad + "  "
+  lines = [
+      f'{pad}<div class="table-container"{style_attr}>',
+      f"{inner}<table>",
+      f"{inner}  <thead>",
+      f"{inner}    <tr>",
+  ]
+  lines += [f"{inner}      <th>{html.escape(h)}</th>" for h in headers]
+  lines += [f"{inner}    </tr>", f"{inner}  </thead>", f"{inner}  <tbody>"]
+  for row in rows:
+    lines.append(f"{inner}    <tr>")
+    lines += [
+        f"{inner}      <td>{html.escape(str(row.get(h, '')))}</td>"
+        for h in headers
+    ]
+    lines.append(f"{inner}    </tr>")
+  lines += [f"{inner}  </tbody>", f"{inner}</table>", f"{pad}</div>"]
+  return lines
+
+
 def _has_xprof_d2d_bandwidth(rows: Sequence[dict[str, Any]]) -> bool:
   """Returns True if xprof_bandwidth_per_device_gb_s is present and non-empty."""
   return any(
@@ -90,12 +143,16 @@ def format_d2d_pairwise_matrix(
   """Builds an N x N pairwise bandwidth matrix from D2D benchmark rows.
 
   Uses `xprof_bandwidth_per_device_gb_s` primarily, falling back to
-  `wall_clock_bandwidth_per_device_gb_s` (or legacy `bandwidth_per_device_gb_s`)
-  if the XProf column is not present in the rows.
+  `wall_clock_bandwidth_per_device_gb_s` if the XProf column is not present in
+  the rows.
 
-  Returns (sorted_device_labels, matrix_rows) where each cell is a formatted
-  bandwidth string (e.g. '85.50') or '-' for self/missing entries, or None
-  if rows contain no valid device indices.
+  Args:
+    rows: Device-to-device metric rows with src/dst device indices.
+
+  Returns:
+    (sorted_device_labels, matrix_rows) where each cell is a formatted
+    bandwidth string (e.g. '85.50') or '-' for self/missing entries, or None
+    if rows contain no valid device indices.
   """
   devs = set()
   bw_map: dict[tuple[int, int], str] = {}
@@ -110,12 +167,11 @@ def format_d2d_pairwise_matrix(
       continue
     devs.add(src)
     devs.add(dst)
-    if use_xprof:
-      bw = r.get("xprof_bandwidth_per_device_gb_s")
-    else:
-      bw = r.get("wall_clock_bandwidth_per_device_gb_s")
-      if bw in (None, ""):
-        bw = r.get("bandwidth_per_device_gb_s")
+    bw = r.get(
+        "xprof_bandwidth_per_device_gb_s"
+        if use_xprof
+        else "wall_clock_bandwidth_per_device_gb_s"
+    )
     bw = bw if bw is not None else ""
     try:
       bw_val = f"{float(bw):.2f}"
@@ -144,201 +200,171 @@ def fetch_aggregated_csv_results(
     gcs_bucket: str, date_str: str
 ) -> dict[str, list[dict[str, Any]]]:
   """Fetches the aggregated category CSV files from GCS."""
-  clean_base = gcs_bucket.rstrip("/") if gcs_bucket else ""
-  if not clean_base:
+  if not gcs_bucket:
     return {}
-  if not clean_base.startswith("gs://"):
-    clean_base = f"gs://{clean_base}"
 
-  target_prefix = f"{clean_base}/{date_str}/aggregated_results"
+  target_prefix = utils.format_gcs_uri(
+      gcs_bucket, date_str, "aggregated_results"
+  )
   cmd = ["gcloud", "storage", "ls", f"{target_prefix}/*.csv"]
-  res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-  if res.returncode != 0 or not res.stdout.strip():
+  res = subprocess.run(
+      cmd,
+      capture_output=True,
+      text=True,
+      check=False,
+      stdin=subprocess.DEVNULL,
+      timeout=utils.CLI_TIMEOUT_SECONDS,
+  )
+  if res.returncode != 0:
+    # Covers both "matched no objects" and auth errors.
+    logging.warning(
+        "No aggregated CSVs listed under %s (gcloud exit %d): %s",
+        target_prefix,
+        res.returncode,
+        (res.stderr or "").strip() or "<no stderr>",
+    )
+    return {}
+  if not res.stdout.strip():
     return {}
 
   category_files = [
-      line.strip()
-      for line in res.stdout.strip().splitlines()
-      if line.strip().endswith(".csv")
+      line for line in res.stdout.split() if line.endswith(".csv")
   ]
 
   categorized: dict[str, list[dict[str, Any]]] = {}
   for c_file in category_files:
-    cat_name = c_file.rsplit("/", 1)[-1].replace(".csv", "")
+    cat_name = c_file.rsplit("/", 1)[-1].removesuffix(".csv")
     cat_cmd = ["gcloud", "storage", "cat", c_file]
     cat_res = subprocess.run(
-        cat_cmd, capture_output=True, text=True, check=False
+        cat_cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        timeout=utils.CLI_TIMEOUT_SECONDS,
     )
-    if cat_res.returncode == 0 and cat_res.stdout.strip():
-      reader = csv.DictReader(io.StringIO(cat_res.stdout), delimiter=",")
+    if cat_res.returncode != 0:
+      logging.error(
+          "Failed to read %s (gcloud exit %d): %s",
+          c_file,
+          cat_res.returncode,
+          (cat_res.stderr or "").strip() or "<no stderr>",
+      )
+      continue
+    if cat_res.stdout.strip():
+      reader = csv.DictReader(io.StringIO(cat_res.stdout))
       categorized[cat_name] = [dict(row) for row in reader]
 
   return categorized
 
 
+def _gcloud_storage_stdout(args: Sequence[str]) -> Optional[str]:
+  """Returns the stdout of a best-effort `gcloud storage` call, or None.
+
+  Environment metadata is optional, so a non-zero exit (logged with stderr),
+  empty output or a timeout skips the value instead of failing the report.
+
+  Args:
+    args: Arguments after `gcloud storage` (e.g. ['ls', 'gs://...']).
+
+  Returns:
+    The stripped stdout, or None if the call failed, timed out or printed
+    nothing.
+  """
+  cmd = ["gcloud", "storage", *args]
+  try:
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        timeout=utils.CLI_TIMEOUT_SECONDS,
+    )
+  except subprocess.TimeoutExpired as e:
+    logging.warning("`%s` timed out after %ss.", " ".join(cmd), e.timeout)
+    return None
+  if proc.returncode != 0:
+    logging.warning(
+        "`%s` failed (gcloud exit %d): %s",
+        " ".join(cmd),
+        proc.returncode,
+        (proc.stderr or "").strip() or "<no stderr>",
+    )
+    return None
+  return proc.stdout.strip() or None
+
+
 def fetch_environment_metadata(
-    gcs_bucket: Optional[str] = None,
-    date_str: Optional[str] = None,
-    results: Optional[list[Any]] = None,
+    gcs_bucket: str,
+    date_str: str,
+    results: Optional[Sequence[workload_submitter.BenchmarkResult]] = None,
 ) -> dict[str, Optional[str]]:
   """Extracts runtime environment metadata (git commit, JAX version, libtpu version)."""
   metadata: dict[str, Optional[str]] = {
-      constants.ENV_GIT_COMMIT: None,
-      constants.ENV_JAX_VERSION: None,
-      constants.ENV_LIBTPU_VERSION: None,
+      utils.ENV_GIT_COMMIT: None,
+      utils.ENV_JAX_VERSION: None,
+      utils.ENV_LIBTPU_VERSION: None,
   }
 
-  clean_base = gcs_bucket.rstrip("/") if gcs_bucket else ""
-  if clean_base and not clean_base.startswith("gs://"):
-    clean_base = f"gs://{clean_base}"
-  target_prefix = f"{clean_base}/{date_str}" if date_str else clean_base
+  target_prefix = utils.format_gcs_uri(gcs_bucket, date_str)
 
   # 1. Look for detailed.json across results or GCS
   detailed_files = []
   if results:
     for r in results:
-      gcs_path = getattr(r, "gcs_artifact_path", "") or (
-          r.get("gcs_artifact_path", "") if isinstance(r, dict) else ""
-      )
+      gcs_path = r.gcs_artifact_path
       if gcs_path:
-        detailed_files.append(f"{gcs_path.rstrip('/')}/detailed.json")
-  if not detailed_files and target_prefix:
-    res = subprocess.run(
-        ["gcloud", "storage", "ls", f"{target_prefix}/*/detailed.json"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if res.returncode == 0 and res.stdout.strip():
+        detailed_files.append(utils.format_gcs_uri(gcs_path, "detailed.json"))
+  if not detailed_files:
+    listing = _gcloud_storage_stdout(["ls", f"{target_prefix}/*/detailed.json"])
+    if listing:
       detailed_files = [
-          line.strip()
-          for line in res.stdout.strip().splitlines()
-          if line.strip().endswith(".json")
+          line for line in listing.split() if line.endswith(".json")
       ]
 
   for d_file in detailed_files:
-    proc = subprocess.run(
-        ["gcloud", "storage", "cat", d_file],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode == 0 and proc.stdout.strip():
-      try:
-        data = json.loads(proc.stdout)
-        item = (
-            data[0]
-            if isinstance(data, list) and data
-            else (data if isinstance(data, dict) else {})
-        )
-        pinfo = item.get("metadata", {}).get("platform_info", {})
-        if not metadata[constants.ENV_JAX_VERSION] and pinfo.get(
-            constants.ENV_JAX_VERSION
-        ):
-          metadata[constants.ENV_JAX_VERSION] = str(
-              pinfo[constants.ENV_JAX_VERSION]
-          )
-        if not metadata[constants.ENV_LIBTPU_VERSION] and pinfo.get(
-            constants.ENV_LIBTPU_VERSION
-        ):
-          metadata[constants.ENV_LIBTPU_VERSION] = str(
-              pinfo[constants.ENV_LIBTPU_VERSION]
-          )
-        if not metadata[constants.ENV_GIT_COMMIT] and pinfo.get(
-            constants.ENV_GIT_COMMIT
-        ):
-          metadata[constants.ENV_GIT_COMMIT] = str(
-              pinfo[constants.ENV_GIT_COMMIT]
-          )
-        if (
-            metadata[constants.ENV_JAX_VERSION]
-            and metadata[constants.ENV_LIBTPU_VERSION]
-        ):
-          break
-      except Exception:
-        continue
+    content = _gcloud_storage_stdout(["cat", d_file])
+    if not content:
+      continue
+    try:
+      data = json.loads(content)
+      item = data[0] if isinstance(data, list) and data else {}
+      pinfo = item.get("metadata", {}).get("platform_info", {})
+      for key in (utils.ENV_JAX_VERSION, utils.ENV_LIBTPU_VERSION):
+        if not metadata[key] and pinfo.get(key):
+          metadata[key] = str(pinfo[key])
+    except (ValueError, AttributeError) as e:
+      logging.warning("Skipping unparseable %s: %s", d_file, e)
+      continue
+    if metadata[utils.ENV_JAX_VERSION] and metadata[utils.ENV_LIBTPU_VERSION]:
+      break
 
   # 2. Look for git_commit.txt on GCS
-  if not metadata[constants.ENV_GIT_COMMIT] and target_prefix:
-    res_git = subprocess.run(
-        [
-            "gcloud",
-            "storage",
-            "ls",
-            f"{target_prefix}/*/git_commit.txt",
-            f"{target_prefix}/git_commit.txt",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
+  if not metadata[utils.ENV_GIT_COMMIT]:
+    # A single URL: multi-URL `ls` exits non-zero if any URL matches nothing,
+    # even when others match.
+    git_listing = _gcloud_storage_stdout(
+        ["ls", f"{target_prefix}/*/git_commit.txt"]
     )
-    if res_git.returncode == 0 and res_git.stdout.strip():
-      git_lines = [
-          line.strip()
-          for line in res_git.stdout.strip().splitlines()
-          if line.strip().endswith(".txt")
-      ]
-      if git_lines:
-        cat_git = subprocess.run(
-            ["gcloud", "storage", "cat", git_lines[0]],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if cat_git.returncode == 0 and cat_git.stdout.strip():
-          metadata[constants.ENV_GIT_COMMIT] = (
-              cat_git.stdout.strip().splitlines()[0].strip()
-          )
-
-  # 3. Fallback: remote git repository HEAD
-  if not metadata[constants.ENV_GIT_COMMIT]:
-    try:
-      rem_proc = subprocess.run(
-          [
-              "git",
-              "ls-remote",
-              "https://github.com/AI-Hypercomputer/accelerator-microbenchmarks.git",
-              "HEAD",
-          ],
-          capture_output=True,
-          text=True,
-          check=False,
-          timeout=5,
-      )
-      if rem_proc.returncode == 0 and rem_proc.stdout.strip():
-        metadata[constants.ENV_GIT_COMMIT] = rem_proc.stdout.strip().split()[0]
-    except Exception:
-      pass
+    git_lines = [
+        line for line in (git_listing or "").split() if line.endswith(".txt")
+    ]
+    if git_lines:
+      commit = _gcloud_storage_stdout(["cat", git_lines[0]])
+      if commit:
+        metadata[utils.ENV_GIT_COMMIT] = commit.splitlines()[0].strip()
 
   return metadata
 
 
-def get_display_headers(
-    cat_key: str, rows: Sequence[dict[str, Any]]
-) -> list[str]:
-  """Returns column headers for display, placing leading columns first followed by CSV column order."""
-  if not rows:
-    return []
-  target_cols = CATEGORY_LEADING_COLUMNS.get(cat_key, ())
-  discovered_cols = []
-  seen = set()
-  for r in rows:
-    for k in r.keys():
-      if k not in seen and k != "_source_path":
-        seen.add(k)
-        discovered_cols.append(k)
-  leading = [h for h in target_cols if h in seen]
-  trailing = [h for h in discovered_cols if h not in leading]
-  return leading + trailing or list(rows[0].keys())
-
-
 def format_consolidated_report(
-    results: list[Any],
+    results: Sequence[workload_submitter.BenchmarkResult],
     categorized_metrics: Optional[dict[str, list[dict[str, Any]]]] = None,
-    cluster: str = DEFAULT_CLUSTER,
-    project: str = DEFAULT_PROJECT,
-    region: str = DEFAULT_REGION,
-    namespace: str = DEFAULT_NAMESPACE,
+    cluster: str = utils.DEFAULT_CLUSTER,
+    project: str = utils.DEFAULT_PROJECT,
+    region: str = utils.DEFAULT_REGION,
+    namespace: str = utils.DEFAULT_NAMESPACE,
     git_commit: Optional[str] = None,
     jax_version: Optional[str] = None,
     libtpu_version: Optional[str] = None,
@@ -348,37 +374,8 @@ def format_consolidated_report(
       "%Y-%m-%d %H:%M:%S UTC"
   )
   total_jobsets = len(results)
-  is_dry_run = (
-      all(
-          (
-              getattr(r, "status", None)
-              or (r.get("status") if isinstance(r, dict) else "")
-          )
-          == "DRY_RUN"
-          for r in results
-      )
-      if results
-      else False
-  )
-
-  successful_jobsets = sum(
-      1
-      for r in results
-      if (
-          getattr(r, "status", None)
-          or (r.get("status") if isinstance(r, dict) else "")
-      )
-      == "SUCCESS"
-  )
-  failed_jobsets = sum(
-      1
-      for r in results
-      if (
-          getattr(r, "status", None)
-          or (r.get("status") if isinstance(r, dict) else "")
-      )
-      in ("FAILED", "TIMEOUT", "EVICTED")
-  )
+  is_dry_run = bool(results) and all(r.status == "DRY_RUN" for r in results)
+  successful_jobsets, failed_jobsets = count_statuses(results)
 
   if is_dry_run:
     summary_line = (
@@ -394,8 +391,8 @@ def format_consolidated_report(
 
   env_items = []
   if git_commit:
-    short_commit = git_commit[:7] if len(git_commit) >= 7 else git_commit
-    commit_url = f"https://github.com/AI-Hypercomputer/accelerator-microbenchmarks/commit/{git_commit}"
+    short_commit = git_commit[:7]
+    commit_url = f"{_REPO_URL}/commit/{git_commit}"
     env_items.append(f"**GitHub Commit:** [`{short_commit}`]({commit_url})")
   if jax_version:
     env_items.append(f"**JAX:** `{jax_version}`")
@@ -419,7 +416,7 @@ def format_consolidated_report(
       "",
   ])
 
-  if categorized_metrics:
+  if categorized_metrics and any(categorized_metrics.values()):
     for cat_key, rows in categorized_metrics.items():
       if not rows:
         continue
@@ -432,7 +429,7 @@ def format_consolidated_report(
       lines.append(f"*{desc}*")
       lines.append("")
 
-      headers = get_display_headers(cat_key, rows)
+      headers = metrics_aggregator.ordered_columns(cat_key, rows)
       if cat_key == "device_to_device":
         matrix_data = format_d2d_pairwise_matrix(rows)
         if matrix_data:
@@ -456,22 +453,10 @@ def format_consolidated_report(
             " rows)</summary>"
         )
         lines.append("")
-        lines.append("| " + " | ".join(headers) + " |")
-        lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
-        for row in rows:
-          lines.append(
-              "| " + " | ".join(str(row.get(h, "")) for h in headers) + " |"
-          )
-        lines.append("")
-        lines.append("</details>")
-        lines.append("")
+        lines.extend(_markdown_table(headers, rows))
+        lines.extend(["", "</details>", ""])
       else:
-        lines.append("| " + " | ".join(headers) + " |")
-        lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
-        for row in rows:
-          lines.append(
-              "| " + " | ".join(str(row.get(h, "")) for h in headers) + " |"
-          )
+        lines.extend(_markdown_table(headers, rows))
         lines.append("")
   else:
     lines.append("*No aggregated metric tables available.*")
@@ -481,12 +466,12 @@ def format_consolidated_report(
 
 
 def generate_html_report(
-    results: list[Any],
+    results: Sequence[workload_submitter.BenchmarkResult],
     categorized_metrics: Optional[dict[str, list[dict[str, Any]]]] = None,
-    cluster: str = DEFAULT_CLUSTER,
-    project: str = DEFAULT_PROJECT,
-    region: str = DEFAULT_REGION,
-    namespace: str = DEFAULT_NAMESPACE,
+    cluster: str = utils.DEFAULT_CLUSTER,
+    project: str = utils.DEFAULT_PROJECT,
+    region: str = utils.DEFAULT_REGION,
+    namespace: str = utils.DEFAULT_NAMESPACE,
     git_commit: Optional[str] = None,
     jax_version: Optional[str] = None,
     libtpu_version: Optional[str] = None,
@@ -498,33 +483,8 @@ def generate_html_report(
 
   # Compute summary counts
   total_jobsets = len(results)
-  successful_jobsets = sum(
-      1
-      for r in results
-      if (
-          getattr(r, "status", None)
-          or (r.get("status") if isinstance(r, dict) else "")
-      )
-      == "SUCCESS"
-  )
-  failed_jobsets = sum(
-      1
-      for r in results
-      if (
-          getattr(r, "status", None)
-          or (r.get("status") if isinstance(r, dict) else "")
-      )
-      in ("FAILED", "TIMEOUT", "EVICTED")
-  )
-  total_duration = max(
-      (
-          getattr(r, "duration_seconds", 0.0)
-          if hasattr(r, "duration_seconds")
-          else (r.get("duration_seconds", 0.0) if isinstance(r, dict) else 0.0)
-          for r in results
-      ),
-      default=0.0,
-  )
+  successful_jobsets, failed_jobsets = count_statuses(results)
+  total_duration = max((r.duration_seconds for r in results), default=0.0)
 
   html_lines = [
       "<!DOCTYPE html>",
@@ -620,22 +580,6 @@ def generate_html_report(
       "    tr:last-child td { border-bottom: none; }",
       "    tr:hover td { background-color: rgba(51, 65, 85, 0.4); }",
       (
-          "    .badge { display: inline-flex; align-items: center; padding: 2px"
-          " 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }"
-      ),
-      (
-          "    .badge-success { background: rgba(52, 211, 153, 0.15); color:"
-          " var(--success); }"
-      ),
-      (
-          "    .badge-danger { background: rgba(248, 113, 113, 0.15); color:"
-          " var(--danger); }"
-      ),
-      (
-          "    .badge-topo { background: #334155; color: #38bdf8; font-family:"
-          " monospace; }"
-      ),
-      (
           "    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,"
           " Consolas, monospace; background: #334155; padding: 2px 6px;"
           " border-radius: 4px; font-size: 13px; }"
@@ -685,8 +629,8 @@ def generate_html_report(
       "<body>",
       '  <div class="container">',
       '    <div class="header">',
-      f"      <h1>🚀 TPUMS Automated Benchmark Report</h1>",
-      f'      <div class="meta-pills">',
+      "      <h1>🚀 TPUMS Automated Benchmark Report</h1>",
+      '      <div class="meta-pills">',
       f'        <span class="pill">🕒 {html.escape(now_str)}</span>',
       (
           '        <span class="pill">🖥️ Cluster:'
@@ -706,8 +650,8 @@ def generate_html_report(
       ),
   ]
   if git_commit:
-    short_commit = git_commit[:7] if len(git_commit) >= 7 else git_commit
-    commit_url = f"https://github.com/AI-Hypercomputer/accelerator-microbenchmarks/commit/{git_commit}"
+    short_commit = git_commit[:7]
+    commit_url = f"{_REPO_URL}/commit/{git_commit}"
     html_lines.append(
         '        <span class="pill">🐙 GitHub: <a'
         f' href="{html.escape(commit_url)}" target="_blank" style="color:'
@@ -751,7 +695,7 @@ def generate_html_report(
       "    </div>",
   ])
 
-  if categorized_metrics:
+  if categorized_metrics and any(categorized_metrics.values()):
     html_lines.append('    <div class="section">')
     html_lines.append(
         '      <h2 class="section-title">📈 Aggregated Benchmark Metrics</h2>'
@@ -765,7 +709,7 @@ def generate_html_report(
       )
       if cat_key == "device_to_device" and not _has_xprof_d2d_bandwidth(rows):
         title = f"{title} (Wall Clock Time)"
-      headers = get_display_headers(cat_key, rows)
+      headers = metrics_aggregator.ordered_columns(cat_key, rows)
 
       html_lines.append(
           '      <h3 style="margin-top: 24px; margin-bottom: 6px; font-size:'
@@ -820,48 +764,12 @@ def generate_html_report(
             '        <summary class="d2d-summary">View Raw Device-to-Device'
             f" Transfer Table ({len(rows)} rows)</summary>"
         )
-        html_lines.append(
-            '        <div class="table-container" style="margin-top: 8px;">'
+        html_lines.extend(
+            _html_table(headers, rows, " " * 8, style="margin-top: 8px;")
         )
-        html_lines.append("          <table>")
-        html_lines.append("            <thead>")
-        html_lines.append("              <tr>")
-        for h in headers:
-          html_lines.append(f"                <th>{html.escape(h)}</th>")
-        html_lines.append("              </tr>")
-        html_lines.append("            </thead>")
-        html_lines.append("            <tbody>")
-        for row in rows:
-          html_lines.append("              <tr>")
-          for h in headers:
-            val_str = str(row.get(h, ""))
-            html_lines.append(
-                f"                <td>{html.escape(val_str)}</td>"
-            )
-          html_lines.append("              </tr>")
-        html_lines.append("            </tbody>")
-        html_lines.append("          </table>")
-        html_lines.append("        </div>")
         html_lines.append("      </details>")
       else:
-        html_lines.append('      <div class="table-container">')
-        html_lines.append("        <table>")
-        html_lines.append("          <thead>")
-        html_lines.append("            <tr>")
-        for h in headers:
-          html_lines.append(f"              <th>{html.escape(h)}</th>")
-        html_lines.append("            </tr>")
-        html_lines.append("          </thead>")
-        html_lines.append("          <tbody>")
-        for row in rows:
-          html_lines.append("            <tr>")
-          for h in headers:
-            val_str = str(row.get(h, ""))
-            html_lines.append(f"              <td>{html.escape(val_str)}</td>")
-          html_lines.append("            </tr>")
-        html_lines.append("          </tbody>")
-        html_lines.append("        </table>")
-        html_lines.append("      </div>")
+        html_lines.extend(_html_table(headers, rows, " " * 6))
 
     html_lines.append("    </div>")
 
@@ -874,14 +782,14 @@ def generate_html_report(
 
 
 def generate_and_publish_report(
-    results: list[Any],
+    results: Sequence[workload_submitter.BenchmarkResult],
     categorized_metrics: Optional[dict[str, list[dict[str, Any]]]] = None,
-    cluster: str = DEFAULT_CLUSTER,
-    project: str = DEFAULT_PROJECT,
-    region: str = DEFAULT_REGION,
-    namespace: str = DEFAULT_NAMESPACE,
-    output_file: str = "/tmp/tpums_daily_report.md",
-    gcs_bucket: Optional[str] = DEFAULT_GCS_BUCKET,
+    cluster: str = utils.DEFAULT_CLUSTER,
+    project: str = utils.DEFAULT_PROJECT,
+    region: str = utils.DEFAULT_REGION,
+    namespace: str = utils.DEFAULT_NAMESPACE,
+    output_file: str = DEFAULT_OUTPUT_REPORT,
+    gcs_bucket: str = utils.DEFAULT_GCS_BUCKET,
     date_str: Optional[str] = None,
     dry_run: bool = False,
     git_commit: Optional[str] = None,
@@ -889,32 +797,38 @@ def generate_and_publish_report(
     libtpu_version: Optional[str] = None,
 ) -> tuple[str, str]:
   """Generates Markdown and HTML reports, writes local files, and publishes to GCS."""
+  if not gcs_bucket and not dry_run:
+    raise ValueError("gcs_bucket is required when dry_run is False.")
   if not date_str:
     date_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
   # Auto-fetch aggregated CSV results from GCS if not provided in-memory
-  if not categorized_metrics and gcs_bucket and not dry_run:
+  if not categorized_metrics and not dry_run:
     categorized_metrics = fetch_aggregated_csv_results(
         gcs_bucket, date_str=date_str
     )
 
-  # Auto-discover workload run results from GCS if not provided in-memory
-  if not results and gcs_bucket and not dry_run:
-    from automation import metrics_aggregator  # pylint: disable=g-import-not-at-top
-
-    results = metrics_aggregator.discover_and_fetch_gcs_results(
-        gcs_bucket, date_str=date_str
-    )
+  # Auto-discover workload run results from GCS if not provided in-memory.
+  # Discovered dicts carry every BenchmarkResult field except these two.
+  if not results and not dry_run:
+    results = [
+        workload_submitter.BenchmarkResult(
+            config_rel_path="", duration_seconds=0.0, **d
+        )
+        for d in metrics_aggregator.discover_and_fetch_gcs_results(
+            gcs_bucket, date_str=date_str
+        )
+    ]
 
   # Auto-discover runtime environment metadata if not explicitly provided
-  if not git_commit or not jax_version or not libtpu_version:
+  if not dry_run and not (git_commit and jax_version and libtpu_version):
     discovered_env = fetch_environment_metadata(
         gcs_bucket=gcs_bucket, date_str=date_str, results=results
     )
-    git_commit = git_commit or discovered_env.get(constants.ENV_GIT_COMMIT)
-    jax_version = jax_version or discovered_env.get(constants.ENV_JAX_VERSION)
+    git_commit = git_commit or discovered_env.get(utils.ENV_GIT_COMMIT)
+    jax_version = jax_version or discovered_env.get(utils.ENV_JAX_VERSION)
     libtpu_version = libtpu_version or discovered_env.get(
-        constants.ENV_LIBTPU_VERSION
+        utils.ENV_LIBTPU_VERSION
     )
 
   report_md = format_consolidated_report(
@@ -958,51 +872,82 @@ def generate_and_publish_report(
   logging.info("Saved HTML preview report to %s", html_output_path)
 
   # Publish both to GCS
-  if gcs_bucket:
-    clean_base = gcs_bucket.rstrip("/")
-    if clean_base.startswith("gs://"):
-      gcs_md_uri = f"{clean_base}/{date_str}/consolidated_report.md"
-      gcs_html_uri = f"{clean_base}/{date_str}/consolidated_report.html"
-    else:
-      gcs_md_uri = f"gs://{clean_base}/{date_str}/consolidated_report.md"
-      gcs_html_uri = f"gs://{clean_base}/{date_str}/consolidated_report.html"
+  gcs_md_uri = utils.format_gcs_uri(
+      gcs_bucket, date_str, "consolidated_report.md"
+  )
+  gcs_html_uri = utils.format_gcs_uri(
+      gcs_bucket, date_str, "consolidated_report.html"
+  )
 
-    subprocess.run(
-        ["gcloud", "storage", "cp", output_file, gcs_md_uri], check=False
+  upload_failures: list[str] = []
+  for local_path, target_uri, label in (
+      (output_file, gcs_md_uri, "Markdown"),
+      (html_output_path, gcs_html_uri, "HTML preview"),
+  ):
+    try:
+      proc = subprocess.run(
+          ["gcloud", "storage", "cp", local_path, target_uri],
+          capture_output=True,
+          text=True,
+          check=False,
+          stdin=subprocess.DEVNULL,
+          timeout=utils.CLI_TIMEOUT_SECONDS,
+      )
+    except subprocess.TimeoutExpired as e:
+      upload_failures.append(label)
+      logging.error(
+          "Timed out uploading %s report to %s after %ss.",
+          label,
+          target_uri,
+          e.timeout,
+      )
+      continue
+    if proc.returncode == 0:
+      logging.info("Uploaded %s report to %s", label, target_uri)
+    else:
+      upload_failures.append(label)
+      logging.error(
+          "Failed to upload %s report to %s (gcloud exit %d): %s",
+          label,
+          target_uri,
+          proc.returncode,
+          (proc.stderr or "").strip() or "<no stderr>",
+      )
+
+  if upload_failures:
+    raise RuntimeError(
+        "Failed to upload consolidated report(s) to GCS: "
+        + ", ".join(upload_failures)
     )
-    subprocess.run(
-        ["gcloud", "storage", "cp", html_output_path, gcs_html_uri], check=False
-    )
-    logging.info("Uploaded Markdown report to %s", gcs_md_uri)
-    logging.info("Uploaded HTML preview report to %s", gcs_html_uri)
 
   return report_md, report_html
 
 
 def main(argv: Sequence[str]) -> None:
-  import argparse  # pylint: disable=g-import-not-at-top
-
   parser = argparse.ArgumentParser(
       description=(
           "Generate and publish TPUMS benchmark summary reports"
           " (Markdown & HTML)."
       )
   )
-  parser.add_argument("--cluster", default=DEFAULT_CLUSTER)
-  parser.add_argument("--project", default=DEFAULT_PROJECT)
-  parser.add_argument("--region", default=DEFAULT_REGION)
-  parser.add_argument("--namespace", default=DEFAULT_NAMESPACE)
-  parser.add_argument("--gcs-bucket", default=DEFAULT_GCS_BUCKET)
+  parser.add_argument("--cluster", default=utils.DEFAULT_CLUSTER)
+  parser.add_argument("--project", default=utils.DEFAULT_PROJECT)
+  parser.add_argument("--region", default=utils.DEFAULT_REGION)
+  parser.add_argument("--namespace", default=utils.DEFAULT_NAMESPACE)
+  parser.add_argument("--gcs-bucket", default=utils.DEFAULT_GCS_BUCKET)
   parser.add_argument(
       "--date",
       default=None,
       help="Target date YYYY-MM-DD (default: current UTC date).",
   )
-  parser.add_argument("--output-report", default="/tmp/tpums_daily_report.md")
+  parser.add_argument("--output-report", default=DEFAULT_OUTPUT_REPORT)
   parser.add_argument(
       "--dry-run",
       action="store_true",
-      help="Print report to stdout without uploading to GCS.",
+      help=(
+          "Generate reports in dry-run mode without writing local files or"
+          " uploading to GCS."
+      ),
   )
   parser.add_argument("--git-commit", default=None, help="GitHub commit hash.")
   parser.add_argument(
