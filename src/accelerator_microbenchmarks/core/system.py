@@ -15,6 +15,7 @@ TpuVersion = schema.TpuVersion
 HardwareSpec = schema.HardwareSpec
 TflopsSpec = schema.TflopsSpec
 IciSpec = schema.IciSpec
+WraparoundRule = schema.WraparoundRule
 HbmSpec = schema.HbmSpec
 
 # The canonical native precision baseline for Google TPU MXU architectures.

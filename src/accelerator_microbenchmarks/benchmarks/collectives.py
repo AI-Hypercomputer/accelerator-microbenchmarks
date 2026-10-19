@@ -1,10 +1,12 @@
 """Collective communication benchmarks."""
 
 import dataclasses
+import logging
 import math
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -368,6 +370,30 @@ class IciCollectiveBenchmark(
 
     return tuple(self.mesh.axis_names)
 
+  def _get_devices_per_chip_in_replica_group(
+      self, replica_group_devices: Sequence[jax.Device]
+  ) -> int:
+    """Returns how many devices of the same chip are in one replica group.
+
+    Args:
+      replica_group_devices: Devices of one replica group.
+
+    Returns:
+      1 for parallel replica groups (one core per chip per group) and for
+      single-device-per-chip hardware; devices_per_chip for non-parallel
+      replica groups, where all cores of a chip are in the same group.
+    """
+    devices_per_chip = self.hardware_spec.devices_per_chip
+    # HLO replica_group ids are logical, so decide one-core-per-chip from the
+    # mesh devices' core_on_chip.
+    if (
+        devices_per_chip > 1
+        and len(replica_group_devices) > 1
+        and len({d.core_on_chip for d in replica_group_devices}) == 1
+    ):
+      return 1
+    return devices_per_chip
+
   def get_workload_metadata(self) -> dict[str, Any]:
     """Calculate static collective transfer metadata (bytes moved, replica group)."""
     if self.mesh is None:
@@ -381,13 +407,10 @@ class IciCollectiveBenchmark(
     rank = len(first_group_devices)
 
     devices_per_chip = self.hardware_spec.devices_per_chip
-    # HLO replica_group ids are logical, so decide one-core-per-chip from the
-    # mesh devices' core_on_chip.
-    if (
-        devices_per_chip > 1
-        and rank > 1
-        and len({d.core_on_chip for d in first_group_devices}) == 1
-    ):
+    devices_per_chip_in_replica_group = (
+        self._get_devices_per_chip_in_replica_group(first_group_devices)
+    )
+    if devices_per_chip > 1 and devices_per_chip_in_replica_group == 1:
       replica_group_type = "parallel"
       participating_ranks = max(rank - 1, 1)
       tf_multiplier = devices_per_chip
@@ -722,9 +745,196 @@ class AllGatherBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
     return data_transferred, {"shard_size_mib": local_size_bytes / (1024 * 1024)}
 
 
+def all_to_all_peak_bandwidth_per_chip_gb_s(
+    replica_group_rank: int,
+    devices_per_chip_in_replica_group: int,
+    replica_group_chip_coords: Sequence[Sequence[int]],
+    topology_dims: Sequence[int],
+    link_bw_per_direction_gb_s: float,
+    wraparound_rule: system.WraparoundRule,
+) -> float:
+  """Returns the theoretical peak all-to-all bus bandwidth per chip (GB/s).
+
+  The all-to-all is bounded by the bisection bandwidth of the replica group.
+  Bus-bandwidth view:
+
+      peak_bw_per_chip = 4 * B * M * P / R^2 * k
+
+  Derivation (S = input bytes per device, D = devices per chip):
+    1. Bytes crossing the bisection, per direction: R/2 devices on one side
+       each send one S/R chunk to each of the R/2 devices on the other side:
+       (R/2) * (R/2) * (S/R) = R*S/4.
+    2. Bisection bandwidth: M links * B per link = M*B.
+    3. Roofline runtime: D/k replica groups run concurrently on the same chips
+       (2 for parallel replica groups on 2-device chips, otherwise 1) and
+       share the M links: T = (D/k) * (R*S/4) / (M*B).
+    4. Bus bytes per device: S * P/R.
+    5. Peak bus bandwidth per device: (S*P/R) / T = 4*B*M*P / R^2 * k/D.
+    6. Peak per chip: x D, the same per-chip scaling as the measured bytes in
+       `AllToAllBenchmark._get_transfer_metrics`. Unlike all-gather/all-reduce,
+       every (source -> destination) chunk of an all-to-all is distinct, so
+       each core of a chip sends its own chunks over ICI. D cancels, leaving
+       4*B*M*P / R^2 * k, so parallel and non-parallel replica groups on the
+       same chips share the same per-chip peak.
+
+  Args:
+    replica_group_rank: R, devices in one replica group.
+    devices_per_chip_in_replica_group: k, devices of the same chip in that
+      replica group (1 for parallel replica groups, devices_per_chip
+      otherwise).
+    replica_group_chip_coords: Chip coordinates of the replica group's devices
+      (devices on the same chip share coordinates).
+    topology_dims: Chip-level extent of the full ICI topology on each axis.
+    link_bw_per_direction_gb_s: B, theoretical per-link ICI BW per direction.
+    wraparound_rule: Which topology axes have wrap-around links.
+
+  Returns:
+    The peak bus bandwidth per chip in decimal GB/s.
+
+  Raises:
+    ValueError: If the bisection model does not apply to this replica group.
+  """
+  # --- Replica group shape + guards --------------------------------------
+  chips = {tuple(c) for c in replica_group_chip_coords}
+  replica_group_dims = platform.bounding_box_dims(list(chips))
+  if len(chips) <= 1:
+    raise ValueError("replica group spans a single chip (die-to-die only)")
+  # The model assumes every chip contributes the same k devices; asymmetric
+  # groups (e.g. both cores of one chip but one core of the others) do not
+  # fit it.
+  if replica_group_rank != len(chips) * devices_per_chip_in_replica_group:
+    raise ValueError(
+        f"replica group has {replica_group_rank} devices, not {len(chips)}"
+        f" chips x {devices_per_chip_in_replica_group} devices per chip"
+    )
+  # The group is a solid box iff its chips fill every position of their
+  # bounding box; otherwise it is scattered (e.g. chips at x=0 and x=2 only),
+  # its traffic hops through chips outside the group, and the box model below
+  # does not apply.
+  is_contiguous_box = len(chips) == math.prod(replica_group_dims)
+  if not is_contiguous_box:
+    raise ValueError(
+        f"replica group's {len(chips)} chips do not form a contiguous"
+        f" {'x'.join(map(str, replica_group_dims))} box"
+    )
+  # TODO(simonleesyuan): Validate on hardware for replica groups spanning a
+  # subset of the ICI topology (e.g. sharding_strategy 4x4x1 on a 4x4x4
+  # topology). So far only replica groups spanning the full topology (every
+  # checked-in config) are validated.
+
+  # --- R, k, P, B -------------------------------------------------------
+  rank = replica_group_rank  # R
+  k = devices_per_chip_in_replica_group  # k
+  participating_ranks = rank - k  # P: peers reached over ICI (not die-to-die)
+  link_bw = link_bw_per_direction_gb_s  # B
+
+  # --- M: unidirectional links crossing the minimum bisection ------------
+  # Which topology axes have physical wrap-around links (hardware rule).
+  if wraparound_rule == system.WraparoundRule.ALL_DIMS_GE_4:
+    all_wrap = len(topology_dims) >= 3 and all(d >= 4 for d in topology_dims)
+    topology_wraps = [all_wrap] * len(topology_dims)
+  elif wraparound_rule == system.WraparoundRule.PER_DIM_GE_16:
+    topology_wraps = [d >= 16 for d in topology_dims]
+  else:
+    topology_wraps = [False] * len(topology_dims)
+  # Try halving the replica group across each axis it spans; the bisection is
+  # the cut crossed by the fewest links.
+  links_per_cut = []
+  for cut_axis, extent in enumerate(replica_group_dims):
+    if extent <= 1:
+      continue
+    # Links the cut crosses: the product of the other dims, e.g. cutting a
+    # 2x4x4 replica group across a 4-axis crosses 2*4 = 8 links.
+    cross_section_links = math.prod(
+        d for axis, d in enumerate(replica_group_dims) if axis != cut_axis
+    )
+    # A wrap-around link is a second path across the cut (a ring cut in half
+    # is cut in two places). It only counts if the replica group spans the
+    # whole axis; otherwise the wrap-around link leads to chips outside it.
+    spans_full_axis = extent == topology_dims[cut_axis]
+    wrap_factor = 2 if (topology_wraps[cut_axis] and spans_full_axis) else 1
+    links_per_cut.append(wrap_factor * cross_section_links)
+  bisection_link_multiplier = min(links_per_cut)  # M
+
+  # --- Peak -------------------------------------------------------------
+  # 4 = 2 * 2: 1/2 of the senders are on one side of the cut, and 1/2 of
+  # each sender's destinations are on the other side (step 1 above).
+  bisection_divisor = 4
+  # Steps 5-6: the per-device peak (x k/D) times D per chip; D cancels.
+  return (
+      bisection_divisor
+      * link_bw
+      * bisection_link_multiplier
+      * participating_ranks
+      / rank**2
+      * k
+  )
+
+
 @registry.benchmark_registry.register("all_to_all")
 class AllToAllBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
-  """Benchmarks the latency and bandwidth of jax.lax.all_to_all across devices."""
+  """Benchmarks the latency and bandwidth of jax.lax.all_to_all across devices.
+
+  The theoretical ICI peak (and its derivation) is in
+  `all_to_all_peak_bandwidth_per_chip_gb_s`.
+  """
+
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.NETWORK_ICI
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      *IciCollectiveBenchmark.REPORT_SCHEMA,
+      ("peak_ici_bandwidth_per_chip_gb_s", report.format_2f),
+      ("wall_clock_ici_roofline_efficiency_pct", report.format_2f),
+      ("xprof_ici_roofline_efficiency_pct", report.format_2f),
+  )
+
+  def _get_topology_devices(self) -> Sequence[jax.Device]:
+    """Returns every device in the ICI topology."""
+    return jax.devices()
+
+  def get_peak_ici_bandwidth_per_chip(self) -> Optional[float]:
+    """Returns the all-to-all ICI peak, or None (with a warning) if N/A.
+
+    The peak is not modeled (and `*_ici_roofline_efficiency_pct` is omitted)
+    for:
+      - Missing ICI spec.
+      - Non-TPU devices without chip coordinates.
+      - Multi-slice runs (cross-slice traffic uses DCN).
+      - Replica groups on a single chip (die-to-die only).
+      - Replica groups whose chips do not form a contiguous box.
+    """
+    ici = self.hardware_spec.ici
+    # The replica group whose bandwidth is measured.
+    replica_group_devices = self._get_first_replica_group_devices()
+    # Every device in the job; the replica group is a subset of it.
+    topology_devices = self._get_topology_devices()
+    try:
+      if ici is None:  # `HardwareSpec.ici` is Optional; shipped specs set it.
+        raise ValueError(f"no ICI spec for {self.hardware_spec.name}")
+      if any(getattr(d, "coords", None) is None for d in topology_devices):
+        raise ValueError("devices have no physical chip coordinates (non-TPU)")
+      if len({getattr(d, "slice_index", 0) for d in topology_devices}) > 1:
+        raise ValueError(
+            "multi-slice run; cross-slice traffic uses DCN, not ICI"
+        )
+      return all_to_all_peak_bandwidth_per_chip_gb_s(
+          replica_group_rank=len(replica_group_devices),
+          devices_per_chip_in_replica_group=(
+              self._get_devices_per_chip_in_replica_group(
+                  replica_group_devices
+              )
+          ),
+          replica_group_chip_coords=[d.coords for d in replica_group_devices],
+          topology_dims=platform.bounding_box_dims(
+              [d.coords for d in topology_devices]
+          ),
+          link_bw_per_direction_gb_s=ici.link_bw_per_direction_gb_s,
+          wraparound_rule=ici.wraparound_rule,
+      )
+    except ValueError as e:
+      logging.warning(
+          "Skipping all_to_all *_ici_roofline_efficiency_pct: %s.", e
+      )
+      return None
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()

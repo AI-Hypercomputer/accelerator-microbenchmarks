@@ -3,7 +3,10 @@
 import argparse
 import dataclasses
 import io
+import itertools
+import math
 import os
+from typing import Any, Sequence
 from unittest import mock
 
 from absl.testing import absltest
@@ -34,6 +37,34 @@ os.environ["XLA_FLAGS"] = (
 
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
+
+_ALL_DIMS_GE_4 = system.WraparoundRule.ALL_DIMS_GE_4
+_PER_DIM_GE_16 = system.WraparoundRule.PER_DIM_GE_16
+_NO_WRAP = system.WraparoundRule.NONE
+_LINK_BW = 100.0
+
+
+def _box_coords(dims: Sequence[int]) -> list[tuple[int, ...]]:
+  """Returns the chip coordinates of a solid box starting at the origin."""
+  return list(itertools.product(*(range(d) for d in dims)))
+
+
+def _peak(
+    rank: int,
+    k: int,
+    group_dims: Sequence[int],
+    topology_dims: Sequence[int],
+    rule: system.WraparoundRule,
+) -> float:
+  return collectives.all_to_all_peak_bandwidth_per_chip_gb_s(
+      replica_group_rank=rank,
+      devices_per_chip_in_replica_group=k,
+      replica_group_chip_coords=_box_coords(group_dims),
+      topology_dims=topology_dims,
+      link_bw_per_direction_gb_s=_LINK_BW,
+      wraparound_rule=rule,
+  )
+
 
 _COLLECTIVES_IGNORED_KEYS: frozenset[str] = frozenset({
     "data_transferred_bytes",
@@ -112,6 +143,27 @@ _HEAD_FIELD_SPEC: dict[str, tuple[object, dict[str, object]]] = {
 class _MockTpuDevice:
   id: int
   core_on_chip: int
+  coords: tuple[int, ...] | None = None
+  slice_index: int = 0
+
+
+def _mock_tpu7x_devices(
+    topology: tuple[int, int, int],
+    cores: tuple[int, ...] = (0, 1),
+    slice_index: int = 0,
+) -> list[_MockTpuDevice]:
+  """Returns mock TPU7x devices (2 cores per chip) for a chip-level topology."""
+  chip_coords = itertools.product(*(range(d) for d in topology))
+  return [
+      _MockTpuDevice(
+          id=2 * chip + core,
+          core_on_chip=core,
+          coords=coords,
+          slice_index=slice_index,
+      )
+      for chip, coords in enumerate(chip_coords)
+      for core in cores
+  ]
 
 
 class CollectivesBenchmarkTest(parameterized.TestCase):
@@ -659,6 +711,119 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
     )
 
+  def _make_all_to_all_ici_benchmark(
+      self,
+      replica_group: list[_MockTpuDevice],
+      topology_devices: list[Any],
+      hardware_spec: system.HardwareSpec = system.TPU7X_HARDWARE_SPEC,
+  ) -> collectives.AllToAllBenchmark:
+    """Returns an AllToAllBenchmark with mocked replica group and topology."""
+    a2a_bm = collectives.AllToAllBenchmark(
+        config=collectives.CollectivesParams(matrix_dim=64),
+        hardware_spec=hardware_spec,
+        mesh=self.mock_mesh,
+    )
+    a2a_bm._get_first_replica_group_devices = lambda: replica_group  # pylint: disable=protected-access
+    a2a_bm._get_topology_devices = lambda: topology_devices  # pylint: disable=protected-access
+    return a2a_bm
+
+  def test_all_to_all_roofline_mode_is_network_ici(self):
+    self.assertEqual(
+        collectives.AllToAllBenchmark.roofline_mode,
+        constants.RooflineMode.NETWORK_ICI,
+    )
+
+  @parameterized.named_parameters(
+      ("non_parallel_2x2x1", (2, 2, 1), (2, 2, 1), (0, 1), 150.0),
+      ("parallel_2x2x1", (2, 2, 1), (2, 2, 1), (0,), 150.0),
+      ("non_parallel_4x4x4", (4, 4, 4), (4, 4, 4), (0, 1), 196.875),
+      # Replica group spans a subset of the ICI topology (a 4x4 plane).
+      ("parallel_4x4_in_4x4x4", (4, 4, 1), (4, 4, 4), (0,), 187.5),
+  )
+  def test_all_to_all_peak_ici_bandwidth(
+      self, group_topology, topology, group_cores, expected_peak
+  ):
+    """Verify the ICI peak is modeled from mocked TPU7x devices."""
+    a2a_bm = self._make_all_to_all_ici_benchmark(
+        replica_group=_mock_tpu7x_devices(group_topology, cores=group_cores),
+        topology_devices=_mock_tpu7x_devices(topology),
+    )
+    with self.assertNoLogs(level="WARNING"):
+      peak = a2a_bm.get_peak_ici_bandwidth_per_chip()
+    self.assertAlmostEqual(peak, expected_peak)
+
+  def test_all_to_all_apply_roofline_analysis_emits_ici_efficiency(self):
+    a2a_bm = self._make_all_to_all_ici_benchmark(
+        replica_group=_mock_tpu7x_devices((2, 2, 1)),
+        topology_devices=_mock_tpu7x_devices((2, 2, 1)),
+    )
+    metrics = a2a_bm.apply_roofline_analysis(
+        {"wall_clock_bandwidth_per_chip_gb_s": 75.0}
+    )
+    self.assertAlmostEqual(metrics["peak_ici_bandwidth_per_chip_gb_s"], 150.0)
+    self.assertAlmostEqual(
+        metrics["wall_clock_ici_roofline_efficiency_pct"], 50.0
+    )
+
+  def test_all_to_all_ici_skipped_without_device_coords(self):
+    """CPU devices have no physical coordinates, so no ICI peak is modeled."""
+    a2a_bm = self._make_all_to_all_ici_benchmark(
+        replica_group=[_MockTpuDevice(id=0, core_on_chip=0)],
+        topology_devices=list(jax.devices()),
+    )
+    with self.assertLogs(level="WARNING") as logs:
+      self.assertIsNone(a2a_bm.get_peak_ici_bandwidth_per_chip())
+    self.assertIn("no physical chip coordinates", logs.output[0])
+    metrics = a2a_bm.apply_roofline_analysis(
+        {"wall_clock_bandwidth_per_chip_gb_s": 75.0}
+    )
+    self.assertNotIn("peak_ici_bandwidth_per_chip_gb_s", metrics)
+    self.assertNotIn("wall_clock_ici_roofline_efficiency_pct", metrics)
+
+  def test_all_to_all_ici_skipped_without_ici_spec(self):
+    a2a_bm = self._make_all_to_all_ici_benchmark(
+        replica_group=_mock_tpu7x_devices((2, 2, 1)),
+        topology_devices=_mock_tpu7x_devices((2, 2, 1)),
+        hardware_spec=dataclasses.replace(
+            system.TPU7X_HARDWARE_SPEC, ici=None
+        ),
+    )
+    with self.assertLogs(level="WARNING") as logs:
+      self.assertIsNone(a2a_bm.get_peak_ici_bandwidth_per_chip())
+    self.assertIn("no ICI spec", logs.output[0])
+
+  def test_all_to_all_ici_skipped_for_multi_slice(self):
+    slice_0 = _mock_tpu7x_devices((2, 2, 1), slice_index=0)
+    slice_1 = _mock_tpu7x_devices((2, 2, 1), slice_index=1)
+    a2a_bm = self._make_all_to_all_ici_benchmark(
+        replica_group=slice_0 + slice_1,
+        topology_devices=slice_0 + slice_1,
+    )
+    with self.assertLogs(level="WARNING") as logs:
+      self.assertIsNone(a2a_bm.get_peak_ici_bandwidth_per_chip())
+    self.assertIn("multi-slice", logs.output[0])
+
+  def test_all_to_all_ici_skipped_for_single_chip_group(self):
+    topology_devices = _mock_tpu7x_devices((2, 2, 1))
+    a2a_bm = self._make_all_to_all_ici_benchmark(
+        replica_group=topology_devices[:2],  # Both cores of chip (0, 0, 0).
+        topology_devices=topology_devices,
+    )
+    with self.assertLogs(level="WARNING") as logs:
+      self.assertIsNone(a2a_bm.get_peak_ici_bandwidth_per_chip())
+    self.assertIn("single chip", logs.output[0])
+
+  def test_all_to_all_ici_skipped_for_scattered_group(self):
+    topology_devices = _mock_tpu7x_devices((4, 1, 1), cores=(0,))
+    a2a_bm = self._make_all_to_all_ici_benchmark(
+        # Chips at x=0 and x=2 only.
+        replica_group=[topology_devices[0], topology_devices[2]],
+        topology_devices=topology_devices,
+    )
+    with self.assertLogs(level="WARNING") as logs:
+      self.assertIsNone(a2a_bm.get_peak_ici_bandwidth_per_chip())
+    self.assertIn("do not form a contiguous 3x1x1 box", logs.output[0])
+
   def test_replica_groups_ignores_hlo_dump_and_uses_mesh_devices(self):
     """Verify replica groups are derived from mesh.devices instead of HLO dumps."""
     devices = np.array(jax.devices()).reshape((2, 2))
@@ -838,6 +1003,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
             "wall_clock_bandwidth_per_chip_gb_s": 350.123,
             "xprof_bandwidth_per_chip_gb_s": 360.000,
             "xprof_p50_ms": 0.04812,
+            "peak_ici_bandwidth_per_chip_gb_s": 400.0,
+            "wall_clock_ici_roofline_efficiency_pct": 87.53075,
+            "xprof_ici_roofline_efficiency_pct": 90.0,
         },
         raw_times_ms=[1.0],
     )
@@ -852,6 +1020,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         "wall_clock_bandwidth_per_chip_gb_s",
         "xprof_p50_ms",
         "xprof_bandwidth_per_chip_gb_s",
+        "peak_ici_bandwidth_per_chip_gb_s",
+        "wall_clock_ici_roofline_efficiency_pct",
+        "xprof_ici_roofline_efficiency_pct",
     ]
     schema_a2a_cols = [
         col for col, _ in collectives.AllToAllBenchmark.REPORT_SCHEMA
@@ -876,6 +1047,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertIn("360.00", table_a2a)
     self.assertIn("0.0520", table_a2a)
     self.assertIn("0.0481", table_a2a)
+    self.assertIn("400.00", table_a2a)
+    self.assertIn("87.53", table_a2a)
+    self.assertIn("90.00", table_a2a)
 
   def test_all_reduce_schema_coverage(self):
     """Verify AllReduceBenchmark REPORT_SCHEMA matches output keys."""
@@ -1305,6 +1479,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
               "wall_clock_bandwidth_per_chip_gb_s",
               "xprof_p50_ms",
               "xprof_bandwidth_per_chip_gb_s",
+              "peak_ici_bandwidth_per_chip_gb_s",
+              "wall_clock_ici_roofline_efficiency_pct",
+              "xprof_ici_roofline_efficiency_pct",
           ],
       ),
       (
@@ -1489,6 +1666,132 @@ class CollectivesParamsValidationTest(parameterized.TestCase):
         normalized_help,
         f"Displayed default '{default_op}' missing from help: {help_msg}",
     )
+
+
+class AllToAllPeakBandwidthTest(parameterized.TestCase):
+
+  @parameterized.named_parameters(
+      # Replica group spans the full ICI topology.
+      # M = 2 (wrap) * 4*4 = 32: 4*100*32*63/64^2.
+      ("tpu7x_4x4x4_parallel", 64, 1, (4, 4, 4), (4, 4, 4), _ALL_DIMS_GE_4,
+       196.875),
+      ("tpu7x_4x4x4_non_parallel", 128, 2, (4, 4, 4), (4, 4, 4),
+       _ALL_DIMS_GE_4, 196.875),
+      # M = 2 * 8*8 = 128.
+      ("tpu7x_8x8x8_parallel", 512, 1, (8, 8, 8), (8, 8, 8), _ALL_DIMS_GE_4,
+       99.8046875),
+      # No wrap (2 < 4); cut across a 4-axis: M = 2*4 = 8 (two smaller dims).
+      ("tpu7x_2x4x4_parallel", 32, 1, (2, 4, 4), (2, 4, 4), _ALL_DIMS_GE_4,
+       96.875),
+      # M = 2.
+      ("tpu7x_2x2x1_parallel", 4, 1, (2, 2, 1), (2, 2, 1), _ALL_DIMS_GE_4,
+       150.0),
+      ("tpu7x_2x2x1_non_parallel", 8, 2, (2, 2, 1), (2, 2, 1),
+       _ALL_DIMS_GE_4, 150.0),
+      # v6e: no wrap below 16; M = 4.
+      ("v6e_4x4", 16, 1, (4, 4, 1), (4, 4, 1), _PER_DIM_GE_16, 93.75),
+      # Both axes wrap: M = 2 * 16 = 32.
+      ("v6e_16x16", 256, 1, (16, 16, 1), (16, 16, 1), _PER_DIM_GE_16,
+       49.8046875),
+      # Only the 16-axis wraps: cut across it gives M = 2 * 8 = 16, and the
+      # cut across the 8-axis gives 1 * 16 = 16.
+      ("v6e_16x8", 128, 1, (16, 8, 1), (16, 8, 1), _PER_DIM_GE_16,
+       49.609375),
+      # No wrap-around rule: M = 16.
+      ("no_wrap_4x4x4", 64, 1, (4, 4, 4), (4, 4, 4), _NO_WRAP, 98.4375),
+      # Replica group spans a subset of the ICI topology.
+      # 4x4 plane of a 4x4x4 cube: spans x and y fully, M = 2 * 4 = 8.
+      ("tpu7x_4x4_in_4x4x4", 16, 1, (4, 4, 1), (4, 4, 4), _ALL_DIMS_GE_4,
+       187.5),
+      # 4-chip ring along x of a 4x4x4 cube: M = 2 * 1 = 2.
+      ("tpu7x_4x1x1_in_4x4x4", 4, 1, (4, 1, 1), (4, 4, 4), _ALL_DIMS_GE_4,
+       150.0),
+      # x is not fully spanned (no wrap): x cut 1*16 = 16; y/z cuts 2*(2*4)
+      # = 16; M = 16.
+      ("tpu7x_2x4x4_in_4x4x4", 32, 1, (2, 4, 4), (4, 4, 4), _ALL_DIMS_GE_4,
+       193.75),
+      # Topology without wrap-around: M = 4.
+      ("tpu7x_4x4_in_4x4x1", 16, 1, (4, 4, 1), (4, 4, 1), _ALL_DIMS_GE_4,
+       93.75),
+  )
+  def test_peak_bandwidth(
+      self, rank, k, group_dims, topology_dims, rule, expected
+  ):
+    self.assertAlmostEqual(
+        _peak(rank, k, group_dims, topology_dims, rule), expected
+    )
+
+  @parameterized.parameters(
+      ((2, 2, 1),), ((2, 4, 4),), ((4, 4, 4),), ((8, 8, 8),)
+  )
+  def test_parallel_and_non_parallel_peaks_match(self, dims):
+    """The same chips move the same bytes over the same links."""
+    chips = math.prod(dims)
+    parallel = _peak(chips, 1, dims, dims, _ALL_DIMS_GE_4)
+    non_parallel = _peak(2 * chips, 2, dims, dims, _ALL_DIMS_GE_4)
+    self.assertAlmostEqual(parallel, non_parallel)
+
+  def test_duplicate_chip_coords_are_deduplicated(self):
+    """Both cores of a chip share coordinates and count as one chip."""
+    coords = _box_coords((2, 2, 1))
+    peak = collectives.all_to_all_peak_bandwidth_per_chip_gb_s(
+        replica_group_rank=8,
+        devices_per_chip_in_replica_group=2,
+        replica_group_chip_coords=coords + coords,
+        topology_dims=(2, 2, 1),
+        link_bw_per_direction_gb_s=_LINK_BW,
+        wraparound_rule=_ALL_DIMS_GE_4,
+    )
+    self.assertAlmostEqual(peak, 150.0)
+
+  def test_single_chip_raises(self):
+    with self.assertRaisesRegex(ValueError, "single chip"):
+      collectives.all_to_all_peak_bandwidth_per_chip_gb_s(
+          replica_group_rank=2,
+          devices_per_chip_in_replica_group=2,
+          replica_group_chip_coords=[(0, 0, 0), (0, 0, 0)],
+          topology_dims=(2, 2, 1),
+          link_bw_per_direction_gb_s=_LINK_BW,
+          wraparound_rule=_ALL_DIMS_GE_4,
+      )
+
+  def test_scattered_replica_group_raises(self):
+    with self.assertRaisesRegex(
+        ValueError, "2 chips do not form a contiguous 3x1x1 box"
+    ):
+      collectives.all_to_all_peak_bandwidth_per_chip_gb_s(
+          replica_group_rank=2,
+          devices_per_chip_in_replica_group=1,
+          replica_group_chip_coords=[(0, 0, 0), (2, 0, 0)],
+          topology_dims=(4, 2, 1),
+          link_bw_per_direction_gb_s=_LINK_BW,
+          wraparound_rule=_ALL_DIMS_GE_4,
+      )
+
+  def test_empty_replica_group_raises(self):
+    with self.assertRaisesRegex(ValueError, "no chip coordinates"):
+      collectives.all_to_all_peak_bandwidth_per_chip_gb_s(
+          replica_group_rank=0,
+          devices_per_chip_in_replica_group=1,
+          replica_group_chip_coords=[],
+          topology_dims=(2, 2, 1),
+          link_bw_per_direction_gb_s=_LINK_BW,
+          wraparound_rule=_ALL_DIMS_GE_4,
+      )
+
+  def test_asymmetric_replica_group_raises(self):
+    """Both cores of one chip plus one core of the other 3 chips (R=5)."""
+    with self.assertRaisesRegex(
+        ValueError, "5 devices, not 4 chips x 2 devices per chip"
+    ):
+      collectives.all_to_all_peak_bandwidth_per_chip_gb_s(
+          replica_group_rank=5,
+          devices_per_chip_in_replica_group=2,
+          replica_group_chip_coords=[(0, 0, 0)] + _box_coords((2, 2, 1)),
+          topology_dims=(2, 2, 1),
+          link_bw_per_direction_gb_s=_LINK_BW,
+          wraparound_rule=_ALL_DIMS_GE_4,
+      )
 
 
 if __name__ == "__main__":

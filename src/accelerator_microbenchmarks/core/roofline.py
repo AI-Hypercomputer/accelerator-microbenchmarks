@@ -24,6 +24,8 @@ def apply_roofline_analysis(
       limit_per_chip)`
     Therefore, `<domain>_compute_roofline_efficiency_pct` and
     `<domain>_memory_roofline_efficiency_pct` apply invariantly to both scopes.
+    `<domain>_ici_roofline_efficiency_pct` is defined per chip only, since ICI
+    collectives report exclusively `*_bandwidth_per_chip_gb_s`.
 
   Args:
     benchmark_instance: The benchmark instance being analyzed.
@@ -102,6 +104,19 @@ def apply_roofline_analysis(
           metrics[f"{prefix}_compute_roofline_efficiency_pct"] = (
               actual_tflops / roofline_tflops
           ) * 100.0
+    return metrics
+
+  if mode == constants.RooflineMode.NETWORK_ICI:
+    peak_bw = benchmark_instance.get_peak_ici_bandwidth_per_chip()
+    if peak_bw is None or peak_bw <= 0:
+      return metrics
+    metrics["peak_ici_bandwidth_per_chip_gb_s"] = peak_bw
+    for prefix in constants.TimingDomain:
+      actual_bw = metrics.get(f"{prefix}_bandwidth_per_chip_gb_s")
+      if actual_bw is not None and actual_bw >= 0:
+        metrics[f"{prefix}_ici_roofline_efficiency_pct"] = (
+            actual_bw / peak_bw
+        ) * 100.0
     return metrics
 
   return metrics

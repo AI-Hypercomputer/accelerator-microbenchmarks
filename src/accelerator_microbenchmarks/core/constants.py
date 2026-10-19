@@ -29,11 +29,18 @@ class RooflineMode(str, enum.Enum):
       sizes will report lower efficiency by construction due to fixed launch
       latency and bandwidth ramp; this is expected behavior rather than a
       performance regression.
+    NETWORK_ICI: ICI-bound roofline analysis comparing the measured
+      collective bus bandwidth per chip against a collective-specific
+      theoretical ICI peak supplied by the benchmark (currently only
+      `all_to_all`, whose peak is bounded by bisection bandwidth). Emits
+      `peak_ici_bandwidth_per_chip_gb_s` and
+      `<domain>_ici_roofline_efficiency_pct`.
   """
 
   NONE = "none"
   COMPUTE = "compute"
   MEMORY_HBM = "memory_hbm"
+  NETWORK_ICI = "network_ici"
 
 
 class TimingDomain(enum.StrEnum):

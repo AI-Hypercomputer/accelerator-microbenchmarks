@@ -314,5 +314,26 @@ class PlatformTest(absltest.TestCase):
     )
 
 
+class BoundingBoxDimsTest(absltest.TestCase):
+
+  def test_box_at_origin(self):
+    self.assertEqual(
+        platform.bounding_box_dims([(0, 0, 0), (1, 1, 0)]), (2, 2, 1)
+    )
+
+  def test_box_with_offset(self):
+    self.assertEqual(
+        platform.bounding_box_dims([(2, 0, 0), (3, 1, 0)]), (2, 2, 1)
+    )
+
+  def test_empty_coords_raises(self):
+    with self.assertRaisesRegex(ValueError, "no chip coordinates"):
+      platform.bounding_box_dims([])
+
+  def test_mixed_axis_counts_raises(self):
+    with self.assertRaisesRegex(ValueError, "different numbers of axes"):
+      platform.bounding_box_dims([(0, 0, 0), (1, 1)])
+
+
 if __name__ == "__main__":
   absltest.main()

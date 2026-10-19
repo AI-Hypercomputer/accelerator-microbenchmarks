@@ -80,6 +80,11 @@ DEFAULT_EXTRA_AVAILABLE_KEYS: frozenset[str] = frozenset({
     "xprof_bandwidth_per_host_gbps",
     "wall_clock_tflops_per_chip",
     "wall_clock_bandwidth_per_chip_gb_s",
+    # Added by apply_roofline_analysis (RooflineMode.NETWORK_ICI) after
+    # calculate_metrics.
+    "peak_ici_bandwidth_per_chip_gb_s",
+    "wall_clock_ici_roofline_efficiency_pct",
+    "xprof_ici_roofline_efficiency_pct",
 })
 
 

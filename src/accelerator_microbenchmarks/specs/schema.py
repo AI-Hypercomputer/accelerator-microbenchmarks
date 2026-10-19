@@ -68,12 +68,36 @@ class TflopsSpec:
   peak_tflops_per_device: dict[str, float | None]
 
 
+class WraparoundRule(str, enum.Enum):
+  """Rule deciding which ICI topology axes have wrap-around (torus) links.
+
+  Attributes:
+    NONE: No wrap-around links on any axis.
+    ALL_DIMS_GE_4: 3D torus; every axis wraps iff all topology dims are >= 4
+      (e.g. 4x4x4, 8x8x8). Topologies such as 2x4x4 or 4x4x1 have no wrap.
+    PER_DIM_GE_16: 2D; an axis wraps iff its topology dim is >= 16 (e.g.
+      16x16, or only the 16-axis of 16x8).
+  """
+
+  NONE = "none"
+  ALL_DIMS_GE_4 = "all_dims_ge_4"
+  PER_DIM_GE_16 = "per_dim_ge_16"
+
+
 @dataclasses.dataclass(frozen=True)
 class IciSpec:
-  """Inter-Chip Interconnect specifications (per-chip)."""
+  """Inter-Chip Interconnect specification (theoretical line rate).
 
-  unidirectional_link_bw_gb_s: float
-  bidirectional: bool = True
+  Attributes:
+    link_bw_per_direction_gb_s: Theoretical bandwidth of a single ICI link
+      (port) in one direction, in decimal GB/s. Links are full-duplex, so each
+      direction carries this bandwidth independently.
+    wraparound_rule: Which topology axes have wrap-around links; doubles the
+      bisection links on wrapped axes.
+  """
+
+  link_bw_per_direction_gb_s: float
+  wraparound_rule: WraparoundRule = WraparoundRule.NONE
 
 
 @dataclasses.dataclass(frozen=True)

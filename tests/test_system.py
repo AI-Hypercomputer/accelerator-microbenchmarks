@@ -189,8 +189,10 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(hw_spec.tflops.peak_tflops_per_device["int8"], 1153.5)
 
     # Test ICI stats
-    self.assertEqual(hw_spec.ici.unidirectional_link_bw_gb_s, 1200.0)
-    self.assertTrue(hw_spec.ici.bidirectional)
+    self.assertEqual(hw_spec.ici.link_bw_per_direction_gb_s, 100.0)
+    self.assertEqual(
+        hw_spec.ici.wraparound_rule, system.WraparoundRule.ALL_DIMS_GE_4
+    )
 
     # Test HBM stats
     self.assertEqual(hw_spec.hbm.peak_bw_gb_s, 7380.0)
@@ -218,8 +220,10 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(hw_spec.tflops.peak_tflops_per_device["int4"], 3672.0)
 
     # Test ICI stats
-    self.assertEqual(hw_spec.ici.unidirectional_link_bw_gb_s, 800.0)
-    self.assertTrue(hw_spec.ici.bidirectional)
+    self.assertEqual(hw_spec.ici.link_bw_per_direction_gb_s, 100.0)
+    self.assertEqual(
+        hw_spec.ici.wraparound_rule, system.WraparoundRule.PER_DIM_GE_16
+    )
 
     # Test HBM stats
     self.assertEqual(hw_spec.hbm.peak_bw_gb_s, 1638.4)

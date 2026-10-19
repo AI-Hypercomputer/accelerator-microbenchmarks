@@ -422,6 +422,42 @@ class RooflineTest(absltest.TestCase):
     with self.assertRaises(KeyError):
       roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
 
+  def test_apply_roofline_analysis_network_ici_mode(self):
+    """Verify NETWORK_ICI emits peak and per-domain ICI efficiency."""
+    self.mock_benchmark.roofline_mode = constants.RooflineMode.NETWORK_ICI
+    self.mock_benchmark.get_peak_ici_bandwidth_per_chip.return_value = 200.0
+    metrics = {
+        "wall_clock_bandwidth_per_chip_gb_s": 100.0,
+        "xprof_bandwidth_per_chip_gb_s": 150.0,
+    }
+    res = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+    self.assertEqual(res["peak_ici_bandwidth_per_chip_gb_s"], 200.0)
+    self.assertAlmostEqual(res["wall_clock_ici_roofline_efficiency_pct"], 50.0)
+    self.assertAlmostEqual(res["xprof_ici_roofline_efficiency_pct"], 75.0)
+    self.assertNotIn("intensity", res)
+    self.assertNotIn("wall_clock_compute_roofline_efficiency_pct", res)
+    self.assertNotIn("wall_clock_memory_roofline_efficiency_pct", res)
+
+  def test_apply_roofline_analysis_network_ici_skips_missing_domain(self):
+    """Verify ICI efficiency is only emitted for domains with a bandwidth."""
+    self.mock_benchmark.roofline_mode = constants.RooflineMode.NETWORK_ICI
+    self.mock_benchmark.get_peak_ici_bandwidth_per_chip.return_value = 200.0
+    metrics = {
+        "wall_clock_bandwidth_per_chip_gb_s": 100.0,
+        "xprof_bandwidth_per_chip_gb_s": None,
+    }
+    res = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+    self.assertIn("wall_clock_ici_roofline_efficiency_pct", res)
+    self.assertNotIn("xprof_ici_roofline_efficiency_pct", res)
+
+  def test_apply_roofline_analysis_network_ici_no_peak(self):
+    """Verify no ICI keys are added when the benchmark has no modeled peak."""
+    self.mock_benchmark.roofline_mode = constants.RooflineMode.NETWORK_ICI
+    self.mock_benchmark.get_peak_ici_bandwidth_per_chip.return_value = None
+    metrics = {"wall_clock_bandwidth_per_chip_gb_s": 100.0}
+    res = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+    self.assertEqual(res, {"wall_clock_bandwidth_per_chip_gb_s": 100.0})
+
 
 if __name__ == "__main__":
   absltest.main()

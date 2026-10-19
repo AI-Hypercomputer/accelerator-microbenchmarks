@@ -18,8 +18,8 @@ TPU7X_HARDWARE_SPEC = schema.HardwareSpec(
         }
     ),
     ici=schema.IciSpec(
-        unidirectional_link_bw_gb_s=1200.0,
-        bidirectional=True,
+        link_bw_per_direction_gb_s=100.0,
+        wraparound_rule=schema.WraparoundRule.ALL_DIMS_GE_4,
     ),
     hbm=schema.HbmSpec(peak_bw_gb_s=7380.0),
 )

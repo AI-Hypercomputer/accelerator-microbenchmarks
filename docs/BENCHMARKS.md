@@ -380,6 +380,9 @@ single-device chips):
 
 - **Collective Bus Bandwidth**:
   - `{wall_clock|xprof}_bandwidth_per_chip_gb_s` — Effective external ICI collective bus bandwidth per physical TPU chip (`GB/s`).
+- **ICI Roofline (`all_to_all` only)**:
+  - `peak_ici_bandwidth_per_chip_gb_s` — Theoretical peak all-to-all bus bandwidth per chip (`GB/s`).
+  - `{wall_clock|xprof}_ici_roofline_efficiency_pct` — Achieved bus bandwidth as a percentage of `peak_ici_bandwidth_per_chip_gb_s` (`%`).
 - **Latency (`ms`)**:
   - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
 - **Benchmark Attributes**:

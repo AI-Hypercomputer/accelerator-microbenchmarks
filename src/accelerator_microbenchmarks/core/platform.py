@@ -56,6 +56,29 @@ def _get_package_version(module_name: str, *fallback_pkg_names: str) -> str:
   return "unknown"
 
 
+def bounding_box_dims(coords: Sequence[Sequence[int]]) -> tuple[int, ...]:
+  """Returns the per-axis extent (max - min + 1) of chip coordinates.
+
+  Args:
+    coords: Non-empty sequence of equal-length chip coordinates.
+
+  Returns:
+    The extent of the coordinates' bounding box on each axis.
+
+  Raises:
+    ValueError: If `coords` is empty or its coordinates differ in length.
+  """
+  if not coords:
+    raise ValueError("no chip coordinates to bound")
+  num_axes = len(coords[0])
+  if any(len(c) != num_axes for c in coords):
+    raise ValueError("chip coordinates have different numbers of axes")
+  return tuple(
+      max(c[axis] for c in coords) - min(c[axis] for c in coords) + 1
+      for axis in range(num_axes)
+  )
+
+
 def _get_topology(
     devices: Sequence[jax.Device],
     topology_dimension: int = 3,
@@ -75,10 +98,7 @@ def _get_topology(
     # of device coordinates: span = max(c[i]) - min(c[i]) + 1.
     # Example: For a 2x4 slice where x in [0, 1] and y in [0, 3],
     # axis 0 span is 1 - 0 + 1 = 2, axis 1 span is 3 - 0 + 1 = 4 -> [2, 4].
-    dims = [
-        max(c[i] for c in coords_list) - min(c[i] for c in coords_list) + 1
-        for i in range(coord_dim)
-    ]
+    dims = list(bounding_box_dims(coords_list))
 
     # Truncate trailing trivial dimension(s) when the physical architecture
     # dimension (topology_dimension) is lower than the coordinate tuple length.

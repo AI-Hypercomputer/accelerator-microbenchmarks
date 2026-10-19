@@ -226,7 +226,19 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     """Return operational intensity (FLOPs/Byte) for roofline analysis."""
     raise NotImplementedError(
         f"{self.__class__.__name__} must implement get_arithmetic_intensity() "
-        "when roofline_mode != RooflineMode.NONE."
+        "when roofline_mode is COMPUTE or MEMORY_HBM."
+    )
+
+  def get_peak_ici_bandwidth_per_chip(self) -> float | None:
+    """Return the theoretical peak ICI bus bandwidth per chip (GB/s).
+
+    Required when roofline_mode == RooflineMode.NETWORK_ICI. Returns None
+    when the peak cannot be modeled for the current configuration.
+    """
+    raise NotImplementedError(
+        f"{self.__class__.__name__} must implement"
+        " get_peak_ici_bandwidth_per_chip() when roofline_mode =="
+        " RooflineMode.NETWORK_ICI."
     )
 
   @abc.abstractmethod
@@ -237,7 +249,10 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     """Derive static workload metadata, host wall-clock latency statistics, and domain throughput metrics."""
     metrics = self.get_workload_metadata()
-    if self.roofline_mode != constants.RooflineMode.NONE:
+    if self.roofline_mode in (
+        constants.RooflineMode.COMPUTE,
+        constants.RooflineMode.MEMORY_HBM,
+    ):
       metrics["intensity"] = self.get_arithmetic_intensity()
     latency_stats = self.calculate_latency_stats(
         times_ms, prefix=constants.TimingDomain.WALL_CLOCK
