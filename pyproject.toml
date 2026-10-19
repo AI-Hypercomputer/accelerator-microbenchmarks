@@ -14,9 +14,9 @@ dependencies = [
     "jaxlib==0.11.1",
     "numpy",
     "pandas",
+    "protobuf",
     "pyyaml",
     "simple_parsing",
-    "tensorflow",
     "tpu-sync-jax==0.0.1.dev20261015075725",
 ]
 

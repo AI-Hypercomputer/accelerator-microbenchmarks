@@ -4,12 +4,71 @@ import collections
 from collections.abc import Callable, Iterable, Mapping
 import os
 import re
+import types
 from typing import Any
 
 from accelerator_microbenchmarks.core import constants
+from google.protobuf import descriptor_pool
+from google.protobuf import message_factory
 
 import os
-from tensorflow.tsl.profiler.protobuf import xplane_pb2  # pylint: disable=g-direct-tensorflow-import
+
+_XPLANE_SERIALIZED_PB = (
+    b'\n-tensorflow/tsl/profiler/protobuf/xplane.proto\x12\x13tensorflow.profiler"j\n\x06XSpace\x12+\n\x06planes\x18\x01'
+    b" \x03(\x0b2\x1b.tensorflow.profiler.XPlane\x12\x0e\n\x06errors\x18\x02"
+    b" \x03(\t\x12\x10\n\x08warnings\x18\x03"
+    b" \x03(\t\x12\x11\n\thostnames\x18\x04"
+    b' \x03(\t"\xba\x03\n\x06XPlane\x12\n\n\x02id\x18\x01'
+    b" \x01(\x03\x12\x0c\n\x04name\x18\x02 \x01(\t\x12)\n\x05lines\x18\x03"
+    b" \x03(\x0b2\x1a.tensorflow.profiler.XLine\x12F\n\x0eevent_metadata\x18\x04"
+    b" \x03(\x0b2..tensorflow.profiler.XPlane.EventMetadataEntry\x12D\n\rstat_metadata\x18\x05"
+    b" \x03(\x0b2-.tensorflow.profiler.XPlane.StatMetadataEntry\x12)\n\x05stats\x18\x06"
+    b" \x03(\x0b2\x1a.tensorflow.profiler.XStat\x1aY\n\x12EventMetadataEntry\x12\x0b\n\x03key\x18\x01"
+    b" \x01(\x03\x122\n\x05value\x18\x02"
+    b" \x01(\x0b2#.tensorflow.profiler.XEventMetadata:\x028\x01\x1aW\n\x11StatMetadataEntry\x12\x0b\n\x03key\x18\x01"
+    b" \x01(\x03\x121\n\x05value\x18\x02"
+    b' \x01(\x0b2".tensorflow.profiler.XStatMetadata:\x028\x01"\xbb\x01\n\x05XLine\x12\n\n\x02id\x18\x01'
+    b" \x01(\x03\x12\x12\n\ndisplay_id\x18\n"
+    b" \x01(\x03\x12\x0c\n\x04name\x18\x02"
+    b" \x01(\t\x12\x14\n\x0cdisplay_name\x18\x0b"
+    b" \x01(\t\x12\x14\n\x0ctimestamp_ns\x18\x03"
+    b" \x01(\x03\x12\x13\n\x0bduration_ps\x18\t"
+    b" \x01(\x03\x12+\n\x06events\x18\x04"
+    b' \x03(\x0b2\x1b.tensorflow.profiler.XEventJ\x04\x08\x05\x10\x06J\x04\x08\x06\x10\x07J\x04\x08\x07\x10\x08J\x04\x08\x08\x10\t"\x95\x01\n\x06XEvent\x12\x13\n\x0bmetadata_id\x18\x01'
+    b" \x01(\x03\x12\x13\n\toffset_ps\x18\x02"
+    b" \x01(\x03H\x00\x12\x19\n\x0fnum_occurrences\x18\x05"
+    b" \x01(\x03H\x00\x12\x13\n\x0bduration_ps\x18\x03"
+    b" \x01(\x03\x12)\n\x05stats\x18\x04"
+    b' \x03(\x0b2\x1a.tensorflow.profiler.XStatB\x06\n\x04data"\xad\x01\n\x05XStat\x12\x13\n\x0bmetadata_id\x18\x01'
+    b" \x01(\x03\x12\x16\n\x0cdouble_value\x18\x02"
+    b" \x01(\x01H\x00\x12\x16\n\x0cuint64_value\x18\x03"
+    b" \x01(\x04H\x00\x12\x15\n\x0bint64_value\x18\x04"
+    b" \x01(\x03H\x00\x12\x13\n\tstr_value\x18\x05"
+    b" \x01(\tH\x00\x12\x15\n\x0bbytes_value\x18\x06"
+    b" \x01(\x0cH\x00\x12\x13\n\tref_value\x18\x07"
+    b' \x01(\x04H\x00B\x07\n\x05value"\x8f\x01\n\x0eXEventMetadata\x12\n\n\x02id\x18\x01'
+    b" \x01(\x03\x12\x0c\n\x04name\x18\x02"
+    b" \x01(\t\x12\x14\n\x0cdisplay_name\x18\x04"
+    b" \x01(\t\x12\x10\n\x08metadata\x18\x03 \x01(\x0c\x12)\n\x05stats\x18\x05"
+    b" \x03(\x0b2\x1a.tensorflow.profiler.XStat\x12\x10\n\x08child_id\x18\x06"
+    b' \x03(\x03">\n\rXStatMetadata\x12\n\n\x02id\x18\x01'
+    b" \x01(\x03\x12\x0c\n\x04name\x18\x02"
+    b" \x01(\t\x12\x13\n\x0bdescription\x18\x03"
+    b" \x01(\tB\x03\xf8\x01\x01b\x06proto3"
+)
+
+
+def _build_xplane_pb2() -> types.SimpleNamespace:
+  """Builds pure-protobuf XPlane message classes without importing TensorFlow."""
+  pool = descriptor_pool.DescriptorPool()
+  file_desc = pool.AddSerializedFile(_XPLANE_SERIALIZED_PB)
+  return types.SimpleNamespace(**{
+      name: message_factory.GetMessageClass(desc)
+      for name, desc in file_desc.message_types_by_name.items()
+  })
+
+
+xplane_pb2 = _build_xplane_pb2()
 
 _DEVICE_PLANE_RE = re.compile(r"^/device:TPU:\d+$")
 _CORE_ID_SUFFIX_RE = re.compile(r"\s+\d+$")
