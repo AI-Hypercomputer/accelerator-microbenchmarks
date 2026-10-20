@@ -178,7 +178,7 @@ no `n`, `transpose_a`, `transpose_b`, `alpha`, `beta`, or `use_scaling_factors`.
 
 | New Metric | Description |
 | :--- | :--- |
-| `global_checksum_match` | **The check passed iff `True`.** `False` if any two devices disagree; `None` if it cannot be decided (fewer than 2 devices, a missing device, or every device degenerate). |
+| `global_checksum_match` | **The check passed iff `True`.** `False` if any two devices disagree; `None` if it cannot be decided (fewer than 2 devices, a missing device, every device degenerate, or a failed checksum gather). |
 | `intra_host_checksum_match` | Same rule over this host's devices. |
 | `checksum` | Non-degenerate checksum held by more than half of the devices, or `None`. |
 | `diverging_devices` | `[]` unless two devices disagree; then the devices that differ from `checksum`, or every device if `checksum` is `None`. |

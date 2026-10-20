@@ -199,14 +199,18 @@ def read_local_rows(arr: Optional[jax.Array]) -> np.ndarray:
 def _invalid_result(
     device_checksums: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
-  """Returns the result when the gather or comparison failed."""
+  """Returns the result when the gather or comparison failed.
+
+  As in every undecidable case, `diverging_devices` is `[]`; only
+  `global_checksum_match` (None) says the result could not be decided.
+  """
   return {
       CHECKSUM: None,
       ALL_DEVICES_VALID_CHECKSUM: False,
       INTRA_HOST_CHECKSUM_MATCH: None,
       GLOBAL_CHECKSUM_MATCH: None,
       DEVICE_CHECKSUMS: device_checksums or [],
-      DIVERGING_DEVICES: None,
+      DIVERGING_DEVICES: [],
   }
 
 
@@ -335,6 +339,7 @@ def compare_gathered_checksums(
   )
 
   # On a mismatch, every device that differs from the consensus (all if None).
+  # Otherwise [], even if undecidable: only global_match says that.
   consensus = _consensus(reports, len(mesh_devices))
   diverging = [
       {
