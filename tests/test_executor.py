@@ -13,6 +13,7 @@ from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config as config_module
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import executor
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
@@ -564,10 +565,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
       return_value=[1.0],
   )
   @unittest.mock.patch("jax.profiler.trace")
-  def test_profiler_options_isolated_to_execution_control_mixin(
+  def test_profiler_options_base_and_soaking(
       self, mock_trace, mock_parse, mock_upload
   ):
-    """Verifies standard benchmarks omit profiler_options while soaking enables them."""
+    """Verifies trace-reduction options for all benchmarks plus soaking FW keys."""
     del mock_parse, mock_upload
     mock_trace.return_value = contextlib.nullcontext()
 
@@ -598,10 +599,16 @@ class SoakingBenchmarkTest(absltest.TestCase):
     mock_trace.assert_not_called()
     self.assertIsNone(std_exec.xprof_expected_runs)
     std_result = std_bm.run()
-    mock_trace.assert_called_once_with(
-        unittest.mock.ANY, create_perfetto_link=False
+    mock_trace.assert_called_once()
+    std_kwargs = mock_trace.call_args.kwargs
+    self.assertFalse(std_kwargs["create_perfetto_link"])
+    std_opts = std_kwargs["profiler_options"]
+    self.assertEqual(
+        std_opts.advanced_configuration,
+        executor._BASE_PROFILER_ADVANCED_CONFIG,  # pylint: disable=protected-access
     )
-    self.assertNotIn("profiler_options", mock_trace.call_args.kwargs)
+    # The host tracer stays enabled: H2D/D2H time against /host:CPU events.
+    self.assertNotEqual(std_opts.host_tracer_level, 0)
     # The whole standard loop is traced, so expected == actual_runs.
     self.assertEqual(
         std_result.metrics["xprof_expected_runs"],
@@ -621,14 +628,55 @@ class SoakingBenchmarkTest(absltest.TestCase):
     )
     soak_bm.run()
     mock_trace.assert_called()
+    self.assertFalse(mock_trace.call_args.kwargs["create_perfetto_link"])
     opts = mock_trace.call_args.kwargs.get("profiler_options")
     self.assertIsNotNone(opts)
     self.assertEqual(opts.host_tracer_level, 0)
+    # Soaking options are a superset of the base trace-reduction options.
+    self.assertLessEqual(
+        executor._BASE_PROFILER_ADVANCED_CONFIG.items(),  # pylint: disable=protected-access
+        opts.advanced_configuration.items(),
+    )
     self.assertTrue(
         opts.advanced_configuration["tpu_e2e_enable_fw_thermal_event"]
     )
+    self.assertTrue(
+        opts.advanced_configuration["tpu_e2e_enable_fw_power_level_event"]
+    )
+    self.assertTrue(
+        opts.advanced_configuration["tpu_e2e_enable_fw_throttle_event"]
+    )
     self.assertEqual(opts.advanced_configuration["tpu_power_trace_level"], 1)
     self.assertFalse(opts.advanced_configuration["tpu_perf_counters"])
+
+  @unittest.mock.patch("jax.profiler.trace")
+  @unittest.mock.patch(
+      "jax.profiler.ProfileOptions",
+      side_effect=RuntimeError("ProfileOptions unavailable"),
+  )
+  def test_profiler_options_failure_raises(self, mock_options, mock_trace):
+    """Verifies both executors raise instead of tracing with default options."""
+    del mock_options
+    with tempfile.TemporaryDirectory() as tmpdir:
+      xprof_config = base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir)
+      std_bm = DummyBenchmark(
+          config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=1),
+          xprof_config=xprof_config,
+      )
+      soak_bm = SoakingDummyBenchmark(
+          config=SoakingDummyParams(
+              warmup_tries=0, min_duration_s=0.01, samples_per_run=1
+          ),
+          xprof_config=xprof_config,
+      )
+      for bm in (std_bm, soak_bm):
+        with self.subTest(executor=type(bm.executor).__name__):
+          with self.assertRaisesRegex(
+              RuntimeError, "ProfileOptions unavailable"
+          ):
+            bm.executor.execute(bm.generate_inputs(), tmpdir)
+    # A default-options trace would reintroduce run truncation.
+    mock_trace.assert_not_called()
 
 
 if __name__ == "__main__":
