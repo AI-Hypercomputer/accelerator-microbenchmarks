@@ -213,6 +213,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
       # Phase 1 (1) + Phase 2 (>= 1) + Phase 3 (1) >= 3 windows.
       self.assertGreaterEqual(res.metrics["actual_runs"], 6)
       self.assertGreaterEqual(len(res.raw_times_ms), 3)
+      # Worst window has samples_per_run=2 traced iterations but the mocked
+      # trace yields 1 duration, so the truncation is recorded and warned.
+      self.assertEqual(res.metrics["xprof_captured_runs"], 1)
+      self.assertEqual(res.metrics["xprof_expected_runs"], 2)
+      self.assertIn("Warning: XProf captured 1/2 traced runs", buf.getvalue())
 
   def test_soaking_warmup_executes_exact_warmup_tries(self):
     """Verifies SoakingRunExecutor.run_warmup executes exact warmup_tries."""
@@ -308,6 +313,9 @@ class SoakingBenchmarkTest(absltest.TestCase):
         res.metrics["xprof_post_soaking_p50_ms"], 2.5, places=4
     )
     self.assertAlmostEqual(res.metrics["xprof_slowdown_ratio"], 2.5, places=4)
+    # Soaking counts only the worst window: samples_per_run=1, 1 duration.
+    self.assertEqual(res.metrics["xprof_captured_runs"], 1)
+    self.assertEqual(res.metrics["xprof_expected_runs"], cfg.samples_per_run)
 
     # Also verify non-positive synced_p50 passes has_xprof_timings=False.
     with (
@@ -364,9 +372,9 @@ class SoakingBenchmarkTest(absltest.TestCase):
           ),
           unittest.mock.patch("jax.profiler.trace", side_effect=fake_trace),
       ):
-        raw_times, actual_runs = bm.executor.execute(
-            bm.generate_inputs(), tmpdir
-        )
+        exec_result = bm.executor.execute(bm.generate_inputs(), tmpdir)
+    raw_times = exec_result.raw_times_ms
+    actual_runs = exec_result.actual_runs
 
     baseline_enter = events.index("trace_enter:baseline_window")
     baseline_exit = events.index("trace_exit:baseline_window")
@@ -389,6 +397,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
     self.assertGreaterEqual(len(raw_times), 3)
     self.assertLen(bm.executor.soak_wall_ms, len(raw_times) - 2)
     self.assertEqual(raw_times[1:-1], bm.executor.soak_wall_ms)
+    # Only the traced `worst_window` feeds xprof_* stats.
+    self.assertEqual(exec_result.xprof_expected_runs, cfg.samples_per_run)
 
   def test_soak_wall_ms_reflects_device_completion_time(self):
     """Verifies soak chunks are timed to device completion, not async dispatch."""
@@ -415,7 +425,9 @@ class SoakingBenchmarkTest(absltest.TestCase):
               "jax.profiler.trace", return_value=contextlib.nullcontext()
           ),
       ):
-        raw_times, _ = bm.executor.execute(bm.generate_inputs(), tmpdir)
+        raw_times = bm.executor.execute(
+            bm.generate_inputs(), tmpdir
+        ).raw_times_ms
 
     self.assertNotEmpty(bm.executor.soak_wall_ms)
     for soak_ms in bm.executor.soak_wall_ms:
@@ -565,12 +577,15 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=1),
         xprof_config=base.XprofConfig(xprof_timing=False),
     )
-    no_trace_bm.run()
+    no_trace_result = no_trace_bm.run()
     mock_trace.assert_not_called()
-    no_trace_bm.executor.execute(
+    self.assertNotIn("xprof_captured_runs", no_trace_result.metrics)
+    self.assertNotIn("xprof_expected_runs", no_trace_result.metrics)
+    no_trace_exec = no_trace_bm.executor.execute(
         no_trace_bm.generate_inputs(), "/tmp/std_xprof"
     )
     mock_trace.assert_not_called()
+    self.assertIsNone(no_trace_exec.xprof_expected_runs)
 
     # 1. Standard non-mixin benchmark (DummyBenchmark)
     std_bm = DummyBenchmark(
@@ -579,13 +594,20 @@ class SoakingBenchmarkTest(absltest.TestCase):
             xprof_timing=True, xprof_dir="/tmp/std_xprof"
         ),
     )
-    std_bm.executor.execute(std_bm.generate_inputs(), None)
+    std_exec = std_bm.executor.execute(std_bm.generate_inputs(), None)
     mock_trace.assert_not_called()
-    std_bm.run()
+    self.assertIsNone(std_exec.xprof_expected_runs)
+    std_result = std_bm.run()
     mock_trace.assert_called_once_with(
         unittest.mock.ANY, create_perfetto_link=False
     )
     self.assertNotIn("profiler_options", mock_trace.call_args.kwargs)
+    # The whole standard loop is traced, so expected == actual_runs.
+    self.assertEqual(
+        std_result.metrics["xprof_expected_runs"],
+        std_result.metrics["actual_runs"],
+    )
+    self.assertEqual(std_result.metrics["xprof_captured_runs"], 1)
 
     # 2. SoakingExecutionParamsMixin benchmark
     mock_trace.reset_mock()

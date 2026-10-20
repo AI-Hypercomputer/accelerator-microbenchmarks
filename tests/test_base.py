@@ -1,8 +1,11 @@
 """Unit tests for the BaseBenchmark execution loop on CPU."""
 
 import contextlib
+import csv
 import dataclasses
 import enum
+import io
+import json
 import os
 from typing import Any
 import unittest
@@ -10,6 +13,7 @@ import unittest
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
@@ -251,6 +255,9 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIsNotNone(result.metadata.platform_info)
     self.assertEqual(result.metadata.hardware_spec, hw_spec)
     self.assertIsNone(result.metadata.xprof_config)
+    # XProf run counts are omitted entirely when xprof_timing is disabled.
+    self.assertNotIn("xprof_captured_runs", result.metrics)
+    self.assertNotIn("xprof_expected_runs", result.metrics)
 
     # Validate Roofline values are NOT computed by default for NONE mode
     self.assertNotIn("roofline_tflops_limit_per_device", result.metrics)
@@ -436,6 +443,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIsNone(result.metrics["xprof_avg_ms"])
     self.assertIsNone(result.metrics["xprof_p50_ms"])
     self.assertGreater(result.metrics["wall_clock_avg_ms"], 0.0)
+    self.assertEqual(result.metrics["xprof_captured_runs"], 0)
+    self.assertEqual(result.metrics["xprof_expected_runs"], 1)
 
   @unittest.mock.patch("jax.experimental.multihost_utils.broadcast_one_to_all")
   @unittest.mock.patch(
@@ -473,7 +482,7 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_trace.return_value = contextlib.nullcontext()
     mock_upload.return_value = "http://mock_xprof_url"
     mock_broadcast.return_value = jnp.array(
-        [4.2, 4.1, 4.5, 0.1], dtype=jnp.float32
+        [4.2, 4.1, 4.5, 0.1, 1.0], dtype=jnp.float32
     )
 
     params = {
@@ -493,6 +502,9 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_parse_durations.assert_not_called()
     self.assertAlmostEqual(result.metrics["xprof_avg_ms"], 4.2, places=4)
     self.assertAlmostEqual(result.metrics["xprof_p50_ms"], 4.1, places=4)
+    # Captured run count is broadcast from the owner host along with stats
+    # (the non-owner's local count is 0).
+    self.assertEqual(result.metrics["xprof_captured_runs"], 1)
 
   @unittest.mock.patch(
       "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
@@ -539,6 +551,140 @@ class BaseBenchmarkTest(absltest.TestCase):
     # XProf trace for its local device without invoking cross-host metric broadcast.
     mock_parse_durations.assert_called_once()
     self.assertEqual(result.metrics["xprof_avg_ms"], 3.5)
+    self.assertEqual(result.metrics["xprof_captured_runs"], 3)
+    self.assertEqual(result.metrics["xprof_expected_runs"], 3)
+
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @unittest.mock.patch("jax.profiler.trace")
+  def test_xprof_truncation_recorded_and_warned(
+      self, mock_trace, mock_upload, mock_parse_durations
+  ):
+    """Tests captured < expected runs are recorded and a warning is printed."""
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = None
+    mock_parse_durations.return_value = [2.0, 2.0, 2.0]
+
+    config = base.BaseBenchmarkParams(warmup_tries=1, num_runs=10)
+    xprof_config = base.XprofConfig(
+        xprof_timing=True, xprof_dir="/tmp/test_xprof"
+    )
+    bm = DummyBenchmark(config=config, xprof_config=xprof_config)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+      result = bm.run()
+
+    self.assertEqual(result.metrics["actual_runs"], 10)
+    self.assertEqual(result.metrics["xprof_captured_runs"], 3)
+    self.assertEqual(result.metrics["xprof_expected_runs"], 10)
+    self.assertIn("Warning: XProf captured 3/10 traced runs", buf.getvalue())
+
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @unittest.mock.patch("jax.profiler.trace")
+  def test_xprof_zero_captured_runs_not_reported_as_truncation(
+      self, mock_trace, mock_upload
+  ):
+    """Tests parse failures / no events warn as 'no durations', not truncation."""
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = None
+    xprof_config = base.XprofConfig(
+        xprof_timing=True, xprof_dir="/tmp/test_xprof"
+    )
+
+    for case_name, parse_kwargs in (
+        ("parse_exception", {"side_effect": RuntimeError("bad trace")}),
+        ("no_matching_events", {"return_value": []}),
+    ):
+      with self.subTest(case_name):
+        bm = DummyBenchmark(
+            config=base.BaseBenchmarkParams(warmup_tries=1, num_runs=4),
+            xprof_config=xprof_config,
+        )
+        buf = io.StringIO()
+        with (
+            unittest.mock.patch(
+                "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+                **parse_kwargs,
+            ),
+            contextlib.redirect_stdout(buf),
+        ):
+          result = bm.run()
+
+        self.assertEqual(result.metrics["xprof_captured_runs"], 0)
+        self.assertEqual(result.metrics["xprof_expected_runs"], 4)
+        self.assertIsNone(result.metrics["xprof_p50_ms"])
+        self.assertIn(
+            "Warning: No XProf durations parsed for 4 traced runs",
+            buf.getvalue(),
+        )
+        self.assertNotIn("truncated trace", buf.getvalue())
+
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @unittest.mock.patch("jax.profiler.trace")
+  def test_xprof_captured_more_than_expected_raises(
+      self, mock_trace, mock_upload, mock_parse_durations
+  ):
+    """Tests more parsed durations than traced runs raises instead of passing."""
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = None
+    mock_parse_durations.return_value = [2.0] * 5
+
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=1, num_runs=2),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True, xprof_dir="/tmp/test_xprof"
+        ),
+    )
+    with self.assertRaisesRegex(
+        RuntimeError, r"XProf parsed 5 durations for 2 traced runs"
+    ):
+      bm.run()
+
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @unittest.mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @unittest.mock.patch("jax.profiler.trace")
+  def test_xprof_run_counts_saved_to_summary_csv_and_detailed_json(
+      self, mock_trace, mock_upload, mock_parse_durations
+  ):
+    """Tests xprof run counts are exported to summary.csv and detailed.json."""
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = None
+    mock_parse_durations.return_value = [2.0, 2.0]
+
+    config = base.BaseBenchmarkParams(warmup_tries=1, num_runs=4)
+    xprof_config = base.XprofConfig(
+        xprof_timing=True, xprof_dir="/tmp/test_xprof"
+    )
+    result = DummyBenchmark(config=config, xprof_config=xprof_config).run()
+
+    output_dir = self.create_tempdir().full_path
+    report.save_output([result], output_dir=output_dir)
+
+    summary_path = os.path.join(output_dir, "summary.csv")
+    with open(summary_path, newline="") as f:
+      summary_rows = list(csv.DictReader(f))
+    self.assertLen(summary_rows, 1)
+    self.assertEqual(summary_rows[0]["xprof_captured_runs"], "2")
+    self.assertEqual(summary_rows[0]["xprof_expected_runs"], "4")
+    with open(os.path.join(output_dir, "detailed.json")) as f:
+      detailed = json.load(f)
+    self.assertEqual(detailed[0]["metrics"]["xprof_captured_runs"], 2)
+    self.assertEqual(detailed[0]["metrics"]["xprof_expected_runs"], 4)
 
   def test_xprof_config_immutability(self):
     """Verifies that XprofConfig is frozen and immutable."""

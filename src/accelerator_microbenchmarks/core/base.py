@@ -356,10 +356,12 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     # 1. Parse local XProf trace on relevant hosts
     should_parse = not self.requires_multihost_sync or is_owner
     local_avg, local_p50, local_p90, local_std = 0.0, 0.0, 0.0, 0.0
+    local_captured = 0
 
     if should_parse:
       try:
         durations = self.executor.get_xprof_durations(xprof_dir)
+        local_captured = len(durations)
         if durations:
           print(
               f"Using XProf device timings ({len(durations)} runs)"
@@ -384,16 +386,18 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       )
 
     # 2. Optionally broadcast stats across hosts for asymmetric targets (D2D)
-    synced_avg, synced_p50, synced_p90, synced_std = (
+    synced_avg, synced_p50, synced_p90, synced_std, synced_captured = (
         local_avg,
         local_p50,
         local_p90,
         local_std,
+        local_captured,
     )
     if self.requires_multihost_sync:
       try:
         stats = jnp.array(
-            [local_avg, local_p50, local_p90, local_std], dtype=jnp.float32
+            [local_avg, local_p50, local_p90, local_std, local_captured],
+            dtype=jnp.float32,
         )
         synced_stats = multihost_utils.broadcast_one_to_all(
             stats, is_source=is_owner
@@ -402,8 +406,11 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         synced_p50 = float(synced_stats[1])
         synced_p90 = float(synced_stats[2])
         synced_std = float(synced_stats[3])
+        synced_captured = int(synced_stats[4])
       except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"Warning: multihost broadcast failed ({e}); using local values.")
+
+    metrics["xprof_captured_runs"] = synced_captured
 
     # 3. Apply XProf timings or fallback to None for unmeasured durations
     if synced_p50 > 0:
@@ -542,7 +549,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
     # 3. Measurement Loop
     loop_start = time.perf_counter()
-    raw_times, actual_runs = self.executor.execute(
+    exec_result = self.executor.execute(
         inputs,
         self._xprof_dir_actual if self.xprof_config.xprof_timing else None,
     )
@@ -554,17 +561,41 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
     # 4. Finalize Results
     # Calculate host-side metrics
-    metrics = self.calculate_metrics(raw_times)
+    metrics = self.calculate_metrics(exec_result.raw_times_ms)
 
     if self.xprof_config.xprof_timing:
       metrics = self._apply_xprof_timing_and_sync(metrics)
+      expected = exec_result.xprof_expected_runs
+      if expected is not None:
+        metrics["xprof_expected_runs"] = expected
+        captured = metrics["xprof_captured_runs"]
+        if captured > expected:
+          # Truncation can only lose samples; more durations than traced
+          # iterations means the parser split steps incorrectly.
+          raise RuntimeError(
+              f"XProf parsed {captured} durations for {expected} traced runs;"
+              " expected at most one duration per traced iteration. Check"
+              " MARKER / match_xprof_op_fallback event matching."
+          )
+        if captured == 0:
+          print(
+              f"Warning: No XProf durations parsed for {expected} traced"
+              " runs (trace parse failure, no MARKER / fallback events"
+              " matched, or multihost broadcast failure)."
+          )
+        elif captured < expected:
+          print(
+              f"Warning: XProf captured {captured}/{expected} traced runs;"
+              " xprof_* metrics are based on a truncated trace (profiler"
+              " event limit likely exceeded)."
+          )
 
     metrics = self.derive_chip_metrics(metrics)
 
     metrics = self.apply_roofline_analysis(metrics)
 
     metrics["total_duration_s"] = time.perf_counter() - loop_start
-    metrics["actual_runs"] = actual_runs
+    metrics["actual_runs"] = exec_result.actual_runs
 
     metadata = BenchmarkMetadata(
         benchmark_name=benchmark_name,
@@ -587,5 +618,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     )
 
     return BenchmarkResult(
-        metadata=metadata, metrics=metrics, raw_times_ms=raw_times
+        metadata=metadata,
+        metrics=metrics,
+        raw_times_ms=exec_result.raw_times_ms,
     )

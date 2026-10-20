@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 import contextlib
+import dataclasses
 import os
 import time
 from typing import Any, Optional
@@ -18,6 +19,23 @@ import numpy as np
 # captures the post-soak throttled state immediately after Phase 2 soak.
 _BASELINE_TRACE_WINDOW_SUBDIR = "baseline_window"
 _WORST_TRACE_WINDOW_SUBDIR = "worst_window"
+
+
+@dataclasses.dataclass(frozen=True)
+class ExecutionResult:
+  """Outcome of an executor's measurement loop.
+
+  Attributes:
+    raw_times_ms: Per-iteration (or per-chunk for soaking) wall-clock latency.
+    actual_runs: Total iterations executed by the host loop.
+    xprof_expected_runs: Number of traced iterations whose XProf durations feed
+      the `xprof_*` latency stats (the upper bound for `xprof_captured_runs`),
+      or None when the loop was not traced.
+  """
+
+  raw_times_ms: list[float]
+  actual_runs: int
+  xprof_expected_runs: Optional[int] = None
 
 
 class BaseRunExecutor:
@@ -45,10 +63,13 @@ class BaseRunExecutor:
       self,
       inputs: tuple[Any, ...],
       local_xprof_dir: Optional[str],
-  ) -> tuple[list[float], int]:
+  ) -> ExecutionResult:
     """Executes the standard single-step measurement loop."""
     ctx = contextlib.nullcontext()
-    if self.benchmark.xprof_config.xprof_timing and local_xprof_dir is not None:
+    is_traced = (
+        self.benchmark.xprof_config.xprof_timing and local_xprof_dir is not None
+    )
+    if is_traced:
       ctx = jax.profiler.trace(local_xprof_dir, create_perfetto_link=False)
 
     raw_times: list[float] = []
@@ -68,7 +89,13 @@ class BaseRunExecutor:
         if actual_runs < 1000:
           raw_times.append((t1 - t0) * 1000.0)
 
-    return raw_times, actual_runs
+    # Every measured iteration runs inside the trace, so all `actual_runs`
+    # should appear in it; fewer captured means the trace was truncated.
+    return ExecutionResult(
+        raw_times_ms=raw_times,
+        actual_runs=actual_runs,
+        xprof_expected_runs=actual_runs if is_traced else None,
+    )
 
   def _resolve_max_device_id(self, trace_dir: str) -> Optional[int]:
     """Selects the local device ID with the highest median kernel duration."""
@@ -295,7 +322,7 @@ class SoakingRunExecutor(BaseRunExecutor):
       self,
       inputs: tuple[Any, ...],
       local_xprof_dir: Optional[str],
-  ) -> tuple[list[float], int]:
+  ) -> ExecutionResult:
     """Executes Phase 1 (`baseline_window`), Phase 2 (`min_duration_s` soak), and Phase 3 (`worst_window`)."""
     if not self.benchmark.xprof_config.xprof_timing or not local_xprof_dir:
       raise ValueError(
@@ -362,7 +389,13 @@ class SoakingRunExecutor(BaseRunExecutor):
     ):
       self._target_device_id = self._resolve_max_device_id(worst_dir)
 
-    return raw_times, actual_runs
+    # xprof_* stats use only the traced worst_window (`samples_per_run`
+    # iterations); baseline_window and the untraced soak are excluded.
+    return ExecutionResult(
+        raw_times_ms=raw_times,
+        actual_runs=actual_runs,
+        xprof_expected_runs=samples_per_run,
+    )
 
   def get_xprof_durations(self, xprof_dir: str) -> list[float]:
     """Returns aggregated baseline and worst-window XProf durations."""
