@@ -3,6 +3,7 @@
 from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import registry
 
 
@@ -93,6 +94,15 @@ class BenchmarkLoaderTest(absltest.TestCase):
           issubclass(bench_cls.Config, base.BaseBenchmarkParams),
           f"Benchmark '{name}' Config ({bench_cls.Config}) must subclass BaseBenchmarkParams.",
       )
+      # SoakingRunExecutor never calls post_run_processing, so a soaking
+      # benchmark must not rely on it.
+      if issubclass(bench_cls.Config, config.SoakingExecutionParamsMixin):
+        self.assertIs(
+            bench_cls.post_run_processing,
+            base.BaseBenchmark.post_run_processing,
+            f"Soaking benchmark '{name}' ({bench_cls}) overrides"
+            " post_run_processing, which SoakingRunExecutor never calls.",
+        )
 
 
 if __name__ == "__main__":

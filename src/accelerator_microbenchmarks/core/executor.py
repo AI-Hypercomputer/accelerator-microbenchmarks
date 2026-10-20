@@ -118,6 +118,8 @@ class BaseRunExecutor:
         actual_runs += 1
         if actual_runs < 1000:
           raw_times.append((t1 - t0) * 1000.0)
+        # Untimed: after this run's timer stops, before the next one starts.
+        self.benchmark.post_run_processing(outputs, run_index=actual_runs - 1)
 
     # Every measured iteration runs inside the trace, so all `actual_runs`
     # should appear in it; fewer captured means the trace was truncated.

@@ -209,6 +209,15 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     """Reset data for the next run."""
     return inputs
 
+  def post_run_processing(self, outputs: Any, run_index: int) -> None:
+    """Process the outputs of each timed run, outside the timer.
+
+    Called only by BaseRunExecutor, not in warmup or by SoakingRunExecutor.
+    Runs inside the profiler trace, so it must not emit MARKER named scopes,
+    and must synchronize any device work it dispatches before returning.
+    """
+    del outputs, run_index  # Unused in base class.
+
   def get_run_identifier(self) -> str:
     """Return a string identifier for the current run parameters."""
     return ""

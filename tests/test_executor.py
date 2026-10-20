@@ -669,5 +669,65 @@ class SoakingBenchmarkTest(absltest.TestCase):
     mock_trace.assert_not_called()
 
 
+class PostRunProcessingTest(absltest.TestCase):
+  """Tests for the untimed per-run hook BaseBenchmark.post_run_processing."""
+
+  def test_called_once_per_timed_run_with_outputs_and_index(self):
+    """Verifies each timed run, not warmup, calls the hook with its outputs."""
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=2, num_runs=3)
+    )
+    real_run_op = bm.run_op
+    run_outputs = []
+
+    def recording_run_op(x):
+      outputs = real_run_op(x)
+      run_outputs.append(outputs)
+      return outputs
+
+    with (
+        mock.patch.object(bm, "run_op", side_effect=recording_run_op),
+        mock.patch.object(bm, "post_run_processing") as mock_hook,
+    ):
+      inputs = bm.executor.run_warmup(bm.generate_inputs())
+      mock_hook.assert_not_called()
+      run_outputs.clear()
+      actual_runs = bm.executor.execute(
+          inputs, local_xprof_dir=None
+      ).actual_runs
+
+    self.assertEqual(actual_runs, 3)
+    self.assertLen(run_outputs, actual_runs)
+    self.assertLen(mock_hook.call_args_list, actual_runs)
+    for run_index, (call, outputs) in enumerate(
+        zip(mock_hook.call_args_list, run_outputs)
+    ):
+      self.assertIs(call.args[0], outputs)
+      self.assertEqual(call.kwargs, {"run_index": run_index})
+
+  def test_excluded_from_wall_clock_timing(self):
+    """Verifies time spent in the hook is not counted in raw_times."""
+    hook_delay_s = 0.1
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=1, num_runs=3)
+    )
+    # Warm up first so that the timed runs do not include op compilation.
+    inputs = bm.executor.run_warmup(bm.generate_inputs())
+
+    def slow_hook(*args, **kwargs):
+      del args, kwargs
+      time.sleep(hook_delay_s)
+
+    with mock.patch.object(
+        bm, "post_run_processing", side_effect=slow_hook
+    ) as mock_hook:
+      raw_times = bm.executor.execute(inputs, local_xprof_dir=None).raw_times_ms
+
+    self.assertEqual(mock_hook.call_count, 3)
+    self.assertLen(raw_times, 3)
+    for run_ms in raw_times:
+      self.assertLess(run_ms, hook_delay_s * 1000.0)
+
+
 if __name__ == "__main__":
   absltest.main()
