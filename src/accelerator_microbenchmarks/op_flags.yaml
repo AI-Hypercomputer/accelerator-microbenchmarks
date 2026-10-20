@@ -78,6 +78,15 @@ all_gather:
     - "--xla_tpu_dvfs_p_state=7"
     - "--xla_tpu_scoped_vmem_limit_kib=65536"
 
+dcn_all_gather:
+  # Despite "reduction" in the flag name, MegaScale's GraphBuilder uses
+  # --megascale_max_reduction_shard_size (default 4 MiB) to cap ALL_GATHER
+  # shard size as well; 16 MiB raises 2-slice TPU7x throughput from ~115 to
+  # ~243-339 Gbps/host.
+  flags:
+    - "--xla_tpu_use_enhanced_launch_barrier=false"
+    - "--megascale_max_reduction_shard_size=16777216"
+
 all_to_all:
   flags:
     - "--xla_jf_debug_level=3"
