@@ -33,6 +33,7 @@ class AllReduceTpuTest(parameterized.TestCase):
   )
   def test_all_reduce_ops_tpu(self, reduce_op, mock_upload):
     """Test AllReduceBenchmark on TPU for each reduction operator."""
+    del mock_upload  # Unused.
     backend = jax.default_backend()
     if backend != "tpu":
       self.skipTest("This test requires TPU devices.")

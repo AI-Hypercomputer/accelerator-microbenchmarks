@@ -12,7 +12,6 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 
-# pylint: disable=g-import-not-at-top
 from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.core import base
@@ -26,17 +25,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-# Force 4 CPU devices for testing collectives
-os.environ["XLA_FLAGS"] = (
-    os.environ.get("XLA_FLAGS", "")
-    + " --xla_force_host_platform_device_count=4"
-)
 
-# pylint: enable=g-import-not-at-top
+def setUpModule():  # pylint: disable=invalid-name
+  # Force 4 CPU devices for testing collectives
+  os.environ["XLA_FLAGS"] = (
+      os.environ.get("XLA_FLAGS", "")
+      + " --xla_force_host_platform_device_count=4"
+  )
+  # Set CPU backend for fast testing without TPU requirements
+  jax.config.update("jax_platform_name", "cpu")
 
-
-# Set CPU backend for fast testing without TPU requirements
-jax.config.update("jax_platform_name", "cpu")
 
 _ALL_DIMS_GE_4 = system.WraparoundRule.ALL_DIMS_GE_4
 _PER_DIM_GE_16 = system.WraparoundRule.PER_DIM_GE_16

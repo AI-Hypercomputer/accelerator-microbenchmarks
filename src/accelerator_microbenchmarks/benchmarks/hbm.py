@@ -157,9 +157,6 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
       )
 
     op_type = self.config.op_type
-    if op_type is None:
-      raise ValueError("op_type must be specified.")
-
     if op_type in HBM_KERNELS:
       spec = HBM_KERNELS[op_type]
     else:

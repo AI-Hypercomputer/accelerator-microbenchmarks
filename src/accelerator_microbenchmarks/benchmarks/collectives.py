@@ -177,10 +177,7 @@ class BaseCollectiveBenchmark(
   Config = CollectivesParams
 
   def get_run_identifier(self) -> str:
-    dim = self.config.matrix_dim
-    if dim is not None:
-      return f"dim_{dim}"
-    return ""
+    return f"dim_{self.config.matrix_dim}"
 
   def _get_sharding_axes(self) -> str | tuple[Any, ...]:
     raise NotImplementedError("Subclasses must implement _get_sharding_axes")
@@ -325,14 +322,15 @@ class IciCollectiveBenchmark(
     if mesh_shape_str is not None:
       try:
         mesh_shape = [int(i) for i in mesh_shape_str.split("x")]
-        axis_names = tuple(f"d_{i}" for i in range(len(mesh_shape)))
         mesh_devices = self._build_mesh_devices(mesh_shape)
-        self.mesh = jax.sharding.Mesh(mesh_devices, axis_names)
       except (ValueError, RuntimeError) as e:
         print(
             f"Warning: Invalid mesh_shape '{mesh_shape_str}'. Falling back to"
             f" original mesh. Error: {e}"
         )
+      else:
+        axis_names = tuple(f"d_{i}" for i in range(len(mesh_shape)))
+        self.mesh = jax.sharding.Mesh(mesh_devices, axis_names)
 
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
@@ -350,23 +348,25 @@ class IciCollectiveBenchmark(
     if self.sharding_strategy is not None:
       try:
         sharding_dims = [int(i) for i in self.sharding_strategy.split("x")]
-        if len(sharding_dims) != len(self.mesh.shape):
-          raise ValueError(
-              f"sharding_strategy '{self.sharding_strategy}' length does not"
-              f" match mesh shape '{self.mesh.shape}'"
-          )
-        sharding_axes = tuple(
-            name
-            for i, name in enumerate(self.mesh.axis_names)
-            if sharding_dims[i] > 1
-        )
-        return sharding_axes
-      except Exception as e:
+      except ValueError as e:
         print(
             "Warning: Failed to parse sharding_strategy"
             f" '{self.sharding_strategy}'. Falling back to all mesh axes."
             f" Error: {e}"
         )
+      else:
+        if len(sharding_dims) != len(self.mesh.shape):
+          print(
+              "Warning: Failed to parse sharding_strategy"
+              f" '{self.sharding_strategy}': length does not match mesh shape"
+              f" '{self.mesh.shape}'. Falling back to all mesh axes."
+          )
+        else:
+          return tuple(
+              name
+              for i, name in enumerate(self.mesh.axis_names)
+              if sharding_dims[i] > 1
+          )
 
     return tuple(self.mesh.axis_names)
 

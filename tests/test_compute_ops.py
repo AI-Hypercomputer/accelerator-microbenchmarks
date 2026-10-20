@@ -10,8 +10,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-# Set CPU backend for fast testing without TPU requirements
-jax.config.update("jax_platform_name", "cpu")
+
+def setUpModule():  # pylint: disable=invalid-name
+  # Set CPU backend for fast testing without TPU requirements
+  jax.config.update("jax_platform_name", "cpu")
 
 
 class SwiGLUBenchmarkTest(absltest.TestCase):

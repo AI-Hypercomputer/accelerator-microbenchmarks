@@ -521,6 +521,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       try:
         jax.profiler.stop_trace()
       except RuntimeError:
+        # No active profiler trace is running; safe to ignore.
         pass
       xprof_base_dir = self.xprof_config.xprof_dir
       timestamp = int(time.time())

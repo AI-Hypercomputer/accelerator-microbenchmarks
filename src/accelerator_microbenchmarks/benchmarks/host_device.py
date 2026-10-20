@@ -103,7 +103,6 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
   )
 
   host_data: np.ndarray
-  device_array: jax.Array
 
   def setup(self):
     dtype = utils.parse_dtype(self.config.dtype)
@@ -115,8 +114,7 @@ class DeviceToHostBenchmark(base.BaseBenchmark[HostDeviceParams]):
     )
 
   def reset_data(self, arr: jax.Array, **kwargs) -> tuple[jax.Array, ...]:
-    if arr is not None:
-      arr.delete()
+    arr.delete()
     return self.generate_inputs()
 
   def get_run_identifier(self) -> str:

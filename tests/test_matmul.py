@@ -1,6 +1,6 @@
 """Unit tests for matlmul.py."""
 
-import unittest
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -24,7 +24,7 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self._platform_patcher = unittest.mock.patch(
+    self._platform_patcher = mock.patch(
         "accelerator_microbenchmarks.core.platform.get_platform_info",
         return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
     )
@@ -570,7 +570,7 @@ class GemmThrottlingBenchmarkTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self._platform_patcher = unittest.mock.patch(
+    self._platform_patcher = mock.patch(
         "accelerator_microbenchmarks.core.platform.get_platform_info",
         return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
     )

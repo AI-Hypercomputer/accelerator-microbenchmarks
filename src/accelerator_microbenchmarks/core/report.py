@@ -101,7 +101,7 @@ def _render_banner_box(
 
 
 def format_benchmark_table(
-    df: pd.DataFrame,
+    df: pd.DataFrame | None,
     schema: Sequence[tuple[str, Callable[[Any], str]]],
     title: str = "",
 ) -> str:
@@ -131,8 +131,8 @@ def format_benchmark_table(
 
 
 def format_standard_table(
-    df: pd.DataFrame,
-    bench_cls: type[base.BaseBenchmark],
+    df: pd.DataFrame | None,
+    bench_cls: type[base.BaseBenchmark] | None = None,
 ) -> str:
   """Renders standard flat ASCII summary table using bench_cls.REPORT_SCHEMA."""
   if df is None or df.empty or bench_cls is None:
@@ -146,8 +146,8 @@ def format_standard_table(
 
 
 def format_device_matrix(
-    df: pd.DataFrame,
-    bench_cls: Optional[type[base.BaseBenchmark]] = None,
+    df: pd.DataFrame | None,
+    bench_cls: type[base.BaseBenchmark] | None = None,
     diagonal_marker: str = DEFAULT_DIAGONAL_MARKER,
 ) -> str:
   """Renders aligned N x N pairwise bandwidth matrix ASCII grids for device_to_device."""
@@ -278,7 +278,7 @@ def results_to_dataframe(
 
 
 def generate_benchmark_report(
-    df: pd.DataFrame,
+    df: pd.DataFrame | None,
 ) -> str:
   """Generates a human-readable benchmark report string for all results in the DataFrame."""
   if df is None or df.empty or "benchmark" not in df.columns:

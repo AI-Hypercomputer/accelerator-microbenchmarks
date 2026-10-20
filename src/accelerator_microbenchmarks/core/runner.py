@@ -37,6 +37,7 @@ def get_op_flags_and_env(
 
   flags_list: list[str] = []
   env_dict: dict[str, str] = {}
+  op_flags = None
 
   try:
     if xla_flags_file_path is None:
@@ -47,55 +48,55 @@ def get_op_flags_and_env(
     if xla_flags_file_path and os.path.exists(xla_flags_file_path):
       with open(xla_flags_file_path, "r") as f:
         op_flags = yaml.safe_load(f)
-
-      if not isinstance(op_flags, dict):
-        raise ValueError(
-            f"Invalid format in '{xla_flags_file_path}': expected a dict, got"
-            f" {type(op_flags).__name__}."
-        )
-      if benchmark_name in op_flags:
-        flags_config = op_flags[benchmark_name]
-        if not isinstance(flags_config, dict):
-          raise ValueError(
-              f"Invalid format for '{benchmark_name}' in"
-              f" '{xla_flags_file_path}': expected a dict, got"
-              f" {type(flags_config).__name__}."
-          )
-        unexpected_keys = set(flags_config.keys()) - {"flags", "env"}
-        if unexpected_keys:
-          raise ValueError(
-              f"Unexpected keys for '{benchmark_name}' in"
-              f" '{xla_flags_file_path}': {sorted(unexpected_keys)}."
-          )
-        raw_flags = flags_config.get("flags")
-        if raw_flags is not None and not isinstance(raw_flags, list):
-          raise ValueError(
-              f"Invalid 'flags' for '{benchmark_name}' in"
-              f" '{xla_flags_file_path}': expected a list, got"
-              f" {type(raw_flags).__name__}."
-          )
-        raw_env = flags_config.get("env")
-        if raw_env is not None and not isinstance(raw_env, dict):
-          raise ValueError(
-              f"Invalid 'env' for '{benchmark_name}' in"
-              f" '{xla_flags_file_path}': expected a dict, got"
-              f" {type(raw_env).__name__}."
-          )
-        flags_list = [str(flag) for flag in raw_flags or []]
-        env_dict = {str(k): str(v) for k, v in (raw_env or {}).items()}
     else:
       print(
           f"Warning: op_flags.yaml not found at '{xla_flags_file_path}'. "
           "Default LIBTPU_INIT_ARGS will not be loaded."
       )
-  except ValueError:
-    raise
+      return flags_list, env_dict
   except yaml.YAMLError as e:
     raise ValueError(
         f"Invalid YAML syntax in '{xla_flags_file_path}': {e}"
     ) from e
-  except Exception as e:
+  except (FileNotFoundError, OSError) as e:
     print(f"Warning: Failed to load op_flags.yaml: {e}")
+    return flags_list, env_dict
+
+  if not isinstance(op_flags, dict):
+    raise ValueError(
+        f"Invalid format in '{xla_flags_file_path}': expected a dict, got"
+        f" {type(op_flags).__name__}."
+    )
+  if benchmark_name in op_flags:
+    flags_config = op_flags[benchmark_name]
+    if not isinstance(flags_config, dict):
+      raise ValueError(
+          f"Invalid format for '{benchmark_name}' in"
+          f" '{xla_flags_file_path}': expected a dict, got"
+          f" {type(flags_config).__name__}."
+      )
+    unexpected_keys = set(flags_config.keys()) - {"flags", "env"}
+    if unexpected_keys:
+      raise ValueError(
+          f"Unexpected keys for '{benchmark_name}' in"
+          f" '{xla_flags_file_path}': {sorted(unexpected_keys)}."
+      )
+    raw_flags = flags_config.get("flags")
+    if raw_flags is not None and not isinstance(raw_flags, list):
+      raise ValueError(
+          f"Invalid 'flags' for '{benchmark_name}' in"
+          f" '{xla_flags_file_path}': expected a list, got"
+          f" {type(raw_flags).__name__}."
+      )
+    raw_env = flags_config.get("env")
+    if raw_env is not None and not isinstance(raw_env, dict):
+      raise ValueError(
+          f"Invalid 'env' for '{benchmark_name}' in"
+          f" '{xla_flags_file_path}': expected a dict, got"
+          f" {type(raw_env).__name__}."
+      )
+    flags_list = [str(flag) for flag in raw_flags or []]
+    env_dict = {str(k): str(v) for k, v in (raw_env or {}).items()}
 
   return flags_list, env_dict
 

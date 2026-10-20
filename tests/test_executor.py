@@ -7,7 +7,7 @@ import os
 import shutil
 import tempfile
 import time
-import unittest
+from unittest import mock
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
@@ -79,7 +79,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
-    self._platform_patcher = unittest.mock.patch(
+    self._platform_patcher = mock.patch(
         "accelerator_microbenchmarks.core.platform.get_platform_info",
         return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
     )
@@ -117,7 +117,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
     bm = DummyBenchmark(
         config=base.BaseBenchmarkParams(warmup_tries=2, num_runs=1)
     )
-    with unittest.mock.patch.object(
+    with mock.patch.object(
         jax, "block_until_ready", wraps=jax.block_until_ready
     ) as mock_block:
       bm.executor.run_warmup(bm.generate_inputs())
@@ -175,15 +175,15 @@ class SoakingBenchmarkTest(absltest.TestCase):
     self.assertIsNone(metrics["peak_temp_c"])
     self.assertEqual(metrics["hbm_throttle_time_pct"], 0.0)
 
-  @unittest.mock.patch(
+  @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
       return_value=None,
   )
-  @unittest.mock.patch(
+  @mock.patch(
       "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
       return_value=[1.0],
   )
-  @unittest.mock.patch("jax.profiler.trace")
+  @mock.patch("jax.profiler.trace")
   def test_samples_per_run_and_run_chunk(
       self, mock_trace, mock_parse_xprof, mock_upload_xprof
   ):
@@ -228,9 +228,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         samples_per_run=25,
     )
     bm = SoakingDummyBenchmark(config=cfg)
-    with unittest.mock.patch.object(
-        bm, "run_op", wraps=bm.run_op
-    ) as mock_run_op:
+    with mock.patch.object(bm, "run_op", wraps=bm.run_op) as mock_run_op:
       bm.executor.run_warmup(bm.generate_inputs())
       self.assertEqual(mock_run_op.call_count, 10)
 
@@ -286,15 +284,15 @@ class SoakingBenchmarkTest(absltest.TestCase):
           xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
       )
       with (
-          unittest.mock.patch(
+          mock.patch(
               "jax.profiler.trace",
               side_effect=fake_trace,
           ),
-          unittest.mock.patch(
+          mock.patch(
               "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
               side_effect=[[1.0], [2.5]],
           ),
-          unittest.mock.patch(
+          mock.patch(
               "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
               return_value=None,
           ),
@@ -320,11 +318,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     # Also verify non-positive synced_p50 passes has_xprof_timings=False.
     with (
-        unittest.mock.patch(
+        mock.patch(
             "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
             side_effect=[[-1.0], [-1.0]],
         ),
-        unittest.mock.patch(
+        mock.patch(
             "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
             return_value=None,
         ),
@@ -365,13 +363,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
         return real_run_op(x)
 
       with (
-          unittest.mock.patch.object(
-              bm, "run_op", side_effect=recording_run_op
-          ),
-          unittest.mock.patch.object(
+          mock.patch.object(bm, "run_op", side_effect=recording_run_op),
+          mock.patch.object(
               jax, "block_until_ready", side_effect=recording_block
           ),
-          unittest.mock.patch("jax.profiler.trace", side_effect=fake_trace),
+          mock.patch("jax.profiler.trace", side_effect=fake_trace),
       ):
         exec_result = bm.executor.execute(bm.generate_inputs(), tmpdir)
     raw_times = exec_result.raw_times_ms
@@ -419,10 +415,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
           xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
       )
       with (
-          unittest.mock.patch.object(
-              jax, "block_until_ready", side_effect=slow_block
-          ),
-          unittest.mock.patch(
+          mock.patch.object(jax, "block_until_ready", side_effect=slow_block),
+          mock.patch(
               "jax.profiler.trace", return_value=contextlib.nullcontext()
           ),
       ):
@@ -481,7 +475,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
             device_mode=constants.XprofDeviceMode.MAX_DEVICE,
         ),
     )
-    fake_devs = [unittest.mock.MagicMock(local_hardware_id=i) for i in range(8)]
+    fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
 
     def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
       del fallback_fn
@@ -497,10 +491,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
       os.makedirs(w0, exist_ok=True)
       os.makedirs(w1, exist_ok=True)
       with (
-          unittest.mock.patch.object(
-              jax, "local_devices", return_value=fake_devs
-          ),
-          unittest.mock.patch(
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
+          mock.patch(
               "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
               side_effect=fake_parse_xprof,
           ),
@@ -519,7 +511,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
   def test_xprof_device_mode_first_vs_max_device(self):
     """Verifies XprofConfig.device_mode ('first_device' vs 'max_device')."""
-    fake_devs = [unittest.mock.MagicMock(local_hardware_id=i) for i in range(8)]
+    fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
 
     def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
       del trace_dir, fallback_fn
@@ -528,10 +520,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
       return [5.009, 5.009]
 
     with (
-        unittest.mock.patch.object(
-            jax, "local_devices", return_value=fake_devs
-        ),
-        unittest.mock.patch(
+        mock.patch.object(jax, "local_devices", return_value=fake_devs),
+        mock.patch(
             "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
             side_effect=fake_parse_xprof,
         ),
@@ -556,15 +546,15 @@ class SoakingBenchmarkTest(absltest.TestCase):
           bm_max.executor._parse_xprof_durations("/tmp/fake"), [6.021, 6.019]  # pylint: disable=protected-access
       )
 
-  @unittest.mock.patch(
+  @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
       return_value=None,
   )
-  @unittest.mock.patch(
+  @mock.patch(
       "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
       return_value=[1.0],
   )
-  @unittest.mock.patch("jax.profiler.trace")
+  @mock.patch("jax.profiler.trace")
   def test_profiler_options_base_and_soaking(
       self, mock_trace, mock_parse, mock_upload
   ):
@@ -649,8 +639,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
     self.assertEqual(opts.advanced_configuration["tpu_power_trace_level"], 1)
     self.assertFalse(opts.advanced_configuration["tpu_perf_counters"])
 
-  @unittest.mock.patch("jax.profiler.trace")
-  @unittest.mock.patch(
+  @mock.patch("jax.profiler.trace")
+  @mock.patch(
       "jax.profiler.ProfileOptions",
       side_effect=RuntimeError("ProfileOptions unavailable"),
   )

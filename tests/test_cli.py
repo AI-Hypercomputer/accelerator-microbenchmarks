@@ -23,10 +23,6 @@ from accelerator_microbenchmarks.tests import test_report_utils
 class TestCli(parameterized.TestCase):
   """Unit tests for cli.py."""
 
-  def setUp(self):
-    super().setUp()
-    self.parser = cli.create_parser()
-
   def test_help_menu(self):
     """Verifies that top-level help menu renders correctly."""
     with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:

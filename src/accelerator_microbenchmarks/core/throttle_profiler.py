@@ -2,6 +2,7 @@
 
 import collections
 from collections.abc import Callable, Iterable, Mapping
+import logging
 import os
 import re
 from typing import Any
@@ -304,8 +305,8 @@ class XprofThermalProfiler:
           space = xplane_pb2.XSpace()
           space.ParseFromString(f.read())
         spaces.append(space)
-      except Exception:  # pylint: disable=broad-exception-caught
-        pass
+      except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.warning("Failed to parse XPlane file %s: %s", xplane_path, e)
     return spaces
 
   def parse_per_device_metrics(self) -> dict[str, dict[str, Any]]:

@@ -240,7 +240,8 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     )
 
     # Replicated sharding for computation ops to avoid discrepancies
-    assert self.mesh is not None, "Mesh not initialized."
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
     replicated_sharding = jax.sharding.NamedSharding(
         self.mesh, jax.sharding.PartitionSpec(None, None)
     )
@@ -271,7 +272,8 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     )
 
   def run_op(self, *args) -> jnp.ndarray:
-    assert self._jit_fn is not None
+    if self._jit_fn is None:
+      raise ValueError("JIT function not initialized.")
     return self._jit_fn(*args)
 
   def get_compute_dtype(self) -> str:
@@ -551,7 +553,8 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
     self._last_x: Optional[jax.Array] = None
 
   def setup(self):
-    assert self.mesh is not None, "Mesh not initialized."
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
     in_dtype = utils.parse_dtype(self.config.in_dtype)
     out_dtype = utils.parse_dtype(self.config.out_dtype)
     self._jit_fn = make_chain_fn(
@@ -570,7 +573,8 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
     )
 
   def generate_inputs(self) -> tuple[Any, ...]:
-    assert self.mesh is not None, "Mesh not initialized."
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
     inputs_fn = make_inputs_fn(
         mesh=self.mesh,
         m=self.config.m,
@@ -581,7 +585,8 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
     return inputs_fn()
 
   def run_op(self, *args) -> jax.Array:
-    assert self._jit_fn is not None
+    if self._jit_fn is None:
+      raise ValueError("JIT function not initialized.")
     # Timed: runs only the chain. Keep a handle to each device's final X (no
     # sync, no readback); it is checksummed after the timed loop.
     self._last_x = self._jit_fn(*args)
@@ -605,7 +610,8 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
 
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     metrics = super().calculate_metrics(times_ms)
-    assert self._checksum_fn is not None and self.mesh is not None
+    if self._checksum_fn is None or self.mesh is None:
+      raise ValueError("Checksum function or mesh not initialized.")
     metrics.update(
         checksum.gather_and_compare_checksums(
             self._last_x, self._checksum_fn, self.mesh

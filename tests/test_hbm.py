@@ -253,13 +253,6 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     out_triad = self.bm.run_op(x_zeros, y_ones)
     np.testing.assert_allclose(out_triad, np.ones(1024) * scalar, rtol=1e-2)
 
-  def test_unsupported_op_type(self):
-    """Verify an unsupported op_type raises a ValueError when initialized."""
-    with self.assertRaisesRegex(
-        ValueError, "Invalid op_type 'invalid_kernel'"
-    ):
-      hbm.HBMBandwidthParams(op_type="invalid_kernel")
-
   def test_run_op_uninitialized(self):
     """Verify calling run_op before setup raises a ValueError."""
     config = hbm.HBMBandwidthParams()

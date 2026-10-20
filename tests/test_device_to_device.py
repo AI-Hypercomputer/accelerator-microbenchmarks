@@ -16,14 +16,15 @@ from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 
-# Force 4 CPU devices for testing multi-device D2D transfers
-os.environ["XLA_FLAGS"] = (
-    os.environ.get("XLA_FLAGS", "")
-    + " --xla_force_host_platform_device_count=4"
-)
 
-# Set CPU backend for fast testing without hardware requirements
-jax.config.update("jax_platform_name", "cpu")
+def setUpModule():  # pylint: disable=invalid-name
+  # Force 4 CPU devices for testing multi-device D2D transfers
+  os.environ["XLA_FLAGS"] = (
+      os.environ.get("XLA_FLAGS", "")
+      + " --xla_force_host_platform_device_count=4"
+  )
+  # Set CPU backend for fast testing without hardware requirements
+  jax.config.update("jax_platform_name", "cpu")
 
 
 class DeviceToDeviceParamsTest(parameterized.TestCase):

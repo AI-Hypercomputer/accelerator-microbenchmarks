@@ -269,6 +269,7 @@ class SoakingRunExecutor(BaseRunExecutor):
     # chunks; the traced Phase 1/3 windows are excluded.
     self.soak_wall_ms: list[float] = []
     self._target_device_id: Optional[int] = None
+    self._result_details: dict[str, Any] = {}
 
   def _samples_per_run(self) -> int:
     """Returns the number of back-to-back iterations per timing window."""
@@ -521,7 +522,7 @@ class SoakingRunExecutor(BaseRunExecutor):
 
   def get_result_details(self) -> dict[str, Any]:
     """Returns per-device telemetry of both trace windows."""
-    return dict(getattr(self, "_result_details", {}))
+    return dict(self._result_details)
 
 
 def create_executor(benchmark: Any) -> BaseRunExecutor:

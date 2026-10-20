@@ -105,8 +105,6 @@ class DummyEmptySchemaBenchmark(base.BaseBenchmark):
 class DummyNoSchemaBenchmark(base.BaseBenchmark):
   """Benchmark without REPORT_SCHEMA attribute."""
 
-  pass
-
 
 @registry.benchmark_registry.register("dummy_dual_formatter_benchmark")
 class DummyDualFormatterBenchmark(base.BaseBenchmark):

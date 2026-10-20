@@ -24,12 +24,13 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.patcher = mock.patch(
-        "accelerator_microbenchmarks.core.platform.get_platform_info",
-        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    self.enter_context(
+        mock.patch.object(
+            platform,
+            "get_platform_info",
+            return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+        )
     )
-    self.patcher.start()
-    self.addCleanup(self.patcher.stop)
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
@@ -110,10 +111,10 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
 
   def test_invalid_dtype_raises_error(self):
     """Verify generate_inputs raises ValueError for invalid dtype."""
+    self._setup_benchmark(dtype="invalid_dtype")
     with self.assertRaisesRegex(
         ValueError, "Invalid dtype string: 'invalid_dtype'"
     ):
-      self._setup_benchmark(dtype="invalid_dtype")
       self.bm.generate_inputs()
 
   def test_get_total_bytes(self):
@@ -222,12 +223,13 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.patcher = mock.patch(
-        "accelerator_microbenchmarks.core.platform.get_platform_info",
-        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    self.enter_context(
+        mock.patch.object(
+            platform,
+            "get_platform_info",
+            return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+        )
     )
-    self.patcher.start()
-    self.addCleanup(self.patcher.stop)
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
