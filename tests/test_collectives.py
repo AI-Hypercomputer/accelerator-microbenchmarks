@@ -237,11 +237,20 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm = collectives.AllGatherBenchmark(
         config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
     )
-    self.assertTrue(
+    for hlo_category in ("async-done", "async-done (OFFLOAD_COLLECTIVE)"):
+      self.assertTrue(
+          bm.match_xprof_op_fallback({
+              "args": {
+                  "hlo_category": hlo_category,
+                  "offload_type": "OFFLOAD_COLLECTIVE",
+              }
+          })
+      )
+    self.assertFalse(
         bm.match_xprof_op_fallback({
             "args": {
-                "hlo_category": "async-done",
-                "offload_type": "OFFLOAD_COLLECTIVE",
+                "hlo_category": "async-done (OFFLOAD_EMBEDDING)",
+                "offload_type": "OFFLOAD_EMBEDDING",
             }
         })
     )
