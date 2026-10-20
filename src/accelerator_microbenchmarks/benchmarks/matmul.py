@@ -1,7 +1,8 @@
 """Matrix multiplication and GEMM benchmarks including FP8 support."""
 
+import abc
 import dataclasses
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence, TypeVar
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import checksum
 from accelerator_microbenchmarks.core import config
@@ -78,15 +79,63 @@ class GemmParams(base.BaseBenchmarkParams):
   )
 
 
+TGemmConfig = TypeVar("TGemmConfig", bound=base.BaseBenchmarkParams)
+
+
+class BaseGemmBenchmark(base.BaseBenchmark[TGemmConfig]):
+  """Base class for GEMM benchmarks.
+
+  Holds the logic that does not depend on the params class: the compute
+  roofline, the XProf op fallback, and the intensity and TFLOPS metrics derived
+  from `get_total_flops()` and `get_total_bytes()`. Subclasses implement those
+  two, and `get_compute_dtype()`, from their own params.
+  """
+
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.COMPUTE
+
+  @abc.abstractmethod
+  def get_total_flops(self) -> float:
+    """Returns the FLOPs of one `run_op` call."""
+
+  def match_xprof_op_fallback(self, event):
+    args = event.get("args", {})
+    hlo_category = args.get("hlo_category", "")
+    return hlo_category.strip('"') == "convolution fusion"
+
+  def get_arithmetic_intensity(self) -> float:
+    flops = self.get_total_flops()
+    bytes_moved = self.get_total_bytes()
+    return flops / bytes_moved if bytes_moved > 0 else 0.0
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    return {
+        "total_flops": self.get_total_flops(),
+    }
+
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    total_flops = self.get_total_flops()
+
+    latency_s = latency_ms / 1000.0
+    if latency_s == 0:
+      tflops_per_sec = float("inf")
+    else:
+      tflops_per_sec = (total_flops / latency_s) / 1e12
+
+    return {
+        f"{prefix}_tflops_per_device": tflops_per_sec,
+    }
+
+
 @registry.benchmark_registry.register("gemm", aliases=["gemm_generalized"])
-class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
+class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
   """Generalized GEMM benchmark supporting FP8 and throughput projection.
 
   Pseudo-code: OUT = matmul(IN0, IN1) * rescaling_factor
   """
 
   Config = GemmParams
-  roofline_mode: constants.RooflineMode = constants.RooflineMode.COMPUTE
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("in_dtype", report.format_str),
       ("out_dtype", report.format_str),
@@ -104,15 +153,6 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
       ("xprof_p50_ms", report.format_4f),
       ("xprof_tflops_per_chip", report.format_2f),
   )
-
-  def get_compute_dtype(self) -> str:
-    """Return the primary data type used for compute math, to determine peak TFLOPS."""
-    return self.config.in_dtype
-
-  def match_xprof_op_fallback(self, event):
-    args = event.get("args", {})
-    hlo_category = args.get("hlo_category", "")
-    return hlo_category.strip('"') == "convolution fusion"
 
   def setup(self):
     out_dtype = utils.parse_dtype(self.config.out_dtype)
@@ -234,6 +274,10 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     assert self._jit_fn is not None
     return self._jit_fn(*args)
 
+  def get_compute_dtype(self) -> str:
+    """Return the primary data type used for compute math, to determine peak TFLOPS."""
+    return self.config.in_dtype
+
   def get_total_bytes(self) -> float:
     m, k, n = self.config.m, self.config.k, self.config.n
     in_itemsize = jnp.dtype(utils.parse_dtype(self.config.in_dtype)).itemsize
@@ -260,31 +304,6 @@ class GeneralizedGemmBenchmark(base.BaseBenchmark[GemmParams]):
     if self.config.beta != 0.0:
       flops += 2 * m * n if self.config.beta != 1.0 else m * n
     return float(flops)
-
-  def get_arithmetic_intensity(self) -> float:
-    flops = self.get_total_flops()
-    bytes_moved = self.get_total_bytes()
-    return flops / bytes_moved if bytes_moved > 0 else 0.0
-
-  def get_workload_metadata(self) -> dict[str, Any]:
-    return {
-        "total_flops": self.get_total_flops(),
-    }
-
-  def calculate_throughput_metrics(
-      self, latency_ms: float, prefix: constants.TimingDomain
-  ) -> dict[str, Any]:
-    total_flops = self.get_total_flops()
-
-    latency_s = latency_ms / 1000.0
-    if latency_s == 0:
-      tflops_per_sec = float("inf")
-    else:
-      tflops_per_sec = (total_flops / latency_s) / 1e12
-
-    return {
-        f"{prefix}_tflops_per_device": tflops_per_sec,
-    }
 
 
 @dataclasses.dataclass
@@ -505,13 +524,11 @@ def make_chain_fn(
 
 
 @registry.benchmark_registry.register("gemm_chained", is_experimental=True)
-class GemmChainedBenchmark(GeneralizedGemmBenchmark):
+class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
   """[EXPERIMENTAL] Chained GEMM determinism benchmark with cross-host per-device checksum comparison."""
 
   # Runtime: the params dataclass the CLI / YAML loader instantiates.
   Config = GemmChainedParams
-  # Type-only: `self.config` is a `GemmChainedParams`, not a `GemmParams`.
-  config: GemmChainedParams
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("in_dtype", report.format_str),
       ("out_dtype", report.format_str),
@@ -581,6 +598,10 @@ class GemmChainedBenchmark(GeneralizedGemmBenchmark):
   def get_total_flops(self) -> float:
     m, k = self.config.m, self.config.k
     return float(self.config.chain_length * 2 * m * k * k)
+
+  def get_compute_dtype(self) -> str:
+    """Return the primary data type used for compute math, to determine peak TFLOPS."""
+    return self.config.in_dtype
 
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     metrics = super().calculate_metrics(times_ms)

@@ -315,6 +315,24 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
         bm.get_run_identifier(), "m_32_k_64_bfloat16_to_float32_chain_5"
     )
 
+  def test_compute_roofline_uses_in_dtype(self):
+    """Verifies the compute roofline looks up peak TFLOPS by in_dtype."""
+    bm = self._benchmark(
+        matmul.GemmChainedParams(
+            m=16, k=16, in_dtype="float8_e4m3fn", out_dtype="bfloat16"
+        )
+    )
+    self.assertEqual(bm.roofline_mode, constants.RooflineMode.COMPUTE)
+    self.assertEqual(bm.get_compute_dtype(), "float8_e4m3fn")
+
+  def test_zero_latency_throughput_metrics(self):
+    """Verifies a zero latency yields inf TFLOPS instead of dividing by zero."""
+    bm = self._benchmark(matmul.GemmChainedParams(m=16, k=16))
+    metrics = bm.calculate_throughput_metrics(
+        latency_ms=0.0, prefix=constants.TimingDomain.WALL_CLOCK
+    )
+    self.assertEqual(metrics["wall_clock_tflops_per_device"], float("inf"))
+
   @parameterized.named_parameters(
       ("bfloat16", "bfloat16", "bfloat16"),
       ("fp8_to_bf16", "float8_e4m3fn", "bfloat16"),

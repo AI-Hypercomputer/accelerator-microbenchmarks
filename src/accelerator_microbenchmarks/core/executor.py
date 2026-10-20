@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 import contextlib
+import dataclasses
 import os
 import time
 from typing import Any, Optional
@@ -18,6 +19,40 @@ import numpy as np
 # captures the post-soak throttled state immediately after Phase 2 soak.
 _BASELINE_TRACE_WINDOW_SUBDIR = "baseline_window"
 _WORST_TRACE_WINDOW_SUBDIR = "worst_window"
+
+# Trace-reduction `ProfileOptions.advanced_configuration` applied to every
+# traced benchmark loop. These drop profiler events that no TPUMS parser
+# consumes, keeping large traces (e.g. multi-GiB all_reduce) under the
+# profiler / trace viewer event limit so every traced run is captured.
+_BASE_PROFILER_ADVANCED_CONFIG: dict[str, Any] = {
+    # Already the XProf default; pinned explicitly so it cannot drift.
+    "tpu_trace_mode": "TRACE_ONLY_XLA",
+    # Timing events (MARKER, `call-done`, `jit_*`) are recorded on TensorCore
+    # planes, while SparseCore planes dominate the event count for
+    # SparseCore-offloaded collectives.
+    "tpu_num_sparse_cores_to_trace": 0,
+    "tpu_num_sparse_core_tiles_to_trace": 0,
+    # Hardware PMU counters are unused (firmware thermal telemetry used by
+    # soaking benchmarks is recorded separately).
+    "tpu_perf_counters": False,
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class ExecutionResult:
+  """Outcome of an executor's measurement loop.
+
+  Attributes:
+    raw_times_ms: Per-iteration (or per-chunk for soaking) wall-clock latency.
+    actual_runs: Total iterations executed by the host loop.
+    xprof_expected_runs: Number of traced iterations whose XProf durations feed
+      the `xprof_*` latency stats (the upper bound for `xprof_captured_runs`),
+      or None when the loop was not traced.
+  """
+
+  raw_times_ms: list[float]
+  actual_runs: int
+  xprof_expected_runs: Optional[int] = None
 
 
 class BaseRunExecutor:
@@ -41,15 +76,31 @@ class BaseRunExecutor:
       i += 1
     return inputs
 
+  def _get_profiler_options(self) -> jax.profiler.ProfileOptions:
+    """Returns ProfileOptions that drop trace events no TPUMS parser uses."""
+    options = jax.profiler.ProfileOptions()
+    options.advanced_configuration = dict(_BASE_PROFILER_ADVANCED_CONFIG)
+    return options
+
+  def _get_trace_kwargs(self) -> dict[str, Any]:
+    """Returns `jax.profiler.trace` kwargs wrapping `_get_profiler_options()`."""
+    return {
+        "create_perfetto_link": False,
+        "profiler_options": self._get_profiler_options(),
+    }
+
   def execute(
       self,
       inputs: tuple[Any, ...],
       local_xprof_dir: Optional[str],
-  ) -> tuple[list[float], int]:
+  ) -> ExecutionResult:
     """Executes the standard single-step measurement loop."""
     ctx = contextlib.nullcontext()
-    if self.benchmark.xprof_config.xprof_timing and local_xprof_dir is not None:
-      ctx = jax.profiler.trace(local_xprof_dir, create_perfetto_link=False)
+    is_traced = (
+        self.benchmark.xprof_config.xprof_timing and local_xprof_dir is not None
+    )
+    if is_traced:
+      ctx = jax.profiler.trace(local_xprof_dir, **self._get_trace_kwargs())
 
     raw_times: list[float] = []
     actual_runs = 0
@@ -68,7 +119,13 @@ class BaseRunExecutor:
         if actual_runs < 1000:
           raw_times.append((t1 - t0) * 1000.0)
 
-    return raw_times, actual_runs
+    # Every measured iteration runs inside the trace, so all `actual_runs`
+    # should appear in it; fewer captured means the trace was truncated.
+    return ExecutionResult(
+        raw_times_ms=raw_times,
+        actual_runs=actual_runs,
+        xprof_expected_runs=actual_runs if is_traced else None,
+    )
 
   def _resolve_max_device_id(self, trace_dir: str) -> Optional[int]:
     """Selects the local device ID with the highest median kernel duration."""
@@ -217,22 +274,18 @@ class SoakingRunExecutor(BaseRunExecutor):
     """Returns the number of back-to-back iterations per timing window."""
     return int(self.config.samples_per_run)
 
-  def _get_profiler_options(self) -> Any:
-    """Returns ProfileOptions enabling TPU FW thermal/power events."""
-    try:
-      options = jax.profiler.ProfileOptions()
-      options.host_tracer_level = 0
-      options.advanced_configuration = {
-          "tpu_e2e_enable_fw_thermal_event": True,
-          "tpu_e2e_enable_fw_power_level_event": True,
-          "tpu_e2e_enable_fw_throttle_event": True,
-          "tpu_power_trace_level": 1,
-          "tpu_perf_counters": False,
-      }
-      return options
-    except Exception as e:  # pylint: disable=broad-exception-caught
-      print(f"Warning: Failed to configure jax.profiler.ProfileOptions: {e}")
-      return None
+  def _get_profiler_options(self) -> jax.profiler.ProfileOptions:
+    """Extends the base trace-reduction options with TPU FW thermal/power events."""
+    options = super()._get_profiler_options()
+    options.host_tracer_level = 0
+    options.advanced_configuration = {
+        **options.advanced_configuration,
+        "tpu_e2e_enable_fw_thermal_event": True,
+        "tpu_e2e_enable_fw_power_level_event": True,
+        "tpu_e2e_enable_fw_throttle_event": True,
+        "tpu_power_trace_level": 1,
+    }
+    return options
 
   def _run_chunk(self, *inputs, samples: int = 1) -> tuple[jax.Array, ...]:
     """Executes `samples` back-to-back iterations and blocks once at the end."""
@@ -295,7 +348,7 @@ class SoakingRunExecutor(BaseRunExecutor):
       self,
       inputs: tuple[Any, ...],
       local_xprof_dir: Optional[str],
-  ) -> tuple[list[float], int]:
+  ) -> ExecutionResult:
     """Executes Phase 1 (`baseline_window`), Phase 2 (`min_duration_s` soak), and Phase 3 (`worst_window`)."""
     if not self.benchmark.xprof_config.xprof_timing or not local_xprof_dir:
       raise ValueError(
@@ -307,10 +360,7 @@ class SoakingRunExecutor(BaseRunExecutor):
 
     samples_per_run = self._samples_per_run()
 
-    trace_kwargs: dict[str, Any] = {"create_perfetto_link": False}
-    profile_options = self._get_profiler_options()
-    if profile_options is not None:
-      trace_kwargs["profiler_options"] = profile_options
+    trace_kwargs = self._get_trace_kwargs()
 
     raw_times: list[float] = []
     self.soak_wall_ms = []
@@ -362,7 +412,13 @@ class SoakingRunExecutor(BaseRunExecutor):
     ):
       self._target_device_id = self._resolve_max_device_id(worst_dir)
 
-    return raw_times, actual_runs
+    # xprof_* stats use only the traced worst_window (`samples_per_run`
+    # iterations); baseline_window and the untraced soak are excluded.
+    return ExecutionResult(
+        raw_times_ms=raw_times,
+        actual_runs=actual_runs,
+        xprof_expected_runs=samples_per_run,
+    )
 
   def get_xprof_durations(self, xprof_dir: str) -> list[float]:
     """Returns aggregated baseline and worst-window XProf durations."""

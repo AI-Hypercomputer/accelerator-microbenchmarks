@@ -452,6 +452,7 @@ class CompareGatheredChecksumsTest(parameterized.TestCase):
     # The reported devices agree, but the missing one could differ.
     self.assertIsNone(res_missing["intra_host_checksum_match"])
     self.assertIsNone(res_missing["global_checksum_match"])
+    self.assertEqual(res_missing["diverging_devices"], [])
     # 3 of 4 expected devices are still a majority.
     self.assertEqual(res_missing["checksum"], "0x0000000100000002")
     self.assertEqual(
@@ -581,6 +582,7 @@ class GatherAndCompareChecksumsTest(parameterized.TestCase):
     self.assertIs(res["all_devices_valid_checksum"], expected_valid)
     self.assertIs(res["intra_host_checksum_match"], expected_match)
     self.assertIs(res["global_checksum_match"], expected_match)
+    self.assertEqual(res["diverging_devices"], [])
     self.assertEqual(
         [d["device_id"] for d in res["device_checksums"]],
         [i for i, r in enumerate(expected_reported) if r],
@@ -613,7 +615,7 @@ class GatherAndCompareChecksumsTest(parameterized.TestCase):
     self.assertIsNone(res_err["global_checksum_match"])
     # Local device checksums read prior to allgather are still preserved
     self.assertLen(res_err["device_checksums"], 4)
-    self.assertIsNone(res_err["diverging_devices"])
+    self.assertEqual(res_err["diverging_devices"], [])
 
   def test_checksum_failure_still_joins_allgather(self):
     """Verifies a failing checksum computation does not skip the collective.
@@ -644,6 +646,7 @@ class GatherAndCompareChecksumsTest(parameterized.TestCase):
     self.assertIsNone(res["intra_host_checksum_match"])
     self.assertIsNone(res["global_checksum_match"])
     self.assertEqual(res["device_checksums"], [])
+    self.assertEqual(res["diverging_devices"], [])
     self.assertTrue(
         any(
             "Computing device checksums failed" in line for line in logs.output
@@ -665,6 +668,7 @@ class GatherAndCompareChecksumsTest(parameterized.TestCase):
     # Every device computed the same degenerate result: undeterminable.
     self.assertIsNone(res["intra_host_checksum_match"])
     self.assertIsNone(res["global_checksum_match"])
+    self.assertEqual(res["diverging_devices"], [])
     self.assertLen(res["device_checksums"], 8)
     self.assertTrue(
         any("Degenerate chain result" in line for line in logs.output),

@@ -59,7 +59,7 @@ class HostDeviceParams(base.SingleDtypeBenchmarkParams):
       },
   )
   local_device: int = dataclasses.field(
-      default=ALL_LOCAL_DEVICES,
+      default=0,
       metadata={
           "min": ALL_LOCAL_DEVICES,
           "help": (
@@ -109,8 +109,10 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
       ("data_size_mib", report.format_str),
       ("wall_clock_p50_ms", report.format_4f),
       ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
+      ("wall_clock_bandwidth_total_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
       ("xprof_bandwidth_per_device_gb_s", report.format_2f),
+      ("xprof_bandwidth_total_gb_s", report.format_2f),
   )
 
   kv_manager: Optional[kv_cache_manager.KVCacheManager] = None
@@ -265,14 +267,18 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
   def calculate_throughput_metrics(
       self, latency_ms: float, prefix: constants.TimingDomain
   ) -> dict[str, Any]:
-    bytes_per_device = self.get_total_bytes() / self.num_transfer_devices
+    total_bytes = self.get_total_bytes()
+    bytes_per_device = total_bytes / self.num_transfer_devices
     latency_s = latency_ms / 1000.0
     if latency_s == 0:
-      bandwidth_gb_s = float("inf")
+      bandwidth_per_device_gb_s = float("inf")
+      bandwidth_total_gb_s = float("inf")
     else:
-      bandwidth_gb_s = bytes_per_device / (latency_s * 1e9)
+      bandwidth_per_device_gb_s = bytes_per_device / (latency_s * 1e9)
+      bandwidth_total_gb_s = total_bytes / (latency_s * 1e9)
     return {
-        f"{prefix}_bandwidth_per_device_gb_s": bandwidth_gb_s,
+        f"{prefix}_bandwidth_per_device_gb_s": bandwidth_per_device_gb_s,
+        f"{prefix}_bandwidth_total_gb_s": bandwidth_total_gb_s,
     }
 
 

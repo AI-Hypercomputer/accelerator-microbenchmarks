@@ -117,6 +117,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     # Run the benchmark
     result = self.bm.run()
     self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertIn("wall_clock_bandwidth_total_gb_s", result.metrics)
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
 
     # If reset_data() was executed, the generated array must have been deleted
@@ -213,9 +214,13 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
     result = bm.run()
 
     self.assertIn("xprof_bandwidth_per_device_gb_s", result.metrics)
+    self.assertIn("xprof_bandwidth_total_gb_s", result.metrics)
     self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
     print(f"result: {result}")
     bandwidth_gb_s = result.metrics["xprof_bandwidth_per_device_gb_s"]
+    self.assertAlmostEqual(
+        result.metrics["xprof_bandwidth_total_gb_s"], bandwidth_gb_s
+    )
     print(f"bandwidth_gb_s: {bandwidth_gb_s}")
     self.assertGreater(bandwidth_gb_s, 0.0)
     # Theoretical maximum PCIe Gen5 bandwidth for v7x is 60 GB/s
@@ -364,13 +369,17 @@ class TransferBackendTpuTest(parameterized.TestCase):
         local_device=local_device,
     )
     result = bm.run()
+    expected_devices = self._expected_devices(local_device)
     self._assert_bandwidth_in_range(
         result.metrics, "wall_clock_bandwidth_per_device_gb_s"
     )
-    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
-    self.assertLen(
-        self._expected_devices(local_device), result.metrics["num_devices"]
+    self.assertAlmostEqual(
+        result.metrics["wall_clock_bandwidth_total_gb_s"],
+        result.metrics["wall_clock_bandwidth_per_device_gb_s"]
+        * len(expected_devices),
     )
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertLen(expected_devices, result.metrics["num_devices"])
     self.assertEqual(
         result.metadata.params["transfer_backend"], transfer_backend
     )
@@ -399,6 +408,11 @@ class TransferBackendTpuTest(parameterized.TestCase):
     print(f"{bm.get_run_identifier()}: {result.metrics}")
     self._assert_bandwidth_in_range(
         result.metrics, "xprof_bandwidth_per_device_gb_s"
+    )
+    self.assertAlmostEqual(
+        result.metrics["xprof_bandwidth_total_gb_s"],
+        result.metrics["xprof_bandwidth_per_device_gb_s"]
+        * len(self._expected_devices(local_device)),
     )
     self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
     self.assertIsNone(bm.kv_manager)

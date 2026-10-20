@@ -140,8 +140,8 @@ class HostDeviceParamsValidationTest(parameterized.TestCase):
   def test_defaults(self):
     params = host_device.HostDeviceParams()
     self.assertEqual(params.transfer_backend, _JAX)
-    self.assertEqual(params.local_device, -1)
-    self.assertEqual(params.local_device, host_device.ALL_LOCAL_DEVICES)
+    self.assertEqual(params.local_device, 0)
+    self.assertEqual(host_device.ALL_LOCAL_DEVICES, -1)
     self.assertEqual(params.data_size_mib, 64)
     self.assertEqual(params.data_size_bytes, 64 * 1024 * 1024)
 
@@ -320,6 +320,7 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
         host_device.HostToDeviceBenchmark,
         dtype=dtype,
         transfer_backend="tpu_sync",
+        local_device=-1,
     )
     self.assertEqual(bm.rows_per_device, expected_rows)
     self.assertEqual(
@@ -365,21 +366,24 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
       *_cross(_BENCHMARK_CLASSES, _BACKENDS_AND_DEVICES)
   )
   def test_calculate_metrics(self, bm_cls, backend, local_device):
-    """Bandwidth is reported per device and num_devices as metadata."""
+    """Bandwidth is reported per device and in total, with num_devices metadata."""
     bm = self._setup_benchmark(
         bm_cls, transfer_backend=backend, local_device=local_device
     )
     metrics = bm.calculate_metrics([10.0, 10.0, 10.0])
-    # Bandwidth is per device regardless of how many devices transfer:
-    # 4194304 bytes / (0.01 s * 1e9) = 0.4194304 GB/s.
+    expected_num_devices = _expected_num_devices(local_device)
+    # Per-device bandwidth is 4194304 bytes / (0.01 s * 1e9) = 0.4194304 GB/s;
+    # total bandwidth scales by the number of participating devices.
     self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
     self.assertAlmostEqual(metrics["wall_clock_p50_ms"], 10.0)
     self.assertAlmostEqual(
         metrics["wall_clock_bandwidth_per_device_gb_s"], 0.4194304
     )
-    self.assertEqual(
-        metrics["num_devices"], _expected_num_devices(local_device)
+    self.assertAlmostEqual(
+        metrics["wall_clock_bandwidth_total_gb_s"],
+        0.4194304 * expected_num_devices,
     )
+    self.assertEqual(metrics["num_devices"], expected_num_devices)
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", metrics)
     self.assertNotIn("total_bytes_mib", metrics)
 
@@ -392,13 +396,21 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
     self.assertEqual(
         metrics["wall_clock_bandwidth_per_device_gb_s"], float("inf")
     )
+    self.assertEqual(metrics["wall_clock_bandwidth_total_gb_s"], float("inf"))
 
-  @parameterized.named_parameters(*_BENCHMARK_CLASSES)
-  def test_xprof_prefix_bandwidth(self, bm_cls):
-    bm = self._make_benchmark(bm_cls, local_device=0)
+  @parameterized.named_parameters(
+      *_cross(_BENCHMARK_CLASSES, (("all", -1), ("dev0", 0)))
+  )
+  def test_xprof_prefix_bandwidth(self, bm_cls, local_device):
+    bm = self._make_benchmark(bm_cls, local_device=local_device)
     metrics = bm.calculate_throughput_metrics(1.0, constants.TimingDomain.XPROF)
+    expected_per_device = _DATA_SIZE_BYTES / 1e6
     self.assertAlmostEqual(
-        metrics["xprof_bandwidth_per_device_gb_s"], _DATA_SIZE_BYTES / 1e6
+        metrics["xprof_bandwidth_per_device_gb_s"], expected_per_device
+    )
+    self.assertAlmostEqual(
+        metrics["xprof_bandwidth_total_gb_s"],
+        expected_per_device * _expected_num_devices(local_device),
     )
 
   @parameterized.named_parameters(
@@ -444,8 +456,10 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
             "data_size_mib",
             "wall_clock_p50_ms",
             "wall_clock_bandwidth_per_device_gb_s",
+            "wall_clock_bandwidth_total_gb_s",
             "xprof_p50_ms",
             "xprof_bandwidth_per_device_gb_s",
+            "xprof_bandwidth_total_gb_s",
         ],
     )
 
@@ -498,7 +512,9 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
         metrics={
             "num_devices": num_devices,
             "wall_clock_bandwidth_per_device_gb_s": 18.25,
+            "wall_clock_bandwidth_total_gb_s": 18.25 * num_devices,
             "xprof_bandwidth_per_device_gb_s": 18.50,
+            "xprof_bandwidth_total_gb_s": 18.50 * num_devices,
             "wall_clock_p50_ms": 14.0274,
             "xprof_p50_ms": 14.0100,
         },
@@ -517,7 +533,9 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
         str(local_device),
         "256",
         "18.25",
+        f"{18.25 * num_devices:.2f}",
         "18.50",
+        f"{18.50 * num_devices:.2f}",
         "14.0274",
         "14.0100",
     ):
@@ -691,15 +709,22 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
     self.assertIsNone(bm.device_array)
 
   @parameterized.named_parameters(
-      ("h2d", host_device.HostToDeviceBenchmark, "h2d"),
-      ("d2h", host_device.DeviceToHostBenchmark, "d2h"),
+      ("h2d_all", host_device.HostToDeviceBenchmark, "h2d", -1),
+      ("h2d_dev0", host_device.HostToDeviceBenchmark, "h2d", 0),
+      ("d2h_all", host_device.DeviceToHostBenchmark, "d2h", -1),
+      ("d2h_dev0", host_device.DeviceToHostBenchmark, "d2h", 0),
   )
-  def test_tpu_sync_run_e2e(self, bm_cls, op_name):
+  def test_tpu_sync_run_e2e(self, bm_cls, op_name, local_device):
     """run() drives every tpu_sync transfer through a full-block copy."""
     bm = self._make_benchmark(
-        bm_cls, transfer_backend="tpu_sync", num_runs=3, warmup_tries=2
+        bm_cls,
+        transfer_backend="tpu_sync",
+        local_device=local_device,
+        num_runs=3,
+        warmup_tries=2,
     )
     result = bm.run()
+    expected_num_devices = _expected_num_devices(local_device)
     self.mock_kv_cls.assert_called()
     measured = getattr(self.mock_kv, op_name)
     # At least warmup_tries + num_runs transfers, all of the full block.
@@ -709,10 +734,15 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
     self.assertGreater(
         result.metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0
     )
-    self.assertEqual(result.metrics["num_devices"], _NUM_DEVICES)
+    self.assertAlmostEqual(
+        result.metrics["wall_clock_bandwidth_total_gb_s"],
+        result.metrics["wall_clock_bandwidth_per_device_gb_s"]
+        * expected_num_devices,
+    )
+    self.assertEqual(result.metrics["num_devices"], expected_num_devices)
     self.assertEqual(result.metrics["actual_runs"], 3)
     self.assertEqual(result.metadata.params["transfer_backend"], "tpu_sync")
-    self.assertEqual(result.metadata.params["local_device"], -1)
+    self.assertEqual(result.metadata.params["local_device"], local_device)
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
     self.assertIsNone(bm.kv_manager)
 
@@ -722,14 +752,16 @@ class HostToDeviceBenchmarkTest(_HostDeviceTestBase):
 
   _BM = host_device.HostToDeviceBenchmark
 
-  def test_generate_inputs(self):
-    """Verify input shape and default dtype across all devices."""
-    bm = self._setup_benchmark(self._BM)
+  @parameterized.named_parameters(("all", -1), ("dev0", 0))
+  def test_generate_inputs(self, local_device):
+    """Verify input shape and default dtype across selected devices."""
+    bm = self._setup_benchmark(self._BM, local_device=local_device)
+    n = _expected_num_devices(local_device)
     inputs = bm.generate_inputs()
     self.assertLen(inputs, 1)
     host_data = inputs[0]
     self.assertIsInstance(host_data, np.ndarray)
-    self.assertEqual(host_data.shape, (_NUM_DEVICES * _ROWS_PER_DEVICE, 128))
+    self.assertEqual(host_data.shape, (n * _ROWS_PER_DEVICE, 128))
     self.assertEqual(host_data.dtype, jnp.bfloat16)
     self.assertEqual(host_data.nbytes, bm.get_total_bytes())
 
@@ -866,17 +898,23 @@ class HostToDeviceBenchmarkTest(_HostDeviceTestBase):
     mock_device_put.assert_not_called()
 
   def test_run_e2e(self):
-    """Verify run() produces per-device bandwidth without per-chip bandwidth."""
+    """Verify run() produces per-device and total bandwidth without per-chip bandwidth."""
     bm = self._make_benchmark(self._BM, num_runs=2, warmup_tries=1)
     result = bm.run()
     self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertIn("wall_clock_bandwidth_total_gb_s", result.metrics)
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
     self.assertGreater(
         result.metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0
     )
+    self.assertAlmostEqual(
+        result.metrics["wall_clock_bandwidth_total_gb_s"],
+        result.metrics["wall_clock_bandwidth_per_device_gb_s"],
+    )
     self.assertIn("wall_clock_avg_ms", result.metrics)
     self.assertGreater(result.metrics["wall_clock_avg_ms"], 0.0)
-    self.assertEqual(result.metrics["num_devices"], _NUM_DEVICES)
+    self.assertEqual(result.metrics["num_devices"], 1)
+    self.assertEqual(result.metadata.params["local_device"], 0)
     self.assertNotIn("roofline_tflops_limit", result.metrics)
     self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
     self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
@@ -920,13 +958,15 @@ class DeviceToHostBenchmarkTest(_HostDeviceTestBase):
     ):
       bm.generate_inputs()
 
-  def test_run_op(self):
+  @parameterized.named_parameters(("all", -1), ("dev0", 0))
+  def test_run_op(self, local_device):
     """Verify run_op returns a numpy array."""
-    bm = self._setup_benchmark(self._BM)
+    bm = self._setup_benchmark(self._BM, local_device=local_device)
+    n = _expected_num_devices(local_device)
     inputs = bm.generate_inputs()
     out = bm.run_op(*inputs)
     self.assertIsInstance(out, np.ndarray)
-    self.assertEqual(out.shape, (_NUM_DEVICES * _ROWS_PER_DEVICE, 128))
+    self.assertEqual(out.shape, (n * _ROWS_PER_DEVICE, 128))
     self.assertEqual(out.dtype, jnp.bfloat16)
     self.assertEqual(out.nbytes, bm.get_total_bytes())
 
@@ -1088,17 +1128,23 @@ class DeviceToHostBenchmarkTest(_HostDeviceTestBase):
     self.assertIsNone(bm.host_data)
 
   def test_run_e2e(self):
-    """Verify run() produces per-device bandwidth without per-chip bandwidth."""
+    """Verify run() produces per-device and total bandwidth without per-chip bandwidth."""
     bm = self._make_benchmark(self._BM, num_runs=2, warmup_tries=1)
     result = bm.run()
     self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertIn("wall_clock_bandwidth_total_gb_s", result.metrics)
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
     self.assertGreater(
         result.metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0
     )
+    self.assertAlmostEqual(
+        result.metrics["wall_clock_bandwidth_total_gb_s"],
+        result.metrics["wall_clock_bandwidth_per_device_gb_s"],
+    )
     self.assertIn("wall_clock_avg_ms", result.metrics)
     self.assertGreater(result.metrics["wall_clock_avg_ms"], 0.0)
-    self.assertEqual(result.metrics["num_devices"], _NUM_DEVICES)
+    self.assertEqual(result.metrics["num_devices"], 1)
+    self.assertEqual(result.metadata.params["local_device"], 0)
     self.assertNotIn("roofline_tflops_limit", result.metrics)
     self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
     self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)

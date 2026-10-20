@@ -696,7 +696,7 @@ class AllGatherBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
     hlo_category = args.get("hlo_category", "")
     offload_type = args.get("offload_type", "")
     return (
-        hlo_category == "async-done"
+        hlo_category in ("async-done", "async-done (OFFLOAD_COLLECTIVE)")
         and offload_type == "OFFLOAD_COLLECTIVE"
     )
 
