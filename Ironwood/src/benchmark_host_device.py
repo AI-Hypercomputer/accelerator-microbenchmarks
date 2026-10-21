@@ -1,16 +1,18 @@
 """
-Benchmarks Host-to-Device and Device-to-Host transfer performance
-(Simple Baseline).
+Benchmarks Host-to-Device and Device-to-Host transfer performance.
 """
 
-import time
-import os
-from typing import Any, Dict, Tuple, List
-
-import jax
-import numpy as np
+import abc
 import contextlib
+import os
+import time
+from typing import Any, Dict, List, Tuple
+
 from benchmark_utils import MetricsStatistics
+import jax
+from jax import numpy as jnp
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
+import numpy as np
 
 libtpu_init_args = [
     "--xla_tpu_dvfs_p_state=7",
@@ -21,29 +23,221 @@ os.environ["TPU_PREMAPPED_BUFFER_SIZE"] = "68719476736"
 os.environ["TPU_PREMAPPED_BUFFER_TRANSFER_THRESHOLD_BYTES"] = "68719476736"
 
 
+class TransferStrategy(abc.ABC):
+    """Abstract base class for transfer strategies."""
+
+    def __init__(self, trace_dir: str = None):
+        self.trace_dir = trace_dir
+        self.h2d_perf = []
+        self.d2h_perf = []
+
+    @abc.abstractmethod
+    def setup(
+        self, data_size_mib: int, host_data: np.ndarray, num_devices: int
+    ):
+        """Perform one-time setup before the benchmark loop."""
+
+    @abc.abstractmethod
+    def run_h2d(self, host_data: np.ndarray, i: int) -> Any:
+        """Run H2D transfer for iteration i."""
+
+    @abc.abstractmethod
+    def run_d2h(self, device_data: Any, i: int):
+        """Run D2H transfer for iteration i."""
+
+    @abc.abstractmethod
+    def teardown(self):
+        """Clean up resources after the benchmark loop."""
+
+
+class SimpleTransfer(TransferStrategy):
+    """Simple device_put/device_get strategy."""
+
+    def setup(
+        self, data_size_mib: int, host_data: np.ndarray, num_devices: int
+    ):
+        target_devices = jax.devices()[:num_devices]
+        self.mesh = Mesh(target_devices, ("x",))
+        self.partition_spec = PartitionSpec("x")
+        self.sharding = NamedSharding(self.mesh, self.partition_spec)
+
+    def run_h2d(self, host_data: np.ndarray, i: int) -> Any:
+        t0 = time.perf_counter()
+        device_array = jax.device_put(host_data, self.sharding)
+        device_array.block_until_ready()
+        t1 = time.perf_counter()
+
+        # Verify H2D shape
+        assert device_array.shape == host_data.shape
+        self.h2d_perf.append((t1 - t0) * 1000)
+        return device_array
+
+    def run_d2h(self, device_data: Any, i: int):
+        t2 = time.perf_counter()
+        # Retrieving addressable shards natively supports parallelism
+        _ = jax.device_get([s.data for s in device_data.addressable_shards])
+        t3 = time.perf_counter()
+        self.d2h_perf.append((t3 - t2) * 1000)
+        device_data.delete()
+
+    def teardown(self):
+        pass
+
+
+class PipelinedTransfer(TransferStrategy):
+    """Pipelined transfer using chunking."""
+
+    def setup(
+        self, data_size_mib: int, host_data: np.ndarray, num_devices: int
+    ):
+        self.target_chunk_size_mib = 16
+        num_devices_to_perform_h2d = num_devices
+        self.target_devices = jax.devices()[:num_devices_to_perform_h2d]
+        self.num_devices = len(self.target_devices)
+
+        data_per_dev = data_size_mib / self.num_devices
+        chunks_per_dev = int(data_per_dev / self.target_chunk_size_mib)
+        self.chunks_per_dev = max(1, chunks_per_dev)
+        if self.chunks_per_dev == 1:
+            print(
+                "Warning: Data size is not larger than target chunk size, "
+                "falling back to standard JAX put."
+            )
+
+    def run_h2d(self, host_data: np.ndarray, i: int) -> Any:
+        if self.chunks_per_dev > 1:
+            chunks = np.array_split(
+                host_data, self.chunks_per_dev * self.num_devices, axis=0
+            )
+            tensors_on_device = []
+
+            t0 = time.perf_counter()
+            for idx, chunk in enumerate(chunks):
+                dev = self.target_devices[idx % self.num_devices]
+                tensors_on_device.append(jax.device_put(chunk, dev))
+
+            for device_tensor in tensors_on_device:
+                device_tensor.block_until_ready()
+            t1 = time.perf_counter()
+
+            self.h2d_perf.append((t1 - t0) * 1000)
+            del chunks
+            return tensors_on_device
+        else:
+            t0 = time.perf_counter()
+            result = jax.device_put(host_data, self.target_devices[0])
+            result.block_until_ready()
+            t1 = time.perf_counter()
+            self.h2d_perf.append((t1 - t0) * 1000)
+            return result
+
+    def run_d2h(self, device_data: Any, i: int):
+        t2 = time.perf_counter()
+        if isinstance(device_data, list):
+            _ = jax.device_get(device_data)
+            for device_tensor in device_data:
+                device_tensor.delete()
+        else:
+            _ = jax.device_get(device_data)
+            device_data.delete()
+        t3 = time.perf_counter()
+        self.d2h_perf.append((t3 - t2) * 1000)
+
+    def teardown(self):
+        pass
+
+
+class PinnedMemoryTransfer(TransferStrategy):
+    """Pinned memory H2D with parallelized D2H transfer."""
+
+    def setup(
+        self, data_size_mib: int, host_data: np.ndarray, num_devices: int
+    ):
+        num_devices_to_perform_h2d = num_devices
+        target_devices = jax.devices()[:num_devices_to_perform_h2d]
+
+        mesh = Mesh(target_devices, ("x",))
+        partition_spec = PartitionSpec("x")
+        host_sharding = NamedSharding(
+            mesh, partition_spec, memory_kind="pinned_host"
+        )
+        self.pinned_device_sharding = NamedSharding(mesh, partition_spec)
+
+        print("  Allocating Pinned Host Data...", flush=True)
+        self.pinned_host_input = jax.device_put(host_data, host_sharding)
+        self.pinned_host_input.block_until_ready()
+
+    def run_h2d(self, host_data: np.ndarray, i: int) -> Any:
+        t_transfer_start = time.perf_counter()
+        device_array = jax.device_put(
+            self.pinned_host_input, self.pinned_device_sharding
+        )
+        device_array.block_until_ready()
+        t_transfer_end = time.perf_counter()
+
+        self.h2d_perf.append((t_transfer_end - t_transfer_start) * 1000)
+        return device_array
+
+    def run_d2h(self, device_data: Any, i: int):
+        t2 = time.perf_counter()
+        # Fetch addressable shards to enable pipelined D2H
+        _ = jax.device_get([s.data for s in device_data.addressable_shards])
+        t3 = time.perf_counter()
+        self.d2h_perf.append((t3 - t2) * 1000)
+        device_data.delete()
+
+    def teardown(self):
+        if hasattr(self, "pinned_host_input"):
+            self.pinned_host_input.delete()
+
+
 def benchmark_host_device(
     data_size_mib: int,
+    transfer_type: str = "simple",
+    num_devices: int = 2,
+    input_type: str = "numpy",
+    dtype: jnp.dtype = jnp.float32,
     num_runs: int = 100,
     trace_dir: str = None,
 ) -> Dict[str, Any]:
-    """Benchmarks H2D/D2H transfer using simple device_put/device_get."""
+    """Benchmarks H2D/D2H transfer using device_put/device_get."""
 
-    num_elements = 1024 * 1024 * data_size_mib // np.dtype(np.float32).itemsize
+    normalized_dtype = jnp.dtype(dtype)
+    num_elements = 1024 * 1024 * data_size_mib // normalized_dtype.itemsize
 
     # Allocate Host Source Buffer
     column = 128
-    host_data = np.random.normal(size=(num_elements // column, column)).astype(
-        np.float32
+    np_data = np.random.normal(size=(num_elements // column, column)).astype(
+        normalized_dtype
     )
+
+    if input_type == "numpy":
+        host_data = np_data
+    elif input_type == "jax":
+        host_data = jax.device_put(np_data, jax.devices("cpu")[0])
+    else:
+        raise ValueError(f"Unknown input_type: {input_type}")
 
     print(
         f"Benchmarking Transfer with Data Size: {data_size_mib} MB "
-        f"for {num_runs} iterations",
+        f"for {num_runs} iterations with {transfer_type=}",
         flush=True,
     )
 
-    # Performance Lists
-    h2d_perf, d2h_perf = [], []
+    strategies = {
+        "simple": SimpleTransfer,
+        "pipelined": PipelinedTransfer,
+        "pinned_memory": PinnedMemoryTransfer,
+    }
+
+    if transfer_type not in strategies:
+        raise ValueError(
+            f"Unknown transfer_type: {transfer_type}. "
+            f"Available: {list(strategies.keys())}"
+        )
+
+    strategy = strategies[transfer_type](trace_dir)
+    strategy.setup(data_size_mib, host_data, num_devices)
 
     # Profiling Context
     if trace_dir:
@@ -54,11 +248,10 @@ def benchmark_host_device(
     with profiler_context:
         # Warmup
         for _ in range(2):
-            device_array = jax.device_put(host_data)
-            device_array.block_until_ready()
-            host_out = np.array(device_array)
-            device_array.delete()
-            del host_out
+            device_array = strategy.run_h2d(host_data, -1)
+            strategy.run_d2h(device_array, -1)
+        strategy.h2d_perf.clear()
+        strategy.d2h_perf.clear()
 
         for i in range(num_runs):
             # Step Context
@@ -70,41 +263,26 @@ def benchmark_host_device(
                 step_context = contextlib.nullcontext()
 
             with step_context:
-                # H2D
-                t0 = time.perf_counter()
+                device_data = strategy.run_h2d(host_data, i)
+                strategy.run_d2h(device_data, i)
 
-                # Simple device_put
-                device_array = jax.device_put(host_data)
-                device_array.block_until_ready()
-
-                t1 = time.perf_counter()
-                h2d_perf.append((t1 - t0) * 1000)
-
-                # Verify H2D shape
-                assert device_array.shape == host_data.shape
-
-                # D2H
-                t2 = time.perf_counter()
-
-                # Simple device_get
-                # Note: device_get returns a numpy array (copy)
-                _ = jax.device_get(device_array)
-
-                t3 = time.perf_counter()
-                d2h_perf.append((t3 - t2) * 1000)
-
-                device_array.delete()
+    strategy.teardown()
 
     return {
-        "h2d_bandwidth_ms": h2d_perf,
-        "d2h_bandwidth_ms": d2h_perf,
+        "h2d_bandwidth_ms": strategy.h2d_perf,
+        "d2h_bandwidth_ms": strategy.d2h_perf,
     }
 
 
 def benchmark_host_device_calculate_metrics(
+    # pylint: disable=unused-argument
     data_size_mib: int,
     h2d_bandwidth_ms: List[float],
     d2h_bandwidth_ms: List[float],
+    transfer_type: str = "simple",
+    num_devices: int = 2,
+    input_type: str = "numpy",
+    dtype: jnp.dtype = jnp.float32,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Calculates metrics for Host-Device transfer."""
     params = locals().items()
@@ -112,8 +290,12 @@ def benchmark_host_device_calculate_metrics(
     # Filter out list params from metadata to avoid explosion
     metadata_keys = {
         "data_size_mib",
+        "transfer_type",
+        "num_devices",
+        "input_type",
     }
     metadata = {k: v for k, v in params if k in metadata_keys}
+    metadata["dtype"] = jnp.dtype(dtype).name
 
     metrics = {}
 
@@ -126,11 +308,23 @@ def benchmark_host_device_calculate_metrics(
         ]
         stats_bw = MetricsStatistics(bw_list, f"{name}_bw (GiB/s)")
         print(
-            f"{name}_bw (GiB/s) median: {stats_bw.statistics["p50"]}, "
+            f"  {name}_bw (GiB/s) median: {stats_bw.statistics["p50"]}, "
             f"P95: {stats_bw.statistics["p95"]}",
             flush=True,
         )
         metrics.update(stats_bw.serialize_statistics())
+
+        bw_array = np.array(bw_list)
+        sample_variance = np.var(bw_array, ddof=1)
+        if np.isnan(sample_variance):
+            sample_variance = 0.0
+
+        metrics[f"{name}_bw (GiB/s)_variance"] = sample_variance
+
+        print(
+            f"  {name}_bw (GiB/s) Sample Variance: {sample_variance:.4e}",
+            flush=True,
+        )
 
     add_metric("H2D", h2d_bandwidth_ms)
     add_metric("D2H", d2h_bandwidth_ms)
