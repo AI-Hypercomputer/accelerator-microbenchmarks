@@ -314,18 +314,6 @@ def benchmark_host_device_calculate_metrics(
         )
         metrics.update(stats_bw.serialize_statistics())
 
-        bw_array = np.array(bw_list)
-        sample_variance = np.var(bw_array, ddof=1)
-        if np.isnan(sample_variance):
-            sample_variance = 0.0
-
-        metrics[f"{name}_bw (GiB/s)_variance"] = sample_variance
-
-        print(
-            f"  {name}_bw (GiB/s) Sample Variance: {sample_variance:.4e}",
-            flush=True,
-        )
-
     add_metric("H2D", h2d_bandwidth_ms)
     add_metric("D2H", d2h_bandwidth_ms)
 
