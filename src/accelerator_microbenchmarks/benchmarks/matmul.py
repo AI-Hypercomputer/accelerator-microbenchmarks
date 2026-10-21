@@ -400,6 +400,24 @@ class GemmChainedParams(base.BaseBenchmarkParams):
   a square K x K matrix, so there is no separate N.
   """
 
+  # Overrides the inherited field, which keeps its place in the field order.
+  # The checksums of every timed run are gathered across hosts, which needs
+  # the same number of runs on every host (a mismatch can hang the gather). A
+  # min_duration_s loop stops on each host's own clock and cannot guarantee
+  # that, while num_runs alone does.
+  min_duration_s: float = dataclasses.field(
+      default=0.0,
+      metadata={
+          "min": 0.0,
+          "max": 0.0,
+          "help": (
+              "Not supported; must be 0. Every host must run exactly num_runs"
+              " timed runs so that the checksums of every run can be compared"
+              " across hosts. Increase num_runs for more coverage."
+          ),
+      },
+  )
+
   m: int = dataclasses.field(
       default=1024,
       metadata={"min": 1, "help": "Matrix dimension M (rows of X)."},
@@ -550,7 +568,9 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self._checksum_fn: Optional[Callable[[jax.Array], jax.Array]] = None
-    self._last_x: Optional[jax.Array] = None
+    # This host's `checksum.checksum_local_rows` result of each timed run, in
+    # run order.
+    self._local_runs: list[Any] = []
 
   def setup(self):
     if self.mesh is None:
@@ -564,6 +584,7 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
         out_dtype=out_dtype,
     )
     self._checksum_fn = checksum.make_checksum_fn(self.mesh)
+    self._local_runs = []
 
   def get_run_identifier(self) -> str:
     return (
@@ -587,10 +608,19 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
   def run_op(self, *args) -> jax.Array:
     if self._jit_fn is None:
       raise ValueError("JIT function not initialized.")
-    # Timed: runs only the chain. Keep a handle to each device's final X (no
-    # sync, no readback); it is checksummed after the timed loop.
-    self._last_x = self._jit_fn(*args)
-    return self._last_x
+    # Timed: runs only the chain. Each run's final X is checksummed in
+    # `post_run_processing`, after the run's timer stops.
+    return self._jit_fn(*args)
+
+  def post_run_processing(self, outputs: jax.Array, run_index: int) -> None:
+    del run_index  # The rows are kept in run order.
+    if self._checksum_fn is None:
+      raise ValueError("Checksum function not initialized.")
+    # Blocks on the readback, so the checksum does not run in the next run's
+    # timed window. Never raises once initialized.
+    self._local_runs.append(
+        checksum.checksum_local_rows(outputs, self._checksum_fn)
+    )
 
   def get_total_bytes(self) -> float:
     m, k = self.config.m, self.config.k
@@ -610,14 +640,9 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
 
   def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
     metrics = super().calculate_metrics(times_ms)
-    if self._checksum_fn is None or self.mesh is None:
-      raise ValueError("Checksum function or mesh not initialized.")
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
     metrics.update(
-        checksum.gather_and_compare_checksums(
-            self._last_x, self._checksum_fn, self.mesh
-        )
+        checksum.gather_and_compare_checksums(self._local_runs, self.mesh)
     )
-    # Release the last chain's final X so it does not stay in HBM until this
-    # benchmark object is garbage collected.
-    self._last_x = None
     return metrics

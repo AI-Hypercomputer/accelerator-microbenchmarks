@@ -42,7 +42,7 @@ Every benchmark supports the following baseline execution and profiling paramete
 | :--- | :--- | :--- | :--- |
 | `warmup_tries` | `int` | `10` | Number of untimed warmup iterations executed prior to measurement to complete XLA JIT compilation and stabilize device clocks. |
 | `num_runs` | `int` | `10` | Minimum number of timed measurement iterations executed inside the timing loop. |
-| `min_duration_s` | `float` | `0.0` | Minimum total measurement duration in seconds. When `> 0.0`, warmup also runs for at least `min(1.0, min_duration_s / 5)` seconds, and the measurement loop continues until both `num_runs` and `min_duration_s` are satisfied. |
+| `min_duration_s` | `float` | `0.0` | Minimum total measurement duration in seconds. When `> 0.0`, warmup also runs for at least `min(1.0, min_duration_s / 5)` seconds, and the measurement loop continues until both `num_runs` and `min_duration_s` are satisfied. Must be `0.0` for [`gemm_chained`](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental). |
 
 <a id="per-device-vs-per-chip-scaling"></a>
 ### 1.2 Throughput & Bandwidth Metric Conventions (`<timing_domain>_<metric_type>_<hardware_scope>`)
@@ -160,8 +160,9 @@ Runs the same deterministic chain of `chain_length` matmuls
 compares a bit-exact, position-weighted checksum of each device's final `X`
 within each host and across the slice to find miscomputing chips. Each device
 generates its own `X_0` and `B` from `seed` (no copies between devices), so a
-fault during input generation only affects that device. Only the chain is timed;
-the checksum is computed after the measurement loop.
+fault during input generation only affects that device. Only the chain is timed:
+each timed run is checksummed after its timer stops, and the checksums of every
+run are compared after the measurement loop.
 `total_flops = chain_length × 2 × M × K²`.
 
 | Parameter | Type | Default | Description |
@@ -175,19 +176,28 @@ the checksum is computed after the measurement loop.
 
 `in_dtype` and `out_dtype` must be 8/16/32-bit floats. Unlike `gemm`, there is
 no `n`, `transpose_a`, `transpose_b`, `alpha`, `beta`, or `use_scaling_factors`.
+`min_duration_s` is not supported and must remain `0.0` so that every host runs
+the same number of timed iterations (`num_runs`) before the cross-host checksum
+gather.
 
 | New Metric | Description |
 | :--- | :--- |
-| `global_checksum_match` | **The check passed iff `True`.** `False` if any two devices disagree; `None` if it cannot be decided (fewer than 2 devices, a missing device, every device degenerate, or a failed checksum gather). |
+| `global_checksum_match` | **The check passed iff `True`.** `False` if any two checksums differ, across devices or timed runs; `None` if it cannot be decided (fewer than 2 devices, a missing checksum, every checksum degenerate, or a failed checksum gather). |
 | `intra_host_checksum_match` | Same rule over this host's devices. |
-| `checksum` | Non-degenerate checksum held by more than half of the devices, or `None`. |
-| `diverging_devices` | `[]` unless two devices disagree; then the devices that differ from `checksum`, or every device if `checksum` is `None`. |
-| `all_devices_valid_checksum` | Every device reported a checksum and none is degenerate (`inf`/`NaN` or all zeros). |
-| `device_checksums` | This host's per-device checksums. |
+| `checksum` | Non-degenerate device checksum (see `device_checksums`) held by more than half of the devices, or `None`. |
+| `diverging_devices` | `[]` unless two checksums differ; then the devices with a timed run whose checksum differs from `checksum`, or every device if `checksum` is `None`. Each lists those runs (every run if `checksum` is `None`) in `failed_runs`, as `{"run", "checksum", "degenerate"}`, where `degenerate` marks an `inf`/`NaN` or all-zero result in that run. |
+| `all_devices_valid_checksum` | Every device has a checksum for every timed run and none is degenerate (`inf`/`NaN` or all zeros). |
+| `device_checksums` | This host's device checksums. A device's checksum is the one of more than half of its timed runs, or `None`. |
+
+A failure in only some runs suggests a transient or intermittent fault, and a
+failure in every run a persistent one. A failure in every run from some run on
+suggests a corrupted `X_0` or `B`, which are generated once and reused by every
+run. The same wrong checksum in every failed run suggests a deterministic fault,
+such as a stuck bit.
 
 **Limits**:
 
-- Only the final timed run's chain is checksummed; warmup and earlier timed runs are not checked, so increasing `num_runs` does not add coverage.
+- Every timed run is checksummed (warmup is not), so increasing `num_runs` adds coverage.
 - Not an HBM scan (`X` and `B` stay at fixed addresses); one shape and dtype covers a subset of MXU datapaths, so sweep for broader coverage.
 - Choose `chain_length` so values stay finite; `inf`/`NaN` or all-zero results never pass.
 - Golden-reference comparison and collective/H2D/D2H integrity are out of scope.

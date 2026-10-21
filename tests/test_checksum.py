@@ -54,24 +54,77 @@ def _rows(words, reported=None, degenerate=None):
   `_devices`.
 
   Args:
-    words: (hosts, local_devices, 2) `(s1, s2)` per device.
-    reported: Optional (hosts, local_devices) 0/1 flags; default all reported.
-    degenerate: Optional (hosts, local_devices) 0/1 flags; default none.
+    words: (hosts, runs, local_devices, 2) `(s1, s2)` per run and device, or
+      (hosts, local_devices, 2) for a single run.
+    reported: Optional 0/1 flags shaped like `words[..., 0]`; default all
+      reported.
+    degenerate: Optional 0/1 flags shaped like `words[..., 0]`; default none.
 
   Returns:
     uint32 rows `(device_id, reported, s1, s2, degenerate)` of shape
-    (hosts, local_devices, 5).
+    (hosts, runs, local_devices, 5).
   """
   words = np.asarray(words, dtype=np.uint32)
-  shape = words.shape[:2]
+  if words.ndim == 3:  # A single run.
+    words = words[:, np.newaxis]
+  shape = words.shape[:3]
+  num_hosts, _, num_local = shape
+  device_ids = np.arange(num_hosts * num_local).reshape(num_hosts, 1, num_local)
   if reported is None:
-    reported = np.ones(shape, dtype=np.uint32)
+    reported = np.ones(shape)
   if degenerate is None:
-    degenerate = np.zeros(shape, dtype=np.uint32)
-  device_ids = np.arange(np.prod(shape)).reshape(shape)
+    degenerate = np.zeros(shape)
   return np.stack(
-      [device_ids, reported, words[..., 0], words[..., 1], degenerate], axis=-1
+      [
+          np.broadcast_to(device_ids, shape),
+          np.reshape(reported, shape),
+          words[..., 0],
+          words[..., 1],
+          np.reshape(degenerate, shape),
+      ],
+      axis=-1,
   ).astype(np.uint32)
+
+
+# Checksum words of the run results in `_pattern_rows`; "N" is degenerate.
+_PATTERN_WORDS = {
+    "A": (1, 2),
+    "B": (3, 4),
+    "C": (5, 6),
+    "D": (7, 8),
+    "N": (9, 9),
+}
+
+
+def _pattern_rows(patterns):
+  """Builds gathered rows from one string of run results per device.
+
+  Args:
+    patterns: `patterns[h][l]` has one character per timed run of local device
+      `l` of host `h`: a key of `_PATTERN_WORDS`, or "-" for a run whose
+      checksum was not read back. Every string has the same length.
+
+  Returns:
+    `_rows` of shape (hosts, runs, local_devices, 5).
+  """
+  results = np.array([[list(p) for p in host] for host in patterns])
+  # (hosts, local_devices, runs) -> (hosts, runs, local_devices).
+  results = results.swapaxes(1, 2)
+  words = [_PATTERN_WORDS.get(r, (0, 0)) for r in results.flat]
+  return _rows(
+      np.reshape(words, results.shape + (2,)),
+      reported=results != "-",
+      degenerate=results == "N",
+  )
+
+
+def _checksum_of(result):
+  """Returns the formatted checksum of a `_pattern_rows` result, or None."""
+  if result is None:
+    return None
+  return checksum.format_checksum(
+      checksum.combine_checksum_words(*_PATTERN_WORDS[result])
+  )
 
 
 def _mesh(num_devices):
@@ -96,20 +149,35 @@ def _per_device_x(mesh, blocks):
   return jax.device_put(jnp.concatenate(blocks), sharding)
 
 
-def _gather_args(mesh, value=1.0):
-  """Returns the arguments of `gather_and_compare_checksums` for `mesh`.
+def _local_runs(mesh, value=1.0, num_runs=1, checksum_fn=None):
+  """Returns this host's rows of each of `num_runs` runs (`local_runs`).
 
   Args:
     mesh: Mesh whose devices report a checksum.
     value: Value of every element of each device's 8 x 8 bfloat16 final X.
-
-  Returns:
-    `(x, checksum_fn, mesh)`: every device's final X (see `_per_device_x`), the
-    checksum function for `mesh`, and `mesh`.
+    num_runs: Number of timed runs.
+    checksum_fn: Checksum function; defaults to `make_checksum_fn(mesh)`.
   """
   block = jnp.full((8, 8), value, dtype=jnp.bfloat16)
   x = _per_device_x(mesh, [block] * mesh.devices.size)
-  return x, checksum.make_checksum_fn(mesh), mesh
+  checksum_fn = checksum_fn or checksum.make_checksum_fn(mesh)
+  return [checksum.checksum_local_rows(x, checksum_fn) for _ in range(num_runs)]
+
+
+def _spy_allgather():
+  """Returns a patch that spies on `process_allgather` without changing it."""
+  return mock.patch.object(
+      checksum.multihost_utils,
+      "process_allgather",
+      wraps=checksum.multihost_utils.process_allgather,
+  )
+
+
+def _gathered_payload(spy_gather):
+  """Returns this host's payload of the only `process_allgather` call."""
+  spy_gather.assert_called_once()
+  (payload,) = spy_gather.call_args.args
+  return payload
 
 
 class ChecksumWordsTest(parameterized.TestCase):
@@ -344,8 +412,12 @@ class CompareGatheredChecksumsTest(parameterized.TestCase):
         "device_id": 5,
         "coords": [0, 1, 0],
         "core_on_chip": 1,
-        "checksum": "0x91c07d22a8e3f4b1",
         "consensus": "0x3f2a9c1e7b4d0e58",
+        "failed_runs": [{
+            "run": 0,
+            "checksum": "0x91c07d22a8e3f4b1",
+            "degenerate": False,
+        }],
     }]
     self.assertEqual(res_h0["diverging_devices"], expected_diverging)
 
@@ -360,24 +432,33 @@ class CompareGatheredChecksumsTest(parameterized.TestCase):
     self.assertEqual(res_h1["diverging_devices"], expected_diverging)
 
   def test_consensus_tie(self):
-    """Verifies a tie: no consensus, every device listed as diverging."""
-    words = np.array(
-        [
-            [[1, 10], [1, 10]],
-            [[2, 20], [2, 20]],
-        ],
-        dtype=np.uint32,
-    )
+    """Verifies a tie: no consensus, every run of every device is listed."""
     res = checksum.compare_gathered_checksums(
-        _rows(words), process_index=0, mesh_devices=_devices(2, 2)
+        _pattern_rows([["AAA", "AAA"], ["BBB", "BBB"]]),
+        process_index=0,
+        mesh_devices=_devices(2, 2),
     )
     self.assertIsNone(res["checksum"])
     self.assertTrue(res["all_devices_valid_checksum"])
     self.assertIs(res["intra_host_checksum_match"], True)
     self.assertIs(res["global_checksum_match"], False)
-    self.assertLen(res["diverging_devices"], 4)
+    self.assertEqual(
+        [d["device_id"] for d in res["diverging_devices"]], [0, 1, 2, 3]
+    )
     for entry in res["diverging_devices"]:
+      result = "A" if entry["process_index"] == 0 else "B"
       self.assertIsNone(entry["consensus"])
+      self.assertEqual(
+          entry["failed_runs"],
+          [
+              {
+                  "run": run,
+                  "checksum": _checksum_of(result),
+                  "degenerate": False,
+              }
+              for run in range(3)
+          ],
+      )
 
   @parameterized.named_parameters(
       # (hosts, local devices per host, expected intra on the last host)
@@ -525,8 +606,109 @@ class CompareGatheredChecksumsTest(parameterized.TestCase):
     )
 
 
+class MultiRunCompareTest(parameterized.TestCase):
+  """Tests `compare_gathered_checksums` over several timed runs (pure numpy)."""
+
+  @parameterized.named_parameters(
+      # (runs of the device, expected device checksum; None if no majority)
+      ("one_run", "A", "A"),
+      ("two_runs_agree", "AA", "A"),
+      ("two_runs_disagree", "AB", None),
+      # A run without a checksum counts against every value.
+      ("two_runs_one_missing", "A-", None),
+      ("three_runs_one_missing", "AA-", "A"),
+      ("three_runs_all_differ", "ABC", None),
+      ("four_runs_tie", "AABB", None),
+      ("five_runs_one_transient", "AABAA", "A"),
+      ("five_runs_no_majority", "AABCD", None),
+      # A degenerate checksum can represent a device, but is never consensus.
+      ("five_runs_degenerate", "NNNNN", "N"),
+  )
+  def test_device_checksum_is_strict_majority_of_its_runs(self, runs, expected):
+    """Verifies a device's checksum needs more than half of its timed runs."""
+    res = checksum.compare_gathered_checksums(
+        _pattern_rows([[runs]]), 0, mesh_devices=_devices(1, 1)
+    )
+    (entry,) = res["device_checksums"]
+    self.assertEqual(entry["checksum"], _checksum_of(expected))
+
+  @parameterized.named_parameters(
+      # (runs of device 5, expected intra-host match of host 1 and global
+      #  match, device 5's checksum, all_devices_valid_checksum)
+      ("healthy", "AAAAA", True, "A", True),
+      ("transient_run_2", "AABAA", False, "A", True),
+      ("transient_run_0", "BAAAA", False, "A", True),
+      ("persistent", "BBBBB", False, "B", True),
+      ("wrong_from_run_2_on", "AABBB", False, "B", True),
+      ("several_wrong_values", "AABCD", False, None, True),
+      ("degenerate_run_2", "AANAA", False, "A", False),
+      ("missing_run_2", "AA-AA", None, "A", False),
+  )
+  def test_compares_every_timed_run_of_every_device(
+      self,
+      device_5_runs,
+      expected_match,
+      expected_device_5_checksum,
+      expected_valid,
+  ):
+    """Verifies 2 hosts x 4 devices x 5 runs, where device 5 varies."""
+    rows = _pattern_rows(
+        [["AAAAA"] * 4, ["AAAAA", device_5_runs, "AAAAA", "AAAAA"]]
+    )
+    # Device 5's runs whose checksum differs from the consensus "A".
+    failed_runs = [
+        {
+            "run": run,
+            "checksum": _checksum_of(result),
+            "degenerate": result == "N",
+        }
+        for run, result in enumerate(device_5_runs)
+        if result not in "A-"
+    ]
+    expected_diverging = (
+        [{
+            "process_index": 1,
+            "device_id": 5,
+            "coords": None,
+            "core_on_chip": None,
+            "consensus": _checksum_of("A"),
+            "failed_runs": failed_runs,
+        }]
+        if failed_runs
+        else []
+    )
+    # Host 0's devices all agree; only host 1 holds device 5.
+    for process_index, expected_intra in ((0, True), (1, expected_match)):
+      res = checksum.compare_gathered_checksums(
+          rows, process_index, mesh_devices=_devices(2, 4)
+      )
+      self.assertIs(res["intra_host_checksum_match"], expected_intra)
+      self.assertIs(res["global_checksum_match"], expected_match)
+      self.assertEqual(res["checksum"], _checksum_of("A"))
+      self.assertIs(res["all_devices_valid_checksum"], expected_valid)
+      self.assertEqual(res["diverging_devices"], expected_diverging)
+      if process_index == 1:
+        device_5 = res["device_checksums"][1]
+        self.assertEqual(device_5["device_id"], 5)
+        self.assertEqual(
+            device_5["checksum"], _checksum_of(expected_device_5_checksum)
+        )
+
+
 class GatherAndCompareChecksumsTest(parameterized.TestCase):
-  """Tests for `gather_and_compare_checksums` on simulated CPU devices."""
+  """Tests `checksum_local_rows` and `gather_and_compare_checksums` on CPU."""
+
+  def _assert_undecided(self, res, num_device_checksums=0):
+    """Asserts `res` decides nothing and lists `num_device_checksums`."""
+    self.assertIsNone(res["checksum"])
+    self.assertFalse(res["all_devices_valid_checksum"])
+    self.assertIsNone(res["intra_host_checksum_match"])
+    self.assertIsNone(res["global_checksum_match"])
+    self.assertLen(res["device_checksums"], num_device_checksums)
+    self.assertEqual(res["diverging_devices"], [])
+
+  def _assert_logged(self, logs, message):
+    self.assertTrue(any(message in line for line in logs.output), logs.output)
 
   @parameterized.named_parameters(
       # (device whose readback fails, expected reported column,
@@ -534,23 +716,23 @@ class GatherAndCompareChecksumsTest(parameterized.TestCase):
       ("all_mesh_devices_read", None, [1, 1, 1, 1, 0, 0, 0, 0], True, True),
       ("one_read_failure", 2, [1, 1, 0, 1, 0, 0, 0, 0], False, None),
   )
-  def test_partial_mesh_gathers_one_fixed_shape_row_per_local_device(
+  def test_partial_mesh_gathers_fixed_shape_rows_per_run_and_local_device(
       self, failing_device_id, expected_reported, expected_valid, expected_match
   ):
-    """Verifies every host gathers once, even if a local readback fails.
+    """Verifies every host joins the allgather, even if a readback fails.
 
-    Skipping the collective on one host would leave the other hosts waiting in
-    `process_allgather`, so every host contributes one row per local device
-    (here 8, while the mesh has 4) exactly once. Devices outside the mesh do
-    not count as missing for the intra-host match.
+    Skipping a collective on one host would leave the other hosts waiting in
+    `process_allgather`, so every host contributes one row per run and local
+    device (here 8, while the mesh has 4). Devices outside the mesh do not
+    count as missing for the intra-host match.
 
     Args:
       failing_device_id: Device whose readback raises, or None.
-      expected_reported: Expected `reported` column of the local payload.
+      expected_reported: Expected `reported` column of each run's rows.
       expected_valid: Expected `all_devices_valid_checksum`.
       expected_match: Expected intra-host and global match.
     """
-    x, checksum_fn, mesh = _gather_args(_mesh(4))
+    mesh = _mesh(4)
     read_shard_words = checksum._read_shard_words  # pylint: disable=protected-access
 
     def maybe_fail(shard):
@@ -560,25 +742,19 @@ class GatherAndCompareChecksumsTest(parameterized.TestCase):
 
     with mock.patch.object(
         checksum, "_read_shard_words", side_effect=maybe_fail
-    ), mock.patch.object(
-        checksum.multihost_utils,
-        "process_allgather",
-        wraps=checksum.multihost_utils.process_allgather,
-    ) as spy_gather, self.assertLogs(
-        level="WARNING"
-    ) as logs:
-      res = checksum.gather_and_compare_checksums(x, checksum_fn, mesh)
+    ), _spy_allgather() as spy_gather, self.assertLogs(level="WARNING") as logs:
+      local_runs = _local_runs(mesh, num_runs=2)
+      res = checksum.gather_and_compare_checksums(local_runs, mesh)
 
-    spy_gather.assert_called_once()
-    (local_rows,) = spy_gather.call_args.args
+    # The rows of every run, gathered once.
+    payload = _gathered_payload(spy_gather)
     # Rows are (device_id, reported, s1, s2, degenerate).
-    self.assertEqual(local_rows.shape, (8, 5))
-    device_ids, reported = local_rows[:, :2].T
-    self.assertEqual(device_ids.tolist(), list(range(8)))
-    self.assertEqual(reported.tolist(), expected_reported)
-    self.assertTrue(
-        any("covers 4 of" in line for line in logs.output), logs.output
-    )
+    self.assertEqual(payload.shape, (2, 8, 5))
+    for rows in payload:
+      device_ids, reported = rows[:, :2].T
+      self.assertEqual(device_ids.tolist(), list(range(8)))
+      self.assertEqual(reported.tolist(), expected_reported)
+    self._assert_logged(logs, "covers 4 of")
     self.assertIs(res["all_devices_valid_checksum"], expected_valid)
     self.assertIs(res["intra_host_checksum_match"], expected_match)
     self.assertIs(res["global_checksum_match"], expected_match)
@@ -589,70 +765,61 @@ class GatherAndCompareChecksumsTest(parameterized.TestCase):
     )
 
   def test_never_raises_on_failure(self):
-    """Verifies an invalid result (no raise) on a None array or gather error."""
-    unused_checksum_fn = mock.Mock()
-    res_none = checksum.gather_and_compare_checksums(
-        None, unused_checksum_fn, _mesh(_NUM_CPU_DEVICES)
-    )
-    unused_checksum_fn.assert_not_called()
-    self.assertIsNone(res_none["checksum"])
-    self.assertFalse(res_none["all_devices_valid_checksum"])
-    self.assertIsNone(res_none["intra_host_checksum_match"])
-    self.assertIsNone(res_none["global_checksum_match"])
-    self.assertEqual(res_none["device_checksums"], [])
-    self.assertEqual(res_none["diverging_devices"], [])
+    """Verifies an invalid result (no raise) with no runs or a gather error."""
+    with _spy_allgather() as spy_gather:
+      res_none = checksum.gather_and_compare_checksums(
+          [], _mesh(_NUM_CPU_DEVICES)
+      )
+    # Without a timed run, every host still gathers one unreported run.
+    payload = _gathered_payload(spy_gather)
+    self.assertEqual(payload[..., 1].tolist(), [[0] * _NUM_CPU_DEVICES])
+    self._assert_undecided(res_none)
 
-    x, checksum_fn, mesh = _gather_args(_mesh(4))
+    mesh = _mesh(4)
+    local_runs = _local_runs(mesh)
     with mock.patch.object(
         checksum.multihost_utils,
         "process_allgather",
         side_effect=RuntimeError("simulated gather failure"),
     ):
-      res_err = checksum.gather_and_compare_checksums(x, checksum_fn, mesh)
-    self.assertIsNone(res_err["checksum"])
-    self.assertFalse(res_err["all_devices_valid_checksum"])
-    self.assertIsNone(res_err["intra_host_checksum_match"])
-    self.assertIsNone(res_err["global_checksum_match"])
+      res_err = checksum.gather_and_compare_checksums(local_runs, mesh)
     # Local device checksums read prior to allgather are still preserved
-    self.assertLen(res_err["device_checksums"], 4)
-    self.assertEqual(res_err["diverging_devices"], [])
+    self._assert_undecided(res_err, num_device_checksums=4)
 
-  def test_checksum_failure_still_joins_allgather(self):
-    """Verifies a failing checksum computation does not skip the collective.
+  def test_checksum_failure_still_joins_the_allgather(self):
+    """Verifies a failing checksum computation does not skip a collective.
 
     Skipping `process_allgather` on one host would leave the other hosts
     waiting, so a host whose checksum computation fails still contributes its
     fixed-shape payload, with every local device marked as not reported.
     """
-    x, _, mesh = _gather_args(_mesh(_NUM_CPU_DEVICES))
+    mesh = _mesh(_NUM_CPU_DEVICES)
     failing_checksum_fn = mock.Mock(
         side_effect=RuntimeError("simulated checksum failure")
     )
-    with mock.patch.object(
-        checksum.multihost_utils,
-        "process_allgather",
-        wraps=checksum.multihost_utils.process_allgather,
-    ) as spy_gather, self.assertLogs(level="ERROR") as logs:
-      res = checksum.gather_and_compare_checksums(x, failing_checksum_fn, mesh)
+    with _spy_allgather() as spy_gather, self.assertLogs(level="ERROR") as logs:
+      local_runs = _local_runs(mesh, checksum_fn=failing_checksum_fn)
+      res = checksum.gather_and_compare_checksums(local_runs, mesh)
 
     failing_checksum_fn.assert_called_once()
-    spy_gather.assert_called_once()
-    (local_rows,) = spy_gather.call_args.args
+    payload = _gathered_payload(spy_gather)
     # Rows are (device_id, reported, s1, s2, degenerate).
-    _, reported = local_rows[:, :2].T
-    self.assertEqual(reported.tolist(), [0] * _NUM_CPU_DEVICES)
-    self.assertIsNone(res["checksum"])
-    self.assertFalse(res["all_devices_valid_checksum"])
-    self.assertIsNone(res["intra_host_checksum_match"])
-    self.assertIsNone(res["global_checksum_match"])
-    self.assertEqual(res["device_checksums"], [])
-    self.assertEqual(res["diverging_devices"], [])
-    self.assertTrue(
-        any(
-            "Computing device checksums failed" in line for line in logs.output
-        ),
-        logs.output,
-    )
+    self.assertEqual(payload[..., 1].tolist(), [[0] * _NUM_CPU_DEVICES])
+    self._assert_undecided(res)
+    self._assert_logged(logs, "Computing device checksums failed")
+
+  def test_invalid_rows_still_join_the_allgather(self):
+    """Verifies rows of the wrong shape are replaced by unreported rows."""
+    with _spy_allgather() as spy_gather, self.assertLogs(level="ERROR") as logs:
+      res = checksum.gather_and_compare_checksums(
+          [np.zeros((3, 5), dtype=np.uint32)], _mesh(4)
+      )
+
+    payload = _gathered_payload(spy_gather)
+    self.assertEqual(payload.shape, (1, _NUM_CPU_DEVICES, 5))
+    self.assertEqual(payload[..., 1].tolist(), [[0] * _NUM_CPU_DEVICES])
+    self._assert_undecided(res)
+    self._assert_logged(logs, "Invalid checksum rows")
 
   @parameterized.named_parameters(
       ("all_zero", 0.0),
@@ -660,9 +827,10 @@ class GatherAndCompareChecksumsTest(parameterized.TestCase):
   )
   def test_degenerate_chain_is_invalid(self, value):
     """Verifies an all-zero or NaN chain result fails the check end to end."""
+    mesh = _mesh(8)
     with self.assertLogs(level="ERROR") as logs:
       res = checksum.gather_and_compare_checksums(
-          *_gather_args(_mesh(8), value)
+          _local_runs(mesh, value), mesh
       )
     self.assertFalse(res["all_devices_valid_checksum"])
     # Every device computed the same degenerate result: undeterminable.
@@ -670,10 +838,8 @@ class GatherAndCompareChecksumsTest(parameterized.TestCase):
     self.assertIsNone(res["global_checksum_match"])
     self.assertEqual(res["diverging_devices"], [])
     self.assertLen(res["device_checksums"], 8)
-    self.assertTrue(
-        any("Degenerate chain result" in line for line in logs.output),
-        logs.output,
-    )
+    self._assert_logged(logs, "Degenerate chain result")
+    self._assert_logged(logs, "'degenerate_runs': [0]")
 
 
 if __name__ == "__main__":
