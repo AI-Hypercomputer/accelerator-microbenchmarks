@@ -12,6 +12,8 @@ from accelerator_microbenchmarks.core import registry
 import numpy as np
 import pandas as pd
 
+import os
+
 DEFAULT_BANNER_MIN_WIDTH: int = 88
 DEFAULT_BANNER_PADDING: int = 4
 DEFAULT_DIAGONAL_MARKER: str = "X"
@@ -315,15 +317,15 @@ def save_output(
     df: Optional[pd.DataFrame] = None,
 ) -> None:
   """Saves benchmark results to summary.csv and detailed.json in output_dir."""
-  if not os.path.exists(output_dir):
-    os.makedirs(output_dir, exist_ok=True)
+  os.makedirs(output_dir, exist_ok=True)
 
   if df is None:
     df = results_to_dataframe(results)
 
   # 1. Summary CSV (Digestible)
   csv_path = os.path.join(output_dir, "summary.csv")
-  df.to_csv(csv_path, index=False)
+  with open(csv_path, "w") as f:
+    df.to_csv(f, index=False)
   print(f"Summary saved to: {csv_path}")
 
   # 2. Detailed JSON (Complete)

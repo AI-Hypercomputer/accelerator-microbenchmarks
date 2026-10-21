@@ -635,6 +635,15 @@ class ReportTest(absltest.TestCase):
           data[0]["metrics"]["wall_clock_tflops_per_device"], 200.0
       )
 
+  def test_save_output_creates_nonexistent_directory(self):
+    """Tests that save_output creates nonexistent output directories."""
+    dummy_res = _make_result("DummyBenchmark")
+    with tempfile.TemporaryDirectory() as tmpdir:
+      nested_dir = os.path.join(tmpdir, "nested", "sub_results")
+      report.save_output([dummy_res], nested_dir)
+      self.assertTrue(os.path.exists(os.path.join(nested_dir, "summary.csv")))
+      self.assertTrue(os.path.exists(os.path.join(nested_dir, "detailed.json")))
+
   def test_save_output_custom_json_serialization(self):
     """Tests that save_output serializes non-primitive metric objects cleanly to strings in detailed.json."""
 
