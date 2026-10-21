@@ -56,7 +56,7 @@ class SimpleTransfer(TransferStrategy):
     def setup(
         self, data_size_mib: int, host_data: np.ndarray, num_devices: int
     ):
-        target_devices = jax.devices()[:num_devices]
+        target_devices = jax.local_devices()[:num_devices]
         self.mesh = Mesh(target_devices, ("x",))
         self.partition_spec = PartitionSpec("x")
         self.sharding = NamedSharding(self.mesh, self.partition_spec)
@@ -92,7 +92,7 @@ class PipelinedTransfer(TransferStrategy):
     ):
         self.target_chunk_size_mib = 16
         num_devices_to_perform_h2d = num_devices
-        self.target_devices = jax.devices()[:num_devices_to_perform_h2d]
+        self.target_devices = jax.local_devices()[:num_devices_to_perform_h2d]
         self.num_devices = len(self.target_devices)
 
         data_per_dev = data_size_mib / self.num_devices
@@ -154,7 +154,7 @@ class PinnedMemoryTransfer(TransferStrategy):
         self, data_size_mib: int, host_data: np.ndarray, num_devices: int
     ):
         num_devices_to_perform_h2d = num_devices
-        target_devices = jax.devices()[:num_devices_to_perform_h2d]
+        target_devices = jax.local_devices()[:num_devices_to_perform_h2d]
 
         mesh = Mesh(target_devices, ("x",))
         partition_spec = PartitionSpec("x")
