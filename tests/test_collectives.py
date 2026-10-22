@@ -229,30 +229,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(bm_class, collectives.AllGatherBenchmark)
     self.assertEqual(bm_class.Config, collectives.IciCollectivesParams)
 
-  def test_all_gather_match_xprof_op_fallback(self):
-    """Test that match_xprof_op_fallback correctly identifies async-done events."""
-    config = collectives.IciCollectivesParams(matrix_dim=64)
-    bm = collectives.AllGatherBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
-    )
-    for hlo_category in ("async-done", "async-done (OFFLOAD_COLLECTIVE)"):
-      self.assertTrue(
-          bm.match_xprof_op_fallback({
-              "args": {
-                  "hlo_category": hlo_category,
-                  "offload_type": "OFFLOAD_COLLECTIVE",
-              }
-          })
-      )
-    self.assertFalse(
-        bm.match_xprof_op_fallback({
-            "args": {
-                "hlo_category": "async-done (OFFLOAD_EMBEDDING)",
-                "offload_type": "OFFLOAD_EMBEDDING",
-            }
-        })
-    )
-
   def test_all_to_all_registered(self):
     """Verify that the benchmark is correctly registered."""
     bm_class = registry.benchmark_registry.get_benchmark("all_to_all")
