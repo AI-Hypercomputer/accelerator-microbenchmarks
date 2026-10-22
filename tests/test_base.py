@@ -481,13 +481,14 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_process_index.return_value = 1  # Current host is Host 1 (non-owner)
     mock_trace.return_value = contextlib.nullcontext()
     mock_upload.return_value = "http://mock_xprof_url"
-    mock_broadcast.return_value = jnp.array(
-        [4.2, 4.1, 4.5, 0.1, 1.0], dtype=jnp.float32
-    )
+    mock_broadcast.side_effect = [
+        np.int32(3),
+        np.array([4.0, 4.1, 4.5], dtype=np.float32),
+    ]
 
     params = {
         "warmup_tries": 1,
-        "num_runs": 1,
+        "num_runs": 3,
     }
     config = base.BaseBenchmarkParams(**params)
     xprof_config = base.XprofConfig(
@@ -498,13 +499,24 @@ class BaseBenchmarkTest(absltest.TestCase):
 
     # When requires_multihost_sync=True (e.g. Device-to-Device asymmetric
     # benchmarks), only the owner host parses the trace; non-owner hosts
-    # skip local trace parsing and use broadcast metrics.
+    # skip local trace parsing and use broadcast durations.
     mock_parse_durations.assert_not_called()
+    self.assertEqual(mock_broadcast.call_count, 2)
     self.assertAlmostEqual(result.metrics["xprof_avg_ms"], 4.2, places=4)
     self.assertAlmostEqual(result.metrics["xprof_p50_ms"], 4.1, places=4)
-    # Captured run count is broadcast from the owner host along with stats
-    # (the non-owner's local count is 0).
-    self.assertEqual(result.metrics["xprof_captured_runs"], 1)
+    # Captured run count is derived from the broadcast owner durations
+    # (the non-owner's local parse is skipped).
+    self.assertEqual(result.metrics["xprof_captured_runs"], 3)
+
+    with self.subTest("value_error_propagates_in_first_device_mode"):
+      bm_first = DummyBenchmark(config=config, xprof_config=xprof_config)
+      with mock.patch.object(
+          bm_first.executor,
+          "get_xprof_durations",
+          side_effect=ValueError("unequal steps"),
+      ):
+        with self.assertRaisesRegex(ValueError, "unequal steps"):
+          bm_first.run()
 
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
@@ -546,9 +558,10 @@ class BaseBenchmarkTest(absltest.TestCase):
     bm = MultihostBenchmark(config=config, xprof_config=xprof_config)
     result = bm.run()
 
-    # When requires_multihost_sync=False (e.g., Collective symmetric benchmarks),
-    # even though hosts exchange data during execution, each host parses its own local
-    # XProf trace for its local device without invoking cross-host metric broadcast.
+    # When requires_multihost_sync=False (e.g., Collective symmetric
+    # benchmarks), even though hosts exchange data during execution, each host
+    # parses its own local XProf trace for its local device without invoking
+    # cross-host metric broadcast.
     mock_parse_durations.assert_called_once()
     self.assertEqual(result.metrics["xprof_avg_ms"], 3.5)
     self.assertEqual(result.metrics["xprof_captured_runs"], 3)
@@ -685,6 +698,169 @@ class BaseBenchmarkTest(absltest.TestCase):
       detailed = json.load(f)
     self.assertEqual(detailed[0]["metrics"]["xprof_captured_runs"], 2)
     self.assertEqual(detailed[0]["metrics"]["xprof_expected_runs"], 4)
+
+  @mock.patch("jax.experimental.multihost_utils.broadcast_one_to_all")
+  @mock.patch("jax.experimental.multihost_utils.process_allgather")
+  @mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @mock.patch("jax.profiler.trace")
+  @mock.patch("jax.process_index")
+  def test_run_with_global_slowest_per_step_computes_identical_metrics_and_bandwidth_on_non_owner_host(
+      self,
+      mock_process_index,
+      mock_trace,
+      mock_upload,
+      mock_parse_durations,
+      mock_allgather,
+      mock_broadcast,
+  ):
+    """Verifies global_slowest_per_step runs on all hosts, skips broadcast, and derives bandwidth from p50."""
+
+    class MultihostCollectiveDummyBenchmark(DummyBenchmark):
+      """Dummy benchmark requiring multihost sync with bandwidth metrics."""
+
+      @property
+      def requires_multihost_sync(self) -> bool:
+        return True
+
+      def get_device_to_measure(self):
+        mock_device = mock.Mock()
+        mock_device.id = 0
+        mock_device.process_index = 0
+        mock_device.local_hardware_id = 0
+        return mock_device
+
+      def calculate_throughput_metrics(
+          self, latency_ms: float, prefix: constants.TimingDomain
+      ):
+        return {f"{prefix}_bandwidth_per_chip_gb_s": 1000.0 / latency_ms}
+
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
+    mock_process_index.return_value = 1  # Non-owner host
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = None
+    mock_parse_durations.side_effect = (
+        lambda _dir, _fn=None, local_device_id=0: [8.0, 20.0, 28.0]
+        if local_device_id == 0
+        else [10.0, 18.0, 30.0]
+    )
+    mock_allgather.side_effect = [
+        np.array([[0, 3], [0, 3]], dtype=np.int32),
+        np.array([[10.0, 20.0, 30.0], [15.0, 25.0, 20.0]], dtype=np.float32),
+    ]
+
+    bm = MultihostCollectiveDummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            xprof_dir="/tmp/test_xprof",
+            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+    with mock.patch.object(
+        jax, "local_devices", return_value=fake_devs
+    ):
+      result = bm.run()
+
+    mock_broadcast.assert_not_called()
+    self.assertEqual(mock_allgather.call_count, 2)
+    self.assertAlmostEqual(result.metrics["xprof_p50_ms"], 25.0, places=4)
+    self.assertAlmostEqual(result.metrics["xprof_avg_ms"], 70.0 / 3.0, places=4)
+    self.assertAlmostEqual(
+        result.metrics["xprof_bandwidth_per_chip_gb_s"], 40.0, places=4
+    )
+
+  @mock.patch("jax.experimental.multihost_utils.process_allgather")
+  @mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @mock.patch("jax.profiler.trace")
+  def test_run_with_global_slowest_per_step_parse_failed_emits_none_metrics_across_hosts(
+      self,
+      mock_trace,
+      mock_upload,
+      mock_parse_durations,
+      mock_allgather,
+  ):
+    """Verifies PARSE_FAILED status on any host sets all XProf latency and bandwidth metrics to None."""
+
+    class BandwidthDummyBenchmark(DummyBenchmark):
+
+      def calculate_throughput_metrics(
+          self, latency_ms: float, prefix: constants.TimingDomain
+      ):
+        return {f"{prefix}_bandwidth_per_chip_gb_s": 1000.0 / latency_ms}
+
+    fake_devs = [mock.MagicMock(local_hardware_id=0)]
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = None
+    mock_parse_durations.return_value = [15.0, 25.0, 30.0]
+    mock_allgather.side_effect = [np.array([[0, 3], [1, 0]], dtype=np.int32)]
+
+    bm = BandwidthDummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            xprof_dir="/tmp/test_xprof",
+            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+    with mock.patch.object(
+        jax, "local_devices", return_value=fake_devs
+    ):
+      result = bm.run()
+
+    self.assertIsNone(result.metrics["xprof_p50_ms"])
+    self.assertIsNone(result.metrics["xprof_avg_ms"])
+    self.assertIsNone(result.metrics["xprof_p90_ms"])
+    self.assertIsNone(result.metrics["xprof_std_ms"])
+    self.assertIsNone(result.metrics["xprof_bandwidth_per_chip_gb_s"])
+
+  @mock.patch("jax.experimental.multihost_utils.process_allgather")
+  @mock.patch(
+      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  )
+  @mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @mock.patch("jax.profiler.trace")
+  def test_run_with_global_slowest_per_step_propagates_unequal_step_count_value_error(
+      self,
+      mock_trace,
+      mock_upload,
+      mock_parse_durations,
+      mock_allgather,
+  ):
+    """Verifies _apply_xprof_timing_and_sync propagates ValueError under GLOBAL_SLOWEST_PER_STEP."""
+    fake_devs = [mock.MagicMock(local_hardware_id=0)]
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = None
+    mock_parse_durations.return_value = [15.0, 25.0, 30.0]
+    mock_allgather.side_effect = [np.array([[0, 3], [0, 2]], dtype=np.int32)]
+
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            xprof_dir="/tmp/test_xprof",
+            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+    with mock.patch.object(
+        jax, "local_devices", return_value=fake_devs
+    ):
+      with self.assertRaisesRegex(ValueError, "Unequal XProf step counts"):
+        bm.run()
 
   def test_xprof_config_immutability(self):
     """Verifies that XprofConfig is frozen and immutable."""

@@ -246,10 +246,7 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         choices=[m.value for m in constants.XprofDeviceMode],
         default=constants.XprofDeviceMode.FIRST_DEVICE,
-        help=(
-            "Device aggregation mode for XProf timings ('first_device' or"
-            " 'max_device')."
-        ),
+        help="Device aggregation mode for XProf timings.",
     )
     add_dataclass_arguments(task_parser, bench_cls.Config)
 

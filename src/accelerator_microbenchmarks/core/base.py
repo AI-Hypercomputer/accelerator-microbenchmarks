@@ -15,8 +15,6 @@ from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
 from accelerator_microbenchmarks.core import system
 import jax
-from jax.experimental import multihost_utils
-import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
@@ -347,92 +345,50 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     if xprof_url:
       metrics["xprof_url"] = xprof_url
 
-    measured_device = self.get_device_to_measure()
-    is_owner = jax.process_index() == measured_device.process_index
-
     all_devs_str = [f"{d.id}(p{d.process_index})" for d in jax.devices()]
     local_devs_str = [
         f"{d.id}(p{d.process_index})" for d in jax.local_devices()
     ]
     print(f"[Host {jax.process_index()}] All devices: {all_devs_str}")
     print(f"[Host {jax.process_index()}] Local devices: {local_devs_str}")
-    print(
-        f"[Host {jax.process_index()}] Measured device:"
-        f" {measured_device.id}(p{measured_device.process_index}),"
-        f" owner_process={measured_device.process_index}, is_owner={is_owner}"
-    )
+    durations: list[float] = []
+    try:
+      durations = self.executor.get_xprof_durations(xprof_dir)
+    except ValueError:
+      raise
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      print(f"Error parsing local XProf trace: {e}")
 
-    # 1. Parse local XProf trace on relevant hosts
-    should_parse = not self.requires_multihost_sync or is_owner
-    local_avg, local_p50, local_p90, local_std = 0.0, 0.0, 0.0, 0.0
-    local_captured = 0
-
-    if should_parse:
-      try:
-        durations = self.executor.get_xprof_durations(xprof_dir)
-        local_captured = len(durations)
-        if durations:
-          print(
-              f"Using XProf device timings ({len(durations)} runs)"
-              " to calculate derived performance metrics."
-          )
-          xprof_stats = self.calculate_latency_stats(
-              durations, prefix=constants.TimingDomain.XPROF
-          )
-          local_avg = xprof_stats[f"{constants.TimingDomain.XPROF}_avg_ms"]
-          local_p50 = xprof_stats[f"{constants.TimingDomain.XPROF}_p50_ms"]
-          local_p90 = xprof_stats[f"{constants.TimingDomain.XPROF}_p90_ms"]
-          local_std = xprof_stats[f"{constants.TimingDomain.XPROF}_std_ms"]
-        else:
-          print("Warning: No XProf device timings found locally.")
-      except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Error parsing local XProf trace: {e}")
-    else:
+    xprof_avg, xprof_p50, xprof_p90, xprof_std = 0.0, 0.0, 0.0, 0.0
+    if durations:
       print(
-          f"Note: Measured device {measured_device.id} is on remote Host"
-          f" {measured_device.process_index} (current Host is"
-          f" {jax.process_index()}). Skipping local XProf parsing."
+          f"Using XProf device timings ({len(durations)} runs)"
+          " to calculate derived performance metrics."
       )
+      xprof_stats = self.calculate_latency_stats(
+          durations, prefix=constants.TimingDomain.XPROF
+      )
+      xprof_avg = xprof_stats[f"{constants.TimingDomain.XPROF}_avg_ms"]
+      xprof_p50 = xprof_stats[f"{constants.TimingDomain.XPROF}_p50_ms"]
+      xprof_p90 = xprof_stats[f"{constants.TimingDomain.XPROF}_p90_ms"]
+      xprof_std = xprof_stats[f"{constants.TimingDomain.XPROF}_std_ms"]
+    else:
+      print("Warning: No XProf device timings found locally.")
 
-    # 2. Optionally broadcast stats across hosts for asymmetric targets (D2D)
-    synced_avg, synced_p50, synced_p90, synced_std, synced_captured = (
-        local_avg,
-        local_p50,
-        local_p90,
-        local_std,
-        local_captured,
-    )
-    if self.requires_multihost_sync:
-      try:
-        stats = jnp.array(
-            [local_avg, local_p50, local_p90, local_std, local_captured],
-            dtype=jnp.float32,
-        )
-        synced_stats = multihost_utils.broadcast_one_to_all(
-            stats, is_source=is_owner
-        )
-        synced_avg = float(synced_stats[0])
-        synced_p50 = float(synced_stats[1])
-        synced_p90 = float(synced_stats[2])
-        synced_std = float(synced_stats[3])
-        synced_captured = int(synced_stats[4])
-      except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Warning: multihost broadcast failed ({e}); using local values.")
+    metrics["xprof_captured_runs"] = len(durations)
 
-    metrics["xprof_captured_runs"] = synced_captured
-
-    # 3. Apply XProf timings or fallback to None for unmeasured durations
-    if synced_p50 > 0:
+    # Apply XProf timings or fallback to None for unmeasured durations
+    if xprof_p50 > 0:
       metrics.update({
-          f"{constants.TimingDomain.XPROF}_avg_ms": synced_avg,
-          f"{constants.TimingDomain.XPROF}_p50_ms": synced_p50,
-          f"{constants.TimingDomain.XPROF}_p90_ms": synced_p90,
-          f"{constants.TimingDomain.XPROF}_std_ms": synced_std,
+          f"{constants.TimingDomain.XPROF}_avg_ms": xprof_avg,
+          f"{constants.TimingDomain.XPROF}_p50_ms": xprof_p50,
+          f"{constants.TimingDomain.XPROF}_p90_ms": xprof_p90,
+          f"{constants.TimingDomain.XPROF}_std_ms": xprof_std,
       })
       self.executor.augment_xprof_metrics(metrics, has_xprof_timings=True)
       metrics.update(
           self.calculate_throughput_metrics(
-              latency_ms=synced_p50, prefix=constants.TimingDomain.XPROF
+              latency_ms=xprof_p50, prefix=constants.TimingDomain.XPROF
           )
       )
     else:

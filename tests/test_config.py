@@ -9,6 +9,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import csv_loader
 
 
@@ -677,6 +678,11 @@ benchmark:
   @parameterized.named_parameters(
       ("first_device", "xprof_device_mode: first_device\n", "first_device"),
       ("max_device", "xprof_device_mode: max_device\n", "max_device"),
+      (
+          "global_slowest_per_step",
+          "xprof_device_mode: global_slowest_per_step\n",
+          "global_slowest_per_step",
+      ),
       ("omitted", "", None),
   )
   def test_load_config_xprof_device_mode(self, mode_snippet, expected):
@@ -738,6 +744,52 @@ benchmark:
 
     with self.assertRaisesRegex(ValueError, "samples_per_run must be >= 1"):
       DummySoakParams(min_duration_s=10.0, samples_per_run=0)
+
+  def test_collective_configs_xprof_device_mode(self):
+    """Verifies collective configs set global_slowest_per_step on multi-host and None on single-host."""
+    configs_root = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "configs")
+    )
+    tpu7x_collectives = (
+        "all_gather.yaml",
+        "all_reduce.yaml",
+        "all_to_all.yaml",
+        "reduce_scatter.yaml",
+    )
+    v6e_collectives = (
+        "all_gather.yaml",
+        "all_reduce.yaml",
+        "all_to_all.yaml",
+    )
+    suites = (
+        (
+            "tpu7x",
+            ("2x2x2", "2x2x4", "2x4x4", "4x4x4"),
+            tpu7x_collectives,
+            constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+        ),
+        ("tpu7x", ("2x2x1",), tpu7x_collectives, None),
+        (
+            "v6e",
+            ("2x4", "4x4", "4x8", "8x8", "8x16", "16x16"),
+            v6e_collectives,
+            constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+        ),
+        ("v6e", ("2x2",), v6e_collectives, None),
+    )
+    for platform_dir, topologies, filenames, expected_mode in suites:
+      for topo in topologies:
+        for filename in filenames:
+          path = os.path.join(configs_root, platform_dir, topo, filename)
+          expanded = config.load_config(path)
+          self.assertNotEmpty(expanded, f"Empty config at {path}")
+          for task in expanded:
+            self.assertEqual(
+                task.get("xprof_device_mode"),
+                expected_mode,
+                f"Expected xprof_device_mode={expected_mode!r} in"
+                f" {platform_dir}/{topo}/{filename}",
+            )
 
 
 if __name__ == "__main__":

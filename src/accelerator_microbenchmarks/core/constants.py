@@ -51,10 +51,18 @@ class TimingDomain(enum.StrEnum):
 
 
 class XprofDeviceMode(ParamEnum):
-  """Device aggregation mode when extracting XProf device timings."""
+  """How XProf durations are aggregated across devices into one per-step series.
 
+  Input: [device, step] duration matrix. Output: [step] series, then summarized
+  (IQR filter -> avg/p50/p90/std) identically for every member.
+  """
+
+  # Row selection: the device returned by get_device_to_measure().
   FIRST_DEVICE = "first_device"
+  # Row selection: the local device whose median duration is highest.
   MAX_DEVICE = "max_device"
+  # Slowest (max duration) over all devices on all hosts, taken at each step.
+  GLOBAL_SLOWEST_PER_STEP = "global_slowest_per_step"
 
 
 HBM_PEAK_TEMP_C = "hbm_peak_temp_c"
