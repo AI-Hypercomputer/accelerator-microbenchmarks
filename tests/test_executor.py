@@ -473,7 +473,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=cfg,
         xprof_config=base.XprofConfig(
             xprof_timing=True,
-            device_mode=constants.XprofDeviceMode.MAX_DEVICE,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE,
         ),
     )
     fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
@@ -510,8 +510,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
     host_cpu_bm = HostCpuSoakingDummyBenchmark(config=cfg)
     self.assertIsNone(host_cpu_bm.executor._resolve_max_device_id("/tmp/fake"))  # pylint: disable=protected-access
 
-  def test_xprof_device_mode_first_vs_max_device(self):
-    """Verifies XprofConfig.device_mode ('first_device' vs 'max_device')."""
+  def test_xprof_device_timing_aggregation_measured_or_first_vs_local_slowest(
+      self,
+  ):
+    """Verifies XprofConfig.device_timing_aggregation ('measured_device_or_first' vs 'local_slowest_device')."""
     fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
 
     def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
@@ -530,7 +532,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
       bm_first = DummyBenchmark(
           xprof_config=base.XprofConfig(
               xprof_timing=True,
-              device_mode=constants.XprofDeviceMode.FIRST_DEVICE,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST,
           )
       )
       self.assertEqual(
@@ -540,7 +542,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
       bm_max = DummyBenchmark(
           xprof_config=base.XprofConfig(
               xprof_timing=True,
-              device_mode=constants.XprofDeviceMode.MAX_DEVICE,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE,
           )
       )
       self.assertEqual(
@@ -686,7 +688,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
         xprof_config=base.XprofConfig(
             xprof_timing=True,
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
 
@@ -741,7 +743,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
         xprof_config=base.XprofConfig(
             xprof_timing=True,
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
 
@@ -776,7 +778,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
         xprof_config=base.XprofConfig(
             xprof_timing=True,
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
 
@@ -857,7 +859,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
         xprof_config=base.XprofConfig(
             xprof_timing=True,
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
 
@@ -923,7 +925,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
         xprof_config=base.XprofConfig(
             xprof_timing=True,
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
 
@@ -962,7 +964,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=cfg,
         xprof_config=base.XprofConfig(
             xprof_timing=True,
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
 
@@ -1050,7 +1052,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
         xprof_config=base.XprofConfig(
             xprof_timing=True,
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
 

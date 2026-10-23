@@ -25,7 +25,9 @@ class XprofConfig:
 
   xprof_timing: bool = False
   xprof_dir: str = "/tmp/tensorboard"
-  device_mode: str = constants.XprofDeviceMode.FIRST_DEVICE
+  device_timing_aggregation: str = (
+      constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
+  )
 
 
 @dataclasses.dataclass

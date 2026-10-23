@@ -326,7 +326,7 @@ class BaseRunExecutor:
       trace_dir: str,
       target_device_id: Optional[int] = None,
   ) -> list[float]:
-    """Extracts XProf device durations from trace_dir according to XprofDeviceMode."""
+    """Extracts XProf device durations from trace_dir according to XprofDeviceTimingAggregation."""
     if self.benchmark.xprof_target_host_cpu:
       return self._durations_for_device(trace_dir, None)
 
@@ -334,8 +334,8 @@ class BaseRunExecutor:
       return self._durations_for_device(trace_dir, target_device_id)
 
     if (
-        self.benchmark.xprof_config.device_mode
-        == constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP
+        self.benchmark.xprof_config.device_timing_aggregation
+        == constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP
     ):
       return self._parse_multihost_durations(trace_dir, agg_fn=np.max)
 
@@ -343,8 +343,8 @@ class BaseRunExecutor:
       return self._parse_multihost_owner_durations(trace_dir)
 
     if (
-        self.benchmark.xprof_config.device_mode
-        == constants.XprofDeviceMode.MAX_DEVICE
+        self.benchmark.xprof_config.device_timing_aggregation
+        == constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE
     ):
       device_slices: list[list[float]] = []
       for dev in jax.local_devices():
@@ -587,8 +587,8 @@ class SoakingRunExecutor(BaseRunExecutor):
 
     self._target_device_id = None
     if (
-        self.benchmark.xprof_config.device_mode
-        == constants.XprofDeviceMode.MAX_DEVICE
+        self.benchmark.xprof_config.device_timing_aggregation
+        == constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE
     ):
       self._target_device_id = self._resolve_max_device_id(worst_dir)
 

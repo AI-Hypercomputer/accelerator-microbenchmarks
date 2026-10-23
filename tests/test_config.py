@@ -496,7 +496,10 @@ benchmark:
     self.assertEqual(config.BenchmarkKey.CASES_FROM_CSV, "cases_from_csv")
     self.assertEqual(config.BenchmarkKey.SWEEP, "sweep")
     self.assertEqual(config.BenchmarkKey.XPROF_TIMING, "xprof_timing")
-    self.assertEqual(config.BenchmarkKey.XPROF_DEVICE_MODE, "xprof_device_mode")
+    self.assertEqual(
+        config.BenchmarkKey.XPROF_DEVICE_TIMING_AGGREGATION,
+        "xprof_device_timing_aggregation",
+    )
     self.assertEqual(
         {k.value for k in config.BenchmarkKey},
         {
@@ -507,7 +510,7 @@ benchmark:
             "cases_from_csv",
             "sweep",
             "xprof_timing",
-            "xprof_device_mode",
+            "xprof_device_timing_aggregation",
         },
     )
 
@@ -676,17 +679,27 @@ benchmark:
       self.assertIn("name", item)
 
   @parameterized.named_parameters(
-      ("first_device", "xprof_device_mode: first_device\n", "first_device"),
-      ("max_device", "xprof_device_mode: max_device\n", "max_device"),
+      (
+          "measured_device_or_first",
+          "xprof_device_timing_aggregation: measured_device_or_first\n",
+          "measured_device_or_first",
+      ),
+      (
+          "local_slowest_device",
+          "xprof_device_timing_aggregation: local_slowest_device\n",
+          "local_slowest_device",
+      ),
       (
           "global_slowest_per_step",
-          "xprof_device_mode: global_slowest_per_step\n",
+          "xprof_device_timing_aggregation: global_slowest_per_step\n",
           "global_slowest_per_step",
       ),
       ("omitted", "", None),
   )
-  def test_load_config_xprof_device_mode(self, mode_snippet, expected):
-    """Verifies that root xprof_device_mode is validated and extracted."""
+  def test_load_config_xprof_device_timing_aggregation(
+      self, mode_snippet, expected
+  ):
+    """Verifies that root xprof_device_timing_aggregation is validated and extracted."""
     yaml_content = (
         "benchmark:\n"
         "  name: gemm_generalized\n"
@@ -698,14 +711,16 @@ benchmark:
     with open(config_path, "w", encoding="utf-8") as f:
       f.write(yaml_content)
     expanded = config.load_config(config_path)
-    self.assertEqual(expanded[0].get("xprof_device_mode"), expected)
+    self.assertEqual(
+        expanded[0].get("xprof_device_timing_aggregation"), expected
+    )
 
-  def test_load_config_invalid_xprof_device_mode_raises(self):
-    """Verifies invalid xprof_device_mode raises ValueError."""
+  def test_load_config_invalid_xprof_device_timing_aggregation_raises(self):
+    """Verifies invalid xprof_device_timing_aggregation raises ValueError."""
     yaml_content = """
 benchmark:
   name: gemm_generalized
-  xprof_device_mode: bogus_mode
+  xprof_device_timing_aggregation: bogus_mode
   params:
     m: 1024
 """
@@ -745,7 +760,7 @@ benchmark:
     with self.assertRaisesRegex(ValueError, "samples_per_run must be >= 1"):
       DummySoakParams(min_duration_s=10.0, samples_per_run=0)
 
-  def test_collective_configs_xprof_device_mode(self):
+  def test_collective_configs_xprof_device_timing_aggregation(self):
     """Verifies collective configs set global_slowest_per_step on multi-host and None on single-host."""
     configs_root = os.path.normpath(
         os.path.join(os.path.dirname(__file__), "..", "configs")
@@ -766,14 +781,14 @@ benchmark:
             "tpu7x",
             ("2x2x2", "2x2x4", "2x4x4", "4x4x4"),
             tpu7x_collectives,
-            constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
         ("tpu7x", ("2x2x1",), tpu7x_collectives, None),
         (
             "v6e",
             ("2x4", "4x4", "4x8", "8x8", "8x16", "16x16"),
             v6e_collectives,
-            constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
         ("v6e", ("2x2",), v6e_collectives, None),
     )
@@ -785,9 +800,10 @@ benchmark:
           self.assertNotEmpty(expanded, f"Empty config at {path}")
           for task in expanded:
             self.assertEqual(
-                task.get("xprof_device_mode"),
+                task.get("xprof_device_timing_aggregation"),
                 expected_mode,
-                f"Expected xprof_device_mode={expected_mode!r} in"
+                "Expected"
+                f" xprof_device_timing_aggregation={expected_mode!r} in"
                 f" {platform_dir}/{topo}/{filename}",
             )
 

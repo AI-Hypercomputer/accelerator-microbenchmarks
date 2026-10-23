@@ -249,6 +249,10 @@ tpums benchmark run-config configs/sample_configs/parameter_sweep.yaml \
         - **Interactive CLI (`tpums benchmark run`)**: Pass `--xprof_timing` directly on the command line.
         - **YAML Config (`tpums benchmark run-config`)**: Set `xprof_timing: true` inside the YAML `benchmark:` block.
     2. **Set Trace Output Directory (`--xprof_dir <path>`, optional)**: Directory to save TensorBoard / XProf hardware trace files (`.xplane.pb`). Defaults to `/tmp/tensorboard`; **only active when XProf timing is enabled**.
+    3. **Device Timing Aggregation (`--xprof_device_timing_aggregation <mode>` / `xprof_device_timing_aggregation: <mode>`, optional)**: Controls how XProf kernel durations are aggregated across devices into a per-step series:
+        - `measured_device_or_first` *(default)*: Uses the device returned by `get_device_to_measure()` (or first local device `TPU:0` by default).
+        - `local_slowest_device`: Selects the local device with the highest median kernel duration.
+        - `global_slowest_per_step`: Takes the slowest (maximum) kernel duration across all devices on all hosts at each step.
 - **Report Output & Compiler Flags**:
     - **`--output_dir <path>`**: Directory to save `summary.csv` and `detailed.json` (defaults to `results/`).
     - **`--xla_flags_file_path <path>`**: Optional path to a custom YAML file overriding default per-benchmark XLA / compiler runtime flags.
@@ -267,6 +271,7 @@ Configuration files define a top-level `benchmark:` mapping containing:
 
 - **`name:` (`<benchmark_name>`)** — Target benchmark name (e.g., `gemm`, `hbm`, `all_reduce`; see [Benchmark Catalog](#benchmark-catalog)).
 - **`xprof_timing:`** *(optional)* — Boolean (`true` / `false`) to enable XProf hardware trace collection and device timing analysis.
+- **`xprof_device_timing_aggregation:`** *(optional)* — Device timing aggregation mode when `xprof_timing: true` (`measured_device_or_first` [default], `local_slowest_device`, or `global_slowest_per_step`).
 - **`params:`** *(optional)* — Baseline execution parameters shared across all generated runs.
 - **`cases:` / `cases_from_csv:` / `sweep:`** *(optional)* — Case override and parameter sweep generators.
 

@@ -24,7 +24,7 @@
 benchmark:
   name: gemm_throttling
   xprof_timing: true
-  xprof_device_mode: max_device
+  xprof_device_timing_aggregation: local_slowest_device
   params:
     warmup_tries: 10
     min_duration_s: 120.0

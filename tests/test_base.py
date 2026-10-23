@@ -508,7 +508,9 @@ class BaseBenchmarkTest(absltest.TestCase):
     # (the non-owner's local parse is skipped).
     self.assertEqual(result.metrics["xprof_captured_runs"], 3)
 
-    with self.subTest("value_error_propagates_in_first_device_mode"):
+    with self.subTest(
+        "value_error_propagates_in_measured_device_or_first_mode"
+    ):
       bm_first = DummyBenchmark(config=config, xprof_config=xprof_config)
       with mock.patch.object(
           bm_first.executor,
@@ -761,7 +763,7 @@ class BaseBenchmarkTest(absltest.TestCase):
         xprof_config=base.XprofConfig(
             xprof_timing=True,
             xprof_dir="/tmp/test_xprof",
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
     with mock.patch.object(
@@ -812,7 +814,7 @@ class BaseBenchmarkTest(absltest.TestCase):
         xprof_config=base.XprofConfig(
             xprof_timing=True,
             xprof_dir="/tmp/test_xprof",
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
     with mock.patch.object(
@@ -853,7 +855,7 @@ class BaseBenchmarkTest(absltest.TestCase):
         xprof_config=base.XprofConfig(
             xprof_timing=True,
             xprof_dir="/tmp/test_xprof",
-            device_mode=constants.XprofDeviceMode.GLOBAL_SLOWEST_PER_STEP,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
         ),
     )
     with mock.patch.object(

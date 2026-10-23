@@ -144,13 +144,15 @@ def run_benchmarks(
     config_path: Optional[str] = None,
     xla_flags_file_path: Optional[str] = None,
     print_table: bool = True,
-    xprof_device_mode: str = constants.XprofDeviceMode.FIRST_DEVICE,
+    xprof_device_timing_aggregation: str = (
+        constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
+    ),
 ) -> List[base.BenchmarkResult]:
   """Core execution engine for typed benchmark task configurations."""
   xprof_config = base.XprofConfig(
       xprof_timing=xprof_timing,
       xprof_dir=xprof_dir,
-      device_mode=xprof_device_mode,
+      device_timing_aggregation=xprof_device_timing_aggregation,
   )
 
   benchmark_loader.load_all_benchmarks()
