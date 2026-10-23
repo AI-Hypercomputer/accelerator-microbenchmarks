@@ -144,7 +144,18 @@ class ReportGeneratorTest(parameterized.TestCase):
 
   def test_fetch_environment_metadata_mocked(self):
     """Versions come from detailed.json; git_commit from git_commit.txt."""
-    mock_detailed_json = json.dumps([{
+    mock_detailed_json_partial = json.dumps(
+        [
+            {
+                "metadata": {
+                    "platform_info": {
+                        "jax_version": "0.11.1",
+                    }
+                }
+            }
+        ]
+    )
+    mock_detailed_json_full = json.dumps([{
         "metadata": {
             "platform_info": {
                 "jax_version": "0.11.1",
@@ -152,13 +163,28 @@ class ReportGeneratorTest(parameterized.TestCase):
             }
         }
     }])
-    with mock.patch("subprocess.run") as mock_run:
+    with (
+        mock.patch("subprocess.run") as mock_run,
+        self.assertNoLogs(level="WARNING"),
+    ):
       mock_run.side_effect = [
-          mock.Mock(returncode=0, stdout="gs://bucket/date/wl/detailed.json\n"),
-          mock.Mock(returncode=0, stdout=mock_detailed_json),
           mock.Mock(
-              returncode=0, stdout="gs://bucket/date/wl/git_commit.txt\n"
+              returncode=0,
+              stdout=(
+                  "gs://bucket/date/wl1/detailed.json\n"
+                  "gs://bucket/date/wl2/detailed.json\n"
+              ),
           ),
+          mock.Mock(returncode=0, stdout=mock_detailed_json_partial),
+          mock.Mock(returncode=0, stdout=mock_detailed_json_full),
+          mock.Mock(
+              returncode=0,
+              stdout=(
+                  "gs://bucket/date/wl1/git_commit.txt\n"
+                  "gs://bucket/date/wl2/git_commit.txt\n"
+              ),
+          ),
+          mock.Mock(returncode=0, stdout="abcdef1234567890\n"),
           mock.Mock(returncode=0, stdout="abcdef1234567890\n"),
       ]
       env = report_generator.fetch_environment_metadata(
@@ -169,9 +195,14 @@ class ReportGeneratorTest(parameterized.TestCase):
     self.assertEqual(env[utils.ENV_GIT_COMMIT], "abcdef1234567890")
     # A single URL: a multi-URL `ls` fails if any URL matches nothing.
     self.assertEqual(
-        mock_run.call_args_list[2].args[0],
+        mock_run.call_args_list[3].args[0],
         ["gcloud", "storage", "ls", "gs://bucket/2026-08-27/*/git_commit.txt"],
     )
+
+    with mock.patch("subprocess.run") as mock_run_empty:
+      empty_env = report_generator.fetch_environment_metadata(gcs_bucket="")
+    mock_run_empty.assert_not_called()
+    self.assertEqual(empty_env, dict.fromkeys(empty_env))
 
   def test_fetch_environment_metadata_without_git_commit_leaves_it_empty(self):
     """No git_commit.txt on GCS leaves git_commit empty (no remote lookup)."""
@@ -320,6 +351,105 @@ class ReportGeneratorTest(parameterized.TestCase):
           results=[_result()],
           gcs_bucket="",
           dry_run=False,
+      )
+
+  def test_fetch_environment_metadata_warns_on_version_or_commit_mismatch(self):
+    """Verifies warnings are logged when metadata differs across workloads."""
+    mock_detailed_json_1 = json.dumps([{
+        "metadata": {
+            "platform_info": {
+                "jax_version": "0.11.1",
+                "libtpu_version": "0.0.46.1",
+            }
+        }
+    }])
+    mock_detailed_json_2 = json.dumps([{
+        "metadata": {
+            "platform_info": {
+                "jax_version": "0.11.2",
+                "libtpu_version": "0.0.46.2",
+            }
+        }
+    }])
+    with (
+        mock.patch("subprocess.run") as mock_run,
+        self.assertLogs(level="WARNING") as log_ctx,
+    ):
+      mock_run.side_effect = [
+          mock.Mock(
+              returncode=0,
+              stdout=(
+                  "gs://bucket/date/wl1/detailed.json\n"
+                  "gs://bucket/date/wl2/detailed.json\n"
+              ),
+          ),
+          mock.Mock(returncode=0, stdout=mock_detailed_json_1),
+          mock.Mock(returncode=0, stdout=mock_detailed_json_2),
+          mock.Mock(
+              returncode=0,
+              stdout=(
+                  "gs://bucket/date/wl1/git_commit.txt\n"
+                  "gs://bucket/date/wl2/git_commit.txt\n"
+              ),
+          ),
+          mock.Mock(returncode=0, stdout="1111111\n"),
+          mock.Mock(returncode=0, stdout="2222222\n"),
+      ]
+      env = report_generator.fetch_environment_metadata(
+          gcs_bucket="gs://bucket", date_str="2026-08-27"
+      )
+    self.assertEqual(env["jax_version"], "0.11.1")
+    self.assertEqual(env["libtpu_version"], "0.0.46.1")
+    self.assertEqual(env["git_commit"], "1111111")
+    joined_logs = "\n".join(log_ctx.output)
+    self.assertIn(
+        "Mismatched jax_version across workloads in gs://bucket/2026-08-27:"
+        " 0.11.1 vs 0.11.2",
+        joined_logs,
+    )
+    self.assertIn(
+        "Mismatched libtpu_version across workloads in gs://bucket/2026-08-27:"
+        " 0.0.46.1 vs 0.0.46.2",
+        joined_logs,
+    )
+    self.assertIn(
+        "Mismatched git_commit across workloads in gs://bucket/2026-08-27:"
+        " 1111111 vs 2222222",
+        joined_logs,
+    )
+
+  def test_fetch_aggregated_csv_results_without_date_str(self):
+    """Verifies fetch_aggregated_csv_results accepts a dated GCS run directory directly."""
+    with mock.patch("subprocess.run") as mock_run:
+      mock_run.side_effect = [
+          mock.Mock(
+              returncode=0,
+              stdout="gs://my-bucket/2026-10-11/aggregated_results/gemm.csv\n",
+          ),
+          mock.Mock(
+              returncode=0,
+              stdout="benchmark,m\nGeneralizedGemmBenchmark,8192\n",
+          ),
+      ]
+      categorized = report_generator.fetch_aggregated_csv_results(
+          "gs://my-bucket/2026-10-11"
+      )
+      self.assertEqual(
+          categorized,
+          {"gemm": [{"benchmark": "GeneralizedGemmBenchmark", "m": "8192"}]},
+      )
+      mock_run.assert_any_call(
+          [
+              "gcloud",
+              "storage",
+              "ls",
+              "gs://my-bucket/2026-10-11/aggregated_results/*.csv",
+          ],
+          capture_output=True,
+          text=True,
+          check=False,
+          stdin=subprocess.DEVNULL,
+          timeout=utils.CLI_TIMEOUT_SECONDS,
       )
 
   def test_format_consolidated_report_host_device(self):
@@ -500,6 +630,187 @@ class ReportGeneratorTest(parameterized.TestCase):
         html_report,
     )
     self.assertNotIn("420.0s", html_report)
+
+  def test_get_display_headers_leading_columns_only(self):
+    """Verifies leading_columns_only returns only leading columns without fallback."""
+    rows = [{
+        "benchmark": "GeneralizedGemmBenchmark",
+        "m": "8192",
+        "warmup_tries": "10",
+        "num_runs": "20",
+    }]
+    self.assertEqual(
+        report_generator.get_display_headers(
+            "gemm", rows, leading_columns_only=True
+        ),
+        ["benchmark", "m"],
+    )
+    # Unknown category or rows with no leading columns return [] instead of
+    # falling back to raw trailing keys.
+    self.assertEqual(
+        report_generator.get_display_headers(
+            "unknown_cat", rows, leading_columns_only=True
+        ),
+        [],
+    )
+    self.assertEqual(
+        report_generator.get_display_headers(
+            "gemm", [{"warmup_tries": "10"}], leading_columns_only=True
+        ),
+        [],
+    )
+    self.assertEqual(
+        report_generator.get_display_headers(
+            "gemm", [{"_source_path": "gs://b/d/s.csv"}]
+        ),
+        [],
+    )
+
+  def test_format_consolidated_report_omit_run_header_and_leading_columns_only(
+      self,
+  ):
+    """Verifies include_run_header=False, leading_columns_only=True, and d2d_matrix_only=True."""
+    categorized = {
+        "device_to_device": [
+            {
+                "benchmark": "DeviceToDeviceBenchmark",
+                "dtype": "float32",
+                "direction": "uni",
+                "src_device_index": 0,
+                "dst_device_index": 1,
+                "xprof_p50_ms": "0.3955",
+                "xprof_bandwidth_per_device_gb_s": "678.64",
+                "num_runs": "5",
+            },
+            {
+                "benchmark": "DeviceToDeviceBenchmark",
+                "dtype": "float32",
+                "direction": "uni",
+                "src_device_index": 1,
+                "dst_device_index": 0,
+                "xprof_p50_ms": "0.3948",
+                "xprof_bandwidth_per_device_gb_s": "679.92",
+                "num_runs": "5",
+            },
+        ],
+        "gemm": [{
+            "benchmark": "GeneralizedGemmBenchmark",
+            "in_dtype": "bfloat16",
+            "out_dtype": "bfloat16",
+            "m": "8192",
+            "k": "4096",
+            "n": "4096",
+            "xprof_p50_ms": "0.25",
+            "xprof_tflops_per_device": "1090.25",
+            "warmup_tries": "10",
+            "wall_clock_p50_ms": "0.50",
+        }],
+        "unknown_extra": [{"raw_col": "leaked_val"}],
+    }
+    report_md = report_generator.format_consolidated_report(
+        results=[],
+        categorized_metrics=categorized,
+        git_commit="27915153b5c44b81394e7ac720e2860e3e0c61ee",
+        jax_version="0.11.1",
+        libtpu_version="0.0.46.2",
+        include_run_header=False,
+        leading_columns_only=True,
+        d2d_matrix_only=True,
+    )
+    self.assertTrue(
+        report_md.startswith("**Environment:** **GitHub Commit:** [`2791515`]")
+    )
+    self.assertNotIn("# 🚀 TPUMS Daily Automated Benchmark Report", report_md)
+    self.assertNotIn("**Cluster:**", report_md)
+    self.assertNotIn("**Execution Summary:**", report_md)
+    self.assertNotIn("warmup_tries", report_md)
+    self.assertNotIn("wall_clock_p50_ms", report_md)
+    self.assertNotIn("unknown_extra", report_md)
+    self.assertNotIn("leaked_val", report_md)
+    self.assertIn("#### Pairwise Bandwidth Matrix (GB/s)", report_md)
+    self.assertIn("D0           -  678.64", report_md)
+    self.assertIn(
+        "D1      679.92       -\n```\n\n### ⚡ Generalized Matrix"
+        " Multiplication (GEMM)",
+        report_md,
+    )
+    self.assertNotIn("<details>", report_md)
+    self.assertNotIn("View Raw Device-to-Device Transfer Table", report_md)
+    self.assertNotIn("DeviceToDeviceBenchmark", report_md)
+    self.assertIn("1090.25", report_md)
+
+    # When leading_columns_only=True and d2d_matrix_only=False (default), the
+    # collapsible raw D2D table is still rendered using only leading columns.
+    report_leading_with_raw_d2d = report_generator.format_consolidated_report(
+        results=[],
+        categorized_metrics=categorized,
+        include_run_header=False,
+        leading_columns_only=True,
+        d2d_matrix_only=False,
+    )
+    self.assertIn(
+        "#### Pairwise Bandwidth Matrix (GB/s)", report_leading_with_raw_d2d
+    )
+    self.assertIn("<details>", report_leading_with_raw_d2d)
+    self.assertIn(
+        "<summary>View Raw Device-to-Device Transfer Table (2 rows)</summary>",
+        report_leading_with_raw_d2d,
+    )
+    self.assertIn("DeviceToDeviceBenchmark", report_leading_with_raw_d2d)
+    self.assertIn("src_device_index", report_leading_with_raw_d2d)
+    self.assertIn("direction", report_leading_with_raw_d2d)
+    self.assertNotIn("num_runs", report_leading_with_raw_d2d)
+
+    # Default leading_columns_only=False preserves the collapsible raw table
+    # with all columns after the Pairwise Bandwidth Matrix on the same input.
+    report_default_cols = report_generator.format_consolidated_report(
+        results=[],
+        categorized_metrics=categorized,
+        include_run_header=False,
+        leading_columns_only=False,
+    )
+    self.assertIn("#### Pairwise Bandwidth Matrix (GB/s)", report_default_cols)
+    self.assertIn("<details>", report_default_cols)
+    self.assertIn(
+        "<summary>View Raw Device-to-Device Transfer Table (2 rows)</summary>",
+        report_default_cols,
+    )
+    self.assertIn("DeviceToDeviceBenchmark", report_default_cols)
+    self.assertIn("src_device_index", report_default_cols)
+    self.assertIn("num_runs", report_default_cols)
+
+    report_no_env = report_generator.format_consolidated_report(
+        results=[],
+        categorized_metrics=categorized,
+        include_run_header=False,
+        leading_columns_only=True,
+        d2d_matrix_only=True,
+    )
+    self.assertTrue(
+        report_no_env.startswith("## Aggregated Benchmark Results by Category")
+    )
+
+    # Fallback: if D2D rows lack src/dst indices (matrix_data is None), the raw
+    # table is still emitted even when d2d_matrix_only=True.
+    report_d2d_fallback = report_generator.format_consolidated_report(
+        results=[],
+        categorized_metrics={
+            "device_to_device": [{
+                "benchmark": "DeviceToDeviceBenchmark",
+                "dtype": "float32",
+                "xprof_p50_ms": "0.3955",
+                "xprof_bandwidth_per_device_gb_s": "678.64",
+            }],
+        },
+        include_run_header=False,
+        leading_columns_only=True,
+        d2d_matrix_only=True,
+    )
+    self.assertNotIn(
+        "#### Pairwise Bandwidth Matrix (GB/s)", report_d2d_fallback
+    )
+    self.assertIn("<details>", report_d2d_fallback)
+    self.assertIn("DeviceToDeviceBenchmark", report_d2d_fallback)
 
 
 if __name__ == "__main__":

@@ -40,6 +40,7 @@ from automation import workload_submitter
 
 DEFAULT_OUTPUT_REPORT = "/tmp/tpums_daily_report.md"
 _REPO_URL = "https://github.com/AI-Hypercomputer/accelerator-microbenchmarks"
+CATEGORY_LEADING_COLUMNS = metrics_aggregator.CATEGORY_LEADING_COLUMNS
 
 CATEGORY_TITLES = {
     "collectives": (
@@ -197,7 +198,7 @@ def format_d2d_pairwise_matrix(
 
 
 def fetch_aggregated_csv_results(
-    gcs_bucket: str, date_str: str
+    gcs_bucket: str, date_str: Optional[str] = None
 ) -> dict[str, list[dict[str, Any]]]:
   """Fetches the aggregated category CSV files from GCS."""
   if not gcs_bucket:
@@ -297,7 +298,7 @@ def _gcloud_storage_stdout(args: Sequence[str]) -> Optional[str]:
 
 def fetch_environment_metadata(
     gcs_bucket: str,
-    date_str: str,
+    date_str: Optional[str] = None,
     results: Optional[Sequence[workload_submitter.BenchmarkResult]] = None,
 ) -> dict[str, Optional[str]]:
   """Extracts runtime environment metadata (git commit, JAX version, libtpu version)."""
@@ -316,32 +317,49 @@ def fetch_environment_metadata(
       gcs_path = r.gcs_artifact_path
       if gcs_path:
         detailed_files.append(utils.format_gcs_uri(gcs_path, "detailed.json"))
-  if not detailed_files:
+  if not detailed_files and target_prefix:
     listing = _gcloud_storage_stdout(["ls", f"{target_prefix}/*/detailed.json"])
     if listing:
       detailed_files = [
           line for line in listing.split() if line.endswith(".json")
       ]
 
+  # TODO(b/544832391): Support strict verification or multi-environment
+  # reporting when workloads under the same prefix have drifted versions.
   for d_file in detailed_files:
     content = _gcloud_storage_stdout(["cat", d_file])
     if not content:
       continue
     try:
       data = json.loads(content)
-      item = data[0] if isinstance(data, list) and data else {}
+      item = (
+          data[0]
+          if isinstance(data, list) and data
+          else (data if isinstance(data, dict) else {})
+      )
       pinfo = item.get("metadata", {}).get("platform_info", {})
       for key in (utils.ENV_JAX_VERSION, utils.ENV_LIBTPU_VERSION):
-        if not metadata[key] and pinfo.get(key):
-          metadata[key] = str(pinfo[key])
+        raw_val = pinfo.get(key)
+        if not raw_val:
+          continue
+        new_val = str(raw_val)
+        existing_val = metadata[key]
+        if not existing_val:
+          metadata[key] = new_val
+        elif existing_val != new_val:
+          logging.warning(
+              "Mismatched %s across workloads in %s: %s vs %s",
+              key,
+              target_prefix,
+              existing_val,
+              new_val,
+          )
     except (ValueError, AttributeError) as e:
       logging.warning("Skipping unparseable %s: %s", d_file, e)
       continue
-    if metadata[utils.ENV_JAX_VERSION] and metadata[utils.ENV_LIBTPU_VERSION]:
-      break
 
   # 2. Look for git_commit.txt on GCS
-  if not metadata[utils.ENV_GIT_COMMIT]:
+  if not metadata[utils.ENV_GIT_COMMIT] and target_prefix:
     # A single URL: multi-URL `ls` exits non-zero if any URL matches nothing,
     # even when others match.
     git_listing = _gcloud_storage_stdout(
@@ -350,12 +368,62 @@ def fetch_environment_metadata(
     git_lines = [
         line for line in (git_listing or "").split() if line.endswith(".txt")
     ]
-    if git_lines:
-      commit = _gcloud_storage_stdout(["cat", git_lines[0]])
+    for git_file in git_lines:
+      commit = _gcloud_storage_stdout(["cat", git_file])
       if commit:
-        metadata[utils.ENV_GIT_COMMIT] = commit.splitlines()[0].strip()
+        commit_val = commit.splitlines()[0].strip()
+        if not commit_val:
+          continue
+        existing_commit = metadata[utils.ENV_GIT_COMMIT]
+        if not existing_commit:
+          metadata[utils.ENV_GIT_COMMIT] = commit_val
+        elif existing_commit != commit_val:
+          logging.warning(
+              "Mismatched git_commit across workloads in %s: %s vs %s",
+              target_prefix,
+              existing_commit,
+              commit_val,
+          )
 
   return metadata
+
+
+def get_display_headers(
+    cat_key: str,
+    rows: Sequence[dict[str, Any]],
+    leading_columns_only: bool = False,
+) -> list[str]:
+  """Returns ordered display column headers for a benchmark category table.
+
+  Args:
+    cat_key: Benchmark category key (e.g. `"collectives"`, `"hbm"`,
+      `"device_to_device"`, `"gemm"`, `"host_device"`).
+    rows: Sequence of parsed CSV row dictionaries for the category.
+    leading_columns_only: If True, returns only the curated primary parameter
+      and hardware-timed `xprof_*` metric columns defined in
+      `CATEGORY_LEADING_COLUMNS[cat_key]`, omitting trailing execution metadata
+      and wall-clock columns (such as `warmup_tries`, `num_runs`, and
+      `wall_clock_*`). If False, appends all remaining discovered CSV columns
+      after the leading columns.
+
+  Returns:
+    Ordered list of column header names present in `rows`.
+  """
+  if not rows:
+    return []
+  target_cols = CATEGORY_LEADING_COLUMNS.get(cat_key, ())
+  discovered_cols = []
+  seen = set()
+  for r in rows:
+    for k in r.keys():
+      if k not in seen and k != "_source_path":
+        seen.add(k)
+        discovered_cols.append(k)
+  leading = [h for h in target_cols if h in seen]
+  if leading_columns_only:
+    return leading
+  trailing = [h for h in discovered_cols if h not in leading]
+  return leading + trailing
 
 
 def format_consolidated_report(
@@ -368,8 +436,35 @@ def format_consolidated_report(
     git_commit: Optional[str] = None,
     jax_version: Optional[str] = None,
     libtpu_version: Optional[str] = None,
+    include_run_header: bool = True,
+    leading_columns_only: bool = False,
+    d2d_matrix_only: bool = False,
 ) -> str:
-  """Formats a clean, consolidated Markdown report summarizing aggregated category results."""
+  """Formats a consolidated Markdown report summarizing aggregated category results.
+
+  Args:
+    results: List of JobSet execution result objects or dicts.
+    categorized_metrics: Mapping from category key to list of CSV row dicts.
+    cluster: GKE cluster name shown in the run header.
+    project: GCP project ID shown in the run header.
+    region: GCP region shown in the run header.
+    namespace: Kubernetes namespace shown in the run header.
+    git_commit: Optional Git commit hash of the benchmark repository.
+    jax_version: Optional JAX version string.
+    libtpu_version: Optional libtpu version string.
+    include_run_header: If True, includes the top-level daily automated run
+      title, cluster/namespace banner, and JobSet execution summary. If False,
+      omits the run-specific header (retaining the `**Environment:**` line and
+      category tables).
+    leading_columns_only: Passed to `get_display_headers` to restrict each
+      category table to the curated primary columns in
+      `CATEGORY_LEADING_COLUMNS`.
+    d2d_matrix_only: If True, omits the collapsible raw D2D transfer table when
+      the Pairwise Bandwidth Matrix is rendered.
+
+  Returns:
+    Formatted Markdown report string.
+  """
   now_str = datetime.datetime.now(datetime.timezone.utc).strftime(
       "%Y-%m-%d %H:%M:%S UTC"
   )
@@ -399,19 +494,22 @@ def format_consolidated_report(
   if libtpu_version:
     env_items.append(f"**libtpu:** `{libtpu_version}`")
 
-  lines = [
-      f"# 🚀 TPUMS Daily Automated Benchmark Report — {now_str}",
-      "",
-      (
-          f"**Cluster:** `{cluster}` (`{project}` / `{region}`) |"
-          f" **Namespace:** `{namespace}`"
-      ),
-      summary_line,
-  ]
+  lines: list[str] = []
+  if include_run_header:
+    lines.extend([
+        f"# 🚀 TPUMS Daily Automated Benchmark Report — {now_str}",
+        "",
+        (
+            f"**Cluster:** `{cluster}` (`{project}` / `{region}`) |"
+            f" **Namespace:** `{namespace}`"
+        ),
+        summary_line,
+    ])
   if env_items:
     lines.append("**Environment:** " + " | ".join(env_items))
+  if lines:
+    lines.append("")
   lines.extend([
-      "",
       "## Aggregated Benchmark Results by Category",
       "",
   ])
@@ -419,6 +517,11 @@ def format_consolidated_report(
   if categorized_metrics and any(categorized_metrics.values()):
     for cat_key, rows in categorized_metrics.items():
       if not rows:
+        continue
+      headers = get_display_headers(
+          cat_key, rows, leading_columns_only=leading_columns_only
+      )
+      if not headers:
         continue
       title, desc = CATEGORY_TITLES.get(
           cat_key, (cat_key.capitalize(), "Benchmark metrics")
@@ -429,7 +532,6 @@ def format_consolidated_report(
       lines.append(f"*{desc}*")
       lines.append("")
 
-      headers = metrics_aggregator.ordered_columns(cat_key, rows)
       if cat_key == "device_to_device":
         matrix_data = format_d2d_pairwise_matrix(rows)
         if matrix_data:
@@ -446,6 +548,8 @@ def format_consolidated_report(
             lines.append(r_line)
           lines.append("```")
           lines.append("")
+          if d2d_matrix_only:
+            continue
 
         lines.append("<details>")
         lines.append(
