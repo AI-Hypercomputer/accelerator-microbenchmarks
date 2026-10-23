@@ -57,6 +57,11 @@ class SimpleTransfer(TransferStrategy):
         self, data_size_mib: int, host_data: np.ndarray, num_devices: int
     ):
         target_devices = jax.local_devices()[:num_devices]
+        assert len(target_devices) == num_devices, (
+            f"Requested {num_devices} devices, but only "
+            f"{len(target_devices)} local devices are available: "
+            f"{jax.local_devices()}"
+        )
         self.mesh = Mesh(target_devices, ("x",))
         self.partition_spec = PartitionSpec("x")
         self.sharding = NamedSharding(self.mesh, self.partition_spec)
@@ -93,6 +98,11 @@ class PipelinedTransfer(TransferStrategy):
         self.target_chunk_size_mib = 16
         num_devices_to_perform_h2d = num_devices
         self.target_devices = jax.local_devices()[:num_devices_to_perform_h2d]
+        assert len(self.target_devices) == num_devices, (
+            f"Requested {num_devices} devices, but only "
+            f"{len(self.target_devices)} local devices are available: "
+            f"{jax.local_devices()}"
+        )
         self.num_devices = len(self.target_devices)
 
         data_per_dev = data_size_mib / self.num_devices
@@ -155,6 +165,11 @@ class PinnedMemoryTransfer(TransferStrategy):
     ):
         num_devices_to_perform_h2d = num_devices
         target_devices = jax.local_devices()[:num_devices_to_perform_h2d]
+        assert len(target_devices) == num_devices, (
+            f"Requested {num_devices} devices, but only "
+            f"{len(target_devices)} local devices are available: "
+            f"{jax.local_devices()}"
+        )
 
         mesh = Mesh(target_devices, ("x",))
         partition_spec = PartitionSpec("x")
