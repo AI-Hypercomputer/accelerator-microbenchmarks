@@ -1,5 +1,6 @@
 """Unit tests for host_device.py that requires TPU devices."""
 
+import itertools
 from unittest import mock
 
 from absl.testing import absltest
@@ -23,11 +24,14 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
-    # Use small runs for testing to limit memory
+    # Use small runs for testing to limit memory. data_size_mib is per device,
+    # so pin a single device to keep the expected shapes below.
     self.params = {
         "data_size_mib": 4,
         "num_runs": 2,
         "warmup_tries": 1,
+        "transfer_backend": "jax",
+        "device_id": 0,
     }
 
   def is_array_on_tpu(self, my_array):
@@ -61,7 +65,9 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     }
     config = host_device.HostDeviceParams(**d2h_params)
     self.bm = host_device.DeviceToHostBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     self.bm.inputs = list(self.bm.generate_inputs())
@@ -96,7 +102,9 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     }
     config = host_device.HostDeviceParams(**d2h_params)
     self.bm = host_device.DeviceToHostBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     original_generate_inputs = self.bm.generate_inputs
     generated_arrays = []
@@ -110,6 +118,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     # Run the benchmark
     result = self.bm.run()
     self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertIn("wall_clock_bandwidth_per_host_gb_s", result.metrics)
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
 
     # If reset_data() was executed, the generated array must have been deleted
@@ -130,13 +139,21 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
       print("Skipping test for non-TPU7x devices.")
       self.skipTest("This test is a corner case for TPU v7x.")
 
-    params = {"data_size_mib": size_mib, "num_runs": 20, "warmup_tries": 2}
+    params = {
+        "data_size_mib": size_mib,
+        "num_runs": 20,
+        "warmup_tries": 2,
+        "transfer_backend": "jax",
+        "device_id": 0,
+    }
     d2h_params = {
         k: v for k, v in params.items() if k not in ("num_runs", "warmup_tries")
     }
     config = host_device.HostDeviceParams(**d2h_params)
     self.bm = host_device.DeviceToHostBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     inputs = self.bm.generate_inputs()
@@ -186,6 +203,8 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
         "num_runs": 10,
         "warmup_tries": 2,
         "dtype": "float32",
+        "transfer_backend": "jax",
+        "device_id": 0,
     }
     config = host_device.HostDeviceParams(**params)
     bm = host_device.HostToDeviceBenchmark(
@@ -198,9 +217,13 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
     result = bm.run()
 
     self.assertIn("xprof_bandwidth_per_device_gb_s", result.metrics)
+    self.assertIn("xprof_bandwidth_per_host_gb_s", result.metrics)
     self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
     print(f"result: {result}")
     bandwidth_gb_s = result.metrics["xprof_bandwidth_per_device_gb_s"]
+    self.assertAlmostEqual(
+        result.metrics["xprof_bandwidth_per_host_gb_s"], bandwidth_gb_s
+    )
     print(f"bandwidth_gb_s: {bandwidth_gb_s}")
     self.assertGreater(bandwidth_gb_s, 0.0)
     # Theoretical maximum PCIe Gen5 bandwidth for v7x is 60 GB/s
@@ -216,6 +239,203 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
         f"Measured H2D bandwidth {bandwidth_gb_s:.2f} GB/s is below"
         " min 0.0 GB/s.",
     )
+
+
+# Theoretical maximum per-device PCIe Gen5 x16 bandwidth on TPU v7x.
+_PCIE_MAX_GB_S = 60.0
+
+_TRANSFER_CASES = tuple(
+    {
+        "testcase_name": f"{direction}_{backend}_dev{dev_name}",
+        "bm_cls": bm_cls,
+        "transfer_backend": backend,
+        "device_id": device_id,
+    }
+    for (direction, bm_cls), backend, (
+        dev_name,
+        device_id,
+    ) in itertools.product(
+        (
+            ("h2d", host_device.HostToDeviceBenchmark),
+            ("d2h", host_device.DeviceToHostBenchmark),
+        ),
+        ("tpu_sync", "jax"),
+        (("all", -1), ("0", 0)),
+    )
+)
+
+_TPU_SYNC_CASES = tuple(
+    case for case in _TRANSFER_CASES if case["transfer_backend"] == "tpu_sync"
+)
+
+
+class TransferBackendTpuTest(parameterized.TestCase):
+  """Covers transfer_backend x device_id for H2D and D2H on TPU."""
+
+  def setUp(self):
+    super().setUp()
+    if jax.devices()[0].platform != "tpu":
+      self.skipTest("This test requires TPU hardware.")
+    self.enter_context(
+        mock.patch(
+            "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
+            return_value="http://mock_xprof_url",
+        )
+    )
+
+  def tearDown(self):
+    super().tearDown()
+    jax.clear_caches()
+
+  def _make_benchmark(self, bm_cls, xprof_timing=False, **params):
+    config = host_device.HostDeviceParams(**params)
+    bm = bm_cls(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        xprof_config=base.XprofConfig(xprof_timing=xprof_timing),
+    )
+    self.addCleanup(bm.teardown)
+    return bm
+
+  def _expected_devices(self, device_id):
+    if device_id == -1:
+      return list(jax.local_devices())
+    return [jax.local_devices()[device_id]]
+
+  def _assert_bandwidth_in_range(self, metrics, key):
+    self.assertIn(key, metrics)
+    bandwidth_gb_s = metrics[key]
+    self.assertGreater(bandwidth_gb_s, 0.0)
+    self.assertLess(
+        bandwidth_gb_s,
+        _PCIE_MAX_GB_S,
+        f"{key}={bandwidth_gb_s:.2f} GB/s exceeds the theoretical PCIe max"
+        f" {_PCIE_MAX_GB_S} GB/s.",
+    )
+
+  @parameterized.named_parameters(*_TPU_SYNC_CASES)
+  def test_tpu_sync_setup_allocates_block_major_kv_cache(
+      self, bm_cls, transfer_backend, device_id
+  ):
+    """setup() builds a real KVCacheManager over (1, rows, 128) shards."""
+    bm = self._make_benchmark(
+        bm_cls,
+        data_size_mib=64,
+        transfer_backend=transfer_backend,
+        device_id=device_id,
+    )
+    bm.setup()
+    devices = self._expected_devices(device_id)
+    self.assertIsInstance(
+        bm.kv_manager, host_device.kv_cache_manager.KVCacheManager
+    )
+    self.assertEqual(list(bm.mesh.devices.flat), devices)
+    rows = bm.rows_per_device
+    self.assertEqual(bm.device_array.shape, (1, len(devices) * rows, 128))
+    self.assertEqual(
+        bm.device_array.sharding.spec,
+        jax.sharding.PartitionSpec(None, "device", None),
+    )
+    self.assertEqual(bm.device_array.devices(), set(devices))
+    for shard in bm.device_array.addressable_shards:
+      self.assertEqual(shard.data.shape, (1, rows, 128))
+      self.assertIn("tpu", shard.device.platform.lower())
+
+  @parameterized.named_parameters(*_TPU_SYNC_CASES)
+  def test_tpu_sync_run_op_repeats(self, bm_cls, transfer_backend, device_id):
+    """Repeated transfers reuse the registered buffer without deleting it."""
+    bm = self._make_benchmark(
+        bm_cls,
+        data_size_mib=64,
+        transfer_backend=transfer_backend,
+        device_id=device_id,
+    )
+    bm.setup()
+    inputs = bm.generate_inputs()
+    for _ in range(3):
+      inputs = bm.reset_data(*inputs)
+      jax.block_until_ready(bm.run_op(*inputs))
+    self.assertIs(inputs[0], bm.device_array)
+    self.assertFalse(bm.device_array.is_deleted())
+
+  @parameterized.named_parameters(*_TRANSFER_CASES)
+  def test_run_wall_clock(self, bm_cls, transfer_backend, device_id):
+    """run() reports sane per-device bandwidth and releases resources."""
+    bm = self._make_benchmark(
+        bm_cls,
+        data_size_mib=256,
+        num_runs=5,
+        warmup_tries=2,
+        transfer_backend=transfer_backend,
+        device_id=device_id,
+    )
+    result = bm.run()
+    expected_devices = self._expected_devices(device_id)
+    self._assert_bandwidth_in_range(
+        result.metrics, "wall_clock_bandwidth_per_device_gb_s"
+    )
+    self.assertAlmostEqual(
+        result.metrics["wall_clock_bandwidth_per_host_gb_s"],
+        result.metrics["wall_clock_bandwidth_per_device_gb_s"]
+        * len(expected_devices),
+    )
+    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertLen(expected_devices, result.metrics["num_devices"])
+    self.assertEqual(
+        result.metadata.params["transfer_backend"], transfer_backend
+    )
+    self.assertEqual(result.metadata.params["device_id"], device_id)
+    # run() must always release the pinned host staging pool.
+    self.assertIsNone(bm.kv_manager)
+    self.assertIsNone(bm.device_array)
+
+  @parameterized.named_parameters(*_TPU_SYNC_CASES)
+  def test_tpu_sync_run_xprof(self, bm_cls, transfer_backend, device_id):
+    """XProf parses the /host:CPU MARKER events for tpu_sync transfers."""
+    devices = jax.devices()
+    if devices[0].device_kind != "TPU7x":
+      self.skipTest("This test requires TPU v7x hardware.")
+    bm = self._make_benchmark(
+        bm_cls,
+        xprof_timing=True,
+        data_size_mib=1024,
+        num_runs=10,
+        warmup_tries=2,
+        transfer_backend=transfer_backend,
+        device_id=device_id,
+    )
+    self.assertTrue(bm.xprof_target_host_cpu)
+    result = bm.run()
+    print(f"{bm.get_run_identifier()}: {result.metrics}")
+    self._assert_bandwidth_in_range(
+        result.metrics, "xprof_bandwidth_per_device_gb_s"
+    )
+    self.assertAlmostEqual(
+        result.metrics["xprof_bandwidth_per_host_gb_s"],
+        result.metrics["xprof_bandwidth_per_device_gb_s"]
+        * len(self._expected_devices(device_id)),
+    )
+    self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertIsNone(bm.kv_manager)
+
+  @parameterized.named_parameters(
+      ("h2d", host_device.HostToDeviceBenchmark),
+      ("d2h", host_device.DeviceToHostBenchmark),
+  )
+  def test_tpu_sync_sweep_points_release_pinned_memory(self, bm_cls):
+    """Back-to-back sweep points must not accumulate pinned host memory."""
+    for _ in range(3):
+      bm = self._make_benchmark(
+          bm_cls,
+          data_size_mib=1024,
+          num_runs=2,
+          warmup_tries=1,
+          transfer_backend="tpu_sync",
+          device_id=-1,
+      )
+      bm.run()
+      self.assertIsNone(bm.kv_manager)
+      self.assertIsNone(bm.device_array)
 
 
 if __name__ == "__main__":

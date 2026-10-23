@@ -76,7 +76,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | :--- | :--- | :--- | :--- |
 | **`gemm`** | **Compute Throughput (`TFLOPS`)** & Roofline (`%`) | **Both Per-Chip & Per-Device**<br>(`*_tflops_per_chip`, `*_tflops_per_device`) | **Measures** per-device and aggregate per-chip matrix compute throughput (`TFLOPS`), and **compares** against peak chip compute rooflines (`%`). |
 | **`hbm`** | **Memory Bandwidth (`GB/s`)** & Roofline (`%`) | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** HBM memory bandwidth (`GB/s`) on a single local logical device (`device_id`), and **compares** against peak per-device HBM bandwidth rooflines (`%`). |
-| **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** PCIe transfer bandwidth (`GB/s`) between the host CPU and a single local logical device (`device 0`). |
+| **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** | **Per-Device & Per-Host**<br>(`*_bandwidth_per_device_gb_s`, `*_bandwidth_per_host_gb_s`) | **Measures** per-device and aggregate per-host PCIe transfer bandwidth (`GB/s`) between the host CPU and either all local devices concurrently (`device_id: -1`, default) or one selected local device (`device_id >= 0`). |
 | **`device_to_device`** | **ICI Link Bandwidth (`GB/s`)** | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** point-to-point ICI link bandwidth (`GB/s`) between each logical device pair `(src_device_index, dst_device_index)`. |
 | **`all_reduce` / `all_gather` / `all_to_all`** | **Collective Bus Bandwidth (`GB/s`)** | **Per-Chip**<br>(`*_bandwidth_per_chip_gb_s`) | **Measures** aggregate external ICI collective bus bandwidth (`GB/s`) per physical TPU chip across the active device mesh. |
 
@@ -253,22 +253,52 @@ such as a stuck bit.
 - **Operations**:
   - **`host_to_device` (H2D)**: Transfers a payload buffer from host CPU RAM to local accelerator HBM over PCIe, synchronizing on full DMA transfer completion.
   - **`device_to_host` (D2H)**: Transfers a resident buffer from local accelerator HBM back to host CPU RAM over PCIe.
+- **Transfer Backends** (`transfer_backend`): the two backends measure
+  different things, and `tpu_sync` typically reports much higher bandwidth than
+  `jax` for the same payload.
+  - **`jax`**: Standard `jax.device_put` (H2D) / `jax.device_get` (D2H) of a
+    `(rows, 128)` buffer sharded across the selected devices. Measures
+    general-purpose framework transfer throughput on arbitrary pageable NumPy
+    arrays, so the timed window includes per-call XLA host bounce-buffer
+    allocation, CPU-side linearization/copying, and unpinned-memory overhead.
+  - **`tpu_sync`**: [`tpu-sync-jax`](https://pypi.org/project/tpu-sync-jax/)
+    `KVCacheManager` DMA between NUMA-local pinned host staging buffers and
+    device HBM. A specialized zero-copy DMA path: host staging buffers are
+    pre-allocated NUMA-local, then pinned and DMA-mapped once in `setup()`,
+    and per-NUMA C++ worker threads dispatch to multiple devices concurrently.
+    Bypassing per-iteration host allocation and CPU staging, it measures the
+    hardware PCIe DMA ceiling.
+    The buffer is shaped `(1, num_devices * rows_per_device, 128)`
+    and sharded along axis 1, so each device shard `(1, rows_per_device, 128)`
+    is a single `KVCacheManager` block and every iteration moves the full
+    per-device payload with one `h2d([0], [0], [1])` / `d2h([0], [0], [1])`
+    call. The `KVCacheManager` and its pinned host memory (`data_size_mib` per
+    device) are allocated once in `setup()` and released in `teardown()` after
+    each sweep point.
+- **Timing**: Both directions record the `MARKER` annotation on the `/host:CPU`
+  XProf plane, spanning dispatch through DMA completion.
 
 #### Parameters
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `data_size_mib` | `int` | `64` | Payload size transferred per iteration in Mebibytes (`1 MiB = 1024 * 1024` bytes). |
+| `data_size_mib` | `int` | `64` | Payload size transferred per device per iteration in Mebibytes (`1 MiB = 1024 * 1024` bytes). |
 | `dtype` | `str` | `"bfloat16"` | Tensor element data type (e.g., `bfloat16`, `float32`, `int8`). |
+| `transfer_backend` | `str` | `"tpu_sync"` | Transfer implementation: `"tpu_sync"` (default) or `"jax"`. The canonical `tpu7x` and `v6e` configs sweep both `"jax"` and `"tpu_sync"`. |
+| `device_id` | `int` | `-1` | Target local accelerator device ID (`0..N-1`), or `-1` (`ALL_LOCAL_DEVICES`, default) to transfer across all local devices concurrently (which shares host PCIe/memory bandwidth across devices). |
 
 #### Reported Metrics
 
 - **PCIe Transfer Bandwidth**:
-  - `{wall_clock|xprof}_bandwidth_per_device_gb_s` — Host-to-device or device-to-host PCIe transfer bandwidth (`GB/s`).
+  - `{wall_clock|xprof}_bandwidth_per_device_gb_s` — Host-to-device or device-to-host PCIe transfer bandwidth per participating local device (`GB/s`).
+  - `{wall_clock|xprof}_bandwidth_per_host_gb_s` — Aggregate host-to-device or device-to-host PCIe transfer bandwidth per host across all participating local devices (`num_devices × per_device`, `GB/s`).
 - **Latency (`ms`)**:
   - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
 - **Benchmark Attributes**:
-  - `data_size_mib` — Payload volume transferred per iteration (`MiB`).
+  - `data_size_mib` — Payload volume transferred per device per iteration (`MiB`).
+  - `transfer_backend` — Active transfer implementation (`"jax"` or `"tpu_sync"`).
+  - `device_id` — Selected local device ID (`-1` for all local devices).
+  - `num_devices` — Number of local devices transferring concurrently.
 
 ---
 

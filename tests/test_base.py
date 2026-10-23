@@ -20,7 +20,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
 
@@ -137,9 +136,20 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
     with self.assertRaisesRegex(ValueError, "score must be <= 10"):
       CustomParams(score=11)
 
-    # Invalid enum
-    with self.assertRaisesRegex(ValueError, "Invalid mode 'gamma'"):
-      CustomParams(mode="gamma")
+    # Invalid enum (including None)
+    for invalid_mode in ("gamma", None):
+      with self.assertRaisesRegex(ValueError, f"Invalid mode '{invalid_mode}'"):
+        CustomParams(mode=invalid_mode)
+
+    # Non-integer values (including None and bool) on int fields are rejected
+    for invalid_score in (None, True, 4.0, "4"):
+      with self.assertRaisesRegex(ValueError, "score must be an integer >= 1"):
+        CustomParams(score=invalid_score)
+
+    # Numpy integers are normalized to Python int and checked against bounds
+    cfg_np = CustomParams(score=np.int64(7))
+    self.assertIs(type(cfg_np.score), int)
+    self.assertEqual(cfg_np.score, 7)
 
     # Test _validate_bounds() independently
     cfg_direct = CustomParams(score=5)
@@ -268,6 +278,30 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertNotIn(
         "wall_clock_memory_roofline_efficiency_pct", result.metrics
     )
+
+  def test_run_calls_teardown_on_success(self):
+    """Verifies run() calls teardown() exactly once after a successful run."""
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    )
+    with mock.patch.object(bm, "teardown") as mock_teardown:
+      result = bm.run()
+    self.assertIsInstance(result, base.BenchmarkResult)
+    mock_teardown.assert_called_once_with()
+
+  def test_run_calls_teardown_when_run_raises(self):
+    """Verifies run() calls teardown() and re-raises when _run() fails."""
+    bm = DummyBenchmark()
+    with (
+        mock.patch.object(
+            bm, "_run", side_effect=RuntimeError("run failed")
+        ) as mock_run,
+        mock.patch.object(bm, "teardown") as mock_teardown,
+    ):
+      with self.assertRaisesRegex(RuntimeError, "run failed"):
+        bm.run()
+    mock_run.assert_called_once_with()
+    mock_teardown.assert_called_once_with()
 
   def test_default_get_arithmetic_intensity_raises_not_implemented_error(self):
     """Tests that BaseBenchmark.get_arithmetic_intensity raises NotImplementedError by default."""

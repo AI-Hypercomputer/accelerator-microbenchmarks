@@ -4,6 +4,7 @@ import abc
 import dataclasses
 import datetime
 import enum
+import numbers
 import os
 import time
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
@@ -58,23 +59,31 @@ class BaseBenchmarkParams:
     """Checks every field against its min/max metadata constraints.
 
     Raises:
-      ValueError: If any field violates its `min`/`max` bound.
+      ValueError: If any field violates its `min`/`max` bound or integer type.
     """
     for field in dataclasses.fields(self):
       value = getattr(self, field.name)
-      if value is None:
-        continue
-
-      # Only validate numeric fields (int, float) for min/max bounds.
-      # Exclude bool since bool is a subclass of int in Python.
-      if not isinstance(value, (int, float)) or isinstance(value, bool):
-        continue
-
       minimum = field.metadata.get("min")
+      maximum = field.metadata.get("max")
+
+      if field.type is int:
+        # bool is an Integral subclass, so reject it explicitly.
+        if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+          bound_str = f" >= {minimum}" if minimum is not None else ""
+          raise ValueError(
+              f"{field.name} must be an integer{bound_str}, got {value!r}"
+          )
+        # Normalize integer-like values (e.g. numpy ints) so bounds apply.
+        value = int(value)
+        setattr(self, field.name, value)
+      elif value is None:
+        continue
+      elif not isinstance(value, (int, float)) or isinstance(value, bool):
+        continue
+
       if minimum is not None and value < minimum:
         raise ValueError(f"{field.name} must be >= {minimum}, got {value}")
 
-      maximum = field.metadata.get("max")
       if maximum is not None and value > maximum:
         raise ValueError(f"{field.name} must be <= {maximum}, got {value}")
 
@@ -85,10 +94,6 @@ class BaseBenchmarkParams:
       ValueError: If any field is not a valid member of its Enum type.
     """
     for field in dataclasses.fields(self):
-      value = getattr(self, field.name)
-      if value is None:
-        continue
-
       # Checks if the field is an enum by coercing raw values into their Enum
       # member. Only scalar enum fields are supported, not containers such as
       # list[Enum].
@@ -97,6 +102,7 @@ class BaseBenchmarkParams:
       else:
         continue
 
+      value = getattr(self, field.name)
       try:
         setattr(self, field.name, enum_type(value))
       except (ValueError, TypeError) as exc:
@@ -203,6 +209,16 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   def setup(self):
     """Perform setup such as JIT compilation or buffer pre-allocation."""
     # Mesh creation is deferred to the run method.
+    pass
+
+  def teardown(self) -> None:
+    """Release resources acquired in setup() (e.g. pinned host buffers).
+
+    Called by run() after every run, including when the run raises, so
+    resources held by one sweep point are released before the next sweep
+    point's benchmark instance calls setup(). Implementations must be
+    idempotent and safe to call before setup().
+    """
     pass
 
   def reset_data(self, *inputs, **kwargs) -> tuple[jax.Array, ...]:
@@ -411,6 +427,10 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
               f"{constants.TimingDomain.XPROF}_bandwidth_per_device_gb_s",
           ),
           (
+              f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_host_gb_s",
+              f"{constants.TimingDomain.XPROF}_bandwidth_per_host_gb_s",
+          ),
+          (
               f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_chip_gb_s",
               f"{constants.TimingDomain.XPROF}_bandwidth_per_chip_gb_s",
           ),
@@ -459,7 +479,20 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     return metrics
 
   def run(self) -> BenchmarkResult:
-    """Standard orchestration flow for a benchmark."""
+    """Standard orchestration flow for a benchmark.
+
+    Always calls teardown() afterwards, even if the run raises.
+
+    Returns:
+      The consolidated BenchmarkResult of the run.
+    """
+    try:
+      return self._run()
+    finally:
+      self.teardown()
+
+  def _run(self) -> BenchmarkResult:
+    """Runs setup, warmup, measurement, and metric finalization."""
     if self.is_experimental:
       print(
           "===================================================================="
