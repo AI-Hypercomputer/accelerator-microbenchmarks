@@ -1,8 +1,6 @@
 """Host-to-Device and Device-to-Host transfer performance benchmarks."""
 
 import dataclasses
-import gc
-import numbers
 from typing import Any, Callable, Optional, Sequence
 
 from accelerator_microbenchmarks.core import base
@@ -20,7 +18,7 @@ from tpu_sync.api.jax import kv_cache_manager
 _COLUMNS = 128
 # Mesh axis name used to shard the transfer buffer across local devices.
 _DEVICE_AXIS = "device"
-# `local_device` sentinel selecting every local device.
+# `device_id` sentinel selecting every local device.
 ALL_LOCAL_DEVICES = -1
 
 
@@ -49,7 +47,7 @@ class HostDeviceParams(base.SingleDtypeBenchmarkParams):
       },
   )
   transfer_backend: TransferBackend = dataclasses.field(
-      default=TransferBackend.JAX,
+      default=TransferBackend.TPU_SYNC,
       metadata={
           "help": (
               "Transfer implementation: 'jax' (jax.device_put/device_get) or"
@@ -58,38 +56,17 @@ class HostDeviceParams(base.SingleDtypeBenchmarkParams):
           )
       },
   )
-  local_device: int = dataclasses.field(
-      default=0,
+  device_id: int = dataclasses.field(
+      default=ALL_LOCAL_DEVICES,
       metadata={
           "min": ALL_LOCAL_DEVICES,
           "help": (
-              "Index into jax.local_devices() of the single device to"
-              " transfer to/from; -1 transfers to/from all local devices"
-              " concurrently."
+              "Target local accelerator device ID (0..N-1), or"
+              f" {ALL_LOCAL_DEVICES} (ALL_LOCAL_DEVICES) to transfer across"
+              " all local devices concurrently."
           ),
       },
   )
-
-  def __post_init__(self):
-    if self.transfer_backend is None:
-      raise ValueError(
-          "Invalid transfer_backend 'None'. Must be one of"
-          f" {[member.value for member in TransferBackend]}."
-      )
-    for name, minimum in (
-        ("data_size_mib", 1),
-        ("local_device", ALL_LOCAL_DEVICES),
-    ):
-      value = getattr(self, name)
-      # bool is an Integral subclass, so reject it explicitly.
-      if isinstance(value, bool) or not isinstance(value, numbers.Integral):
-        raise ValueError(
-            f"{name} must be an integer >= {minimum}, got {value!r}"
-        )
-      # Normalize integer-like values (e.g. numpy ints) so bounds apply.
-      setattr(self, name, int(value))
-    # Coerces enums and checks min/max bounds.
-    super().__post_init__()
 
   @property
   def data_size_bytes(self) -> int:
@@ -104,15 +81,15 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("transfer_backend", report.format_str),
-      ("local_device", report.format_str),
+      ("device_id", report.format_str),
       ("num_devices", report.format_str),
       ("data_size_mib", report.format_str),
       ("wall_clock_p50_ms", report.format_4f),
       ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
-      ("wall_clock_bandwidth_total_gb_s", report.format_2f),
+      ("wall_clock_bandwidth_per_host_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
       ("xprof_bandwidth_per_device_gb_s", report.format_2f),
-      ("xprof_bandwidth_total_gb_s", report.format_2f),
+      ("xprof_bandwidth_per_host_gb_s", report.format_2f),
   )
 
   kv_manager: Optional[kv_cache_manager.KVCacheManager] = None
@@ -131,15 +108,15 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
   def get_transfer_devices(self) -> list[jax.Device]:
     """Returns the local devices that participate in the transfer."""
     local_devices = jax.local_devices()
-    local_device = self.config.local_device
-    if local_device == ALL_LOCAL_DEVICES:
+    device_id = self.config.device_id
+    if device_id == ALL_LOCAL_DEVICES:
       return list(local_devices)
-    if local_device >= len(local_devices):
+    if device_id >= len(local_devices):
       raise ValueError(
-          f"local_device ({local_device}) exceeds the number of local devices"
+          f"device_id ({device_id}) exceeds the number of local devices"
           f" ({len(local_devices)})."
       )
-    return [local_devices[local_device]]
+    return [local_devices[device_id]]
 
   @property
   def num_transfer_devices(self) -> int:
@@ -173,17 +150,14 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
     return self.get_transfer_devices()[0]
 
   def get_run_identifier(self) -> str:
-    local_device = self.config.local_device
-    device_str = "all" if local_device == ALL_LOCAL_DEVICES else local_device
+    device_id = self.config.device_id
+    device_str = "all" if device_id == ALL_LOCAL_DEVICES else device_id
     return (
         f"{self.config.transfer_backend}_dev{device_str}"
         f"_size_{self.config.data_size_mib}mib"
     )
 
   def setup(self):
-    # Release resources from any previous setup() so a re-run never holds two
-    # pinned host staging pools at once.
-    self.teardown()
     self.mesh = jax.sharding.Mesh(
         np.array(self.get_transfer_devices()), axis_names=(_DEVICE_AXIS,)
     )
@@ -209,13 +183,8 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
       try:
         if not self.device_array.is_deleted():
           self.device_array.delete()
-      except Exception as e:  # pylint: disable=broad-exception-caught
-        # run() calls teardown() in a finally block; never mask the run's
-        # original exception with a cleanup failure.
-        print(f"Warning: failed to delete transfer buffer: {e}")
       finally:
         self.device_array = None
-    gc.collect()
 
   def _make_host_shard(self) -> np.ndarray:
     """Returns a random host payload with the shape of one device shard."""
@@ -272,13 +241,13 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
     latency_s = latency_ms / 1000.0
     if latency_s == 0:
       bandwidth_per_device_gb_s = float("inf")
-      bandwidth_total_gb_s = float("inf")
+      bandwidth_per_host_gb_s = float("inf")
     else:
       bandwidth_per_device_gb_s = bytes_per_device / (latency_s * 1e9)
-      bandwidth_total_gb_s = total_bytes / (latency_s * 1e9)
+      bandwidth_per_host_gb_s = total_bytes / (latency_s * 1e9)
     return {
         f"{prefix}_bandwidth_per_device_gb_s": bandwidth_per_device_gb_s,
-        f"{prefix}_bandwidth_total_gb_s": bandwidth_total_gb_s,
+        f"{prefix}_bandwidth_per_host_gb_s": bandwidth_per_host_gb_s,
     }
 
 

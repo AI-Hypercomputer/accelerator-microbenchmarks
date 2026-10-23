@@ -2,7 +2,7 @@
 
 import itertools
 import os
-import unittest
+from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -12,7 +12,6 @@ from accelerator_microbenchmarks.core import (
 )
 from accelerator_microbenchmarks.core import system
 import jax
-import numpy as np
 
 SUPPORTED_DTYPES = (
     "bfloat16",
@@ -33,31 +32,23 @@ TRANSPOSE_CASES = (
 class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
   """Unit tests for Generalized GEMM benchmark."""
 
-  def setUp(self):
-    super().setUp()
-    self.mock_mesh = jax.sharding.Mesh(
-        np.array(jax.devices()), axis_names=("device",)
-    )
-
-  @parameterized.named_parameters(
-      *[
-          {
-              "testcase_name": f"{case_label}_{in_dtype}_to_{out_dtype}",
-              "in_dtype": in_dtype,
-              "out_dtype": out_dtype,
-              "transpose_a": transpose_a,
-              "transpose_b": transpose_b,
-          }
-          for (case_label, transpose_a, transpose_b), (
-              in_dtype,
-              out_dtype,
-          ) in itertools.product(
-              TRANSPOSE_CASES,
-              itertools.product(SUPPORTED_DTYPES, repeat=2),
-          )
-      ]
-  )
-  @unittest.mock.patch(
+  @parameterized.named_parameters(*[
+      {
+          "testcase_name": f"{case_label}_{in_dtype}_to_{out_dtype}",
+          "in_dtype": in_dtype,
+          "out_dtype": out_dtype,
+          "transpose_a": transpose_a,
+          "transpose_b": transpose_b,
+      }
+      for (case_label, transpose_a, transpose_b), (
+          in_dtype,
+          out_dtype,
+      ) in itertools.product(
+          TRANSPOSE_CASES,
+          itertools.product(SUPPORTED_DTYPES, repeat=2),
+      )
+  ])
+  @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
   )
   def test_real_e2e_matmul_with_xprof(

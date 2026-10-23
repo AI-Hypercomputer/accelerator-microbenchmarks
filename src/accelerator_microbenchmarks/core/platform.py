@@ -49,9 +49,8 @@ def _get_package_version(module_name: str, *fallback_pkg_names: str) -> str:
   for pkg in (module_name, *fallback_pkg_names):
     try:
       return str(importlib.metadata.version(pkg))
-    except importlib.metadata.PackageNotFoundError:
-      continue
     except Exception:  # pylint: disable=broad-exception-caught
+      # Package metadata may be missing or unreadable in monorepo environments.
       continue
   return "unknown"
 
@@ -99,20 +98,20 @@ def _get_topology(
     # Example: For a 2x4 slice where x in [0, 1] and y in [0, 3],
     # axis 0 span is 1 - 0 + 1 = 2, axis 1 span is 3 - 0 + 1 = 4 -> [2, 4].
     dims = list(bounding_box_dims(coords_list))
-
-    # Truncate trailing trivial dimension(s) when the physical architecture
-    # dimension (topology_dimension) is lower than the coordinate tuple length.
-    # Example: TPU v6e (Trillium) is a 2D mesh (topology_dimension = 2), but JAX
-    # exposes 3D coordinates (x, y, 0), producing raw dims [2, 4, 1].
-    # Since topology_dimension = 2 and dims[2] == 1, we slice dims[:2] -> "2x4".
-    if coord_dim > topology_dimension and all(
-        d == 1 for d in dims[topology_dimension:]
-    ):
-      dims = dims[:topology_dimension]
-
-    return "x".join(str(d) for d in dims)
-  except Exception:  # pylint: disable=broad-exception-caught
+  except (TypeError, ValueError):
     return "unknown"
+
+  # Truncate trailing trivial dimension(s) when the physical architecture
+  # dimension (topology_dimension) is lower than the coordinate tuple length.
+  # Example: TPU v6e (Trillium) is a 2D mesh (topology_dimension = 2), but JAX
+  # exposes 3D coordinates (x, y, 0), producing raw dims [2, 4, 1].
+  # Since topology_dimension = 2 and dims[2] == 1, we slice dims[:2] -> "2x4".
+  if coord_dim > topology_dimension and all(
+      d == 1 for d in dims[topology_dimension:]
+  ):
+    dims = dims[:topology_dimension]
+
+  return "x".join(str(d) for d in dims)
 
 
 def get_platform_info() -> PlatformInfo:
@@ -175,4 +174,3 @@ def get_platform_info() -> PlatformInfo:
       jaxlib_version=_get_package_version("jaxlib"),
       libtpu_version=_get_package_version("libtpu", "libtpu-nightly"),
   )
-

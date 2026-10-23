@@ -19,7 +19,7 @@ class BenchmarkKey(str, enum.Enum):
   CASES_FROM_CSV = "cases_from_csv"
   SWEEP = "sweep"
   XPROF_TIMING = "xprof_timing"
-  XPROF_DEVICE_MODE = "xprof_device_mode"
+  XPROF_DEVICE_TIMING_AGGREGATION = "xprof_device_timing_aggregation"
 
 
 _ALLOWED_BENCHMARK_KEYS = frozenset(BenchmarkKey)
@@ -286,19 +286,23 @@ def load_config(path: str) -> list[dict[str, Any]]:
       )
     base_params["xprof_timing"] = xprof_timing
 
-  xprof_device_mode = benchmark_spec.get(BenchmarkKey.XPROF_DEVICE_MODE)
-  if xprof_device_mode is not None:
-    valid_modes = tuple(m.value for m in constants.XprofDeviceMode)
+  xprof_device_timing_aggregation = benchmark_spec.get(
+      BenchmarkKey.XPROF_DEVICE_TIMING_AGGREGATION
+  )
+  if xprof_device_timing_aggregation is not None:
+    valid_modes = tuple(m.value for m in constants.XprofDeviceTimingAggregation)
     if (
-        not isinstance(xprof_device_mode, str)
-        or xprof_device_mode not in valid_modes
+        not isinstance(xprof_device_timing_aggregation, str)
+        or xprof_device_timing_aggregation not in valid_modes
     ):
       raise ValueError(
-          f"Expected '{BenchmarkKey.XPROF_DEVICE_MODE.value}' in benchmark"
-          f" '{benchmark_name}' to be one of {list(valid_modes)}, but got"
-          f" '{xprof_device_mode}'."
+          f"Expected '{BenchmarkKey.XPROF_DEVICE_TIMING_AGGREGATION.value}' in"
+          f" benchmark '{benchmark_name}' to be one of {list(valid_modes)}, but"
+          f" got '{xprof_device_timing_aggregation}'."
       )
-    base_params["xprof_device_mode"] = xprof_device_mode
+    base_params["xprof_device_timing_aggregation"] = (
+        xprof_device_timing_aggregation
+    )
 
   # Stage 3: Cases (per-case parameter overrides over base_params)
   case_dicts = (

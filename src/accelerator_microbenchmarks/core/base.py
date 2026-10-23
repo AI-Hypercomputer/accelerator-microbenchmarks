@@ -4,6 +4,7 @@ import abc
 import dataclasses
 import datetime
 import enum
+import numbers
 import os
 import time
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
@@ -15,8 +16,6 @@ from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
 from accelerator_microbenchmarks.core import system
 import jax
-from jax.experimental import multihost_utils
-import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
@@ -27,7 +26,9 @@ class XprofConfig:
 
   xprof_timing: bool = False
   xprof_dir: str = "/tmp/tensorboard"
-  device_mode: str = constants.XprofDeviceMode.FIRST_DEVICE
+  device_timing_aggregation: str = (
+      constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
+  )
 
 
 @dataclasses.dataclass
@@ -58,23 +59,31 @@ class BaseBenchmarkParams:
     """Checks every field against its min/max metadata constraints.
 
     Raises:
-      ValueError: If any field violates its `min`/`max` bound.
+      ValueError: If any field violates its `min`/`max` bound or integer type.
     """
     for field in dataclasses.fields(self):
       value = getattr(self, field.name)
-      if value is None:
-        continue
-
-      # Only validate numeric fields (int, float) for min/max bounds.
-      # Exclude bool since bool is a subclass of int in Python.
-      if not isinstance(value, (int, float)) or isinstance(value, bool):
-        continue
-
       minimum = field.metadata.get("min")
+      maximum = field.metadata.get("max")
+
+      if field.type is int:
+        # bool is an Integral subclass, so reject it explicitly.
+        if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+          bound_str = f" >= {minimum}" if minimum is not None else ""
+          raise ValueError(
+              f"{field.name} must be an integer{bound_str}, got {value!r}"
+          )
+        # Normalize integer-like values (e.g. numpy ints) so bounds apply.
+        value = int(value)
+        setattr(self, field.name, value)
+      elif value is None:
+        continue
+      elif not isinstance(value, (int, float)) or isinstance(value, bool):
+        continue
+
       if minimum is not None and value < minimum:
         raise ValueError(f"{field.name} must be >= {minimum}, got {value}")
 
-      maximum = field.metadata.get("max")
       if maximum is not None and value > maximum:
         raise ValueError(f"{field.name} must be <= {maximum}, got {value}")
 
@@ -85,10 +94,6 @@ class BaseBenchmarkParams:
       ValueError: If any field is not a valid member of its Enum type.
     """
     for field in dataclasses.fields(self):
-      value = getattr(self, field.name)
-      if value is None:
-        continue
-
       # Checks if the field is an enum by coercing raw values into their Enum
       # member. Only scalar enum fields are supported, not containers such as
       # list[Enum].
@@ -97,6 +102,7 @@ class BaseBenchmarkParams:
       else:
         continue
 
+      value = getattr(self, field.name)
       try:
         setattr(self, field.name, enum_type(value))
       except (ValueError, TypeError) as exc:
@@ -218,6 +224,15 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   def reset_data(self, *inputs, **kwargs) -> tuple[jax.Array, ...]:
     """Reset data for the next run."""
     return inputs
+
+  def post_run_processing(self, outputs: Any, run_index: int) -> None:
+    """Process the outputs of each timed run, outside the timer.
+
+    Called only by BaseRunExecutor, not in warmup or by SoakingRunExecutor.
+    Runs inside the profiler trace, so it must not emit MARKER named scopes,
+    and must synchronize any device work it dispatches before returning.
+    """
+    del outputs, run_index  # Unused in base class.
 
   def get_run_identifier(self) -> str:
     """Return a string identifier for the current run parameters."""
@@ -348,92 +363,50 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     if xprof_url:
       metrics["xprof_url"] = xprof_url
 
-    measured_device = self.get_device_to_measure()
-    is_owner = jax.process_index() == measured_device.process_index
-
     all_devs_str = [f"{d.id}(p{d.process_index})" for d in jax.devices()]
     local_devs_str = [
         f"{d.id}(p{d.process_index})" for d in jax.local_devices()
     ]
     print(f"[Host {jax.process_index()}] All devices: {all_devs_str}")
     print(f"[Host {jax.process_index()}] Local devices: {local_devs_str}")
-    print(
-        f"[Host {jax.process_index()}] Measured device:"
-        f" {measured_device.id}(p{measured_device.process_index}),"
-        f" owner_process={measured_device.process_index}, is_owner={is_owner}"
-    )
+    durations: list[float] = []
+    try:
+      durations = self.executor.get_xprof_durations(xprof_dir)
+    except ValueError:
+      raise
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      print(f"Error parsing local XProf trace: {e}")
 
-    # 1. Parse local XProf trace on relevant hosts
-    should_parse = not self.requires_multihost_sync or is_owner
-    local_avg, local_p50, local_p90, local_std = 0.0, 0.0, 0.0, 0.0
-    local_captured = 0
-
-    if should_parse:
-      try:
-        durations = self.executor.get_xprof_durations(xprof_dir)
-        local_captured = len(durations)
-        if durations:
-          print(
-              f"Using XProf device timings ({len(durations)} runs)"
-              " to calculate derived performance metrics."
-          )
-          xprof_stats = self.calculate_latency_stats(
-              durations, prefix=constants.TimingDomain.XPROF
-          )
-          local_avg = xprof_stats[f"{constants.TimingDomain.XPROF}_avg_ms"]
-          local_p50 = xprof_stats[f"{constants.TimingDomain.XPROF}_p50_ms"]
-          local_p90 = xprof_stats[f"{constants.TimingDomain.XPROF}_p90_ms"]
-          local_std = xprof_stats[f"{constants.TimingDomain.XPROF}_std_ms"]
-        else:
-          print("Warning: No XProf device timings found locally.")
-      except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Error parsing local XProf trace: {e}")
-    else:
+    xprof_avg, xprof_p50, xprof_p90, xprof_std = 0.0, 0.0, 0.0, 0.0
+    if durations:
       print(
-          f"Note: Measured device {measured_device.id} is on remote Host"
-          f" {measured_device.process_index} (current Host is"
-          f" {jax.process_index()}). Skipping local XProf parsing."
+          f"Using XProf device timings ({len(durations)} runs)"
+          " to calculate derived performance metrics."
       )
+      xprof_stats = self.calculate_latency_stats(
+          durations, prefix=constants.TimingDomain.XPROF
+      )
+      xprof_avg = xprof_stats[f"{constants.TimingDomain.XPROF}_avg_ms"]
+      xprof_p50 = xprof_stats[f"{constants.TimingDomain.XPROF}_p50_ms"]
+      xprof_p90 = xprof_stats[f"{constants.TimingDomain.XPROF}_p90_ms"]
+      xprof_std = xprof_stats[f"{constants.TimingDomain.XPROF}_std_ms"]
+    else:
+      print("Warning: No XProf device timings found locally.")
 
-    # 2. Optionally broadcast stats across hosts for asymmetric targets (D2D)
-    synced_avg, synced_p50, synced_p90, synced_std, synced_captured = (
-        local_avg,
-        local_p50,
-        local_p90,
-        local_std,
-        local_captured,
-    )
-    if self.requires_multihost_sync:
-      try:
-        stats = jnp.array(
-            [local_avg, local_p50, local_p90, local_std, local_captured],
-            dtype=jnp.float32,
-        )
-        synced_stats = multihost_utils.broadcast_one_to_all(
-            stats, is_source=is_owner
-        )
-        synced_avg = float(synced_stats[0])
-        synced_p50 = float(synced_stats[1])
-        synced_p90 = float(synced_stats[2])
-        synced_std = float(synced_stats[3])
-        synced_captured = int(synced_stats[4])
-      except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Warning: multihost broadcast failed ({e}); using local values.")
+    metrics["xprof_captured_runs"] = len(durations)
 
-    metrics["xprof_captured_runs"] = synced_captured
-
-    # 3. Apply XProf timings or fallback to None for unmeasured durations
-    if synced_p50 > 0:
+    # Apply XProf timings or fallback to None for unmeasured durations
+    if xprof_p50 > 0:
       metrics.update({
-          f"{constants.TimingDomain.XPROF}_avg_ms": synced_avg,
-          f"{constants.TimingDomain.XPROF}_p50_ms": synced_p50,
-          f"{constants.TimingDomain.XPROF}_p90_ms": synced_p90,
-          f"{constants.TimingDomain.XPROF}_std_ms": synced_std,
+          f"{constants.TimingDomain.XPROF}_avg_ms": xprof_avg,
+          f"{constants.TimingDomain.XPROF}_p50_ms": xprof_p50,
+          f"{constants.TimingDomain.XPROF}_p90_ms": xprof_p90,
+          f"{constants.TimingDomain.XPROF}_std_ms": xprof_std,
       })
       self.executor.augment_xprof_metrics(metrics, has_xprof_timings=True)
       metrics.update(
           self.calculate_throughput_metrics(
-              latency_ms=synced_p50, prefix=constants.TimingDomain.XPROF
+              latency_ms=xprof_p50, prefix=constants.TimingDomain.XPROF
           )
       )
     else:
@@ -454,8 +427,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
               f"{constants.TimingDomain.XPROF}_bandwidth_per_device_gb_s",
           ),
           (
-              f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_total_gb_s",
-              f"{constants.TimingDomain.XPROF}_bandwidth_total_gb_s",
+              f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_host_gb_s",
+              f"{constants.TimingDomain.XPROF}_bandwidth_per_host_gb_s",
           ),
           (
               f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_chip_gb_s",
@@ -548,6 +521,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       try:
         jax.profiler.stop_trace()
       except RuntimeError:
+        # No active profiler trace is running; safe to ignore.
         pass
       xprof_base_dir = self.xprof_config.xprof_dir
       timestamp = int(time.time())

@@ -12,7 +12,6 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 
-# pylint: disable=g-import-not-at-top
 from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.core import base
@@ -26,17 +25,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-# Force 4 CPU devices for testing collectives
-os.environ["XLA_FLAGS"] = (
-    os.environ.get("XLA_FLAGS", "")
-    + " --xla_force_host_platform_device_count=4"
-)
 
-# pylint: enable=g-import-not-at-top
+def setUpModule():  # pylint: disable=invalid-name
+  # Force 4 CPU devices for testing collectives
+  os.environ["XLA_FLAGS"] = (
+      os.environ.get("XLA_FLAGS", "")
+      + " --xla_force_host_platform_device_count=4"
+  )
+  # Set CPU backend for fast testing without TPU requirements
+  jax.config.update("jax_platform_name", "cpu")
 
-
-# Set CPU backend for fast testing without TPU requirements
-jax.config.update("jax_platform_name", "cpu")
 
 _ALL_DIMS_GE_4 = system.WraparoundRule.ALL_DIMS_GE_4
 _PER_DIM_GE_16 = system.WraparoundRule.PER_DIM_GE_16
@@ -230,30 +228,6 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm_class = registry.benchmark_registry.get_benchmark("all_gather")
     self.assertEqual(bm_class, collectives.AllGatherBenchmark)
     self.assertEqual(bm_class.Config, collectives.IciCollectivesParams)
-
-  def test_all_gather_match_xprof_op_fallback(self):
-    """Test that match_xprof_op_fallback correctly identifies async-done events."""
-    config = collectives.IciCollectivesParams(matrix_dim=64)
-    bm = collectives.AllGatherBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
-    )
-    for hlo_category in ("async-done", "async-done (OFFLOAD_COLLECTIVE)"):
-      self.assertTrue(
-          bm.match_xprof_op_fallback({
-              "args": {
-                  "hlo_category": hlo_category,
-                  "offload_type": "OFFLOAD_COLLECTIVE",
-              }
-          })
-      )
-    self.assertFalse(
-        bm.match_xprof_op_fallback({
-            "args": {
-                "hlo_category": "async-done (OFFLOAD_EMBEDDING)",
-                "offload_type": "OFFLOAD_EMBEDDING",
-            }
-        })
-    )
 
   def test_all_to_all_registered(self):
     """Verify that the benchmark is correctly registered."""

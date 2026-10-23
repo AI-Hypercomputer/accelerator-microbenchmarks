@@ -123,19 +123,11 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
       raise ValueError(f"Unknown mode: {mode}")
 
   def get_run_identifier(self) -> str:
-    batch = self.config.batch
-    seq_len = self.config.seq_len
-    num_q_heads = self.config.num_q_heads
-    num_kv_heads = self.config.num_kv_heads
-    head_dim = self.config.head_dim
-    if any(
-        v is not None
-        for v in (batch, seq_len, num_q_heads, num_kv_heads, head_dim)
-    ):
-      return (
-          f"b_{batch or 1}_s_{seq_len or 8192}_hq_{num_q_heads or 56}_hkv_{num_kv_heads or 56}_d_{head_dim or 128}"
-      )
-    return ""
+    return (
+        f"b_{self.config.batch}_s_{self.config.seq_len}_"
+        f"hq_{self.config.num_q_heads}_hkv_{self.config.num_kv_heads}_"
+        f"d_{self.config.head_dim}"
+    )
 
   def generate_inputs(self) -> tuple[Any, ...]:
     batch = self.config.batch

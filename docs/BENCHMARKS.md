@@ -42,7 +42,7 @@ Every benchmark supports the following baseline execution and profiling paramete
 | :--- | :--- | :--- | :--- |
 | `warmup_tries` | `int` | `10` | Number of untimed warmup iterations executed prior to measurement to complete XLA JIT compilation and stabilize device clocks. |
 | `num_runs` | `int` | `10` | Minimum number of timed measurement iterations executed inside the timing loop. |
-| `min_duration_s` | `float` | `0.0` | Minimum total measurement duration in seconds. When `> 0.0`, warmup also runs for at least `min(1.0, min_duration_s / 5)` seconds, and the measurement loop continues until both `num_runs` and `min_duration_s` are satisfied. |
+| `min_duration_s` | `float` | `0.0` | Minimum total measurement duration in seconds. When `> 0.0`, warmup also runs for at least `min(1.0, min_duration_s / 5)` seconds, and the measurement loop continues until both `num_runs` and `min_duration_s` are satisfied. Must be `0.0` for [`gemm_chained`](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental). |
 
 <a id="per-device-vs-per-chip-scaling"></a>
 ### 1.2 Throughput & Bandwidth Metric Conventions (`<timing_domain>_<metric_type>_<hardware_scope>`)
@@ -76,7 +76,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | :--- | :--- | :--- | :--- |
 | **`gemm`** | **Compute Throughput (`TFLOPS`)** & Roofline (`%`) | **Both Per-Chip & Per-Device**<br>(`*_tflops_per_chip`, `*_tflops_per_device`) | **Measures** per-device and aggregate per-chip matrix compute throughput (`TFLOPS`), and **compares** against peak chip compute rooflines (`%`). |
 | **`hbm`** | **Memory Bandwidth (`GB/s`)** & Roofline (`%`) | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** HBM memory bandwidth (`GB/s`) on a single local logical device (`device_id`), and **compares** against peak per-device HBM bandwidth rooflines (`%`). |
-| **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** | **Per-Device & Total**<br>(`*_bandwidth_per_device_gb_s`, `*_bandwidth_total_gb_s`) | **Measures** per-device and aggregate PCIe transfer bandwidth (`GB/s`) between the host CPU and either one selected local device (`local_device >= 0`, default `0`) or all local devices concurrently (`local_device: -1`). |
+| **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** | **Per-Device & Per-Host**<br>(`*_bandwidth_per_device_gb_s`, `*_bandwidth_per_host_gb_s`) | **Measures** per-device and aggregate per-host PCIe transfer bandwidth (`GB/s`) between the host CPU and either all local devices concurrently (`device_id: -1`, default) or one selected local device (`device_id >= 0`). |
 | **`device_to_device`** | **ICI Link Bandwidth (`GB/s`)** | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** point-to-point ICI link bandwidth (`GB/s`) between each logical device pair `(src_device_index, dst_device_index)`. |
 | **`all_reduce` / `all_gather` / `all_to_all`** | **Collective Bus Bandwidth (`GB/s`)** | **Per-Chip**<br>(`*_bandwidth_per_chip_gb_s`) | **Measures** aggregate external ICI collective bus bandwidth (`GB/s`) per physical TPU chip across the active device mesh. |
 
@@ -160,8 +160,9 @@ Runs the same deterministic chain of `chain_length` matmuls
 compares a bit-exact, position-weighted checksum of each device's final `X`
 within each host and across the slice to find miscomputing chips. Each device
 generates its own `X_0` and `B` from `seed` (no copies between devices), so a
-fault during input generation only affects that device. Only the chain is timed;
-the checksum is computed after the measurement loop.
+fault during input generation only affects that device. Only the chain is timed:
+each timed run is checksummed after its timer stops, and the checksums of every
+run are compared after the measurement loop.
 `total_flops = chain_length × 2 × M × K²`.
 
 | Parameter | Type | Default | Description |
@@ -175,19 +176,28 @@ the checksum is computed after the measurement loop.
 
 `in_dtype` and `out_dtype` must be 8/16/32-bit floats. Unlike `gemm`, there is
 no `n`, `transpose_a`, `transpose_b`, `alpha`, `beta`, or `use_scaling_factors`.
+`min_duration_s` is not supported and must remain `0.0` so that every host runs
+the same number of timed iterations (`num_runs`) before the cross-host checksum
+gather.
 
 | New Metric | Description |
 | :--- | :--- |
-| `global_checksum_match` | **The check passed iff `True`.** `False` if any two devices disagree; `None` if it cannot be decided (fewer than 2 devices, a missing device, every device degenerate, or a failed checksum gather). |
+| `global_checksum_match` | **The check passed iff `True`.** `False` if any two checksums differ, across devices or timed runs; `None` if it cannot be decided (fewer than 2 devices, a missing checksum, every checksum degenerate, or a failed checksum gather). |
 | `intra_host_checksum_match` | Same rule over this host's devices. |
-| `checksum` | Non-degenerate checksum held by more than half of the devices, or `None`. |
-| `diverging_devices` | `[]` unless two devices disagree; then the devices that differ from `checksum`, or every device if `checksum` is `None`. |
-| `all_devices_valid_checksum` | Every device reported a checksum and none is degenerate (`inf`/`NaN` or all zeros). |
-| `device_checksums` | This host's per-device checksums. |
+| `checksum` | Non-degenerate device checksum (see `device_checksums`) held by more than half of the devices, or `None`. |
+| `diverging_devices` | `[]` unless two checksums differ; then the devices with a timed run whose checksum differs from `checksum`, or every device if `checksum` is `None`. Each lists those runs (every run if `checksum` is `None`) in `failed_runs`, as `{"run", "checksum", "degenerate"}`, where `degenerate` marks an `inf`/`NaN` or all-zero result in that run. |
+| `all_devices_valid_checksum` | Every device has a checksum for every timed run and none is degenerate (`inf`/`NaN` or all zeros). |
+| `device_checksums` | This host's device checksums. A device's checksum is the one of more than half of its timed runs, or `None`. |
+
+A failure in only some runs suggests a transient or intermittent fault, and a
+failure in every run a persistent one. A failure in every run from some run on
+suggests a corrupted `X_0` or `B`, which are generated once and reused by every
+run. The same wrong checksum in every failed run suggests a deterministic fault,
+such as a stuck bit.
 
 **Limits**:
 
-- Only the final timed run's chain is checksummed; warmup and earlier timed runs are not checked, so increasing `num_runs` does not add coverage.
+- Every timed run is checksummed (warmup is not), so increasing `num_runs` adds coverage.
 - Not an HBM scan (`X` and `B` stay at fixed addresses); one shape and dtype covers a subset of MXU datapaths, so sweep for broader coverage.
 - Choose `chain_length` so values stay finite; `inf`/`NaN` or all-zero results never pass.
 - Golden-reference comparison and collective/H2D/D2H integrity are out of scope.
@@ -243,12 +253,22 @@ no `n`, `transpose_a`, `transpose_b`, `alpha`, `beta`, or `use_scaling_factors`.
 - **Operations**:
   - **`host_to_device` (H2D)**: Transfers a payload buffer from host CPU RAM to local accelerator HBM over PCIe, synchronizing on full DMA transfer completion.
   - **`device_to_host` (D2H)**: Transfers a resident buffer from local accelerator HBM back to host CPU RAM over PCIe.
-- **Transfer Backends** (`transfer_backend`):
+- **Transfer Backends** (`transfer_backend`): the two backends measure
+  different things, and `tpu_sync` typically reports much higher bandwidth than
+  `jax` for the same payload.
   - **`jax`**: Standard `jax.device_put` (H2D) / `jax.device_get` (D2H) of a
-    `(rows, 128)` buffer sharded across the selected devices.
+    `(rows, 128)` buffer sharded across the selected devices. Measures
+    general-purpose framework transfer throughput on arbitrary pageable NumPy
+    arrays, so the timed window includes per-call XLA host bounce-buffer
+    allocation, CPU-side linearization/copying, and unpinned-memory overhead.
   - **`tpu_sync`**: [`tpu-sync-jax`](https://pypi.org/project/tpu-sync-jax/)
     `KVCacheManager` DMA between NUMA-local pinned host staging buffers and
-    device HBM. The buffer is shaped `(1, num_devices * rows_per_device, 128)`
+    device HBM. A specialized zero-copy DMA path: host staging buffers are
+    pre-allocated NUMA-local, then pinned and DMA-mapped once in `setup()`,
+    and per-NUMA C++ worker threads dispatch to multiple devices concurrently.
+    Bypassing per-iteration host allocation and CPU staging, it measures the
+    hardware PCIe DMA ceiling.
+    The buffer is shaped `(1, num_devices * rows_per_device, 128)`
     and sharded along axis 1, so each device shard `(1, rows_per_device, 128)`
     is a single `KVCacheManager` block and every iteration moves the full
     per-device payload with one `h2d([0], [0], [1])` / `d2h([0], [0], [1])`
@@ -264,20 +284,20 @@ no `n`, `transpose_a`, `transpose_b`, `alpha`, `beta`, or `use_scaling_factors`.
 | :--- | :--- | :--- | :--- |
 | `data_size_mib` | `int` | `64` | Payload size transferred per device per iteration in Mebibytes (`1 MiB = 1024 * 1024` bytes). |
 | `dtype` | `str` | `"bfloat16"` | Tensor element data type (e.g., `bfloat16`, `float32`, `int8`). |
-| `transfer_backend` | `str` | `"jax"` | Transfer implementation: `"jax"` or `"tpu_sync"`. The canonical `tpu7x` configs sweep both `"jax"` and `"tpu_sync"`. |
-| `local_device` | `int` | `0` | Index into `jax.local_devices()` of the single device to transfer to/from (`0` by default). `-1` transfers to/from all local devices concurrently, which shares host PCIe/memory bandwidth across devices (lower per-device bandwidth than a single-device run). |
+| `transfer_backend` | `str` | `"tpu_sync"` | Transfer implementation: `"tpu_sync"` (default) or `"jax"`. The canonical `tpu7x` and `v6e` configs sweep both `"jax"` and `"tpu_sync"`. |
+| `device_id` | `int` | `-1` | Target local accelerator device ID (`0..N-1`), or `-1` (`ALL_LOCAL_DEVICES`, default) to transfer across all local devices concurrently (which shares host PCIe/memory bandwidth across devices). |
 
 #### Reported Metrics
 
 - **PCIe Transfer Bandwidth**:
   - `{wall_clock|xprof}_bandwidth_per_device_gb_s` — Host-to-device or device-to-host PCIe transfer bandwidth per participating local device (`GB/s`).
-  - `{wall_clock|xprof}_bandwidth_total_gb_s` — Aggregate host-to-device or device-to-host PCIe transfer bandwidth across all participating local devices (`num_devices × per_device`, `GB/s`).
+  - `{wall_clock|xprof}_bandwidth_per_host_gb_s` — Aggregate host-to-device or device-to-host PCIe transfer bandwidth per host across all participating local devices (`num_devices × per_device`, `GB/s`).
 - **Latency (`ms`)**:
   - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
 - **Benchmark Attributes**:
   - `data_size_mib` — Payload volume transferred per device per iteration (`MiB`).
   - `transfer_backend` — Active transfer implementation (`"jax"` or `"tpu_sync"`).
-  - `local_device` — Selected local device index (`-1` for all local devices).
+  - `device_id` — Selected local device ID (`-1` for all local devices).
   - `num_devices` — Number of local devices transferring concurrently.
 
 ---

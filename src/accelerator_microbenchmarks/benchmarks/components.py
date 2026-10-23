@@ -113,11 +113,7 @@ class TransformerLayerMoE(ComponentBenchmark):
     self._fprop = full_layer_fwd
 
   def get_run_identifier(self) -> str:
-    model_dim = self.config.model_dim
-    mslen = self.config.mslen
-    if model_dim is not None or mslen is not None:
-      return f"dim_{model_dim or 7168}_len_{mslen or 1024}"
-    return ""
+    return f"dim_{self.config.model_dim}_len_{self.config.mslen}"
 
   def generate_inputs(self) -> tuple[Any, ...]:
     model_dim = self.config.model_dim

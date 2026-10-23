@@ -10,14 +10,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "absl-py",
-    "jax[tpu]==0.11.1",
-    "jaxlib==0.11.1",
+    "jax[tpu]==0.12.0",
+    "jaxlib==0.12.0",
     "numpy",
     "pandas",
     "protobuf",
     "pyyaml",
     "simple_parsing",
-    "tpu-sync-jax==0.0.1.dev20261015075725",
+    "tpu-sync-jax==0.0.1.dev20261022073132",
 ]
 
 [project.scripts]

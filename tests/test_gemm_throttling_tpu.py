@@ -73,6 +73,7 @@ class GemmThrottlingTPUTest(absltest.TestCase):
 
       with open(detailed_path, "r") as f:
         details_list = json.load(f)
+      self.assertLen(details_list, 1)
 
       # Verify thermal_per_device matches device count
       thermal_per_device = benchmark.executor.get_result_details().get(

@@ -111,11 +111,7 @@ class SwiGLUBenchmark(base.BaseBenchmark[ComputeParams]):
     self._jit_fn = swiglu_fn
 
   def get_run_identifier(self) -> str:
-    dim = self.config.dim
-    batch = self.config.batch
-    if dim is not None or batch is not None:
-      return f"batch_{batch or 1024}_dim_{dim or 4096}"
-    return ""
+    return f"batch_{self.config.batch}_dim_{self.config.dim}"
 
   def generate_inputs(self) -> tuple[Any, ...]:
     dim = self.config.dim
@@ -173,11 +169,7 @@ class RMSNormBenchmark(base.BaseBenchmark[ComputeParams]):
     self._jit_fn = rmsnorm_fn
 
   def get_run_identifier(self) -> str:
-    dim = self.config.dim
-    batch = self.config.batch
-    if dim is not None or batch is not None:
-      return f"batch_{batch or 1024}_dim_{dim or 4096}"
-    return ""
+    return f"batch_{self.config.batch}_dim_{self.config.dim}"
 
   def generate_inputs(self) -> tuple[jnp.ndarray, jnp.ndarray]:
     dim = self.config.dim
@@ -240,13 +232,10 @@ class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
     self._jit_fn = rope_fn
 
   def get_run_identifier(self) -> str:
-    seq_len = self.config.seq_len
-    head_dim = self.config.head_dim
-    batch = self.config.batch
-    heads = self.config.heads
-    if any(v is not None for v in (seq_len, head_dim, batch, heads)):
-      return f"b_{batch or 32}_h_{heads or 32}_s_{seq_len or 1024}_d_{head_dim or 128}"
-    return ""
+    return (
+        f"b_{self.config.batch}_h_{self.config.heads}_"
+        f"s_{self.config.seq_len}_d_{self.config.head_dim}"
+    )
 
   def generate_inputs(self) -> tuple[jnp.ndarray, jnp.ndarray]:
     m = self.config.seq_len
@@ -435,10 +424,7 @@ class AddBenchmark(base.BaseBenchmark[AddParams]):
     self._jit_fn = add_fn
 
   def get_run_identifier(self) -> str:
-    size = self.config.size
-    if size is not None:
-      return f"size_{size}"
-    return ""
+    return f"size_{self.config.size}"
 
   def generate_inputs(self) -> tuple[jnp.ndarray, jnp.ndarray]:
     size = self.config.size

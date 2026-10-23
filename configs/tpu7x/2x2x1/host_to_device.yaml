@@ -7,5 +7,4 @@ benchmark:
     dtype: "float32"
   sweep:
     transfer_backend: ["jax", "tpu_sync"]
-    local_device: [0, -1]
     data_size_mib: [4096, 8192, 16384]

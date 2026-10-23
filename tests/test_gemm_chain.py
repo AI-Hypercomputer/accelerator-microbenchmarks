@@ -1,6 +1,7 @@
 """Unit tests for GemmChainedParams, make_chain_fn and GemmChainedBenchmark."""
 
 import csv
+import dataclasses
 import json
 import os
 import tempfile
@@ -9,6 +10,7 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import matmul
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import checksum
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import report
@@ -43,32 +45,51 @@ def _mesh(num_devices):
   )
 
 
+def _with_device_fault(arr, mesh, device_index, flat_index=0, bit=0):
+  """Returns `arr` with one bit flipped in its shard on one mesh device.
+
+  JAX does not check that the shards of an array are consistent (e.g. that
+  the replicas of a replicated array agree), so this simulates a single-bit
+  fault on one device without any fault-injection code in the benchmark.
+
+  Args:
+    arr: Array with one shard on each mesh device.
+    mesh: Mesh whose devices hold the shards.
+    device_index: Position in `mesh.devices.flat` of the corrupted shard, or
+      None to return `arr` unchanged.
+    flat_index: Row-major element index to corrupt within the shard.
+    bit: Bit to flip in that element.
+  """
+  if device_index is None:
+    return arr
+  shards = {s.device: s.data for s in arr.addressable_shards}
+  bad_device = mesh.devices.flat[device_index]
+  buffers = [
+      _flip_bit(shards[d], flat_index, bit) if d == bad_device else shards[d]
+      for d in mesh.devices.flat
+  ]
+  return jax.make_array_from_single_device_arrays(
+      arr.shape, arr.sharding, buffers
+  )
+
+
 def _replicated_with_fault(x, mesh, device_index=None, flat_index=0, bit=0):
   """Builds a P()-replicated array whose copy on one mesh device is corrupted.
 
-  JAX does not check that the replicas of a replicated array agree, so this
-  simulates a single-bit fault in one device's operand without any
-  fault-injection code in the benchmark. With `device_index=None` all
-  replicas are identical.
-
-  Args:
-    x: Host value to replicate.
-    mesh: Mesh whose devices receive a replica.
-    device_index: Position in `mesh.devices.flat` of the corrupted replica.
-    flat_index: Row-major element index to corrupt.
-    bit: Bit to flip in that element.
+  See `_with_device_fault`; with `device_index=None` all replicas are
+  identical.
 
   Returns:
     A `jax.Array` with `NamedSharding(mesh, P())`.
   """
-  x = jnp.asarray(x)
-  bad = _flip_bit(x, flat_index, bit) if device_index is not None else x
   sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-  buffers = [
-      jax.device_put(bad if i == device_index else x, d)
-      for i, d in enumerate(mesh.devices.flat)
-  ]
-  return jax.make_array_from_single_device_arrays(x.shape, sharding, buffers)
+  return _with_device_fault(
+      jax.device_put(jnp.asarray(x), sharding),
+      mesh,
+      device_index,
+      flat_index,
+      bit,
+  )
 
 
 def _reference_chain(x, b, steps, in_dtype, out_dtype):
@@ -126,6 +147,29 @@ class _CorruptedInputGemmChained(matmul.GemmChainedBenchmark):
             b_host, self.mesh, b_bad, self._flat_index, self._bit
         ),
     )
+
+
+class _TransientFaultGemmChained(matmul.GemmChainedBenchmark):
+  """Flips one bit of one device's final X in one timed run only.
+
+  The fault is applied to the X that `post_run_processing` checksums, as if
+  that device miscomputed the chain in that run only. Block `d` of X along
+  axis 0 is the final X of mesh device `d` (see `matmul.make_chain_fn`).
+  """
+
+  def __init__(self, *args, fault_run, device_index, flat_index, bit, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._fault_run = fault_run
+    self._device_index = device_index
+    self._flat_index = flat_index
+    self._bit = bit
+
+  def post_run_processing(self, outputs, run_index):
+    if run_index == self._fault_run:
+      outputs = _with_device_fault(
+          outputs, self.mesh, self._device_index, self._flat_index, self._bit
+      )
+    super().post_run_processing(outputs, run_index)
 
 
 class InputsFnTest(absltest.TestCase):
@@ -245,6 +289,33 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
         **kwargs,
     )
 
+  def _assert_one_diverging_device(
+      self, metrics, device_index, healthy_checksum, failed_runs
+  ):
+    """Asserts only `device_index` diverges, in exactly `failed_runs`.
+
+    Args:
+      metrics: Metrics of a run on this test's single-host mesh.
+      device_index: The only device expected to diverge.
+      healthy_checksum: Checksum of a run without the fault.
+      failed_runs: Expected timed runs in which `device_index` diverges.
+
+    Returns:
+      The `diverging_devices` entry of `device_index`.
+    """
+    self.assertTrue(metrics["all_devices_valid_checksum"])
+    self.assertIs(metrics["intra_host_checksum_match"], False)
+    self.assertIs(metrics["global_checksum_match"], False)
+    self.assertEqual(metrics["checksum"], healthy_checksum)
+    (div,) = metrics["diverging_devices"]
+    self.assertEqual(div["device_id"], device_index)
+    self.assertEqual(div["process_index"], 0)
+    self.assertEqual(div["consensus"], healthy_checksum)
+    self.assertEqual([f["run"] for f in div["failed_runs"]], failed_runs)
+    for f in div["failed_runs"]:
+      self.assertNotEqual(f["checksum"], healthy_checksum)
+    return div
+
   @parameterized.named_parameters(
       ("m", "m", 0, 1),
       ("k", "k", 0, 1),
@@ -283,6 +354,17 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
         m=128, k=128, in_dtype=in_dtype, out_dtype=out_dtype
     )
     self.assertEqual((cfg.in_dtype, cfg.out_dtype), (in_dtype, out_dtype))
+
+  def test_params_require_zero_min_duration_s(self):
+    """Verifies min_duration_s must be 0, so every host runs num_runs runs."""
+    self.assertEqual(matmul.GemmChainedParams().min_duration_s, 0.0)
+    with self.assertRaisesRegex(ValueError, "min_duration_s must be <= 0.0"):
+      matmul.GemmChainedParams(min_duration_s=1.0)
+    # The overriding field keeps its inherited place, so the CLI flags and the
+    # summary.csv columns keep their order.
+    base_fields = [f.name for f in dataclasses.fields(base.BaseBenchmarkParams)]
+    fields = [f.name for f in dataclasses.fields(matmul.GemmChainedParams)]
+    self.assertEqual(fields[: len(base_fields)], base_fields)
 
   def test_flops_bytes_tflops_and_run_identifier(self):
     """Verifies FLOPs, bytes and TFLOPs cover the whole chain; the run id."""
@@ -332,6 +414,16 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
         latency_ms=0.0, prefix=constants.TimingDomain.WALL_CLOCK
     )
     self.assertEqual(metrics["wall_clock_tflops_per_device"], float("inf"))
+
+  def test_uninitialized_hooks_raise_value_error(self):
+    """Verifies the timed and checksum hooks raise ValueError before setup."""
+    bm = self._benchmark(matmul.GemmChainedParams(m=16, k=16))
+    with self.assertRaisesRegex(ValueError, "JIT function not initialized."):
+      bm.run_op()
+    with self.assertRaisesRegex(
+        ValueError, "Checksum function not initialized."
+    ):
+      bm.post_run_processing(None, 0)
 
   @parameterized.named_parameters(
       ("bfloat16", "bfloat16", "bfloat16"),
@@ -427,30 +519,62 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
 
     fm = self._benchmark(cfg, device_index=device_index, **common).run().metrics
 
-    self.assertTrue(fm["all_devices_valid_checksum"])
-    self.assertIs(fm["intra_host_checksum_match"], False)
-    self.assertIs(fm["global_checksum_match"], False)
-    self.assertEqual(fm["checksum"], healthy_checksum)
-    self.assertLen(fm["diverging_devices"], 1)
-    div = fm["diverging_devices"][0]
-    self.assertEqual(div["device_id"], device_index)
-    self.assertEqual(div["process_index"], 0)
-    self.assertEqual(div["consensus"], healthy_checksum)
-    self.assertNotEqual(div["checksum"], healthy_checksum)
+    # The corrupted replica makes every timed run fail the same way.
+    div = self._assert_one_diverging_device(
+        fm, device_index, healthy_checksum, failed_runs=[0, 1]
+    )
+    (bad_checksum,) = {f["checksum"] for f in div["failed_runs"]}
 
     # All other 7 devices in device_checksums must match healthy_checksum
     for entry in fm["device_checksums"]:
       if entry["device_id"] == device_index:
-        self.assertEqual(entry["checksum"], div["checksum"])
+        self.assertEqual(entry["checksum"], bad_checksum)
       else:
         self.assertEqual(entry["checksum"], healthy_checksum)
 
-  def test_checksum_and_readback_only_after_timed_loop(self):
-    """Verifies the timed run_op returns X; checksum and readback come after."""
-    m, k = 16, 16
+  @parameterized.named_parameters(
+      ("first_run", 0),
+      ("last_run", 2),
+  )
+  def test_transient_fault_in_one_timed_run_flags_that_device_and_run(
+      self, fault_run
+  ):
+    """Verifies a 1-bit fault in one timed run of one device is caught.
+
+    Earlier runs used to go unchecked, as only the last run was checksummed.
+    """
+    device_index = 5
+    cfg = matmul.GemmChainedParams(
+        m=16, k=16, chain_length=4, seed=7, warmup_tries=1, num_runs=3
+    )
+    healthy_checksum = self._benchmark(cfg).run().metrics["checksum"]
+
+    fm = (
+        self._benchmark(
+            cfg,
+            cls=_TransientFaultGemmChained,
+            fault_run=fault_run,
+            device_index=device_index,
+            flat_index=3,
+            bit=6,
+        )
+        .run()
+        .metrics
+    )
+
+    self._assert_one_diverging_device(
+        fm, device_index, healthy_checksum, failed_runs=[fault_run]
+    )
+    # The device's other runs are healthy, so its own checksum is too.
+    for entry in fm["device_checksums"]:
+      self.assertEqual(entry["checksum"], healthy_checksum)
+
+  def test_checksums_every_timed_run_and_gathers_after_the_loop(self):
+    """Verifies one checksum per timed run and one gather after the loop."""
+    m, k, num_runs = 16, 16, 3
     bm = self._benchmark(
         matmul.GemmChainedParams(
-            m=m, k=k, chain_length=2, warmup_tries=2, num_runs=3
+            m=m, k=k, chain_length=2, warmup_tries=2, num_runs=num_runs
         )
     )
     bm.setup()
@@ -465,19 +589,22 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
         "_checksum_fn",
         wraps=bm._checksum_fn,  # pylint: disable=protected-access
     ) as spy_checksum, mock.patch.object(
-        checksum, "read_local_rows", wraps=checksum.read_local_rows
-    ) as spy_read:
+        checksum.multihost_utils,
+        "process_allgather",
+        wraps=checksum.multihost_utils.process_allgather,
+    ) as spy_gather:
       bm.executor.run_warmup(inputs)
-      bm.executor.execute(inputs, local_xprof_dir=None)
-      # No checksum computation or D2H readback in warmup or the timed loop.
       self.assertEqual(spy_checksum.call_count, 0)
-      self.assertEqual(spy_read.call_count, 0)
-      metrics = bm.calculate_metrics([1.0, 1.0, 1.0])
-      self.assertEqual(spy_checksum.call_count, 1)
-      self.assertEqual(spy_read.call_count, 1)
+      bm.executor.execute(inputs, local_xprof_dir=None)
+      # One checksum per timed run, and no collective during the timed loop.
+      self.assertEqual(spy_checksum.call_count, num_runs)
+      self.assertEqual(spy_gather.call_count, 0)
+      metrics = bm.calculate_metrics([1.0] * num_runs)
+      # The rows of every run, gathered once.
+      spy_gather.assert_called_once()
+      self.assertEqual(spy_checksum.call_count, num_runs)
     self.assertIs(metrics["global_checksum_match"], True)
-    # The final X is released once its checksum has been computed.
-    self.assertIsNone(bm._last_x)  # pylint: disable=protected-access
+    self.assertEqual(metrics["diverging_devices"], [])
 
   def test_schema_coverage_and_report_output_files(self):
     """Verifies REPORT_SCHEMA and summary.csv / detailed.json output."""

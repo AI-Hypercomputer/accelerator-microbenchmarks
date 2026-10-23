@@ -2,8 +2,9 @@
 #
 # Runs a deterministic chain of `chain_length` back-to-back matrix
 # multiplications (`X <- X @ B`) independently on every device, computes a
-# position-weighted 64-bit checksum per device, and compares checksums
-# within each host and across the slice to identify any miscomputing chip.
+# position-weighted 64-bit checksum per device after every timed run, and
+# compares the checksums of every run within each host and across the slice to
+# identify any miscomputing chip.
 benchmark:
   name: gemm_chained
   xprof_timing: true

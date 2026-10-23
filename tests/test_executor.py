@@ -7,7 +7,7 @@ import os
 import shutil
 import tempfile
 import time
-import unittest
+from unittest import mock
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
@@ -17,6 +17,7 @@ from accelerator_microbenchmarks.core import executor
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
+from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -79,7 +80,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
-    self._platform_patcher = unittest.mock.patch(
+    self._platform_patcher = mock.patch(
         "accelerator_microbenchmarks.core.platform.get_platform_info",
         return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
     )
@@ -117,7 +118,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
     bm = DummyBenchmark(
         config=base.BaseBenchmarkParams(warmup_tries=2, num_runs=1)
     )
-    with unittest.mock.patch.object(
+    with mock.patch.object(
         jax, "block_until_ready", wraps=jax.block_until_ready
     ) as mock_block:
       bm.executor.run_warmup(bm.generate_inputs())
@@ -175,15 +176,15 @@ class SoakingBenchmarkTest(absltest.TestCase):
     self.assertIsNone(metrics["peak_temp_c"])
     self.assertEqual(metrics["hbm_throttle_time_pct"], 0.0)
 
-  @unittest.mock.patch(
+  @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
       return_value=None,
   )
-  @unittest.mock.patch(
+  @mock.patch(
       "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
       return_value=[1.0],
   )
-  @unittest.mock.patch("jax.profiler.trace")
+  @mock.patch("jax.profiler.trace")
   def test_samples_per_run_and_run_chunk(
       self, mock_trace, mock_parse_xprof, mock_upload_xprof
   ):
@@ -228,9 +229,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
         samples_per_run=25,
     )
     bm = SoakingDummyBenchmark(config=cfg)
-    with unittest.mock.patch.object(
-        bm, "run_op", wraps=bm.run_op
-    ) as mock_run_op:
+    with mock.patch.object(bm, "run_op", wraps=bm.run_op) as mock_run_op:
       bm.executor.run_warmup(bm.generate_inputs())
       self.assertEqual(mock_run_op.call_count, 10)
 
@@ -286,15 +285,15 @@ class SoakingBenchmarkTest(absltest.TestCase):
           xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
       )
       with (
-          unittest.mock.patch(
+          mock.patch(
               "jax.profiler.trace",
               side_effect=fake_trace,
           ),
-          unittest.mock.patch(
+          mock.patch(
               "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
               side_effect=[[1.0], [2.5]],
           ),
-          unittest.mock.patch(
+          mock.patch(
               "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
               return_value=None,
           ),
@@ -320,11 +319,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     # Also verify non-positive synced_p50 passes has_xprof_timings=False.
     with (
-        unittest.mock.patch(
+        mock.patch(
             "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
             side_effect=[[-1.0], [-1.0]],
         ),
-        unittest.mock.patch(
+        mock.patch(
             "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
             return_value=None,
         ),
@@ -365,13 +364,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
         return real_run_op(x)
 
       with (
-          unittest.mock.patch.object(
-              bm, "run_op", side_effect=recording_run_op
-          ),
-          unittest.mock.patch.object(
+          mock.patch.object(bm, "run_op", side_effect=recording_run_op),
+          mock.patch.object(
               jax, "block_until_ready", side_effect=recording_block
           ),
-          unittest.mock.patch("jax.profiler.trace", side_effect=fake_trace),
+          mock.patch("jax.profiler.trace", side_effect=fake_trace),
       ):
         exec_result = bm.executor.execute(bm.generate_inputs(), tmpdir)
     raw_times = exec_result.raw_times_ms
@@ -419,10 +416,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
           xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
       )
       with (
-          unittest.mock.patch.object(
-              jax, "block_until_ready", side_effect=slow_block
-          ),
-          unittest.mock.patch(
+          mock.patch.object(jax, "block_until_ready", side_effect=slow_block),
+          mock.patch(
               "jax.profiler.trace", return_value=contextlib.nullcontext()
           ),
       ):
@@ -478,10 +473,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
         config=cfg,
         xprof_config=base.XprofConfig(
             xprof_timing=True,
-            device_mode=constants.XprofDeviceMode.MAX_DEVICE,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE,
         ),
     )
-    fake_devs = [unittest.mock.MagicMock(local_hardware_id=i) for i in range(8)]
+    fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
 
     def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
       del fallback_fn
@@ -497,10 +492,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
       os.makedirs(w0, exist_ok=True)
       os.makedirs(w1, exist_ok=True)
       with (
-          unittest.mock.patch.object(
-              jax, "local_devices", return_value=fake_devs
-          ),
-          unittest.mock.patch(
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
+          mock.patch(
               "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
               side_effect=fake_parse_xprof,
           ),
@@ -517,9 +510,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
     host_cpu_bm = HostCpuSoakingDummyBenchmark(config=cfg)
     self.assertIsNone(host_cpu_bm.executor._resolve_max_device_id("/tmp/fake"))  # pylint: disable=protected-access
 
-  def test_xprof_device_mode_first_vs_max_device(self):
-    """Verifies XprofConfig.device_mode ('first_device' vs 'max_device')."""
-    fake_devs = [unittest.mock.MagicMock(local_hardware_id=i) for i in range(8)]
+  def test_xprof_device_timing_aggregation_measured_or_first_vs_local_slowest(
+      self,
+  ):
+    """Verifies XprofConfig.device_timing_aggregation ('measured_device_or_first' vs 'local_slowest_device')."""
+    fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
 
     def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
       del trace_dir, fallback_fn
@@ -528,10 +523,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
       return [5.009, 5.009]
 
     with (
-        unittest.mock.patch.object(
-            jax, "local_devices", return_value=fake_devs
-        ),
-        unittest.mock.patch(
+        mock.patch.object(jax, "local_devices", return_value=fake_devs),
+        mock.patch(
             "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
             side_effect=fake_parse_xprof,
         ),
@@ -539,7 +532,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
       bm_first = DummyBenchmark(
           xprof_config=base.XprofConfig(
               xprof_timing=True,
-              device_mode=constants.XprofDeviceMode.FIRST_DEVICE,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST,
           )
       )
       self.assertEqual(
@@ -549,22 +542,22 @@ class SoakingBenchmarkTest(absltest.TestCase):
       bm_max = DummyBenchmark(
           xprof_config=base.XprofConfig(
               xprof_timing=True,
-              device_mode=constants.XprofDeviceMode.MAX_DEVICE,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE,
           )
       )
       self.assertEqual(
           bm_max.executor._parse_xprof_durations("/tmp/fake"), [6.021, 6.019]  # pylint: disable=protected-access
       )
 
-  @unittest.mock.patch(
+  @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
       return_value=None,
   )
-  @unittest.mock.patch(
+  @mock.patch(
       "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
       return_value=[1.0],
   )
-  @unittest.mock.patch("jax.profiler.trace")
+  @mock.patch("jax.profiler.trace")
   def test_profiler_options_base_and_soaking(
       self, mock_trace, mock_parse, mock_upload
   ):
@@ -649,8 +642,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
     self.assertEqual(opts.advanced_configuration["tpu_power_trace_level"], 1)
     self.assertFalse(opts.advanced_configuration["tpu_perf_counters"])
 
-  @unittest.mock.patch("jax.profiler.trace")
-  @unittest.mock.patch(
+  @mock.patch("jax.profiler.trace")
+  @mock.patch(
       "jax.profiler.ProfileOptions",
       side_effect=RuntimeError("ProfileOptions unavailable"),
   )
@@ -677,6 +670,593 @@ class SoakingBenchmarkTest(absltest.TestCase):
             bm.executor.execute(bm.generate_inputs(), tmpdir)
     # A default-options trace would reintroduce run truncation.
     mock_trace.assert_not_called()
+
+  def test_global_slowest_per_step_all_ok_multihost(self):
+    """Verifies two-stage global_slowest_per_step reduction across local devices and hosts."""
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
+
+    def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
+      del trace_dir, fallback_fn
+      if local_device_id == 0:
+        return [10.0, 22.0, 30.0]
+      return [14.0, 18.0, 35.0]
+
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+
+    with (
+        mock.patch.object(
+            jax, "local_devices", return_value=fake_devs
+        ),
+        mock.patch(
+            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+            side_effect=fake_parse_xprof,
+        ),
+        mock.patch.object(
+            multihost_utils,
+            "process_allgather",
+            side_effect=[
+                np.array([[0, 3], [0, 3]], dtype=np.int32),
+                np.array(
+                    [[14.0, 22.0, 35.0], [16.0, 20.0, 31.0]], dtype=np.float32
+                ),
+            ],
+        ) as mock_gather,
+    ):
+      durations = bm.executor.get_xprof_durations("/tmp/fake")
+
+    self.assertEqual(durations, [16.0, 22.0, 35.0])
+    self.assertEqual(mock_gather.call_count, 2)
+    np.testing.assert_array_equal(
+        mock_gather.call_args_list[0].args[0],
+        np.array([0, 3], dtype=np.int32),
+    )
+    np.testing.assert_allclose(
+        mock_gather.call_args_list[1].args[0],
+        np.array([14.0, 22.0, 35.0], dtype=np.float32),
+    )
+
+  def test_global_slowest_per_step_single_host_reduces_to_in_host_step_max(
+      self,
+  ):
+    """Verifies single-host global_slowest_per_step reduces to in-host per-step max."""
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
+
+    def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
+      del trace_dir, fallback_fn
+      if local_device_id == 0:
+        return [10.0, 22.0, 30.0]
+      return [14.0, 18.0, 35.0]
+
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+
+    with (
+        mock.patch.object(
+            jax, "local_devices", return_value=fake_devs
+        ),
+        mock.patch(
+            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+            side_effect=fake_parse_xprof,
+        ),
+        mock.patch.object(
+            multihost_utils,
+            "process_allgather",
+            wraps=multihost_utils.process_allgather,
+        ) as spy_gather,
+    ):
+      durations = bm.executor.get_xprof_durations("/tmp/fake")
+
+    self.assertEqual(durations, [14.0, 22.0, 35.0])
+    self.assertEqual(spy_gather.call_count, 2)
+
+  def test_global_slowest_per_step_parse_failed_returns_empty_on_all_hosts(
+      self,
+  ):
+    """Verifies PARSE_FAILED on any host causes all hosts to return []."""
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+
+    with self.subTest("local_empty_slice"):
+
+      def fake_empty(trace_dir, fallback_fn=None, local_device_id=0):
+        del trace_dir, fallback_fn
+        return [10.0, 20.0, 30.0] if local_device_id == 0 else []
+
+      with (
+          mock.patch.object(
+              jax, "local_devices", return_value=fake_devs
+          ),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              side_effect=fake_empty,
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "process_allgather",
+              wraps=multihost_utils.process_allgather,
+          ) as spy_gather,
+      ):
+        self.assertEqual(bm.executor.get_xprof_durations("/tmp/fake"), [])
+      spy_gather.assert_called_once()
+      np.testing.assert_array_equal(
+          spy_gather.call_args.args[0], np.array([1, 0], dtype=np.int32)
+      )
+
+    with self.subTest("local_exception"):
+      with (
+          mock.patch.object(
+              jax, "local_devices", return_value=fake_devs
+          ),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              side_effect=RuntimeError("corrupt trace"),
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "process_allgather",
+              wraps=multihost_utils.process_allgather,
+          ) as spy_gather,
+      ):
+        self.assertEqual(bm.executor.get_xprof_durations("/tmp/fake"), [])
+      spy_gather.assert_called_once()
+      np.testing.assert_array_equal(
+          spy_gather.call_args.args[0], np.array([1, 0], dtype=np.int32)
+      )
+
+    with self.subTest("remote_host_parse_failed"):
+      with (
+          mock.patch.object(
+              jax, "local_devices", return_value=fake_devs
+          ),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              return_value=[14.0, 22.0, 35.0],
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "process_allgather",
+              side_effect=[np.array([[0, 3], [1, 0]], dtype=np.int32)],
+          ) as mock_gather,
+      ):
+        self.assertEqual(bm.executor.get_xprof_durations("/tmp/fake"), [])
+      mock_gather.assert_called_once()
+
+  def test_global_slowest_per_step_unequal_local_counts_raises_on_all_hosts(
+      self,
+  ):
+    """Verifies UNEQUAL_LOCAL_COUNTS on any host raises ValueError on all hosts."""
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+
+    with self.subTest("local_unequal_device_counts"):
+
+      def fake_unequal(trace_dir, fallback_fn=None, local_device_id=0):
+        del trace_dir, fallback_fn
+        return [10.0, 20.0, 30.0] if local_device_id == 0 else [12.0, 18.0]
+
+      with (
+          mock.patch.object(
+              jax, "local_devices", return_value=fake_devs
+          ),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              side_effect=fake_unequal,
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "process_allgather",
+              wraps=multihost_utils.process_allgather,
+          ) as spy_gather,
+      ):
+        with self.assertRaisesRegex(
+            ValueError, "Unequal XProf step counts.*statuses="
+        ):
+          bm.executor.get_xprof_durations("/tmp/fake")
+      spy_gather.assert_called_once()
+      np.testing.assert_array_equal(
+          spy_gather.call_args.args[0], np.array([2, 0], dtype=np.int32)
+      )
+
+    with self.subTest("remote_unequal_device_counts"):
+      with (
+          mock.patch.object(
+              jax, "local_devices", return_value=fake_devs
+          ),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              return_value=[14.0, 22.0, 35.0],
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "process_allgather",
+              side_effect=[np.array([[0, 3], [2, 0]], dtype=np.int32)],
+          ) as mock_gather,
+      ):
+        with self.assertRaisesRegex(
+            ValueError, "Unequal XProf step counts.*statuses="
+        ):
+          bm.executor.get_xprof_durations("/tmp/fake")
+      mock_gather.assert_called_once()
+
+  def test_global_slowest_per_step_differing_step_counts_across_hosts_raises_on_all_hosts(
+      self,
+  ):
+    """Verifies differing n_steps across OK hosts raises ValueError on all hosts."""
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+
+    with (
+        mock.patch.object(
+            jax, "local_devices", return_value=fake_devs
+        ),
+        mock.patch(
+            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+            return_value=[14.0, 22.0, 35.0],
+        ),
+        mock.patch.object(
+            multihost_utils,
+            "process_allgather",
+            side_effect=[np.array([[0, 3], [0, 2]], dtype=np.int32)],
+        ) as mock_gather,
+    ):
+      with self.assertRaisesRegex(
+          ValueError, "Unequal XProf step counts.*step_counts=\\[3, 2\\]"
+      ):
+        bm.executor.get_xprof_durations("/tmp/fake")
+    mock_gather.assert_called_once()
+
+  def test_soaking_executor_global_slowest_per_step_both_windows_and_baseline_error_raises_immediately(
+      self,
+  ):
+    """Verifies SoakingRunExecutor runs two-stage gathers on both windows and raises immediately on baseline ValueError."""
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
+    cfg = SoakingDummyParams(
+        warmup_tries=0, min_duration_s=0.01, samples_per_run=2
+    )
+    bm = SoakingDummyBenchmark(
+        config=cfg,
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+
+    with self.subTest("both_windows_ok"):
+
+      def fake_parse_both(trace_dir, fallback_fn=None, local_device_id=0):
+        del fallback_fn
+        if "baseline_window" in trace_dir:
+          return [5.0, 6.0] if local_device_id == 0 else [5.5, 5.8]
+        return [7.0, 8.0] if local_device_id == 0 else [7.5, 7.2]
+
+      with (
+          mock.patch.object(
+              jax, "local_devices", return_value=fake_devs
+          ),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              side_effect=fake_parse_both,
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "process_allgather",
+              side_effect=[
+                  np.array([[0, 2], [0, 2]], dtype=np.int32),
+                  np.array([[5.5, 6.0], [5.9, 5.7]], dtype=np.float32),
+                  np.array([[0, 2], [0, 2]], dtype=np.int32),
+                  np.array([[7.5, 8.0], [7.2, 8.5]], dtype=np.float32),
+              ],
+          ) as mock_gather,
+      ):
+        durations = bm.executor.get_xprof_durations("/tmp/fake")
+
+      np.testing.assert_allclose(durations, [7.5, 8.5], rtol=1e-5)
+      np.testing.assert_allclose(
+          bm.executor.first_window_xprof_duration, [5.9, 6.0], rtol=1e-5
+      )
+      np.testing.assert_allclose(
+          bm.executor.last_window_xprof_duration, [7.5, 8.5], rtol=1e-5
+      )
+      self.assertEqual(mock_gather.call_count, 4)
+
+    with self.subTest("baseline_error_raises_immediately"):
+
+      def fake_parse_baseline_bad(
+          trace_dir, fallback_fn=None, local_device_id=0
+      ):
+        del fallback_fn
+        if "baseline_window" in trace_dir:
+          return [5.0, 6.0] if local_device_id == 0 else [5.5]
+        return [7.0, 8.0]
+
+      with (
+          mock.patch.object(
+              jax, "local_devices", return_value=fake_devs
+          ),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              side_effect=fake_parse_baseline_bad,
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "process_allgather",
+              wraps=multihost_utils.process_allgather,
+          ) as spy_gather,
+      ):
+        with self.assertRaisesRegex(ValueError, "Unequal XProf step counts"):
+          bm.executor.get_xprof_durations("/tmp/fake")
+
+      self.assertEqual(spy_gather.call_count, 1)
+
+  def test_extract_local_device_slices_and_custom_agg_fn(self):
+    """Verifies _extract_local_device_slices returns raw 2D slices and _parse_multihost_durations supports custom agg_fn."""
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
+
+    def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
+      del trace_dir, fallback_fn
+      if local_device_id == 0:
+        return [10.0, 22.0, 30.0]
+      return [14.0, 18.0, 35.0]
+
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+        ),
+    )
+
+    with (
+        mock.patch.object(
+            jax, "local_devices", return_value=fake_devs
+        ),
+        mock.patch(
+            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+            side_effect=fake_parse_xprof,
+        ),
+    ):
+      status, slices = bm.executor._extract_local_device_slices("/tmp/fake")  # pylint: disable=protected-access
+      self.assertEqual(status, executor._XprofParseStatus.OK)  # pylint: disable=protected-access
+      self.assertEqual(slices, [[10.0, 22.0, 30.0], [14.0, 18.0, 35.0]])
+
+      empty_status, empty_slices = bm.executor._extract_local_device_slices("")  # pylint: disable=protected-access
+      self.assertEqual(empty_status, executor._XprofParseStatus.PARSE_FAILED)  # pylint: disable=protected-access
+      self.assertEqual(empty_slices, [])
+
+      with mock.patch.object(
+          multihost_utils,
+          "process_allgather",
+          side_effect=[
+              np.array([[0, 3], [0, 3]], dtype=np.int32),
+              np.array(
+                  [[10.0, 18.0, 30.0], [12.0, 16.0, 31.0]], dtype=np.float32
+              ),
+          ],
+      ):
+        min_durations = bm.executor._parse_multihost_durations(  # pylint: disable=protected-access
+            "/tmp/fake", agg_fn=np.min
+        )
+      self.assertEqual(min_durations, [10.0, 16.0, 30.0])
+
+  def test_parse_multihost_owner_durations(self):
+    """Verifies _parse_multihost_owner_durations for owner, non-owner, empty, and error paths."""
+
+    class MultihostSyncDummyBenchmark(DummyBenchmark):
+      """Dummy benchmark with requires_multihost_sync=True."""
+
+      @property
+      def requires_multihost_sync(self) -> bool:
+        return True
+
+      def get_device_to_measure(self):
+        mock_device = mock.Mock()
+        mock_device.id = 0
+        mock_device.process_index = 0
+        mock_device.local_hardware_id = 0
+        return mock_device
+
+    bm = MultihostSyncDummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+        xprof_config=base.XprofConfig(xprof_timing=True),
+    )
+
+    with self.subTest("owner_host_parses_and_broadcasts"):
+      with (
+          mock.patch("jax.process_index", return_value=0),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              return_value=[4.0, 4.1, 4.5],
+          ) as mock_parse,
+          mock.patch.object(
+              multihost_utils,
+              "broadcast_one_to_all",
+              side_effect=lambda x, is_source=False: x,
+          ) as mock_bcast,
+      ):
+        durations = bm.executor.get_xprof_durations("/tmp/fake")
+      mock_parse.assert_called_once()
+      self.assertEqual(mock_bcast.call_count, 2)
+      np.testing.assert_allclose(durations, [4.0, 4.1, 4.5], rtol=1e-5)
+
+    with self.subTest("non_owner_host_skips_parse_and_receives_broadcast"):
+      with (
+          mock.patch("jax.process_index", return_value=1),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+          ) as mock_parse,
+          mock.patch.object(
+              multihost_utils,
+              "broadcast_one_to_all",
+              side_effect=[
+                  np.int32(3),
+                  np.array([4.0, 4.1, 4.5], dtype=np.float32),
+              ],
+          ) as mock_bcast,
+      ):
+        durations = bm.executor.get_xprof_durations("/tmp/fake")
+      mock_parse.assert_not_called()
+      self.assertEqual(mock_bcast.call_count, 2)
+      np.testing.assert_allclose(durations, [4.0, 4.1, 4.5], rtol=1e-5)
+
+    with self.subTest("empty_trace_returns_empty"):
+      with (
+          mock.patch("jax.process_index", return_value=0),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              return_value=[],
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "broadcast_one_to_all",
+              return_value=np.int32(0),
+          ) as mock_bcast,
+      ):
+        durations = bm.executor.get_xprof_durations("/tmp/fake")
+      self.assertEqual(durations, [])
+      mock_bcast.assert_called_once()
+
+    with self.subTest("owner_parse_value_error_broadcasts_zero_steps"):
+      with (
+          mock.patch("jax.process_index", return_value=0),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              side_effect=ValueError("corrupt trace json"),
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "broadcast_one_to_all",
+              side_effect=lambda x, is_source=False: x,
+          ) as mock_bcast,
+      ):
+        durations = bm.executor.get_xprof_durations("/tmp/fake")
+      self.assertEqual(durations, [])
+      mock_bcast.assert_called_once_with(np.int32(0), is_source=True)
+
+    with self.subTest("broadcast_exception_falls_back_to_local"):
+      with (
+          mock.patch("jax.process_index", return_value=0),
+          mock.patch(
+              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              return_value=[4.0, 4.1, 4.5],
+          ),
+          mock.patch.object(
+              multihost_utils,
+              "broadcast_one_to_all",
+              side_effect=RuntimeError("broadcast failed"),
+          ),
+      ):
+        durations = bm.executor.get_xprof_durations("/tmp/fake")
+      self.assertEqual(durations, [4.0, 4.1, 4.5])
+
+
+class PostRunProcessingTest(absltest.TestCase):
+  """Tests for the untimed per-run hook BaseBenchmark.post_run_processing."""
+
+  def test_called_once_per_timed_run_with_outputs_and_index(self):
+    """Verifies each timed run, not warmup, calls the hook with its outputs."""
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=2, num_runs=3)
+    )
+    real_run_op = bm.run_op
+    run_outputs = []
+
+    def recording_run_op(x):
+      outputs = real_run_op(x)
+      run_outputs.append(outputs)
+      return outputs
+
+    with (
+        mock.patch.object(bm, "run_op", side_effect=recording_run_op),
+        mock.patch.object(bm, "post_run_processing") as mock_hook,
+    ):
+      inputs = bm.executor.run_warmup(bm.generate_inputs())
+      mock_hook.assert_not_called()
+      run_outputs.clear()
+      actual_runs = bm.executor.execute(
+          inputs, local_xprof_dir=None
+      ).actual_runs
+
+    self.assertEqual(actual_runs, 3)
+    self.assertLen(run_outputs, actual_runs)
+    self.assertLen(mock_hook.call_args_list, actual_runs)
+    for run_index, (call, outputs) in enumerate(
+        zip(mock_hook.call_args_list, run_outputs)
+    ):
+      self.assertIs(call.args[0], outputs)
+      self.assertEqual(call.kwargs, {"run_index": run_index})
+
+  def test_excluded_from_wall_clock_timing(self):
+    """Verifies time spent in the hook is not counted in raw_times."""
+    hook_delay_s = 0.1
+    bm = DummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=1, num_runs=3)
+    )
+    # Warm up first so that the timed runs do not include op compilation.
+    inputs = bm.executor.run_warmup(bm.generate_inputs())
+
+    def slow_hook(*args, **kwargs):
+      del args, kwargs
+      time.sleep(hook_delay_s)
+
+    with mock.patch.object(
+        bm, "post_run_processing", side_effect=slow_hook
+    ) as mock_hook:
+      raw_times = bm.executor.execute(inputs, local_xprof_dir=None).raw_times_ms
+
+    self.assertEqual(mock_hook.call_count, 3)
+    self.assertLen(raw_times, 3)
+    for run_ms in raw_times:
+      self.assertLess(run_ms, hook_delay_s * 1000.0)
 
 
 if __name__ == "__main__":

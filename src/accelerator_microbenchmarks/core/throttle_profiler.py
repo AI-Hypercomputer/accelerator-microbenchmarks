@@ -2,6 +2,7 @@
 
 import collections
 from collections.abc import Callable, Iterable, Mapping
+import logging
 import os
 import re
 import types
@@ -13,6 +14,11 @@ from google.protobuf import message_factory
 
 import os
 
+# Copy of `xplane_pb2.DESCRIPTOR.serialized_pb` generated from
+# `//third_party/tensorflow/tsl/profiler/protobuf/xplane.proto` (with the file
+# name set to the OSS path `tensorflow/tsl/profiler/protobuf/xplane.proto`),
+# used to build XPlane message classes in OSS without importing TensorFlow.
+# Regenerate it if the upstream schema changes.
 _XPLANE_SERIALIZED_PB = (
     b'\n-tensorflow/tsl/profiler/protobuf/xplane.proto\x12\x13tensorflow.profiler"j\n\x06XSpace\x12+\n\x06planes\x18\x01'
     b" \x03(\x0b2\x1b.tensorflow.profiler.XPlane\x12\x0e\n\x06errors\x18\x02"
@@ -363,8 +369,8 @@ class XprofThermalProfiler:
           space = xplane_pb2.XSpace()
           space.ParseFromString(f.read())
         spaces.append(space)
-      except Exception:  # pylint: disable=broad-exception-caught
-        pass
+      except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.warning("Failed to parse XPlane file %s: %s", xplane_path, e)
     return spaces
 
   def parse_per_device_metrics(self) -> dict[str, dict[str, Any]]:

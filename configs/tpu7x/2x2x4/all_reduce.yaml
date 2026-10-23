@@ -1,6 +1,7 @@
 benchmark:
   name: all_reduce
   xprof_timing: true
+  xprof_device_timing_aggregation: global_slowest_per_step
   params:
     warmup_tries: 2
     num_runs: 5

@@ -11,7 +11,7 @@ from accelerator_microbenchmarks.core import system
 
 
 @dataclasses.dataclass
-class MockConfig(base.BaseBenchmarkParams):
+class DummyConfig(base.BaseBenchmarkParams):
   dtype: str = "bfloat16"
 
 
@@ -24,7 +24,7 @@ class RooflineTest(absltest.TestCase):
     self.mock_benchmark.get_arithmetic_intensity.return_value = 1.0
     self.mock_benchmark.get_total_bytes.return_value = 1000.0
     self.mock_benchmark.get_compute_dtype.return_value = "bfloat16"
-    self.mock_benchmark.config = MockConfig()
+    self.mock_benchmark.config = DummyConfig()
     self.mock_benchmark.hardware_spec = system.TPU7X_HARDWARE_SPEC
 
   def test_apply_roofline_analysis_none_mode(self):

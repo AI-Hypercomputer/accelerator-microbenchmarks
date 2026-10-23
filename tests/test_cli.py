@@ -23,10 +23,6 @@ from accelerator_microbenchmarks.tests import test_report_utils
 class TestCli(parameterized.TestCase):
   """Unit tests for cli.py."""
 
-  def setUp(self):
-    super().setUp()
-    self.parser = cli.create_parser()
-
   def test_help_menu(self):
     """Verifies that top-level help menu renders correctly."""
     with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
@@ -969,16 +965,20 @@ benchmark:
       cli.run(["benchmark", "run", "gemm", "-m", "1024", "0"])
     mock_run_benchmarks.assert_not_called()
 
+  @parameterized.named_parameters(
+      ("local_slowest_device", "local_slowest_device"),
+      ("global_slowest_per_step", "global_slowest_per_step"),
+  )
   @mock.patch.object(runner, "run_benchmarks")
-  def test_benchmark_run_config_with_xprof_device_mode(
-      self, mock_run_benchmarks
+  def test_benchmark_run_config_with_xprof_device_timing_aggregation(
+      self, device_timing_aggregation, mock_run_benchmarks
   ):
-    """Verifies that xprof_device_mode in YAML or CLI is forwarded to runner.run_benchmarks."""
-    fake_config = self.create_tempfile(content="""
+    """Verifies that xprof_device_timing_aggregation in YAML is forwarded to runner.run_benchmarks."""
+    fake_config = self.create_tempfile(content=f"""
 benchmark:
   name: gemm_throttling
   xprof_timing: true
-  xprof_device_mode: max_device
+  xprof_device_timing_aggregation: {device_timing_aggregation}
   params:
     warmup_tries: 1
     min_duration_s: 1.0
@@ -986,15 +986,30 @@ benchmark:
     cli.run(["benchmark", "run-config", fake_config.full_path])
     mock_run_benchmarks.assert_called_once()
     _, kwargs = mock_run_benchmarks.call_args
-    self.assertEqual(kwargs["xprof_device_mode"], "max_device")
+    self.assertEqual(
+        kwargs["xprof_device_timing_aggregation"], device_timing_aggregation
+    )
 
+  @parameterized.named_parameters(
+      ("local_slowest_device", "local_slowest_device"),
+      ("global_slowest_per_step", "global_slowest_per_step"),
+  )
   @mock.patch.object(runner, "run_benchmarks")
-  def test_benchmark_run_xprof_device_mode(self, mock_run_benchmarks):
-    """Verifies that --xprof_device_mode on benchmark run is forwarded."""
-    cli.run(["benchmark", "run", "gemm", "--xprof_device_mode=max_device"])
+  def test_benchmark_run_xprof_device_timing_aggregation(
+      self, device_timing_aggregation, mock_run_benchmarks
+  ):
+    """Verifies that --xprof_device_timing_aggregation on benchmark run is forwarded."""
+    cli.run([
+        "benchmark",
+        "run",
+        "gemm",
+        f"--xprof_device_timing_aggregation={device_timing_aggregation}",
+    ])
     mock_run_benchmarks.assert_called_once()
     _, kwargs = mock_run_benchmarks.call_args
-    self.assertEqual(kwargs["xprof_device_mode"], "max_device")
+    self.assertEqual(
+        kwargs["xprof_device_timing_aggregation"], device_timing_aggregation
+    )
 
 
 if __name__ == "__main__":

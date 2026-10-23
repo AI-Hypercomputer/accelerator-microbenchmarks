@@ -5,9 +5,7 @@ from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import device_to_device
-from accelerator_microbenchmarks.core import (
-    base,
-)
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import system
 import jax
 
