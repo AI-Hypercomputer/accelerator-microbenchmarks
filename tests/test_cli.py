@@ -552,6 +552,57 @@ benchmark:
     self.assertEqual(kwargs["xprof_dir"], "/tmp/tensorboard")
 
   @parameterized.named_parameters(
+      ("flag_set", ["--single_host_tpu_init"], True),
+      ("flag_omitted", [], False),
+  )
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_single_host_tpu_init(
+      self, extra_flags, expected, mock_run_benchmarks
+  ):
+    """Verifies that `benchmark run` forwards --single_host_tpu_init."""
+    cli.run(
+        ["benchmark", "run", "gemm", "-m", "128", "-n", "128", "-k", "128"]
+        + extra_flags
+    )
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertIs(kwargs["single_host_tpu_init"], expected)
+
+  @parameterized.named_parameters(
+      ("yaml_true", "  single_host_tpu_init: true\n", [], True),
+      ("yaml_false", "  single_host_tpu_init: false\n", [], False),
+      ("omitted", "", [], False),
+      ("cli_flag", "", ["--single_host_tpu_init"], True),
+      (
+          "cli_flag_overrides_yaml_false",
+          "  single_host_tpu_init: false\n",
+          ["--single_host_tpu_init"],
+          True,
+      ),
+  )
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_config_single_host_tpu_init(
+      self, yaml_snippet, extra_flags, expected, mock_run_benchmarks
+  ):
+    """Verifies single_host_tpu_init resolution for benchmark run-config."""
+    config_yaml = (
+        "benchmark:\n"
+        "  name: gemm\n"
+        f"{yaml_snippet}"
+        "  params:\n"
+        "    warmup_tries: 1\n"
+        "    num_runs: 1\n"
+    )
+    fake_config = self.create_tempfile(content=config_yaml)
+    cli.run(["benchmark", "run-config", fake_config.full_path] + extra_flags)
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertIs(kwargs["single_host_tpu_init"], expected)
+    # The root-level key must not leak into the benchmark Config dataclass.
+    _, task_config = kwargs["tasks"][0]
+    self.assertFalse(hasattr(task_config, "single_host_tpu_init"))
+
+  @parameterized.named_parameters(
       (
           "yaml_xprof_true",
           """

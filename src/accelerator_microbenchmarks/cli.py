@@ -39,6 +39,17 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
       default=None,
       help="Optional path to custom op_flags YAML file.",
   )
+  parser.add_argument(
+      "--single_host_tpu_init",
+      action="store_true",
+      default=False,
+      help=(
+          "Initialize this host standalone inside a multi-host slice for"
+          " node-local diagnostics (forces a 1-host topology and skips"
+          " SliceBuilder). Device-to-device transfers hang in this mode;"
+          " supported benchmarks: gemm, gemm_throttling, hbm."
+      ),
+  )
 
 
 def _str_to_bool(value: str) -> bool:
@@ -305,12 +316,18 @@ def run(argv: Sequence[str]) -> None:
           "xprof_device_timing_aggregation",
           constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST,
       )
+    effective_single_host_tpu_init = args.single_host_tpu_init or (
+        bool(raw_configs[0].get("single_host_tpu_init", False))
+        if raw_configs
+        else False
+    )
 
     tasks = []
     for raw in raw_configs:
       name = raw.pop("name")
       raw.pop("xprof_timing", None)
       raw.pop("xprof_device_timing_aggregation", None)
+      raw.pop("single_host_tpu_init", None)
       bench_cls = registry.benchmark_registry.get_benchmark(name)
       tasks.append((name, bench_cls.Config(**raw)))
 
@@ -324,6 +341,7 @@ def run(argv: Sequence[str]) -> None:
         xprof_dir=args.xprof_dir,
         config_path=args.config_path,
         xla_flags_file_path=args.xla_flags_file_path,
+        single_host_tpu_init=effective_single_host_tpu_init,
     )
     return
 
@@ -338,6 +356,7 @@ def run(argv: Sequence[str]) -> None:
         xprof_device_timing_aggregation=args.xprof_device_timing_aggregation,
         xprof_dir=args.xprof_dir,
         xla_flags_file_path=args.xla_flags_file_path,
+        single_host_tpu_init=args.single_host_tpu_init,
     )
     return
 

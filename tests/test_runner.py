@@ -1,6 +1,8 @@
 """Unit tests for the benchmark execution runner (runner.py)."""
 
+import io
 import os
+import sys
 import tempfile
 from unittest import mock
 
@@ -205,6 +207,66 @@ class TestRunner(absltest.TestCase):
     with mock.patch.object(runner.jax.distributed, "initialize") as mock_init:
       runner.init_jax_distributed()
       mock_init.assert_called_once()
+
+  def _run_benchmarks_with_stages_mocked(self, task_names, **kwargs):
+    """Runs run_benchmarks for `task_names` with TPU-touching stages mocked.
+
+    Returns the ordered list of init stages invoked and the captured stdout.
+    """
+    calls = []
+    params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    with mock.patch.object(
+        runner, "set_xla_flags", side_effect=lambda *a, **k: calls.append("xla")
+    ), mock.patch.object(
+        runner.single_host,
+        "configure_single_host_tpu",
+        side_effect=lambda: calls.append("single_host"),
+    ), mock.patch.object(
+        runner, "init_jax_distributed", side_effect=lambda: calls.append("jax")
+    ), mock.patch.object(
+        runner.platform, "get_platform_info"
+    ), mock.patch.object(
+        runner.system, "get_hardware_spec"
+    ), mock.patch.object(
+        runner.benchmark_loader, "load_all_benchmarks"
+    ), mock.patch.object(
+        runner.registry.benchmark_registry, "get_benchmark"
+    ), mock.patch.object(
+        runner.report, "report_results"
+    ), mock.patch.object(
+        sys, "stdout", new=io.StringIO()
+    ) as fake_out:
+      runner.run_benchmarks(
+          tasks=[(name, params) for name in task_names],
+          output_dir=self.temp_dir.name,
+          **kwargs,
+      )
+    return calls, fake_out.getvalue()
+
+  def test_run_benchmarks_single_host_tpu_init_off_by_default(self):
+    """Without the flag, single-host configuration is never applied."""
+    calls, _ = self._run_benchmarks_with_stages_mocked(["gemm"])
+    self.assertEqual(calls, ["xla", "jax"])
+
+  def test_run_benchmarks_single_host_tpu_init_order(self):
+    """Single-host env is applied after op_flags and before JAX init."""
+    calls, out = self._run_benchmarks_with_stages_mocked(
+        ["gemm", "hbm"], single_host_tpu_init=True
+    )
+    self.assertEqual(calls, ["xla", "single_host", "jax"])
+    self.assertNotIn("Warning: single_host_tpu_init", out)
+
+  def test_run_benchmarks_single_host_tpu_init_warns_unsupported(self):
+    """Benchmarks outside the allow-list produce a warning but still run."""
+    calls, out = self._run_benchmarks_with_stages_mocked(
+        ["all_reduce"], single_host_tpu_init=True
+    )
+    self.assertEqual(calls, ["xla", "single_host", "jax"])
+    self.assertIn(
+        "Warning: single_host_tpu_init is not supported for ['all_reduce']",
+        out,
+    )
+    self.assertIn("hang", out)
 
   def test_run_benchmarks(self):
     """Verifies that run_benchmarks executes typed benchmark tasks."""

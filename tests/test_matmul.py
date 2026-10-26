@@ -80,6 +80,40 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.assertEqual(sf0.dtype, jnp.float32)
     self.assertEqual(sf1.dtype, jnp.float32)
 
+  def test_generate_inputs_replicated_without_device_put(self):
+    """Inputs are replicated, match eager sampling, and use no `device_put`.
+
+    `single_host_tpu_init` relies on operands being generated on every device
+    rather than broadcast from one; a `jax.device_put` broadcast would hang.
+    """
+    self._setup_benchmark(seed=7, use_scaling_factors=True, beta=1.0)
+    with mock.patch.object(
+        jax, "device_put", wraps=jax.device_put
+    ) as device_put:
+      inputs = self.bm.generate_inputs()
+    device_put.assert_not_called()
+    self.assertLen(inputs, 5)
+    for arr in inputs:
+      self.assertTrue(arr.sharding.is_fully_replicated)
+      self.assertEqual(
+          set(arr.sharding.device_set), set(self.mock_mesh.devices.flat)
+      )
+      self.assertLen(arr.addressable_shards, len(self.mock_mesh.devices.flat))
+      first = np.asarray(arr.addressable_shards[0].data)
+      for shard in arr.addressable_shards[1:]:
+        np.testing.assert_array_equal(np.asarray(shard.data), first)
+
+    key = jax.random.PRNGKey(7)
+    k1, _, _, _, k5 = jax.random.split(key, 5)
+    np.testing.assert_array_equal(
+        np.asarray(inputs[0]),
+        np.asarray(jax.random.normal(k1, (64, 64)).astype(jnp.bfloat16)),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(inputs[4]),
+        np.asarray(jax.random.normal(k5, (64, 64)).astype(jnp.bfloat16)),
+    )
+
   def test_run_op(self):
     """Test run op without scaling factors."""
     self._setup_benchmark()
