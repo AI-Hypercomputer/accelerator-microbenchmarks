@@ -337,7 +337,7 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
       self, dtype_kwargs, field
   ):
     """Verifies integer, sub-byte and 64-bit dtypes are rejected."""
-    with self.assertRaisesRegex(
+    with jax.enable_x64(True), self.assertRaisesRegex(
         ValueError, rf"floating-point {field} with a bit width in \(8, 16, 32\)"
     ):
       matmul.GemmChainedParams(m=128, k=128, **dtype_kwargs)

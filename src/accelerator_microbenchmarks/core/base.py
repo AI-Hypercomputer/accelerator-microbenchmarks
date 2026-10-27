@@ -7,7 +7,7 @@ import enum
 import numbers
 import os
 import time
-from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
+from typing import Any, Callable, ClassVar, Generic, Optional, Sequence, TypeVar
 
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import executor
@@ -15,6 +15,7 @@ from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
 from accelerator_microbenchmarks.core import system
+from accelerator_microbenchmarks.core import utils
 import jax
 import numpy as np
 import pandas as pd
@@ -33,6 +34,11 @@ class XprofConfig:
 
 @dataclasses.dataclass
 class BaseBenchmarkParams:
+  # jnp scalar types (e.g. `jnp.bfloat16`) or abstract dtype classes (e.g.
+  # `jnp.floating`) the `dtype` field must be a sub-dtype of; None allows any
+  # dtype.
+  SUPPORTED_DTYPES: ClassVar[Sequence[jax.typing.DTypeLike] | None] = None
+
   warmup_tries: int = dataclasses.field(
       default=10,
       metadata={
@@ -111,9 +117,29 @@ class BaseBenchmarkParams:
             f" {[member.value for member in enum_type]}."
         ) from exc
 
+  def _validate_dtypes(self) -> None:
+    """Validates every `dtype` / `*_dtype` field via `utils.validate_dtype`.
+
+    The `dtype` field must also match the class's `SUPPORTED_DTYPES`, if set.
+
+    Raises:
+      ValueError: If any dtype field is invalid or unsupported.
+    """
+    for field in dataclasses.fields(self):
+      if field.name != "dtype" and not field.name.endswith("_dtype"):
+        continue
+      value = getattr(self, field.name)
+      try:
+        utils.validate_dtype(
+            value, self.SUPPORTED_DTYPES if field.name == "dtype" else None
+        )
+      except ValueError as exc:
+        raise ValueError(f"{field.name}: {exc}") from exc
+
   def __post_init__(self):
     self._coerce_enums()
     self._validate_bounds()
+    self._validate_dtypes()
 
   def expand_test_cases(self) -> Sequence["BaseBenchmarkParams"]:
     """Default 1-to-1 mapping: returns [self]."""

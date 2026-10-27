@@ -18,6 +18,7 @@ from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
 from accelerator_microbenchmarks.tests import test_report_utils
+import jax
 
 
 class TestCli(parameterized.TestCase):
@@ -417,6 +418,72 @@ benchmark:
     fake_config = self.create_tempfile(content=config_yaml)
     with self.assertRaisesRegex(ValueError, expected_error_msg):
       cli.run(["benchmark", "run-config", fake_config.full_path])
+
+  @parameterized.named_parameters(
+      (
+          "attention_unsupported_dtype",
+          """
+benchmark:
+  name: attention_flashed
+  params:
+    dtype: float16
+""",
+          "^dtype: Unsupported dtype: 'float16'",
+      ),
+      (
+          "hbm_64_bit_dtype",
+          """
+benchmark:
+  name: hbm
+  params:
+    dtype: float64
+""",
+          "^dtype: JAX canonicalizes dtype 'float64' to 'float32'",
+      ),
+      (
+          "gemm_64_bit_in_dtype",
+          """
+benchmark:
+  name: gemm
+  params:
+    in_dtype: int64
+""",
+          "^in_dtype: JAX canonicalizes dtype 'int64' to 'int32'",
+      ),
+      (
+          # One invalid sweep value aborts the whole run before any case runs.
+          "all_reduce_sweep_with_one_unsupported_dtype",
+          """
+benchmark:
+  name: all_reduce
+  sweep:
+    dtype: [bfloat16, complex64]
+""",
+          "^dtype: Unsupported dtype: 'complex64'",
+      ),
+  )
+  @mock.patch.object(runner, "run_benchmarks", autospec=True)
+  def test_benchmark_run_config_invalid_dtype_raises_before_running(
+      self, config_yaml, expected_error_msg, mock_run_benchmarks
+  ):
+    """Verifies invalid dtypes in YAML fail at config load, before any run."""
+    fake_config = self.create_tempfile(content=config_yaml)
+    with jax.enable_x64(False), self.assertRaisesRegex(
+        ValueError, expected_error_msg
+    ):
+      cli.run(["benchmark", "run-config", fake_config.full_path])
+    mock_run_benchmarks.assert_not_called()
+
+  @mock.patch.object(runner, "run_benchmarks", autospec=True)
+  def test_benchmark_run_invalid_dtype_flag_raises_before_running(
+      self, mock_run_benchmarks
+  ):
+    """Verifies an invalid `--dtype` CLI flag fails before any run."""
+    with jax.enable_x64(False), self.assertRaisesRegex(
+        ValueError, "^dtype: JAX canonicalizes dtype 'float64' to 'float32'"
+    ):
+      cli.run(["benchmark", "run", "hbm", "--dtype", "float64"])
+    mock_run_benchmarks.assert_not_called()
 
   _BENCHMARK_RUN_CONFIG_ENUM_CASES = (
       tuple(

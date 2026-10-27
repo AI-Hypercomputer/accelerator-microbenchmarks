@@ -195,6 +195,19 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(bm_class, collectives.AllReduceBenchmark)
     self.assertEqual(bm_class.Config, collectives.AllReduceParams)
 
+  def test_reduction_collectives_complex_dtype_raises_error(self):
+    """Verify all-reduce/reduce-scatter reject complex64, unlike the others."""
+    collectives.IciCollectivesParams(dtype="complex64")
+    collectives.AllReduceParams(dtype="int8")
+    collectives.ReduceScatterParams(dtype="int8")
+    for params_cls in (
+        collectives.AllReduceParams,
+        collectives.DcnAllReduceParams,
+        collectives.ReduceScatterParams,
+    ):
+      with self.assertRaisesRegex(ValueError, "Unsupported dtype: 'complex64'"):
+        params_cls(dtype="complex64")
+
   def test_all_reduce_invalid_op_raises_error(self):
     """Verify that invalid reduce_op raises ValueError at initialization."""
     params = {
@@ -239,7 +252,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     """Verify that the benchmark is correctly registered."""
     bm_class = registry.benchmark_registry.get_benchmark("reduce_scatter")
     self.assertEqual(bm_class, collectives.ReduceScatterBenchmark)
-    self.assertEqual(bm_class.Config, collectives.IciCollectivesParams)
+    self.assertEqual(bm_class.Config, collectives.ReduceScatterParams)
 
   def test_all_reduce_generate_inputs(self):
     """Verify input generation for all_reduce."""
@@ -1404,7 +1417,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
           "reduce_scatter",
           collectives.ReduceScatterBenchmark,
           (collectives.IciCollectiveBenchmark,),
-          collectives.IciCollectivesParams,
+          collectives.ReduceScatterParams,
       ),
       (
           "all_reduce",

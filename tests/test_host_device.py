@@ -479,14 +479,13 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
 
   @parameterized.named_parameters(*_BENCHMARK_CLASSES)
   def test_invalid_dtype_raises_error(self, bm_cls):
-    bm = self._make_benchmark(
-        bm_cls, dtype="invalid_dtype", transfer_backend="jax"
-    )
+    """Verify config construction raises ValueError for invalid dtype."""
     with self.assertRaisesRegex(
         ValueError, "Invalid dtype string: 'invalid_dtype'"
     ):
-      bm.setup()
-      bm.generate_inputs()
+      self._make_benchmark(
+          bm_cls, dtype="invalid_dtype", transfer_backend="jax"
+      )
 
   @parameterized.named_parameters(*_BENCHMARK_CLASSES)
   def test_jax_run_op_inside_marker(self, bm_cls):

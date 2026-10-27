@@ -136,9 +136,15 @@ class DcnCollectivesParams(CollectivesParams):
   """Parameters for DCN collective benchmarks."""
 
 
+# XLA does not implement complex all-reduce or reduce-scatter on TPU.
+_NON_COMPLEX_DTYPES = (jnp.bool_, jnp.integer, jnp.floating)
+
+
 @dataclasses.dataclass
 class AllReduceParamsMixin:
   """All-reduce parameters, reusable with any topology params class."""
+
+  SUPPORTED_DTYPES = _NON_COMPLEX_DTYPES
 
   reduce_op: ReduceOp = dataclasses.field(
       default=ReduceOp.SUM,
@@ -156,6 +162,13 @@ class AllReduceParams(AllReduceParamsMixin, IciCollectivesParams):
 @dataclasses.dataclass
 class DcnAllReduceParams(AllReduceParamsMixin, DcnCollectivesParams):
   """Parameters for DCN all-reduce collective benchmarks."""
+
+
+@dataclasses.dataclass
+class ReduceScatterParams(IciCollectivesParams):
+  """Parameters for the ICI reduce-scatter benchmark."""
+
+  SUPPORTED_DTYPES = _NON_COMPLEX_DTYPES
 
 
 TCollectiveConfig = TypeVar("TCollectiveConfig", bound=CollectivesParams)
@@ -984,8 +997,10 @@ class AllToAllBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
 
 
 @registry.benchmark_registry.register("reduce_scatter", is_experimental=True)
-class ReduceScatterBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
+class ReduceScatterBenchmark(IciCollectiveBenchmark[ReduceScatterParams]):
   """[EXPERIMENTAL] Benchmarks the latency and bandwidth of jax.lax.psum_scatter across devices."""
+
+  Config = ReduceScatterParams
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()

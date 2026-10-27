@@ -163,6 +163,24 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
     with self.assertRaisesRegex(ValueError, "Invalid mode 'gamma'"):
       cfg_direct._coerce_enums()  # pylint: disable=protected-access
 
+  def test_dtype_fields_validated(self):
+    """Verifies `*_dtype` checks; SUPPORTED_DTYPES only limits `dtype`."""
+
+    @dataclasses.dataclass
+    class CustomParams(base.SingleDtypeBenchmarkParams):
+      SUPPORTED_DTYPES = (jnp.bfloat16,)
+      in_dtype: str = "bfloat16"
+
+    CustomParams(in_dtype="float32")
+    with self.assertRaisesRegex(ValueError, "^dtype: Unsupported dtype"):
+      CustomParams(dtype="float32")
+    with jax.enable_x64(False), self.assertRaisesRegex(
+        ValueError, "^in_dtype: .*jax_enable_x64 is off"
+    ):
+      CustomParams(in_dtype="int64")
+    with self.assertRaisesRegex(ValueError, "^in_dtype: Invalid dtype: None"):
+      CustomParams(in_dtype=None)
+
 
 class ParamEnumTest(absltest.TestCase):
   """Tests for the shared ParamEnum base class."""

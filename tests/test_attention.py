@@ -20,7 +20,7 @@ import numpy as np
 jax.config.update("jax_platform_name", "cpu")
 
 
-class AttentionBenchmarkTest(absltest.TestCase):
+class AttentionBenchmarkTest(parameterized.TestCase):
   """Unit tests for attention.py."""
 
   def setUp(self):
@@ -34,6 +34,26 @@ class AttentionBenchmarkTest(absltest.TestCase):
     """Verify that the benchmark is correctly registered."""
     bm_class = registry.benchmark_registry.get_benchmark("attention_flashed")
     self.assertEqual(bm_class, attention.AttentionBenchmark)
+
+  @parameterized.parameters("bfloat16", "float32")
+  def test_supported_dtype_accepted(self, dtype):
+    """Verify bfloat16 and float32 are accepted."""
+    attention.AttentionParams(dtype=dtype)
+
+  @parameterized.parameters("float16", "float8_e4m3fn", "complex64")
+  def test_unsupported_dtype_raises_error(self, dtype):
+    """Verify dtypes other than bfloat16 and float32 are rejected."""
+    with self.assertRaisesRegex(ValueError, f"Unsupported dtype: '{dtype}'"):
+      attention.AttentionParams(dtype=dtype)
+
+  def test_64_bit_check_runs_before_supported_dtypes_check(self):
+    """Verify a truncated 64-bit dtype reports x64, not SUPPORTED_DTYPES."""
+    with jax.enable_x64(False), self.assertRaisesRegex(
+        ValueError,
+        "^dtype: JAX canonicalizes dtype 'float64' to 'float32' because"
+        " jax_enable_x64 is off",
+    ):
+      attention.AttentionParams(dtype="float64")
 
   def test_generate_inputs(self):
     """Verify the shape and type of the generated inputs (Q, K, V)."""

@@ -441,6 +441,13 @@ class HBMBandwidthParamsValidationTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, "Invalid op_type 'invalid_kernel'"):
       hbm.HBMBandwidthParams(op_type="invalid_kernel")
 
+  def test_complex_dtype_raises_error(self):
+    """Verify complex is rejected, as it reports above the HBM peak."""
+    with self.assertRaisesRegex(
+        ValueError, "^dtype: Unsupported dtype: 'complex64'"
+    ):
+      hbm.HBMBandwidthParams(dtype="complex64")
+
   def test_op_type_coerces_to_enum(self):
     params = hbm.HBMBandwidthParams(op_type="scale")
     self.assertEqual(params.op_type, hbm.HBMKernelOp.SCALE)

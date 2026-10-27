@@ -15,6 +15,13 @@ import jax.numpy as jnp
 
 @dataclasses.dataclass
 class TransformerLayerParams(base.SingleDtypeBenchmarkParams):
+  # Excluded dtypes:
+  # * complex: jax.nn.standardize (the norm proxy) clips the variance, and
+  #   complex values have no ordering.
+  # * int / bool: input generation fails (jax.random.normal needs a float
+  #   dtype).
+  SUPPORTED_DTYPES = (jnp.floating,)
+
   model_dim: int = dataclasses.field(
       default=7168,
       metadata={

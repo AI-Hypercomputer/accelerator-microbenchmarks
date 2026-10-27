@@ -20,6 +20,14 @@ class AttentionMode(constants.ParamEnum):
 
 @dataclasses.dataclass
 class AttentionParams(base.SingleDtypeBenchmarkParams):
+  # Excluded dtypes:
+  # * float16: XLA does not support dot algorithm ALG_DOT_F16_F16_F32.
+  # * float8: no implicit dtype promotion path with float32.
+  # * complex: Pallas Mosaic lowering fails.
+  # * int / bool: input generation fails (jax.random.normal needs a float
+  #   dtype).
+  SUPPORTED_DTYPES = (jnp.bfloat16, jnp.float32)
+
   mode: AttentionMode = dataclasses.field(
       default=AttentionMode.FWD,
       metadata={
@@ -63,7 +71,7 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
 
   Supports:
   - MHA/GQA
-  - BF16 compute
+  - BF16 / FP32 compute
   - Causal masking
   """
 

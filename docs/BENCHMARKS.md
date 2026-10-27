@@ -44,6 +44,13 @@ Every benchmark supports the following baseline execution and profiling paramete
 | `num_runs` | `int` | `10` | Minimum number of timed measurement iterations executed inside the timing loop. |
 | `min_duration_s` | `float` | `0.0` | Minimum total measurement duration in seconds. When `> 0.0`, warmup also runs for at least `min(1.0, min_duration_s / 5)` seconds, and the measurement loop continues until both `num_runs` and `min_duration_s` are satisfied. Must be `0.0` for [`gemm_chained`](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental). |
 
+> [!NOTE]
+> Dtype parameters (`dtype`, `*_dtype`) are validated when the config is
+> built: 64-bit dtypes (`float64`, `int64`, `uint64`, `complex128`) are
+> rejected unless `jax_enable_x64` is enabled (e.g. `JAX_ENABLE_X64=1`; JAX
+> would otherwise silently truncate them to 32 bits), and some benchmarks
+> restrict `dtype` further via their params class's `SUPPORTED_DTYPES`.
+
 <a id="per-device-vs-per-chip-scaling"></a>
 ### 1.2 Throughput & Bandwidth Metric Conventions (`<timing_domain>_<metric_type>_<hardware_scope>`)
 
