@@ -461,6 +461,7 @@ class ReportGeneratorTest(parameterized.TestCase):
                 "data_size_mib": "4096.0",
                 "dtype": "float32",
                 "num_runs": "10",
+                "transfer_backend": "jax",
                 "bandwidth_per_device_gb_s": "28.5",
                 "time_ms_avg": "145.0",
                 "time_ms_p50": "144.5",
@@ -470,6 +471,7 @@ class ReportGeneratorTest(parameterized.TestCase):
                 "data_size_mib": "4096.0",
                 "dtype": "float32",
                 "num_runs": "10",
+                "transfer_backend": "tpu_sync",
                 "bandwidth_per_device_gb_s": "32.1",
                 "time_ms_avg": "130.0",
                 "time_ms_p50": "129.5",
@@ -483,10 +485,12 @@ class ReportGeneratorTest(parameterized.TestCase):
     )
     self.assertIn("Host-to-Device (H2D / D2H)", report_md)
     self.assertIn(
-        "| dtype | data_size_mib | num_runs | bandwidth_per_device_gb_s |",
+        "| dtype | data_size_mib | transfer_backend | num_runs |"
+        " bandwidth_per_device_gb_s |",
         report_md,
     )
     self.assertIn("4096.0", report_md)
+    self.assertIn("tpu_sync", report_md)
     self.assertIn("28.5", report_md)
     self.assertIn("32.1", report_md)
 
@@ -497,8 +501,10 @@ class ReportGeneratorTest(parameterized.TestCase):
     self.assertIn("Host-to-Device (H2D / D2H)", report_html)
     self.assertIn("<th>dtype</th>", report_html)
     self.assertIn("<th>data_size_mib</th>", report_html)
+    self.assertIn("<th>transfer_backend</th>", report_html)
     self.assertIn("<td>float32</td>", report_html)
     self.assertIn("<td>4096.0</td>", report_html)
+    self.assertIn("<td>tpu_sync</td>", report_html)
     self.assertIn("bandwidth_per_device_gb_s", report_html)
     self.assertIn("28.5", report_html)
     self.assertIn("32.1", report_html)

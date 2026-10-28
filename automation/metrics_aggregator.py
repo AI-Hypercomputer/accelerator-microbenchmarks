@@ -84,6 +84,7 @@ CATEGORY_LEADING_COLUMNS: dict[str, tuple[str, ...]] = {
         "benchmark",
         "dtype",
         "data_size_mib",
+        "transfer_backend",
         "xprof_p50_ms",
         "xprof_bandwidth_per_device_gb_s",
     ),
