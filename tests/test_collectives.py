@@ -93,7 +93,10 @@ _HEAD_FIELD_SPEC: dict[str, tuple[object, dict[str, object]]] = {
     ),
     "dtype": (
         "bfloat16",
-        {"help": "Data type for tensor operations (e.g. bfloat16, float32)."},
+        {
+            "help": "Data type for tensor operations (e.g. bfloat16, float32).",
+            "dtype": True,
+        },
     ),
     "matrix_dim": (
         1024,

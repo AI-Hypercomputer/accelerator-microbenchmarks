@@ -44,9 +44,25 @@ class RoPEParams(base.SingleDtypeBenchmarkParams):
   )
 
 
+# Input (`dtype`) and rowwise scale (`scale_dtype`) dtypes of the quantization
+# benchmark.
+_INPUT_AND_SCALE_DTYPES = (jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64)
+
+
 @dataclasses.dataclass
 class QuantParams(base.SingleDtypeBenchmarkParams):
   """Parameters for the rowwise quantization microbenchmark."""
+
+  # The input is sampled with jax.random.normal, which does not support
+  # sub-byte floats, and the rowwise scale is a fractional factor (an integer
+  # scale truncates). JAX has no implicit promotion between 4/6/8-bit floats
+  # and other floats, so `x * sf` raises unless both are >= 16-bit floats.
+  # The quantized output may be a float or an integer.
+  DTYPE_CONSTRAINTS = {
+      "dtype": _INPUT_AND_SCALE_DTYPES,
+      "quant_dtype": (jnp.floating, jnp.integer),
+      "scale_dtype": _INPUT_AND_SCALE_DTYPES,
+  }
 
   m: int = dataclasses.field(
       default=4096,
@@ -56,7 +72,7 @@ class QuantParams(base.SingleDtypeBenchmarkParams):
       default=4096,
       metadata={"min": 1, "help": "Matrix dimension N (columns)."},
   )
-  quant_dtype: str = dataclasses.field(
+  quant_dtype: str = base.dtype_field(
       default="float8_e4m3fn",
       metadata={
           "help": (
@@ -65,7 +81,7 @@ class QuantParams(base.SingleDtypeBenchmarkParams):
           )
       },
   )
-  scale_dtype: str = dataclasses.field(
+  scale_dtype: str = base.dtype_field(
       default="bfloat16",
       metadata={
           "help": (

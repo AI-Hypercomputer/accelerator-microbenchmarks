@@ -7,7 +7,7 @@ import enum
 import numbers
 import os
 import time
-from typing import Any, Callable, ClassVar, Generic, Optional, Sequence, TypeVar
+from typing import Any, Callable, ClassVar, Generic, Mapping, Optional, Sequence, TypeVar
 
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import executor
@@ -32,12 +32,40 @@ class XprofConfig:
   )
 
 
+# Field-metadata key that `dtype_field()` sets to mark a dtype field.
+_DTYPE_FIELD_KEY = "dtype"
+
+
+def dtype_field(
+    *, default: str, metadata: Mapping[str, Any] | None = None
+) -> Any:
+  """Returns a dataclass field that holds a dtype name (e.g. 'bfloat16').
+
+  `BaseBenchmarkParams` validates every field declared this way when the config
+  is built (see `BaseBenchmarkParams.DTYPE_CONSTRAINTS`).
+
+  Args:
+    default: The default dtype name.
+    metadata: Additional field metadata, e.g. `{"help": ...}`.
+
+  Returns:
+    A `dataclasses.Field` with `metadata` plus the dtype-field marker.
+  """
+  return dataclasses.field(
+      default=default,
+      metadata={**(metadata or {}), _DTYPE_FIELD_KEY: True},
+  )
+
+
 @dataclasses.dataclass
 class BaseBenchmarkParams:
-  # jnp scalar types (e.g. `jnp.bfloat16`) or abstract dtype classes (e.g.
-  # `jnp.floating`) the `dtype` field must be a sub-dtype of; None allows any
-  # dtype.
-  SUPPORTED_DTYPES: ClassVar[Sequence[jax.typing.DTypeLike] | None] = None
+  # Allowed dtypes per dtype field (declared with `dtype_field()`), as jnp
+  # scalar types (e.g. `jnp.bfloat16`) or abstract dtype classes (e.g.
+  # `jnp.floating`). Dtype fields that are not listed accept any dtype
+  # `utils.parse_dtype` accepts. Every key must name a dtype field. Subclasses
+  # replace (rather than merge) `DTYPE_CONSTRAINTS`; merge explicitly via
+  # `{**Parent.DTYPE_CONSTRAINTS, ...}` to preserve inherited constraints.
+  DTYPE_CONSTRAINTS: ClassVar[Mapping[str, Sequence[jax.typing.DTypeLike]]] = {}
 
   warmup_tries: int = dataclasses.field(
       default=10,
@@ -118,21 +146,29 @@ class BaseBenchmarkParams:
         ) from exc
 
   def _validate_dtypes(self) -> None:
-    """Validates every `dtype` / `*_dtype` field via `utils.validate_dtype`.
+    """Validates every `dtype_field()` field via `utils.validate_dtype`.
 
-    The `dtype` field must also match the class's `SUPPORTED_DTYPES`, if set.
+    Each dtype field must also match its `DTYPE_CONSTRAINTS` entry, if any.
 
     Raises:
+      TypeError: If a `DTYPE_CONSTRAINTS` key is not a dtype field.
       ValueError: If any dtype field is invalid or unsupported.
     """
-    for field in dataclasses.fields(self):
-      if field.name != "dtype" and not field.name.endswith("_dtype"):
-        continue
+    dtype_fields = [
+        field
+        for field in dataclasses.fields(self)
+        if field.metadata.get(_DTYPE_FIELD_KEY)
+    ]
+    unknown = set(self.DTYPE_CONSTRAINTS) - {f.name for f in dtype_fields}
+    if unknown:
+      raise TypeError(
+          f"{type(self).__name__}.DTYPE_CONSTRAINTS names non-dtype fields:"
+          f" {sorted(unknown)}."
+      )
+    for field in dtype_fields:
       value = getattr(self, field.name)
       try:
-        utils.validate_dtype(
-            value, self.SUPPORTED_DTYPES if field.name == "dtype" else None
-        )
+        utils.validate_dtype(value, self.DTYPE_CONSTRAINTS.get(field.name))
       except ValueError as exc:
         raise ValueError(f"{field.name}: {exc}") from exc
 
@@ -150,7 +186,7 @@ class BaseBenchmarkParams:
 class SingleDtypeBenchmarkParams(BaseBenchmarkParams):
   """Base parameters for benchmarks using a single tensor data type."""
 
-  dtype: str = dataclasses.field(
+  dtype: str = dtype_field(
       default="bfloat16",
       metadata={
           "help": "Data type for tensor operations (e.g. bfloat16, float32)."

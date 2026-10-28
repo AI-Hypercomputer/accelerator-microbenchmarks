@@ -20,7 +20,7 @@ class TransformerLayerParams(base.SingleDtypeBenchmarkParams):
   #   complex values have no ordering.
   # * int / bool: input generation fails (jax.random.normal needs a float
   #   dtype).
-  SUPPORTED_DTYPES = (jnp.floating,)
+  DTYPE_CONSTRAINTS = {"dtype": (jnp.floating,)}
 
   model_dim: int = dataclasses.field(
       default=7168,

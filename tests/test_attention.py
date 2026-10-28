@@ -46,8 +46,8 @@ class AttentionBenchmarkTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, f"Unsupported dtype: '{dtype}'"):
       attention.AttentionParams(dtype=dtype)
 
-  def test_64_bit_check_runs_before_supported_dtypes_check(self):
-    """Verify a truncated 64-bit dtype reports x64, not SUPPORTED_DTYPES."""
+  def test_64_bit_check_runs_before_dtype_constraints_check(self):
+    """Verify a truncated 64-bit dtype reports x64, not DTYPE_CONSTRAINTS."""
     with jax.enable_x64(False), self.assertRaisesRegex(
         ValueError,
         "^dtype: JAX canonicalizes dtype 'float64' to 'float32' because"

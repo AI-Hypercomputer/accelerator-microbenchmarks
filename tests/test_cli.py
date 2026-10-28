@@ -14,6 +14,7 @@ from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.benchmarks import device_to_device
 from accelerator_microbenchmarks.benchmarks import hbm
 from accelerator_microbenchmarks.benchmarks import matmul
+from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
@@ -790,6 +791,24 @@ benchmark:
                 f"Help text for parameter '{field.name}' in benchmark"
                 f" '{task_name}' missing from help output.",
             )
+
+  def test_all_registered_dtype_constraints_and_defaults_valid(self):
+    """Verifies every registered Config's DTYPE_CONSTRAINTS and default dtypes."""
+    tasks = registry.benchmark_registry.list_benchmark_names(
+        include_experimental=True, include_aliases=False
+    )
+    for task_name in tasks:
+      with self.subTest(task=task_name):
+        config_cls = registry.benchmark_registry.get_benchmark(task_name).Config
+        kwargs = (
+            {"min_duration_s": 1.0}
+            if issubclass(config_cls, config.SoakingExecutionParamsMixin)
+            else {}
+        )
+        # __post_init__ -> _validate_dtypes checks that every DTYPE_CONSTRAINTS
+        # key is a dtype_field() and every default dtype satisfies its
+        # constraints.
+        config_cls(**kwargs)
 
   @parameterized.named_parameters(
       ("true", "true", True),

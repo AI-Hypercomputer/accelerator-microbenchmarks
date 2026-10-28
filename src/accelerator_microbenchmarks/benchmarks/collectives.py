@@ -144,7 +144,7 @@ _NON_COMPLEX_DTYPES = (jnp.bool_, jnp.integer, jnp.floating)
 class AllReduceParamsMixin:
   """All-reduce parameters, reusable with any topology params class."""
 
-  SUPPORTED_DTYPES = _NON_COMPLEX_DTYPES
+  DTYPE_CONSTRAINTS = {"dtype": _NON_COMPLEX_DTYPES}
 
   reduce_op: ReduceOp = dataclasses.field(
       default=ReduceOp.SUM,
@@ -168,7 +168,7 @@ class DcnAllReduceParams(AllReduceParamsMixin, DcnCollectivesParams):
 class ReduceScatterParams(IciCollectivesParams):
   """Parameters for the ICI reduce-scatter benchmark."""
 
-  SUPPORTED_DTYPES = _NON_COMPLEX_DTYPES
+  DTYPE_CONSTRAINTS = {"dtype": _NON_COMPLEX_DTYPES}
 
 
 TCollectiveConfig = TypeVar("TCollectiveConfig", bound=CollectivesParams)

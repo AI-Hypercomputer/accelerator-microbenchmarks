@@ -26,7 +26,7 @@ class AttentionParams(base.SingleDtypeBenchmarkParams):
   # * complex: Pallas Mosaic lowering fails.
   # * int / bool: input generation fails (jax.random.normal needs a float
   #   dtype).
-  SUPPORTED_DTYPES = (jnp.bfloat16, jnp.float32)
+  DTYPE_CONSTRAINTS = {"dtype": (jnp.bfloat16, jnp.float32)}
 
   mode: AttentionMode = dataclasses.field(
       default=AttentionMode.FWD,

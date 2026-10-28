@@ -39,13 +39,13 @@ class GemmParams(base.BaseBenchmarkParams):
           "help": "Matrix dimension N (columns of operand B / output C).",
       },
   )
-  in_dtype: str = dataclasses.field(
+  in_dtype: str = base.dtype_field(
       default="bfloat16",
       metadata={
           "help": "Input operand data type (e.g. float8_e4m3fn, bfloat16)."
       },
   )
-  out_dtype: str = dataclasses.field(
+  out_dtype: str = base.dtype_field(
       default="bfloat16",
       metadata={
           "help": "Output accumulation/result data type (e.g. bfloat16)."
@@ -400,6 +400,13 @@ class GemmChainedParams(base.BaseBenchmarkParams):
   a square K x K matrix, so there is no separate N.
   """
 
+  # Integer dtypes are rejected: B ~ N(0, 1) / sqrt(k) truncates to all zeros,
+  # so the chain collapses to 0 and every device trivially matches.
+  DTYPE_CONSTRAINTS = {
+      "in_dtype": (jnp.floating,),
+      "out_dtype": (jnp.floating,),
+  }
+
   # Overrides the inherited field, which keeps its place in the field order.
   # The checksums of every timed run are gathered across hosts, which needs
   # the same number of runs on every host (a mismatch can hang the gather). A
@@ -429,7 +436,7 @@ class GemmChainedParams(base.BaseBenchmarkParams):
           "help": "Matrix dimension K (columns of X; B is K x K).",
       },
   )
-  in_dtype: str = dataclasses.field(
+  in_dtype: str = base.dtype_field(
       default="bfloat16",
       metadata={
           "help": (
@@ -438,7 +445,7 @@ class GemmChainedParams(base.BaseBenchmarkParams):
           )
       },
   )
-  out_dtype: str = dataclasses.field(
+  out_dtype: str = base.dtype_field(
       default="bfloat16",
       metadata={"help": "Data type of X after each matmul (e.g. bfloat16)."},
   )
@@ -458,17 +465,11 @@ class GemmChainedParams(base.BaseBenchmarkParams):
     super().__post_init__()
     for name in ("in_dtype", "out_dtype"):
       dtype_str = getattr(self, name)
-      dtype = jnp.dtype(utils.parse_dtype(dtype_str))
-      # Integer dtypes are rejected: B ~ N(0, 1) / sqrt(k) truncates to all
-      # zeros, so the chain collapses to 0 and every device trivially matches.
-      # The element width must also be supported by the checksum.
-      if not (
-          jnp.issubdtype(dtype, jnp.floating)
-          and checksum.is_checksummable_dtype(dtype)
-      ):
+      # The element width must be supported by the checksum.
+      if not checksum.is_checksummable_dtype(utils.parse_dtype(dtype_str)):
         raise ValueError(
-            f"gemm_chained requires a floating-point {name} with a bit width"
-            f" in {checksum.SUPPORTED_BITS}, got {dtype_str!r}."
+            f"gemm_chained requires a {name} with a bit width in"
+            f" {checksum.SUPPORTED_BITS}, got {dtype_str!r}."
         )
 
 

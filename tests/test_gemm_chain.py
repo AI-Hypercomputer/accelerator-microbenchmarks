@@ -328,17 +328,27 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
       matmul.GemmChainedParams(**{field: value})
 
   @parameterized.named_parameters(
-      ("int8_in", {"in_dtype": "int8"}, "in_dtype"),
-      ("int8_out", {"out_dtype": "int8"}, "out_dtype"),
-      ("int4_in", {"in_dtype": "int4"}, "in_dtype"),
+      ("int8_in", {"in_dtype": "int8"}, "in_dtype", "int8"),
+      ("int8_out", {"out_dtype": "int8"}, "out_dtype", "int8"),
+      ("int4_in", {"in_dtype": "int4"}, "in_dtype", "int4"),
+  )
+  def test_params_reject_non_float_dtypes(self, dtype_kwargs, field, dtype):
+    """Verifies integer (incl. sub-byte) dtypes are rejected."""
+    with self.assertRaisesRegex(
+        ValueError,
+        rf"^{field}: Unsupported dtype: '{dtype}'. Supported dtypes:"
+        r" \['floating'\]",
+    ):
+      matmul.GemmChainedParams(m=128, k=128, **dtype_kwargs)
+
+  @parameterized.named_parameters(
+      ("float64_in", {"in_dtype": "float64"}, "in_dtype"),
       ("float64_out", {"out_dtype": "float64"}, "out_dtype"),
   )
-  def test_params_reject_non_float_or_unsupported_width_dtypes(
-      self, dtype_kwargs, field
-  ):
-    """Verifies integer, sub-byte and 64-bit dtypes are rejected."""
+  def test_params_reject_unsupported_width_dtypes(self, dtype_kwargs, field):
+    """Verifies float dtypes the checksum cannot handle are rejected."""
     with jax.enable_x64(True), self.assertRaisesRegex(
-        ValueError, rf"floating-point {field} with a bit width in \(8, 16, 32\)"
+        ValueError, rf"{field} with a bit width in \(8, 16, 32\)"
     ):
       matmul.GemmChainedParams(m=128, k=128, **dtype_kwargs)
 

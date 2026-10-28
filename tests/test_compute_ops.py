@@ -279,6 +279,73 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
         f"m_64_n_128_{quant_dtype}_sf_{scale_dtype}",
     )
 
+  @parameterized.named_parameters(
+      ("int_input", "dtype", "int8"),
+      ("fp8_input", "dtype", "float8_e4m3fn"),
+      ("fp4_input", "dtype", "float4_e2m1fn"),
+      ("bool_quant", "quant_dtype", "bool"),
+      ("complex_quant", "quant_dtype", "complex64"),
+      ("int_scale", "scale_dtype", "int8"),
+      ("complex_scale", "scale_dtype", "complex64"),
+      ("fp8_scale", "scale_dtype", "float8_e4m3fn"),
+      ("e8m0_scale", "scale_dtype", "float8_e8m0fnu"),
+      ("fp4_scale", "scale_dtype", "float4_e2m1fn"),
+  )
+  def test_params_reject_unsupported_dtypes(self, field, dtype):
+    """Verifies the input, scale and quant dtype constraints are enforced."""
+    with self.assertRaisesRegex(
+        ValueError, f"^{field}: Unsupported dtype: '{dtype}'"
+    ):
+      compute_ops.QuantParams(**{field: dtype})
+
+  @parameterized.product(
+      field=("dtype", "scale_dtype"),
+      dtype=("bfloat16", "float16", "float32"),
+  )
+  def test_params_accept_16_and_32_bit_floats(self, field, dtype):
+    """Verifies >= 16-bit float inputs and scales are accepted."""
+    config = compute_ops.QuantParams(**{field: dtype})
+    self.assertEqual(getattr(config, field), dtype)
+
+  @parameterized.parameters("dtype", "scale_dtype")
+  def test_params_float64_requires_x64(self, field):
+    """Verifies a float64 input or scale is accepted only with jax_enable_x64."""
+    with jax.enable_x64(True):
+      config = compute_ops.QuantParams(**{field: "float64"})
+      self.assertEqual(getattr(config, field), "float64")
+    with jax.enable_x64(False), self.assertRaisesRegex(
+        ValueError, f"^{field}: JAX canonicalizes dtype 'float64'"
+    ):
+      compute_ops.QuantParams(**{field: "float64"})
+
+  @parameterized.product(
+      dtype=("bfloat16", "float16", "float32", "float64"),
+      scale_dtype=("bfloat16", "float16", "float32", "float64"),
+  )
+  def test_run_op_accepted_input_and_scale_dtypes(self, dtype, scale_dtype):
+    """Verifies every accepted input x scale dtype pair runs end to end."""
+    with jax.enable_x64("float64" in (dtype, scale_dtype)):
+      config = compute_ops.QuantParams(
+          m=64, n=128, dtype=dtype, scale_dtype=scale_dtype
+      )
+      self.bm = compute_ops.QuantizationBenchmark(
+          config=config,
+          hardware_spec=system.TPU7X_HARDWARE_SPEC,
+          mesh=self.mock_mesh,
+      )
+      self.bm.setup()
+      (x,) = self.bm.generate_inputs()
+      out, sf = self.bm.run_op(x)
+      self.assertEqual(x.dtype, jnp.dtype(dtype))
+      self.assertEqual(out.dtype, jnp.float8_e4m3fn)
+      self.assertEqual(sf.dtype, jnp.dtype(scale_dtype))
+
+  @parameterized.parameters("int8", "uint8", "float8_e5m2")
+  def test_params_accept_float_or_int_quant_dtype(self, quant_dtype):
+    """Verifies quant_dtype accepts integer and floating-point dtypes."""
+    config = compute_ops.QuantParams(quant_dtype=quant_dtype)
+    self.assertEqual(config.quant_dtype, quant_dtype)
+
   def test_get_total_bytes(self):
     """Verifies default total bytes and derived device bandwidth metrics."""
     params = {"m": 64, "n": 128}

@@ -101,7 +101,7 @@ HBM_KERNELS[HBMKernelOp.WRITE] = HBM_KERNELS[HBMKernelOp.WRITE_ONLY]
 class HBMBandwidthParams(base.SingleDtypeBenchmarkParams):
   # complex64 runs at float32 latency while bytes are counted at 8 bytes per
   # element, so it reports ~2x the float32 bandwidth, above the HBM peak.
-  SUPPORTED_DTYPES = (jnp.bool_, jnp.integer, jnp.floating)
+  DTYPE_CONSTRAINTS = {"dtype": (jnp.bool_, jnp.integer, jnp.floating)}
 
   op_type: HBMKernelOp = dataclasses.field(
       default=HBMKernelOp.COPY,
