@@ -1,6 +1,7 @@
 """Collective communication benchmarks."""
 
 import dataclasses
+import enum
 import logging
 import math
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
@@ -80,6 +81,31 @@ class DevicePlacement(constants.ParamEnum):
 
   MESH_UTILS = "mesh_utils"
   ID_SORTED = "id_sorted"
+
+
+class ReplicaGroupType(enum.StrEnum):
+  """How an ICI replica group maps onto the cores of multi-core chips."""
+
+  # One core per chip in the group; one group per core runs concurrently.
+  PARALLEL = "parallel"
+  # All cores of each chip in the same group, or single-core chips.
+  NON_PARALLEL = "non-parallel"
+
+
+@dataclasses.dataclass(frozen=True)
+class ReplicaGroupInfo:
+  """Size and core mapping of the replica groups of an ICI collective.
+
+  Attributes:
+    rank: R, the number of devices in the group.
+    participating_ranks: P, the number of peers each device reaches over ICI,
+      excluding die-to-die peers on the same chip.
+    group_type: How the group maps onto the cores of its chips.
+  """
+
+  rank: int  # R
+  participating_ranks: int  # P
+  group_type: ReplicaGroupType
 
 
 @dataclasses.dataclass
@@ -274,18 +300,28 @@ class BaseCollectiveBenchmark(
     )
     return list(self.mesh.devices[indexer].flatten())
 
-  def get_total_bytes(self) -> float:
-    return float(self.get_workload_metadata()["data_transferred_bytes"])
+  def _get_shard_size_bytes(self) -> int:
+    """Returns the per-device input shard size in bytes."""
+    itemsize = jnp.dtype(utils.parse_dtype(self.config.dtype)).itemsize
+    return self.config.matrix_dim * _BASE_N * _BASE_K * itemsize
 
-  def _get_transfer_metrics(
-      self,
-      dim: int,
-      itemsize: int,
-      rank: int = 1,
-      participating_ranks: int = 1,
-      tf_multiplier: int = 1,
-  ) -> tuple[float, dict[str, float]]:
-    raise NotImplementedError("Subclasses must implement _get_transfer_metrics")
+  def _get_transfer_size_bytes_per_device(
+      self, rank: int, participating_ranks: int
+  ) -> float:
+    """Returns one device's collective transfer size in bytes (bus bytes).
+
+    Symbols used by the per-op formulas: S = `_get_shard_size_bytes()`,
+    R = rank and P = participating_ranks (see `ReplicaGroupInfo`).
+    Topology-neutral op math: it never applies a chip or host factor. The
+    topology base scales it to its reporting scope in `get_total_bytes()`.
+
+    Args:
+      rank: Number of devices in one replica group.
+      participating_ranks: Number of peers reached over the measured link.
+    """
+    raise NotImplementedError(
+        "Subclasses must implement _get_transfer_size_bytes_per_device"
+    )
 
 
 class IciCollectiveBenchmark(
@@ -407,14 +443,14 @@ class IciCollectiveBenchmark(
       return 1
     return devices_per_chip
 
-  def get_workload_metadata(self) -> dict[str, Any]:
-    """Calculate static collective transfer metadata (bytes moved, replica group)."""
+  def _get_replica_group_info(self) -> ReplicaGroupInfo:
+    """Classifies the replica groups of the mesh.
+
+    Derived from the first replica group; every group of the regular meshes
+    built here has the same size and core mapping.
+    """
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
-
-    dim = self.config.matrix_dim
-    dtype = utils.parse_dtype(self.config.dtype)
-    itemsize = jnp.dtype(dtype).itemsize
 
     first_group_devices = self._get_first_replica_group_devices()
     rank = len(first_group_devices)
@@ -424,38 +460,59 @@ class IciCollectiveBenchmark(
         self._get_devices_per_chip_in_replica_group(first_group_devices)
     )
     if devices_per_chip > 1 and devices_per_chip_in_replica_group == 1:
-      replica_group_type = "parallel"
-      participating_ranks = max(rank - 1, 1)
-      tf_multiplier = devices_per_chip
-    else:
-      replica_group_type = "non-parallel"
-      participating_ranks = max(rank - devices_per_chip, 1)
-      tf_multiplier = 1
-
-    data_transferred_bytes, extra_metrics = self._get_transfer_metrics(
-        dim=dim,
-        itemsize=itemsize,
+      return ReplicaGroupInfo(
+          rank=rank,
+          participating_ranks=max(rank - 1, 1),
+          group_type=ReplicaGroupType.PARALLEL,
+      )
+    return ReplicaGroupInfo(
         rank=rank,
-        participating_ranks=participating_ranks,
-        tf_multiplier=tf_multiplier,
+        participating_ranks=max(rank - devices_per_chip, 1),
+        group_type=ReplicaGroupType.NON_PARALLEL,
     )
+
+  def _get_sending_devices_per_chip(self, group_type: ReplicaGroupType) -> int:
+    """Returns how many devices of one chip send their own data concurrently.
+
+    Scales per-device transfer bytes to per-chip bytes. Parallel replica
+    groups run one group per core at the same time, so every core sends.
+    Non-parallel replica groups put all cores of a chip in one group, which
+    receive each remote shard once and share it die-to-die, so the chip is
+    counted once.
+
+    Args:
+      group_type: How the replica group maps onto the cores of its chips.
+    """
+    if group_type == ReplicaGroupType.PARALLEL:
+      return self.hardware_spec.devices_per_chip
+    return 1
+
+  def get_total_bytes(self) -> float:
+    """Returns the per-chip transfer size in bytes."""
+    info = self._get_replica_group_info()
+    return self._get_transfer_size_bytes_per_device(
+        rank=info.rank, participating_ranks=info.participating_ranks
+    ) * self._get_sending_devices_per_chip(info.group_type)
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    """Calculate static collective transfer metadata (bytes moved, replica group)."""
+    info = self._get_replica_group_info()
     return {
-        "data_transferred_bytes": data_transferred_bytes,
-        "replica_group_type": replica_group_type,
-        "replica_group_rank": rank,
-        **extra_metrics,
+        "shard_size_mib": self._get_shard_size_bytes() / (1024 * 1024),
+        "transfer_size_per_chip_mib": self.get_total_bytes() / (1024 * 1024),
+        "replica_group_type": info.group_type.value,
+        "replica_group_rank": info.rank,
     }
 
   def calculate_throughput_metrics(
       self, latency_ms: float, prefix: constants.TimingDomain
   ) -> dict[str, Any]:
-    metadata = self.get_workload_metadata()
     latency_s = latency_ms / 1000.0
-    if metadata["replica_group_rank"] > 1:
+    if self._get_replica_group_info().rank > 1:
       if latency_s == 0:
         bandwidth_gb_s = float("inf")
       else:
-        bandwidth_gb_s = metadata["data_transferred_bytes"] / (latency_s * 1e9)
+        bandwidth_gb_s = self.get_total_bytes() / (latency_s * 1e9)
     else:
       bandwidth_gb_s = 0.0
 
@@ -512,29 +569,29 @@ class DcnCollectiveBenchmark(
   def _get_sharding_axes(self):
     return "dcn"
 
+  def _get_replica_group_rank(self) -> int:
+    """Returns the number of slices in one replica group."""
+    return len(self._get_first_replica_group_devices())
+
+  def get_total_bytes(self) -> float:
+    """Returns the per-device transfer size in bytes.
+
+    Each local device sends its own data over DCN, so
+    `calculate_throughput_metrics()` scales this to per-host bandwidth.
+    """
+    rank = self._get_replica_group_rank()
+    return self._get_transfer_size_bytes_per_device(
+        rank=rank, participating_ranks=max(rank - 1, 1)
+    )
+
   def get_workload_metadata(self) -> dict[str, Any]:
     """Calculate static DCN collective transfer metadata."""
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
-
-    dim = self.config.matrix_dim
-    dtype = utils.parse_dtype(self.config.dtype)
-    itemsize = jnp.dtype(dtype).itemsize
-
-    rank = len(self._get_first_replica_group_devices())
-    participating_ranks = max(rank - 1, 1)
-
-    data_transferred_bytes, extra_metrics = self._get_transfer_metrics(
-        dim=dim,
-        itemsize=itemsize,
-        rank=rank,
-        participating_ranks=participating_ranks,
-        tf_multiplier=1,
-    )
     return {
-        "data_transferred_bytes": data_transferred_bytes,
-        "replica_group_rank": rank,
-        **extra_metrics,
+        "shard_size_mib": self._get_shard_size_bytes() / (1024 * 1024),
+        "transfer_size_per_device_mib": self.get_total_bytes() / (1024 * 1024),
+        "replica_group_rank": self._get_replica_group_rank(),
     }
 
   def calculate_throughput_metrics(
@@ -555,12 +612,11 @@ class AllReduceOpMixin(
   """All-reduce op logic shared by any topology base.
 
   Provides reduce_op validation, the run identifier, the replicated input,
-  the jitted all-reduce and its transfer bytes. List it before the topology
-  base, whose config must include `AllReduceParamsMixin`. The topology base
-  builds `self.mesh` in `setup()`, returns its collective axes from
-  `_get_sharding_axes()` and passes rank, participating ranks and the
-  transfer multiplier to `_get_transfer_metrics()` from its own
-  `get_workload_metadata()`.
+  the jitted all-reduce and its per-device transfer size. List it before the
+  topology base, whose config must include `AllReduceParamsMixin`. The
+  topology base builds `self.mesh` in `setup()`, returns its collective axes
+  from `_get_sharding_axes()` and scales the per-device transfer size to its
+  reporting scope in `get_total_bytes()`.
 
   `_setup_jit_fn()` always wraps the op in the MARKER named scope and
   `zero_crop`, with no hook to change either. Until such a hook exists, a
@@ -621,22 +677,13 @@ class AllReduceOpMixin(
 
     self._jit_fn = all_reduce_sharded
 
-  def _get_transfer_metrics(
-      self,
-      dim: int,
-      itemsize: int,
-      rank: int = 1,
-      participating_ranks: int = 1,
-      tf_multiplier: int = 1,
-  ):
-    local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
-    data_transferred = (
-        2
-        * local_size_bytes
-        * (participating_ranks / max(rank, 1))
-        * tf_multiplier
+  def _get_transfer_size_bytes_per_device(
+      self, rank: int, participating_ranks: int
+  ) -> float:
+    """2*S*P/R: a reduce-scatter then an all-gather, each moving S*P/R."""
+    return (
+        2 * self._get_shard_size_bytes() * participating_ranks / max(rank, 1)
     )
-    return data_transferred, {"shard_size_mib": local_size_bytes / (1024 * 1024)}
 
 
 @registry.benchmark_registry.register("all_reduce")
@@ -736,17 +783,12 @@ class AllGatherBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
     )
     return shape, sharding
 
-  def _get_transfer_metrics(
-      self,
-      dim: int,
-      itemsize: int,
-      rank: int = 1,
-      participating_ranks: int = 1,
-      tf_multiplier: int = 1,
-  ):
-    local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
-    data_transferred = local_size_bytes * participating_ranks * tf_multiplier
-    return data_transferred, {"shard_size_mib": local_size_bytes / (1024 * 1024)}
+  def _get_transfer_size_bytes_per_device(
+      self, rank: int, participating_ranks: int
+  ) -> float:
+    """S*P: each device receives one full shard from every peer."""
+    del rank  # Unused.
+    return self._get_shard_size_bytes() * participating_ranks
 
 
 def all_to_all_peak_bandwidth_per_chip_gb_s(
@@ -775,11 +817,12 @@ def all_to_all_peak_bandwidth_per_chip_gb_s(
     4. Bus bytes per device: S * P/R.
     5. Peak bus bandwidth per device: (S*P/R) / T = 4*B*M*P / R^2 * k/D.
     6. Peak per chip: x D, the same per-chip scaling as the measured bytes in
-       `AllToAllBenchmark._get_transfer_metrics`. Unlike all-gather/all-reduce,
-       every (source -> destination) chunk of an all-to-all is distinct, so
-       each core of a chip sends its own chunks over ICI. D cancels, leaving
-       4*B*M*P / R^2 * k, so parallel and non-parallel replica groups on the
-       same chips share the same per-chip peak.
+       `AllToAllBenchmark._get_sending_devices_per_chip`. Unlike
+       all-gather/all-reduce, every (source -> destination) chunk of an
+       all-to-all is distinct, so each core of a chip sends its own chunks
+       over ICI. D cancels, leaving 4*B*M*P / R^2 * k, so parallel and
+       non-parallel replica groups on the same chips share the same per-chip
+       peak.
 
   Args:
     replica_group_rank: R, devices in one replica group.
@@ -974,26 +1017,18 @@ class AllToAllBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
     )
     return shape, sharding
 
-  def _get_transfer_metrics(
-      self,
-      dim: int,
-      itemsize: int,
-      rank: int = 1,
-      participating_ranks: int = 1,
-      tf_multiplier: int = 1,
-  ):
-    local_size_bytes = dim * _BASE_N * _BASE_K * itemsize
+  def _get_transfer_size_bytes_per_device(
+      self, rank: int, participating_ranks: int
+  ) -> float:
+    """S*P/R: each device sends one S/R chunk to every peer."""
+    return self._get_shard_size_bytes() * participating_ranks / max(rank, 1)
+
+  def _get_sending_devices_per_chip(self, group_type: ReplicaGroupType) -> int:
     # In All-to-All, every (source_rank -> dest_rank) chunk is distinct, so all
     # devices_per_chip cores on a chip independently transmit their own outbound
     # inter-chip data in both parallel and non-parallel replica group modes.
-    data_transferred = (
-        local_size_bytes
-        * (participating_ranks / max(rank, 1))
-        * self.hardware_spec.devices_per_chip
-    )
-    return data_transferred, {
-        "shard_size_mib": local_size_bytes / (1024 * 1024)
-    }
+    del group_type
+    return self.hardware_spec.devices_per_chip
 
 
 @registry.benchmark_registry.register("reduce_scatter", is_experimental=True)
@@ -1034,16 +1069,13 @@ class ReduceScatterBenchmark(IciCollectiveBenchmark[ReduceScatterParams]):
     )
     return shape, sharding
 
-  def _get_transfer_metrics(
-      self,
-      dim: int,
-      itemsize: int,
-      rank: int = 1,
-      participating_ranks: int = 1,
-      tf_multiplier: int = 1,
-  ):
-    chunk_size_bytes = dim * _REDUCE_SCATTER_K * itemsize
-    data_transferred = (
-        chunk_size_bytes * (participating_ranks / max(rank, 1)) * tf_multiplier
-    )
-    return data_transferred, {"shard_size_mib": chunk_size_bytes / (1024 * 1024)}
+  def _get_shard_size_bytes(self) -> int:
+    """Returns the size of one reduce-scatter chunk in bytes."""
+    itemsize = jnp.dtype(utils.parse_dtype(self.config.dtype)).itemsize
+    return self.config.matrix_dim * _REDUCE_SCATTER_K * itemsize
+
+  def _get_transfer_size_bytes_per_device(
+      self, rank: int, participating_ranks: int
+  ) -> float:
+    """S*P/R: each device receives one S/R chunk to reduce from every peer."""
+    return self._get_shard_size_bytes() * participating_ranks / max(rank, 1)

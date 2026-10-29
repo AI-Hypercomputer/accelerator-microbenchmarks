@@ -65,7 +65,8 @@ def _peak(
 
 
 _COLLECTIVES_IGNORED_KEYS: frozenset[str] = frozenset({
-    "data_transferred_bytes",
+    "transfer_size_per_chip_mib",
+    "transfer_size_per_device_mib",
     "replica_group_type",
     "replica_group_rank",
 })
@@ -702,7 +703,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(metadata["replica_group_type"], expected_group_type)
     self.assertEqual(metadata["replica_group_rank"], expected_rank)
     self.assertAlmostEqual(
-        metadata["data_transferred_bytes"], expected_bytes, places=1
+        metadata["transfer_size_per_chip_mib"] * 1024 * 1024,
+        expected_bytes,
+        places=1,
     )
 
     metrics = a2a_bm.calculate_metrics([1.0])
@@ -906,12 +909,17 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
 
     metadata = ag_bm.get_workload_metadata()
     self.assertEqual(metadata["replica_group_type"], expected_group_type)
+    # Metadata is a serialization boundary: plain str, not the enum member.
+    self.assertIs(type(metadata["replica_group_type"]), str)
     self.assertLen(ids, metadata["replica_group_rank"])
-    tf_multiplier = 2 if expected_group_type == "parallel" else 1
+    sending_devices_per_chip = 2 if expected_group_type == "parallel" else 1
     local_bytes = 1024 * collectives._BASE_N * collectives._BASE_K * 4  # pylint: disable=protected-access
     self.assertEqual(
-        metadata["data_transferred_bytes"],
-        local_bytes * expected_participating_ranks * tf_multiplier,
+        metadata["transfer_size_per_chip_mib"],
+        local_bytes
+        * expected_participating_ranks
+        * sending_devices_per_chip
+        / (1024 * 1024),
     )
 
   def test_format_benchmark_table(self):
@@ -1096,6 +1104,13 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     test_report_utils.assert_schema_matches_output(
         self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
     )
+    # DCN reports the transfer size per device: 2 * S * (n - 1) / n for n = 2
+    # slices is one shard, with no devices_per_chip factor.
+    shard_mib = 64 * 8 * 128 * 4 / (1024 * 1024)
+    metadata = bm.get_workload_metadata()
+    self.assertAlmostEqual(metadata["shard_size_mib"], shard_mib)
+    self.assertAlmostEqual(metadata["transfer_size_per_device_mib"], shard_mib)
+    self.assertNotIn("transfer_size_per_chip_mib", metadata)
     metrics = bm.derive_chip_metrics(bm.calculate_metrics([1.0]))
     expected_gbps = (
         bm.get_total_bytes() * 8.0 * jax.local_device_count() / (0.001 * 1e9)
@@ -1104,6 +1119,46 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         metrics["wall_clock_bandwidth_per_host_gbps"], expected_gbps
     )
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", metrics)
+
+  @parameterized.named_parameters(
+      # (name, bm_cls, config_cls, spec, group_type, expected)
+      # Default hook: every core of a chip sends in parallel replica groups...
+      (
+          "default_parallel",
+          collectives.AllReduceBenchmark,
+          collectives.AllReduceParams,
+          system.TPU7X_HARDWARE_SPEC,
+          collectives.ReplicaGroupType.PARALLEL,
+          2,
+      ),
+      # ...and the chip is counted once in non-parallel replica groups.
+      (
+          "default_non_parallel",
+          collectives.AllReduceBenchmark,
+          collectives.AllReduceParams,
+          system.TPU7X_HARDWARE_SPEC,
+          collectives.ReplicaGroupType.NON_PARALLEL,
+          1,
+      ),
+      # All-to-all chunks are distinct, so every core sends in both modes.
+      (
+          "all_to_all_non_parallel",
+          collectives.AllToAllBenchmark,
+          collectives.IciCollectivesParams,
+          system.TPU7X_HARDWARE_SPEC,
+          collectives.ReplicaGroupType.NON_PARALLEL,
+          2,
+      ),
+  )
+  def test_sending_devices_per_chip(
+      self, bm_cls, config_cls, spec, group_type, expected
+  ):
+    """Verify the per-chip scale factor of each ICI collective."""
+    bm = bm_cls(config=config_cls(matrix_dim=64), hardware_spec=spec)
+    self.assertEqual(
+        bm._get_sending_devices_per_chip(group_type),  # pylint: disable=protected-access
+        expected,
+    )
 
   def test_dcn_setup_single_slice_raises_error(self):
     """Verify DcnCollectiveBenchmark.setup rejects fewer than 2 slices."""

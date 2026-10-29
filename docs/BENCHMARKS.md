@@ -408,7 +408,7 @@ paths the traffic takes.
 | `reduce_op` | `str` | `"sum"` | `all_reduce` only | Reduction operator applied across active collective dimensions (`"sum"`, `"mean"`, `"max"`, `"min"`). |
 | `seed` | `int` | `0` | All Collectives | PRNG seed for tensor initialization. |
 
-#### Collective Bus Bandwidth Formulas (`data_transferred_bytes`)
+#### Collective Bus Bandwidth Formulas (`transfer_size_per_chip_mib`)
 
 Given per-device shard payload $$S$$ (bytes), replica group rank $$R$$
 (`replica_group_rank`, devices per ring), external inter-chip peers $$P$$
@@ -418,11 +418,15 @@ Given per-device shard payload $$S$$ (bytes), replica group rank $$R$$
 (`devices_per_chip`, e.g., $$2$$ for dual-device chips, $$1$$ for
 single-device chips):
 
-| Benchmark | JAX Primitive | Per-Chip Bytes Transferred (`data_transferred_bytes`) |
-| :--- | :--- | :--- |
-| **`all_reduce`** | `jax.lax.psum` / `pmean` / `pmax` / `pmin` | $$2 \times S \times \left(\frac{P}{R}\right) \times C$$ |
-| **`all_gather`** | `jax.lax.all_gather` | $$S \times P \times C$$ |
-| **`all_to_all`** | `jax.lax.all_to_all` | $$S \times \left(\frac{P}{R}\right) \times D$$ |
+Each collective's per-device transfer size is topology-neutral; the ICI
+benchmarks scale it to the chip by the number of devices of one chip that send
+their own data ($$C$$, or $$D$$ for `all_to_all`).
+
+| Benchmark | JAX Primitive | Per-Device Transfer Size | Per-Chip Scale | Per-Chip Transfer Size (`transfer_size_per_chip_mib`) |
+| :--- | :--- | :--- | :--- | :--- |
+| **`all_reduce`** | `jax.lax.psum` / `pmean` / `pmax` / `pmin` | $$2 \times S \times \frac{P}{R}$$ | $$C$$ | $$2 \times S \times \left(\frac{P}{R}\right) \times C$$ |
+| **`all_gather`** | `jax.lax.all_gather` | $$S \times P$$ | $$C$$ | $$S \times P \times C$$ |
+| **`all_to_all`** | `jax.lax.all_to_all` | $$S \times \frac{P}{R}$$ | $$D$$ | $$S \times \left(\frac{P}{R}\right) \times D$$ |
 
 #### Reported Metrics
 
@@ -437,7 +441,8 @@ single-device chips):
   - `shard_size_mib` — Per-device tensor shard payload (`S` expressed in `MiB`).
   - `replica_group_rank` — Number of participating devices (`R`) per collective replica group (product of dimensions `> 1` in `sharding_strategy`).
   - `replica_group_type` — Classified replica ring mode (`"parallel"` vs. `"non-parallel"`).
-  - `data_transferred_bytes` — Effective external ICI bytes transferred per physical chip per collective step.
+  - `transfer_size_per_chip_mib` — Effective external ICI transfer size per physical chip per collective step (`MiB`); the bytes behind `*_bandwidth_per_chip_gb_s`.
+  - `transfer_size_per_device_mib` — Multi-slice DCN collectives (`dcn_*`) only: DCN transfer size per device per collective step (`MiB`); `*_bandwidth_per_host_gbps` scales it by the local device count.
 
 ---
 
