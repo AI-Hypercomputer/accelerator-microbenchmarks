@@ -217,6 +217,38 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
         ):
           params_cls()
 
+  def test_allow_sub_byte_dtypes(self):
+    """Verifies ALLOW_SUB_BYTE_DTYPES gates sub-byte dtypes, per class."""
+
+    @dataclasses.dataclass
+    class NoSubByteParams(base.SingleDtypeBenchmarkParams):
+      ALLOW_SUB_BYTE_DTYPES = False
+      out_dtype: str = base.dtype_field(default="bfloat16")
+
+    @dataclasses.dataclass
+    class ChildParams(NoSubByteParams):
+      pass
+
+    # Allowed by default.
+    params = base.SingleDtypeBenchmarkParams(dtype="int4")
+    self.assertEqual(params.dtype, "int4")
+    # Byte-sized dtypes are unaffected by the flag.
+    for dtype in ("int8", "bool", "float8_e4m3fn"):
+      NoSubByteParams(dtype=dtype, out_dtype=dtype)
+    # Every dtype field is checked, and subclasses inherit the flag.
+    for params_cls, field, dtype in (
+        (NoSubByteParams, "dtype", "int4"),
+        (NoSubByteParams, "out_dtype", "float4_e2m1fn"),
+        (ChildParams, "dtype", "int4"),
+    ):
+      with self.subTest(cls=params_cls.__name__, field=field):
+        with self.assertRaisesRegex(
+            ValueError,
+            rf"^{field}: Unsupported sub-byte dtype: '{dtype}'\..*"
+            rf"{params_cls.__name__} counts itemsize",
+        ):
+          params_cls(**{field: dtype})
+
   def test_only_dtype_field_fields_are_validated(self):
     """Verifies dtype fields are marked by dtype_field(), not by name."""
 

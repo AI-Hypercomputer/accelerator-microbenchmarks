@@ -50,7 +50,7 @@ class HBMKernelSpec:
 HBM_KERNELS: dict[HBMKernelOp, HBMKernelSpec] = {
     HBMKernelOp.COPY: HBMKernelSpec(
         name=HBMKernelOp.COPY.value,
-        kernel_fn=lambda args, scalar: args[0] + 1.0,
+        kernel_fn=lambda args, scalar: args[0] + jnp.ones((), args[0].dtype),
         num_inputs=1,
         num_arrays=2,  # 1 read (x), 1 write (y)
         num_flops_per_element=1.0,
@@ -99,9 +99,13 @@ HBM_KERNELS[HBMKernelOp.WRITE] = HBM_KERNELS[HBMKernelOp.WRITE_ONLY]
 
 @dataclasses.dataclass
 class HBMBandwidthParams(base.SingleDtypeBenchmarkParams):
-  # complex64 runs at float32 latency while bytes are counted at 8 bytes per
-  # element, so it reports ~2x the float32 bandwidth, above the HBM peak.
-  DTYPE_CONSTRAINTS = {"dtype": (jnp.bool_, jnp.integer, jnp.floating)}
+  # bool copy (`x | True`) constant-folds and scale (`x & True`) is the
+  # identity, so neither measures a real read + write of x. complex64 runs at
+  # float32 latency while bytes are counted at 8 bytes per element, so it
+  # reports ~2x the float32 bandwidth, above the HBM peak.
+  DTYPE_CONSTRAINTS = {"dtype": (jnp.integer, jnp.floating)}
+  # get_total_bytes() counts itemsize bytes per element.
+  ALLOW_SUB_BYTE_DTYPES = False
 
   op_type: HBMKernelOp = dataclasses.field(
       default=HBMKernelOp.COPY,
@@ -171,7 +175,9 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     self.spec = spec
 
     dtype = utils.parse_dtype(self.config.dtype)
-    self.scalar = jnp.array(random.uniform(1.1, 10.0), dtype=dtype)
+    # Any value >= 2 works (integers truncate to >= 2): XLA folds `x * 1` into
+    # a copy without the MARKER scope.
+    self.scalar = jnp.array(random.uniform(2.0, 5.0), dtype=dtype)
     scalar = self.scalar
 
     def hbm_op(*args):
@@ -206,7 +212,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
 
     # Use jit with out_shardings to generate on device to avoid host OOM
     generate_data = jax.jit(
-        lambda k: jax.random.normal(k, (num_elements,), dtype=dtype),
+        lambda k: utils.random_normal_array(k, (num_elements,), dtype),
         out_shardings=sharding,
     )
 

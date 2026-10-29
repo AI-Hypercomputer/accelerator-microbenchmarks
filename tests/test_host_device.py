@@ -213,6 +213,14 @@ class HostDeviceParamsValidationTest(parameterized.TestCase):
     ):
       host_device.HostDeviceParams(**{name: value})
 
+  @parameterized.parameters("int4", "float4_e2m1fn")
+  def test_sub_byte_dtype_raises_error(self, dtype):
+    """Verifies sub-byte dtypes are rejected (bytes count itemsize)."""
+    with self.assertRaisesRegex(
+        ValueError, f"^dtype: Unsupported sub-byte dtype: '{dtype}'"
+    ):
+      host_device.HostDeviceParams(dtype=dtype)
+
   def test_numpy_int_params_normalized_to_int(self):
     params = host_device.HostDeviceParams(
         data_size_mib=np.int64(8), device_id=np.int32(0)

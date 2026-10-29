@@ -136,6 +136,31 @@ def random_bits_array(
   return words.view(np.uint8)[:nbytes].view(dtype).reshape(shape)
 
 
+def random_normal_array(
+    key: jax.Array, shape: Sequence[int], dtype: jax.typing.DTypeLike
+) -> jax.Array:
+  """Returns `jax.random.normal` samples of `shape` cast to `dtype`.
+
+  Unlike `jax.random.normal`, also supports integer, boolean and sub-byte
+  dtypes by sampling in float32 and casting (integers truncate toward zero and
+  booleans are almost all True), so only use this where the contents are
+  opaque, e.g. bandwidth benchmark payloads. Traceable, so it can run inside
+  `jax.jit` with `out_shardings` to generate inputs directly on device.
+
+  Args:
+    key: PRNG key.
+    shape: Output shape.
+    dtype: Output dtype.
+
+  Returns:
+    An array with the given shape and dtype.
+  """
+  # jax.random.normal only supports >= 8-bit inexact dtypes.
+  if jnp.issubdtype(dtype, jnp.inexact) and jnp.finfo(dtype).bits >= 8:
+    return jax.random.normal(key, shape, dtype=dtype)
+  return jax.random.normal(key, shape, dtype=jnp.float32).astype(dtype)
+
+
 def get_dtype_info(dtype_or_str: str | jnp.dtype) -> jnp.finfo | jnp.iinfo:
   """Returns the jax.numpy finfo or iinfo descriptor for a numeric dtype.
 
@@ -179,6 +204,32 @@ def get_dtype_bits(dtype_or_str: str | jnp.dtype) -> int:
     ValueError: If the dtype is not a floating-point or integer numeric type.
   """
   return int(get_dtype_info(dtype_or_str).bits)
+
+
+def is_sub_byte_dtype(dtype_or_str: str | jnp.dtype) -> bool:
+  """Returns whether a numeric dtype is narrower than one byte (e.g. `int4`).
+
+  NumPy reports `itemsize == 1` for these dtypes, but TPUs store them packed
+  (e.g. two `int4` elements per byte), so byte counts based on `itemsize` are
+  too large.
+
+  Args:
+    dtype_or_str: Either a string representation or a `jax.numpy` dtype.
+
+  Returns:
+    True for integer or floating-point dtypes narrower than 8 bits; False
+    otherwise (including `bool` and complex dtypes).
+  """
+  dtype = (
+      parse_dtype(dtype_or_str)
+      if isinstance(dtype_or_str, str)
+      else jnp.dtype(dtype_or_str)
+  )
+  if not (
+      jnp.issubdtype(dtype, jnp.integer) or jnp.issubdtype(dtype, jnp.floating)
+  ):
+    return False
+  return get_dtype_bits(dtype) < 8
 
 
 def get_dtype_bytes(dtype_or_str: str | jnp.dtype) -> float:

@@ -112,6 +112,33 @@ class UtilsTest(parameterized.TestCase):
     b = utils.random_bits_array((32, 128), jnp.int32)
     self.assertFalse(np.array_equal(a, b))
 
+  @parameterized.parameters(
+      jnp.bfloat16,
+      jnp.float8_e4m3fn,
+      jnp.float4_e2m1fn,
+      jnp.complex64,
+      jnp.int4,
+      jnp.int8,
+      jnp.uint8,
+      jnp.int32,
+      jnp.bool_,
+  )
+  def test_random_normal_array_shape_dtype(self, dtype):
+    """Verifies float, complex, integer and bool dtypes under `jax.jit`."""
+    arr = jax.jit(lambda k: utils.random_normal_array(k, (64, 128), dtype))(
+        jax.random.PRNGKey(0)
+    )
+    self.assertEqual(arr.shape, (64, 128))
+    self.assertEqual(arr.dtype, dtype)
+
+  def test_random_normal_array_float_matches_jax_random_normal(self):
+    """Verifies floating-point dtypes keep `jax.random.normal` values."""
+    key = jax.random.PRNGKey(0)
+    np.testing.assert_array_equal(
+        utils.random_normal_array(key, (64, 128), jnp.bfloat16),
+        jax.random.normal(key, (64, 128), dtype=jnp.bfloat16),
+    )
+
   @parameterized.named_parameters(
       ("float32_str", "float32", 4.0, float(jnp.finfo(jnp.float32).max)),
       ("bfloat16_str", "bfloat16", 2.0, float(jnp.finfo(jnp.bfloat16).max)),
@@ -153,6 +180,20 @@ class UtilsTest(parameterized.TestCase):
     """Verifies non-numeric dtypes raise ValueError."""
     with self.assertRaisesRegex(ValueError, "Unsupported non-numeric dtype"):
       utils.get_dtype_bits(dtype)
+
+  @parameterized.named_parameters(
+      ("int4_str", "int4", True),
+      ("uint4_dtype", jnp.uint4, True),
+      ("float4_e2m1fn_str", "float4_e2m1fn", True),
+      ("int8_str", "int8", False),
+      ("float8_e4m3fn_dtype", jnp.float8_e4m3fn, False),
+      ("bfloat16_str", "bfloat16", False),
+      ("bool_str", "bool", False),
+      ("complex64_dtype", jnp.complex64, False),
+  )
+  def test_is_sub_byte_dtype(self, dtype_or_str, expected):
+    """Verifies only < 8-bit integer and floating-point dtypes are sub-byte."""
+    self.assertEqual(utils.is_sub_byte_dtype(dtype_or_str), expected)
 
   @parameterized.parameters(
       ("float64", "JAX canonicalizes dtype 'float64'"),

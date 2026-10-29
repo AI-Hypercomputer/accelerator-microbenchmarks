@@ -18,8 +18,9 @@ class TransformerLayerParams(base.SingleDtypeBenchmarkParams):
   # Excluded dtypes:
   # * complex: jax.nn.standardize (the norm proxy) clips the variance, and
   #   complex values have no ordering.
-  # * int / bool: input generation fails (jax.random.normal needs a float
-  #   dtype).
+  # * int / bool: the layer is floating-point; jax.nn.standardize promotes
+  #   integer inputs to float32, so it would run in float32 while TFLOPs are
+  #   reported against the integer peak.
   DTYPE_CONSTRAINTS = {"dtype": (jnp.floating,)}
 
   model_dim: int = dataclasses.field(

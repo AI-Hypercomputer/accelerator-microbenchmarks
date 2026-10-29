@@ -199,9 +199,10 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(bm_class, collectives.AllReduceBenchmark)
     self.assertEqual(bm_class.Config, collectives.AllReduceParams)
 
-  def test_reduction_collectives_complex_dtype_raises_error(self):
-    """Verify all-reduce/reduce-scatter reject complex64, unlike the others."""
-    collectives.IciCollectivesParams(dtype="complex64")
+  @parameterized.parameters("complex64", "bool")
+  def test_reduction_collectives_dtype_raises_error(self, dtype):
+    """Verify all-reduce/reduce-scatter reject complex64/bool, unlike others."""
+    collectives.IciCollectivesParams(dtype=dtype)
     collectives.AllReduceParams(dtype="int8")
     collectives.ReduceScatterParams(dtype="int8")
     for params_cls in (
@@ -209,8 +210,8 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         collectives.DcnAllReduceParams,
         collectives.ReduceScatterParams,
     ):
-      with self.assertRaisesRegex(ValueError, "Unsupported dtype: 'complex64'"):
-        params_cls(dtype="complex64")
+      with self.assertRaisesRegex(ValueError, f"Unsupported dtype: '{dtype}'"):
+        params_cls(dtype=dtype)
 
   def test_all_reduce_invalid_op_raises_error(self):
     """Verify that invalid reduce_op raises ValueError at initialization."""
@@ -258,11 +259,14 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(bm_class, collectives.ReduceScatterBenchmark)
     self.assertEqual(bm_class.Config, collectives.ReduceScatterParams)
 
-  def test_all_reduce_generate_inputs(self):
+  # int8 / bool cover non-float input generation (jax.random.normal is
+  # float-only); all-reduce rejects bool.
+  @parameterized.parameters("bfloat16", "int8")
+  def test_all_reduce_generate_inputs(self, dtype):
     """Verify input generation for all_reduce."""
     params = {
         "matrix_dim": 64,
-        "dtype": "bfloat16",
+        "dtype": dtype,
     }
     config = collectives.AllReduceParams(**params)
     bm = collectives.AllReduceBenchmark(
@@ -271,13 +275,14 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm.setup()
     (data,) = bm.generate_inputs()
     self.assertEqual(data.shape, (64, 8, 128))
-    self.assertEqual(data.dtype, jnp.bfloat16)
+    self.assertEqual(data.dtype, jnp.dtype(dtype))
 
-  def test_all_gather_generate_inputs(self):
+  @parameterized.parameters("bfloat16", "int8", "bool")
+  def test_all_gather_generate_inputs(self, dtype):
     """Verify input generation for all_gather."""
     params = {
         "matrix_dim": 64,
-        "dtype": "bfloat16",
+        "dtype": dtype,
     }
     config = collectives.IciCollectivesParams(**params)
     bm = collectives.AllGatherBenchmark(
@@ -286,13 +291,14 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm.setup()
     (data,) = bm.generate_inputs()
     self.assertEqual(data.shape, (64, 8, 128))
-    self.assertEqual(data.dtype, jnp.bfloat16)
+    self.assertEqual(data.dtype, jnp.dtype(dtype))
 
-  def test_all_to_all_generate_inputs(self):
+  @parameterized.parameters("bfloat16", "int8", "bool")
+  def test_all_to_all_generate_inputs(self, dtype):
     """Verify input generation for all_to_all."""
     params = {
         "matrix_dim": 64,
-        "dtype": "bfloat16",
+        "dtype": dtype,
     }
     config = collectives.IciCollectivesParams(**params)
     bm = collectives.AllToAllBenchmark(
@@ -301,7 +307,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm.setup()
     (data,) = bm.generate_inputs()
     self.assertEqual(data.shape, (64, 8, 128))
-    self.assertEqual(data.dtype, jnp.bfloat16)
+    self.assertEqual(data.dtype, jnp.dtype(dtype))
 
   @parameterized.named_parameters(
       ("sum", "sum", 4.0),
@@ -1633,6 +1639,23 @@ class CollectivesParamsValidationTest(parameterized.TestCase):
   def test_out_of_range_values_raise_error(self, field, value, bound):
     with self.assertRaisesRegex(ValueError, f"{field} must be >= {bound}"):
       collectives.CollectivesParams(**{field: value})
+
+  @parameterized.product(
+      params_cls=(
+          collectives.IciCollectivesParams,
+          collectives.DcnCollectivesParams,
+          collectives.AllReduceParams,
+          collectives.DcnAllReduceParams,
+          collectives.ReduceScatterParams,
+      ),
+      dtype=("int4", "float4_e2m1fn"),
+  )
+  def test_sub_byte_dtype_raises_error(self, params_cls, dtype):
+    """Verify every collective rejects sub-byte dtypes (1 byte/elem counted)."""
+    with self.assertRaisesRegex(
+        ValueError, f"^dtype: Unsupported sub-byte dtype: '{dtype}'"
+    ):
+      params_cls(dtype=dtype)
 
   def test_reduce_op_coerces_to_enum(self):
     params = collectives.AllReduceParams(reduce_op="mean")

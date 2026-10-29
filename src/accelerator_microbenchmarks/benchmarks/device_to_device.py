@@ -25,6 +25,9 @@ class TransferDirection(constants.ParamEnum):
 class DeviceToDeviceParams(base.SingleDtypeBenchmarkParams):
   """YAML / CLI configuration specification (NO src/dst fields)."""
 
+  # generate_inputs() sizes the payload with itemsize bytes per element.
+  ALLOW_SUB_BYTE_DTYPES = False
+
   data_size_mib: int = dataclasses.field(
       default=1024,
       metadata={"min": 1, "help": "Transfer payload size in Mebibytes (MiB)."},
@@ -199,7 +202,7 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
     key = jax.random.PRNGKey(self.config.seed)
 
     generate_data = jax.jit(
-        lambda k: jax.random.normal(k, shape, dtype=dtype),
+        lambda k: utils.random_normal_array(k, shape, dtype),
         out_shardings=sharding,
     )
     data = generate_data(key)

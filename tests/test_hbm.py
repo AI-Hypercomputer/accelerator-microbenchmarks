@@ -163,6 +163,60 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
       self.assertLen(inputs, 1)
       self.assertEqual(inputs[0].shape, (1024,))
 
+  @parameterized.product(
+      op_type=("copy", "scale", "add", "triad", "write_only"),
+      dtype=("int8", "uint8"),
+  )
+  def test_integer_dtypes_keep_output_dtype(self, op_type, dtype):
+    """Verify integer inputs are generated and outputs keep the dtype."""
+    self._setup_benchmark(op_type, dtype=dtype)
+    out = self.bm.run_op(*self.bm.generate_inputs())
+    self.assertEqual(out.dtype, jnp.dtype(dtype))
+
+  @parameterized.parameters("int8", "uint8", "int32", "bfloat16", "float32")
+  def test_copy_adds_one_in_same_dtype(self, dtype):
+    """Verify copy computes x + 1 without promotion (x + 0 would fold away)."""
+    self._setup_benchmark("copy", dtype=dtype)
+
+    out = self.bm.run_op(jnp.array([0, 3, 5], dtype=dtype))
+
+    self.assertEqual(out.dtype, jnp.dtype(dtype))
+    np.testing.assert_array_equal(out, np.array([1, 4, 6], dtype=dtype))
+
+  @parameterized.parameters("int8", "uint8", "int32", "bfloat16", "float32")
+  def test_scalar_draw_range(self, dtype):
+    """Verify the scalar is drawn from [2.0, 5.0]: `x * 1` would fold away."""
+    with mock.patch.object(
+        hbm.random, "uniform", autospec=True, return_value=2.0
+    ) as mock_uniform:
+      self._setup_benchmark("scale", dtype=dtype)
+    mock_uniform.assert_called_once_with(2.0, 5.0)
+    self.assertEqual(self.bm.scalar.dtype, jnp.dtype(dtype))
+    self.assertEqual(float(self.bm.scalar), 2.0)
+
+  @parameterized.parameters("int8", "uint8", "int32")
+  def test_integer_scalar_truncates_to_at_least_two(self, dtype):
+    """Verify integer scalars truncate to [2, 5], never to 1."""
+    for draw, expected in ((2.9, 2), (5.0, 5)):
+      with mock.patch.object(
+          hbm.random, "uniform", autospec=True, return_value=draw
+      ):
+        self._setup_benchmark("scale", dtype=dtype)
+      self.assertEqual(int(self.bm.scalar), expected)
+
+    with mock.patch.object(
+        hbm.random, "uniform", autospec=True, return_value=2.9
+    ):
+      self._setup_benchmark("scale", dtype=dtype)
+    out = self.bm.run_op(jnp.array([0, 1, 3], dtype=dtype))
+
+    np.testing.assert_array_equal(out, np.array([0, 2, 6], dtype=dtype))
+
+  def test_bool_dtype_raises_error(self):
+    """Verify bool is rejected, as copy/scale would constant-fold."""
+    with self.assertRaisesRegex(ValueError, "Unsupported dtype: 'bool'"):
+      hbm.HBMBandwidthParams(dtype="bool")
+
   def test_read_and_write_values(self):
     """Verify numerical correctness of read_only and write_only ops."""
     # Test write_only: should produce array filled with scalar
@@ -447,6 +501,14 @@ class HBMBandwidthParamsValidationTest(parameterized.TestCase):
         ValueError, "^dtype: Unsupported dtype: 'complex64'"
     ):
       hbm.HBMBandwidthParams(dtype="complex64")
+
+  @parameterized.parameters("int4", "uint4", "float4_e2m1fn")
+  def test_sub_byte_dtype_raises_error(self, dtype):
+    """Verify sub-byte dtypes are rejected, as bytes count 1 per element."""
+    with self.assertRaisesRegex(
+        ValueError, f"^dtype: Unsupported sub-byte dtype: '{dtype}'"
+    ):
+      hbm.HBMBandwidthParams(dtype=dtype)
 
   def test_op_type_coerces_to_enum(self):
     params = hbm.HBMBandwidthParams(op_type="scale")

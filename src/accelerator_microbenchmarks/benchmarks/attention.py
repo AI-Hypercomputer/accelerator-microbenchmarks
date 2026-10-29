@@ -24,8 +24,8 @@ class AttentionParams(base.SingleDtypeBenchmarkParams):
   # * float16: XLA does not support dot algorithm ALG_DOT_F16_F16_F32.
   # * float8: no implicit dtype promotion path with float32.
   # * complex: Pallas Mosaic lowering fails.
-  # * int / bool: input generation fails (jax.random.normal needs a float
-  #   dtype).
+  # * int / bool: attention (softmax) is floating-point; quantized attention
+  #   needs a dedicated kernel.
   DTYPE_CONSTRAINTS = {"dtype": (jnp.bfloat16, jnp.float32)}
 
   mode: AttentionMode = dataclasses.field(

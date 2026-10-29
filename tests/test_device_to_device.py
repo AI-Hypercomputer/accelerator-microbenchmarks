@@ -15,6 +15,7 @@ from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
+import jax.numpy as jnp
 
 
 def setUpModule():  # pylint: disable=invalid-name
@@ -138,8 +139,28 @@ class DeviceToDeviceParamsTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, f"{field} must be >= {bound}"):
       params_cls(**{field: value})
 
+  @parameterized.product(
+      params_cls=(
+          device_to_device.DeviceToDeviceParams,
+          device_to_device.DeviceToDeviceTestCaseParams,
+      ),
+      dtype=("int4", "float4_e2m1fn"),
+  )
+  def test_sub_byte_dtype_raises_error(self, params_cls, dtype):
+    """Verifies sub-byte dtypes are rejected (the payload counts itemsize)."""
+    with self.assertRaisesRegex(
+        ValueError, f"^dtype: Unsupported sub-byte dtype: '{dtype}'"
+    ):
+      params_cls(dtype=dtype)
 
-class DeviceToDeviceBenchmarkTest(absltest.TestCase):
+  @parameterized.parameters("int8", "uint8", "bool")
+  def test_byte_sized_non_float_dtypes_accepted(self, dtype):
+    """Verifies 1-byte integer and bool payloads are accepted."""
+    cfg = device_to_device.DeviceToDeviceParams(dtype=dtype)
+    self.assertEqual(cfg.dtype, dtype)
+
+
+class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
   """Unit tests for DeviceToDeviceBenchmark."""
 
   def setUp(self):
@@ -302,15 +323,30 @@ class DeviceToDeviceBenchmarkTest(absltest.TestCase):
     with self.assertRaisesRegex(ValueError, "Mesh not initialized."):
       uninitialized_bm.generate_inputs()
 
-  def test_generate_inputs_and_run_op(self):
+  # int8 / bool cover non-float input generation (jax.random.normal is
+  # float-only).
+  @parameterized.parameters("bfloat16", "int8", "bool")
+  def test_generate_inputs_and_run_op(self, dtype):
     """Verify setup, input generation, and kernel execution."""
-    self.bm.config.src_device_index = 0
-    self.bm.config.dst_device_index = 1
-    self.bm.config.data_size_mib = 1
-    self.bm.setup()
-    inputs = self.bm.generate_inputs()
+    bm = self.bm_class(
+        device_to_device.DeviceToDeviceTestCaseParams(
+            dtype=dtype,
+            data_size_mib=1,
+            direction="uni",
+            src_device_index=0,
+            dst_device_index=1,
+        ),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    bm.setup()
+    inputs = bm.generate_inputs()
     self.assertLen(inputs, 1)
-    out = self.bm.run_op(*inputs)
+    self.assertEqual(inputs[0].dtype, jnp.dtype(dtype))
+    self.assertEqual(
+        inputs[0].shape,
+        (len(jax.devices()), 1024 * 1024 // jnp.dtype(dtype).itemsize),
+    )
+    out = bm.run_op(*inputs)
     self.assertEqual(out.shape, inputs[0].shape)
     self.assertEqual(out.dtype, inputs[0].dtype)
 

@@ -39,6 +39,10 @@ class TransferBackend(constants.ParamEnum):
 class HostDeviceParams(base.SingleDtypeBenchmarkParams):
   """Parameters for Host-to-Device and Device-to-Host benchmarks."""
 
+  # rows_per_device and get_total_bytes() count itemsize bytes per element,
+  # while tpu_sync DMAs the packed on-device size.
+  ALLOW_SUB_BYTE_DTYPES = False
+
   data_size_mib: int = dataclasses.field(
       default=64,
       metadata={

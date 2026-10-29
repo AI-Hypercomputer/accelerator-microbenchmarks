@@ -50,7 +50,10 @@ Every benchmark supports the following baseline execution and profiling paramete
 > `complex128`) are rejected unless `jax_enable_x64` is enabled (e.g.
 > `JAX_ENABLE_X64=1`; JAX would otherwise silently truncate them to 32 bits),
 > and some benchmarks restrict them further via their params class's
-> `DTYPE_CONSTRAINTS`.
+> `DTYPE_CONSTRAINTS`. `hbm`, the collectives, `device_to_device`,
+> `host_to_device` and `device_to_host` also reject sub-byte dtypes (e.g.
+> `int4`, `float4_e2m1fn`): TPUs store them packed below one byte per element,
+> while these benchmarks count 1 byte per element.
 
 <a id="per-device-vs-per-chip-scaling"></a>
 ### 1.2 Throughput & Bandwidth Metric Conventions (`<timing_domain>_<metric_type>_<hardware_scope>`)

@@ -66,6 +66,9 @@ class BaseBenchmarkParams:
   # replace (rather than merge) `DTYPE_CONSTRAINTS`; merge explicitly via
   # `{**Parent.DTYPE_CONSTRAINTS, ...}` to preserve inherited constraints.
   DTYPE_CONSTRAINTS: ClassVar[Mapping[str, Sequence[jax.typing.DTypeLike]]] = {}
+  # Set False where bytes are counted with `itemsize`: TPUs pack sub-byte
+  # dtypes (e.g. `int4`), so that would over-report bandwidth.
+  ALLOW_SUB_BYTE_DTYPES: ClassVar[bool] = True
 
   warmup_tries: int = dataclasses.field(
       default=10,
@@ -148,7 +151,8 @@ class BaseBenchmarkParams:
   def _validate_dtypes(self) -> None:
     """Validates every `dtype_field()` field via `utils.validate_dtype`.
 
-    Each dtype field must also match its `DTYPE_CONSTRAINTS` entry, if any.
+    Each dtype field must also match its `DTYPE_CONSTRAINTS` entry, if any, and
+    must not be a sub-byte dtype unless `ALLOW_SUB_BYTE_DTYPES` is set.
 
     Raises:
       TypeError: If a `DTYPE_CONSTRAINTS` key is not a dtype field.
@@ -171,6 +175,12 @@ class BaseBenchmarkParams:
         utils.validate_dtype(value, self.DTYPE_CONSTRAINTS.get(field.name))
       except ValueError as exc:
         raise ValueError(f"{field.name}: {exc}") from exc
+      if not self.ALLOW_SUB_BYTE_DTYPES and utils.is_sub_byte_dtype(value):
+        raise ValueError(
+            f"{field.name}: Unsupported sub-byte dtype: '{value}'. TPUs store"
+            f" it packed below one byte per element, but {type(self).__name__}"
+            " counts itemsize (1 byte), which over-reports bandwidth."
+        )
 
   def __post_init__(self):
     self._coerce_enums()

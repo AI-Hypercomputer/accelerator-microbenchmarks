@@ -112,6 +112,9 @@ class ReplicaGroupInfo:
 class CollectivesParams(base.SingleDtypeBenchmarkParams):
   """Topology-neutral parameters shared by all collective benchmarks."""
 
+  # get_total_bytes() counts itemsize bytes per element.
+  ALLOW_SUB_BYTE_DTYPES = False
+
   matrix_dim: int = dataclasses.field(
       default=1024,
       metadata={
@@ -162,15 +165,16 @@ class DcnCollectivesParams(CollectivesParams):
   """Parameters for DCN collective benchmarks."""
 
 
-# XLA does not implement complex all-reduce or reduce-scatter on TPU.
-_NON_COMPLEX_DTYPES = (jnp.bool_, jnp.integer, jnp.floating)
+# XLA does not implement complex all-reduce or reduce-scatter on TPU, and psum
+# widens bool to int32, which would change the bytes moved.
+_REDUCTION_DTYPES = (jnp.integer, jnp.floating)
 
 
 @dataclasses.dataclass
 class AllReduceParamsMixin:
   """All-reduce parameters, reusable with any topology params class."""
 
-  DTYPE_CONSTRAINTS = {"dtype": _NON_COMPLEX_DTYPES}
+  DTYPE_CONSTRAINTS = {"dtype": _REDUCTION_DTYPES}
 
   reduce_op: ReduceOp = dataclasses.field(
       default=ReduceOp.SUM,
@@ -194,7 +198,7 @@ class DcnAllReduceParams(AllReduceParamsMixin, DcnCollectivesParams):
 class ReduceScatterParams(IciCollectivesParams):
   """Parameters for the ICI reduce-scatter benchmark."""
 
-  DTYPE_CONSTRAINTS = {"dtype": _NON_COMPLEX_DTYPES}
+  DTYPE_CONSTRAINTS = {"dtype": _REDUCTION_DTYPES}
 
 
 TCollectiveConfig = TypeVar("TCollectiveConfig", bound=CollectivesParams)
@@ -271,7 +275,7 @@ class BaseCollectiveBenchmark(
     key = jax.random.PRNGKey(self.config.seed)
 
     generate_data = jax.jit(
-        lambda k: jax.random.normal(k, shape, dtype=dtype),
+        lambda k: utils.random_normal_array(k, shape, dtype),
         out_shardings=sharding,
     )
     data = generate_data(key)
