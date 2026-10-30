@@ -3,11 +3,13 @@
 from collections.abc import Iterable, Sequence
 import dataclasses
 from typing import Optional
+from unittest import mock
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
+from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import system
 
 DEFAULT_TEST_PLATFORM_INFO: platform.PlatformInfo = platform.PlatformInfo(
@@ -23,6 +25,95 @@ DEFAULT_TEST_PLATFORM_INFO: platform.PlatformInfo = platform.PlatformInfo(
     libtpu_version="0.1.dev20240101",
 )
 DEFAULT_TEST_HARDWARE_SPEC: system.HardwareSpec = system.TPU7X_HARDWARE_SPEC
+
+
+@dataclasses.dataclass(frozen=True)
+class FakeXprofTrace(profiler.XprofTrace):
+  """Empty `XprofTrace` that remembers the directory it was "loaded" from."""
+
+  trace_dir: str = ""
+
+
+def fake_load_xprof_trace(
+    trace_dir: str, is_xprof_op_fn=None
+) -> FakeXprofTrace:
+  """Stub for `profiler.load_xprof_trace` resolving TPU:0-7 and /host:CPU PIDs.
+
+  Unmocked `device_step_durations_ms` calls on it return `[]` (no events).
+
+  Args:
+    trace_dir: Directory the trace would be loaded from.
+    is_xprof_op_fn: Unused custom XProf op matcher.
+
+  Returns:
+    An empty trace tagged with `trace_dir`.
+  """
+  del is_xprof_op_fn
+  return FakeXprofTrace(
+      timing_events_by_pid={},
+      step_spans_by_pid={},
+      process_pids={
+          **{f"/device:TPU:{i}": i + 1 for i in range(8)},
+          "/host:CPU": 100,
+      },
+      fallback_pid=None,
+      trace_dir=trace_dir,
+  )
+
+
+# Messages printed when an XProf parse exception is caught and swallowed.
+_SWALLOWED_XPROF_PARSE_ERRORS = (
+    "Error parsing local XProf trace",
+    "Warning: Local XProf parsing failed",
+    "Warning: Failed to parse XProf durations",
+)
+
+
+def _swallowed_parse_errors(mock_print: mock.MagicMock) -> list[str]:
+  return [
+      str(call.args[0])
+      for call in mock_print.call_args_list
+      if call.args
+      and str(call.args[0]).startswith(_SWALLOWED_XPROF_PARSE_ERRORS)
+  ]
+
+
+def patch_xprof_trace_loading(
+    test: absltest.TestCase,
+) -> tuple[mock.MagicMock, mock.MagicMock]:
+  """Stubs trace loading with `fake_load_xprof_trace` for the whole test.
+
+  Also fails the test if an XProf parse exception is swallowed, unless the
+  test acknowledges it with `assert_swallowed_xprof_parse_error`.
+
+  Args:
+    test: The running test case.
+
+  Returns:
+    `(mock_load_trace, mock_print)`.
+  """
+  mock_load_trace = test.enter_context(
+      mock.patch.object(
+          profiler, "load_xprof_trace", side_effect=fake_load_xprof_trace
+      )
+  )
+  mock_print = test.enter_context(mock.patch("builtins.print", wraps=print))
+  test.addCleanup(
+      lambda: test.assertEmpty(
+          _swallowed_parse_errors(mock_print),
+          "XProf parse exception was swallowed unexpectedly.",
+      )
+  )
+  return mock_load_trace, mock_print
+
+
+def assert_swallowed_xprof_parse_error(
+    test: absltest.TestCase, mock_print: mock.MagicMock
+) -> None:
+  """Asserts an XProf parse exception was swallowed, then clears the record."""
+  test.assertNotEmpty(_swallowed_parse_errors(mock_print))
+  mock_print.reset_mock()
+
 
 # Default keys produced by base classes or execution runners that are not
 # intended to be displayed in concise ASCII summary tables.

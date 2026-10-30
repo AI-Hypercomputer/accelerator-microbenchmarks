@@ -13,6 +13,7 @@ from unittest import mock
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
@@ -310,6 +311,9 @@ class BaseBenchmarkTest(absltest.TestCase):
         return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
     )
     self._platform_patcher.start()
+    self.mock_load_trace, self.mock_print = (
+        test_report_utils.patch_xprof_trace_loading(self)
+    )
 
   def tearDown(self):
     self._platform_patcher.stop()
@@ -482,8 +486,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIn("BenchmarkWithId_test_id_42_", called_path)
     self.assertTrue(called_path.startswith("/tmp/test_xprof/"))
 
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -522,8 +526,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_upload.assert_called_once()
     mock_parse_durations.assert_called_once()
 
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -560,8 +564,8 @@ class BaseBenchmarkTest(absltest.TestCase):
         mock_parse_durations.call_args.kwargs.get("local_device_id")
     )
 
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -594,8 +598,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertEqual(result.metrics["xprof_expected_runs"], 1)
 
   @mock.patch("jax.experimental.multihost_utils.broadcast_one_to_all")
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -667,8 +671,8 @@ class BaseBenchmarkTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "unequal steps"):
           bm_first.run()
 
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -716,8 +720,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertEqual(result.metrics["xprof_captured_runs"], 3)
     self.assertEqual(result.metrics["xprof_expected_runs"], 3)
 
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -770,13 +774,19 @@ class BaseBenchmarkTest(absltest.TestCase):
         )
         buf = io.StringIO()
         with (
-            mock.patch(
-                "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+            mock.patch.object(
+                profiler.XprofTrace,
+                "device_step_durations_ms",
+                autospec=True,
                 **parse_kwargs,
             ),
             contextlib.redirect_stdout(buf),
         ):
           result = bm.run()
+        if case_name == "parse_exception":
+          test_report_utils.assert_swallowed_xprof_parse_error(
+              self, self.mock_print
+          )
 
         self.assertEqual(result.metrics["xprof_captured_runs"], 0)
         self.assertEqual(result.metrics["xprof_expected_runs"], 4)
@@ -787,8 +797,8 @@ class BaseBenchmarkTest(absltest.TestCase):
         )
         self.assertNotIn("truncated trace", buf.getvalue())
 
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -813,8 +823,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     ):
       bm.run()
 
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -850,8 +860,8 @@ class BaseBenchmarkTest(absltest.TestCase):
 
   @mock.patch("jax.experimental.multihost_utils.broadcast_one_to_all")
   @mock.patch("jax.experimental.multihost_utils.process_allgather")
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -896,7 +906,7 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_trace.return_value = contextlib.nullcontext()
     mock_upload.return_value = None
     mock_parse_durations.side_effect = (
-        lambda _dir, _fn=None, local_device_id=0: [8.0, 20.0, 28.0]
+        lambda _trace, local_device_id=0: [8.0, 20.0, 28.0]
         if local_device_id == 0
         else [10.0, 18.0, 30.0]
     )
@@ -927,8 +937,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     )
 
   @mock.patch("jax.experimental.multihost_utils.process_allgather")
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
@@ -976,8 +986,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIsNone(result.metrics["xprof_bandwidth_per_chip_gb_s"])
 
   @mock.patch("jax.experimental.multihost_utils.process_allgather")
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations"
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
   )
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"

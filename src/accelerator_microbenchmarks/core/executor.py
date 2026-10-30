@@ -138,34 +138,44 @@ class BaseRunExecutor:
         xprof_expected_runs=actual_runs if is_traced else None,
     )
 
+  def _load_trace(self, trace_dir: str) -> Optional[profiler.XprofTrace]:
+    """Loads the XProf trace in `trace_dir` once for per-device parsing."""
+    return profiler.load_xprof_trace(
+        trace_dir, self.benchmark.match_xprof_op_fallback
+    )
+
   def _durations_for_device(
-      self, trace_dir: str, local_device_id: int | None
+      self,
+      trace: Optional[profiler.XprofTrace],
+      local_device_id: int | None,
   ) -> list[float]:
-    """Extracts XProf durations from `trace_dir` for `local_device_id` (or `/host:CPU` if None).
+    """Extracts XProf durations from `trace` for `local_device_id` (or `/host:CPU` if None).
 
     Args:
-      trace_dir: Directory containing XProf trace files.
+      trace: Trace loaded by `_load_trace`, or None if no trace or timing events
+        were found.
       local_device_id: Local hardware ID of the target TPU device
         (`/device:TPU:{id}`), or `None` to extract `/host:CPU` events.
 
     Returns:
       List of extracted event durations in milliseconds.
     """
-    return profiler.parse_xprof_durations(
-        trace_dir,
-        self.benchmark.match_xprof_op_fallback,
-        local_device_id=local_device_id,
-    )
+    if trace is None:
+      return []
+    return trace.device_step_durations_ms(local_device_id=local_device_id)
 
   def _resolve_max_device_id(self, trace_dir: str) -> Optional[int]:
     """Selects the local device ID with the highest median kernel duration."""
     if self.benchmark.xprof_target_host_cpu:
       return None
+    trace = self._load_trace(trace_dir)
+    if trace is None:
+      return None
     best_dev_id: Optional[int] = None
     best_median = -1.0
     for dev in jax.local_devices():
       dev_id = dev.local_hardware_id
-      durations = self._durations_for_device(trace_dir, dev_id)
+      durations = self._durations_for_device(trace, dev_id)
       if durations:
         med = float(np.median(durations))
         if med > best_median:
@@ -191,8 +201,9 @@ class BaseRunExecutor:
       return _XprofParseStatus.PARSE_FAILED, []
 
     try:
+      trace = self._load_trace(trace_dir)
       device_slices = [
-          self._durations_for_device(trace_dir, dev.local_hardware_id)
+          self._durations_for_device(trace, dev.local_hardware_id)
           for dev in jax.local_devices()
       ]
     except Exception:  # pylint: disable=broad-exception-caught
@@ -287,7 +298,7 @@ class BaseRunExecutor:
       if trace_dir:
         try:
           local_durations = self._durations_for_device(
-              trace_dir, measured_device.local_hardware_id
+              self._load_trace(trace_dir), measured_device.local_hardware_id
           )
         except Exception as e:  # pylint: disable=broad-exception-caught
           print(f"Error parsing local XProf trace: {e}")
@@ -326,12 +337,25 @@ class BaseRunExecutor:
       trace_dir: str,
       target_device_id: Optional[int] = None,
   ) -> list[float]:
-    """Extracts XProf device durations from trace_dir according to XprofDeviceTimingAggregation."""
+    """Extracts XProf device durations from trace_dir according to XprofDeviceTimingAggregation.
+
+    Each branch loads the trace at most once and reuses it for every device.
+
+    Args:
+      trace_dir: Directory containing XProf trace files.
+      target_device_id: Local hardware ID to parse instead of applying
+        `device_timing_aggregation`, or None.
+
+    Returns:
+      Per-step durations in milliseconds.
+    """
     if self.benchmark.xprof_target_host_cpu:
-      return self._durations_for_device(trace_dir, None)
+      return self._durations_for_device(self._load_trace(trace_dir), None)
 
     if target_device_id is not None:
-      return self._durations_for_device(trace_dir, target_device_id)
+      return self._durations_for_device(
+          self._load_trace(trace_dir), target_device_id
+      )
 
     if (
         self.benchmark.xprof_config.device_timing_aggregation
@@ -342,13 +366,16 @@ class BaseRunExecutor:
     if self.benchmark.requires_multihost_sync:
       return self._parse_multihost_owner_durations(trace_dir)
 
+    trace = self._load_trace(trace_dir)
+    if trace is None:
+      return []
     if (
         self.benchmark.xprof_config.device_timing_aggregation
         == constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE
     ):
       device_slices: list[list[float]] = []
       for dev in jax.local_devices():
-        dev_slice = self._durations_for_device(trace_dir, dev.local_hardware_id)
+        dev_slice = self._durations_for_device(trace, dev.local_hardware_id)
         if dev_slice:
           device_slices.append(dev_slice)
       return (
@@ -358,9 +385,7 @@ class BaseRunExecutor:
       )
 
     measured_device = self.benchmark.get_device_to_measure()
-    return self._durations_for_device(
-        trace_dir, measured_device.local_hardware_id
-    )
+    return self._durations_for_device(trace, measured_device.local_hardware_id)
 
   def get_xprof_durations(self, xprof_dir: str) -> list[float]:
     """Returns XProf kernel durations (ms) for the completed benchmark run."""

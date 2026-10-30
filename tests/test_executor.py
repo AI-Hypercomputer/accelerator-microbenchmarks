@@ -14,6 +14,7 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config as config_module
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import executor
+from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
@@ -85,6 +86,9 @@ class SoakingBenchmarkTest(absltest.TestCase):
         return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
     )
     self._platform_patcher.start()
+    self.mock_load_trace, self.mock_print = (
+        test_report_utils.patch_xprof_trace_loading(self)
+    )
 
   def tearDown(self):
     self._platform_patcher.stop()
@@ -180,8 +184,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
       return_value=None,
   )
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+  @mock.patch.object(
+      profiler.XprofTrace,
+      "device_step_durations_ms",
+      autospec=True,
       return_value=[1.0],
   )
   @mock.patch("jax.profiler.trace")
@@ -289,8 +295,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
               "jax.profiler.trace",
               side_effect=fake_trace,
           ),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               side_effect=[[1.0], [2.5]],
           ),
           mock.patch(
@@ -319,8 +327,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     # Also verify non-positive synced_p50 passes has_xprof_timings=False.
     with (
-        mock.patch(
-            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+        mock.patch.object(
+            profiler.XprofTrace,
+            "device_step_durations_ms",
+            autospec=True,
             side_effect=[[-1.0], [-1.0]],
         ),
         mock.patch(
@@ -478,9 +488,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
     )
     fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
 
-    def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
-      del fallback_fn
-      if "baseline_window" in trace_dir:
+    def fake_parse_xprof(trace, local_device_id=0):
+      if "baseline_window" in trace.trace_dir:
         return [5.008, 5.010]
       if local_device_id in (4, 5):
         return [6.021, 6.019]
@@ -493,13 +502,22 @@ class SoakingBenchmarkTest(absltest.TestCase):
       os.makedirs(w1, exist_ok=True)
       with (
           mock.patch.object(jax, "local_devices", return_value=fake_devs),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               side_effect=fake_parse_xprof,
           ),
+          mock.patch.object(
+              bm.executor,
+              "_load_trace",
+              wraps=getattr(bm.executor, "_load_trace"),
+          ) as mock_load_trace,
       ):
         target_dev_id = bm.executor._resolve_max_device_id(w1)  # pylint: disable=protected-access
         self.assertIn(target_dev_id, (4, 5))
+        # Parse-once: one trace load shared by all 8 per-device parses.
+        mock_load_trace.assert_called_once_with(w1)
         d0 = bm.executor._extract_window_durations(w0, target_device_id=target_dev_id)  # pylint: disable=protected-access
         d1 = bm.executor._extract_window_durations(w1, target_device_id=target_dev_id)  # pylint: disable=protected-access
     self.assertEqual(d0 + d1, [5.008, 5.010, 6.021, 6.019])
@@ -516,16 +534,18 @@ class SoakingBenchmarkTest(absltest.TestCase):
     """Verifies XprofConfig.device_timing_aggregation ('measured_device_or_first' vs 'local_slowest_device')."""
     fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
 
-    def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
-      del trace_dir, fallback_fn
+    def fake_parse_xprof(trace, local_device_id=0):
+      del trace
       if local_device_id in (4, 5):
         return [6.021, 6.019]
       return [5.009, 5.009]
 
     with (
         mock.patch.object(jax, "local_devices", return_value=fake_devs),
-        mock.patch(
-            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+        mock.patch.object(
+            profiler.XprofTrace,
+            "device_step_durations_ms",
+            autospec=True,
             side_effect=fake_parse_xprof,
         ),
     ):
@@ -553,8 +573,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
       return_value=None,
   )
-  @mock.patch(
-      "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+  @mock.patch.object(
+      profiler.XprofTrace,
+      "device_step_durations_ms",
+      autospec=True,
       return_value=[1.0],
   )
   @mock.patch("jax.profiler.trace")
@@ -678,8 +700,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
         mock.MagicMock(local_hardware_id=1),
     ]
 
-    def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
-      del trace_dir, fallback_fn
+    def fake_parse_xprof(trace, local_device_id=0):
+      del trace
       if local_device_id == 0:
         return [10.0, 22.0, 30.0]
       return [14.0, 18.0, 35.0]
@@ -693,11 +715,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
     )
 
     with (
+        mock.patch.object(jax, "local_devices", return_value=fake_devs),
         mock.patch.object(
-            jax, "local_devices", return_value=fake_devs
-        ),
-        mock.patch(
-            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+            profiler.XprofTrace,
+            "device_step_durations_ms",
+            autospec=True,
             side_effect=fake_parse_xprof,
         ),
         mock.patch.object(
@@ -733,8 +755,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
         mock.MagicMock(local_hardware_id=1),
     ]
 
-    def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
-      del trace_dir, fallback_fn
+    def fake_parse_xprof(trace, local_device_id=0):
+      del trace
       if local_device_id == 0:
         return [10.0, 22.0, 30.0]
       return [14.0, 18.0, 35.0]
@@ -748,11 +770,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
     )
 
     with (
+        mock.patch.object(jax, "local_devices", return_value=fake_devs),
         mock.patch.object(
-            jax, "local_devices", return_value=fake_devs
-        ),
-        mock.patch(
-            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+            profiler.XprofTrace,
+            "device_step_durations_ms",
+            autospec=True,
             side_effect=fake_parse_xprof,
         ),
         mock.patch.object(
@@ -784,16 +806,16 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     with self.subTest("local_empty_slice"):
 
-      def fake_empty(trace_dir, fallback_fn=None, local_device_id=0):
-        del trace_dir, fallback_fn
+      def fake_empty(trace, local_device_id=0):
+        del trace
         return [10.0, 20.0, 30.0] if local_device_id == 0 else []
 
       with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
           mock.patch.object(
-              jax, "local_devices", return_value=fake_devs
-          ),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               side_effect=fake_empty,
           ),
           mock.patch.object(
@@ -810,11 +832,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     with self.subTest("local_exception"):
       with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
           mock.patch.object(
-              jax, "local_devices", return_value=fake_devs
-          ),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               side_effect=RuntimeError("corrupt trace"),
           ),
           mock.patch.object(
@@ -824,6 +846,9 @@ class SoakingBenchmarkTest(absltest.TestCase):
           ) as spy_gather,
       ):
         self.assertEqual(bm.executor.get_xprof_durations("/tmp/fake"), [])
+      test_report_utils.assert_swallowed_xprof_parse_error(
+          self, self.mock_print
+      )
       spy_gather.assert_called_once()
       np.testing.assert_array_equal(
           spy_gather.call_args.args[0], np.array([1, 0], dtype=np.int32)
@@ -831,11 +856,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     with self.subTest("remote_host_parse_failed"):
       with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
           mock.patch.object(
-              jax, "local_devices", return_value=fake_devs
-          ),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               return_value=[14.0, 22.0, 35.0],
           ),
           mock.patch.object(
@@ -865,16 +890,16 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     with self.subTest("local_unequal_device_counts"):
 
-      def fake_unequal(trace_dir, fallback_fn=None, local_device_id=0):
-        del trace_dir, fallback_fn
+      def fake_unequal(trace, local_device_id=0):
+        del trace
         return [10.0, 20.0, 30.0] if local_device_id == 0 else [12.0, 18.0]
 
       with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
           mock.patch.object(
-              jax, "local_devices", return_value=fake_devs
-          ),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               side_effect=fake_unequal,
           ),
           mock.patch.object(
@@ -894,11 +919,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     with self.subTest("remote_unequal_device_counts"):
       with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
           mock.patch.object(
-              jax, "local_devices", return_value=fake_devs
-          ),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               return_value=[14.0, 22.0, 35.0],
           ),
           mock.patch.object(
@@ -930,11 +955,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
     )
 
     with (
+        mock.patch.object(jax, "local_devices", return_value=fake_devs),
         mock.patch.object(
-            jax, "local_devices", return_value=fake_devs
-        ),
-        mock.patch(
-            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+            profiler.XprofTrace,
+            "device_step_durations_ms",
+            autospec=True,
             return_value=[14.0, 22.0, 35.0],
         ),
         mock.patch.object(
@@ -970,18 +995,17 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     with self.subTest("both_windows_ok"):
 
-      def fake_parse_both(trace_dir, fallback_fn=None, local_device_id=0):
-        del fallback_fn
-        if "baseline_window" in trace_dir:
+      def fake_parse_both(trace, local_device_id=0):
+        if "baseline_window" in trace.trace_dir:
           return [5.0, 6.0] if local_device_id == 0 else [5.5, 5.8]
         return [7.0, 8.0] if local_device_id == 0 else [7.5, 7.2]
 
       with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
           mock.patch.object(
-              jax, "local_devices", return_value=fake_devs
-          ),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               side_effect=fake_parse_both,
           ),
           mock.patch.object(
@@ -1008,20 +1032,17 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
     with self.subTest("baseline_error_raises_immediately"):
 
-      def fake_parse_baseline_bad(
-          trace_dir, fallback_fn=None, local_device_id=0
-      ):
-        del fallback_fn
-        if "baseline_window" in trace_dir:
+      def fake_parse_baseline_bad(trace, local_device_id=0):
+        if "baseline_window" in trace.trace_dir:
           return [5.0, 6.0] if local_device_id == 0 else [5.5]
         return [7.0, 8.0]
 
       with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
           mock.patch.object(
-              jax, "local_devices", return_value=fake_devs
-          ),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               side_effect=fake_parse_baseline_bad,
           ),
           mock.patch.object(
@@ -1042,8 +1063,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
         mock.MagicMock(local_hardware_id=1),
     ]
 
-    def fake_parse_xprof(trace_dir, fallback_fn=None, local_device_id=0):
-      del trace_dir, fallback_fn
+    def fake_parse_xprof(trace, local_device_id=0):
+      del trace
       if local_device_id == 0:
         return [10.0, 22.0, 30.0]
       return [14.0, 18.0, 35.0]
@@ -1057,11 +1078,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
     )
 
     with (
+        mock.patch.object(jax, "local_devices", return_value=fake_devs),
         mock.patch.object(
-            jax, "local_devices", return_value=fake_devs
-        ),
-        mock.patch(
-            "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+            profiler.XprofTrace,
+            "device_step_durations_ms",
+            autospec=True,
             side_effect=fake_parse_xprof,
         ),
     ):
@@ -1113,8 +1134,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
     with self.subTest("owner_host_parses_and_broadcasts"):
       with (
           mock.patch("jax.process_index", return_value=0),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               return_value=[4.0, 4.1, 4.5],
           ) as mock_parse,
           mock.patch.object(
@@ -1131,8 +1154,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
     with self.subTest("non_owner_host_skips_parse_and_receives_broadcast"):
       with (
           mock.patch("jax.process_index", return_value=1),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
           ) as mock_parse,
           mock.patch.object(
               multihost_utils,
@@ -1151,8 +1176,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
     with self.subTest("empty_trace_returns_empty"):
       with (
           mock.patch("jax.process_index", return_value=0),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               return_value=[],
           ),
           mock.patch.object(
@@ -1168,8 +1195,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
     with self.subTest("owner_parse_value_error_broadcasts_zero_steps"):
       with (
           mock.patch("jax.process_index", return_value=0),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               side_effect=ValueError("corrupt trace json"),
           ),
           mock.patch.object(
@@ -1180,13 +1209,18 @@ class SoakingBenchmarkTest(absltest.TestCase):
       ):
         durations = bm.executor.get_xprof_durations("/tmp/fake")
       self.assertEqual(durations, [])
+      test_report_utils.assert_swallowed_xprof_parse_error(
+          self, self.mock_print
+      )
       mock_bcast.assert_called_once_with(np.int32(0), is_source=True)
 
     with self.subTest("broadcast_exception_falls_back_to_local"):
       with (
           mock.patch("jax.process_index", return_value=0),
-          mock.patch(
-              "accelerator_microbenchmarks.core.profiler.parse_xprof_durations",
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
               return_value=[4.0, 4.1, 4.5],
           ),
           mock.patch.object(
