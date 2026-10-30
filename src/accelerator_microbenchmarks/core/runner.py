@@ -14,6 +14,7 @@ from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import single_host
 from accelerator_microbenchmarks.core import system
 import jax
 import yaml
@@ -147,6 +148,7 @@ def run_benchmarks(
     xprof_device_timing_aggregation: str = (
         constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
     ),
+    single_host_tpu_init: bool = False,
 ) -> List[base.BenchmarkResult]:
   """Core execution engine for typed benchmark task configurations."""
   xprof_config = base.XprofConfig(
@@ -162,6 +164,20 @@ def run_benchmarks(
       [{"name": task_name} for task_name, _ in tasks],
       xla_flags_file_path=xla_flags_file_path,
   )
+  # Optional standalone single-host init. Must follow set_xla_flags (which
+  # replaces LIBTPU_INIT_ARGS) and precede any JAX device call.
+  if single_host_tpu_init:
+    unsupported = sorted(
+        {name for name, _ in tasks} - single_host.SUPPORTED_BENCHMARKS
+    )
+    if unsupported:
+      print(
+          f"Warning: single_host_tpu_init is not supported for {unsupported}:"
+          " device-to-device transfers hang in this mode, so collectives and"
+          " device_to_device cannot work and other benchmarks may hang."
+          f" Supported: {sorted(single_host.SUPPORTED_BENCHMARKS)}."
+      )
+    single_host.configure_single_host_tpu()
 
   # 2. Ensure JAX is initialized
   init_jax_distributed()

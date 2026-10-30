@@ -501,6 +501,9 @@ benchmark:
         "xprof_device_timing_aggregation",
     )
     self.assertEqual(
+        config.BenchmarkKey.SINGLE_HOST_TPU_INIT, "single_host_tpu_init"
+    )
+    self.assertEqual(
         {k.value for k in config.BenchmarkKey},
         {
             "name",
@@ -511,6 +514,7 @@ benchmark:
             "sweep",
             "xprof_timing",
             "xprof_device_timing_aggregation",
+            "single_host_tpu_init",
         },
     )
 
@@ -652,6 +656,76 @@ benchmark:
     with self.assertRaises(ValueError) as ctx:
       config.load_config(config_path)
     self.assertIn("Expected 'xprof_timing' in benchmark", str(ctx.exception))
+    self.assertIn("to be a bool", str(ctx.exception))
+
+  @parameterized.named_parameters(
+      ("true", "benchmark:\n  name: gemm\n  single_host_tpu_init: true\n", True),
+      (
+          "false",
+          "benchmark:\n  name: gemm\n  single_host_tpu_init: false\n",
+          False,
+      ),
+      ("omitted", "benchmark:\n  name: gemm\n", None),
+  )
+  def test_load_config_root_single_host_tpu_init_extracted(
+      self, yaml_content, expected
+  ):
+    """Verifies that root single_host_tpu_init is extracted into base params."""
+    config_path = os.path.join(self.test_dir.name, "config_single_host.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+    expanded = config.load_config(config_path)
+    self.assertNotEmpty(expanded)
+    self.assertEqual(expanded[0].get("single_host_tpu_init"), expected)
+
+  @parameterized.named_parameters(
+      ("in_params", "params:\n  single_host_tpu_init: true\n"),
+      ("in_sweep", "sweep:\n  single_host_tpu_init: [true, false]\n"),
+  )
+  def test_load_config_single_host_tpu_init_reserved_key_raises_error(
+      self, snippet
+  ):
+    """Verifies reserved key single_host_tpu_init in config sections raises."""
+    yaml_content = "benchmark:\n  name: gemm\n" + "".join(
+        f"  {line}\n" for line in snippet.splitlines()
+    )
+    config_path = os.path.join(
+        self.test_dir.name, "config_reserved_single_host.yaml"
+    )
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    with self.assertRaises(ValueError) as ctx:
+      config.load_config(config_path)
+    self.assertIn("reserved key(s)", str(ctx.exception))
+    self.assertIn("single_host_tpu_init", str(ctx.exception))
+
+  @parameterized.named_parameters(
+      ("string_true", '"true"'),
+      ("integer", "1"),
+  )
+  def test_load_config_single_host_tpu_init_non_bool_raises_error(
+      self, value
+  ):
+    """Verifies non-bool single_host_tpu_init at benchmark root raises."""
+    yaml_content = f"""
+benchmark:
+  name: gemm
+  single_host_tpu_init: {value}
+  params:
+    m: 1024
+"""
+    config_path = os.path.join(
+        self.test_dir.name, "config_invalid_single_host.yaml"
+    )
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    with self.assertRaises(ValueError) as ctx:
+      config.load_config(config_path)
+    self.assertIn(
+        "Expected 'single_host_tpu_init' in benchmark", str(ctx.exception)
+    )
     self.assertIn("to be a bool", str(ctx.exception))
 
   @parameterized.named_parameters(_find_all_benchmark_configs())
