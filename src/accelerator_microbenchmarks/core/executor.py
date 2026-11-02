@@ -46,16 +46,78 @@ class ExecutionResult:
   """Outcome of an executor's measurement loop.
 
   Attributes:
-    raw_times_ms: Per-iteration (or per-chunk for soaking) wall-clock latency.
+    durations_ms: Per-iteration (or per-chunk for soaking) wall-clock latency.
     actual_runs: Total iterations executed by the host loop.
     xprof_expected_runs: Number of traced iterations whose XProf durations feed
       the `xprof_*` latency stats (the upper bound for `xprof_captured_runs`),
       or None when the loop was not traced.
   """
 
-  raw_times_ms: list[float]
+  durations_ms: list[float]
   actual_runs: int
   xprof_expected_runs: Optional[int] = None
+
+
+@dataclasses.dataclass(frozen=True)
+class XprofDevice:
+  """A TPU device identified by its host process and local hardware ID."""
+
+  process_index: int
+  local_hardware_id: int
+
+  @property
+  def label(self) -> str:
+    """Returns the `detailed.json` device key `process_{p}/TPU:{id}`."""
+    return f"process_{self.process_index}/TPU:{self.local_hardware_id}"
+
+
+@dataclasses.dataclass(frozen=True)
+class XprofParseResult:
+  """XProf step durations parsed from one benchmark trace.
+
+  Attributes:
+    durations: Aggregated per-step durations (ms) that feed the headline
+      `xprof_*` metrics.
+    measured_device: Device whose series is `durations`, or None when
+      `durations` is empty, aggregates several devices
+      (`GLOBAL_SLOWEST_PER_STEP`), or measures `/host:CPU`.
+    per_local_device_durations: Per-step durations (ms) of each
+      `get_devices_to_measure()` device on this host, or None for `/host:CPU`
+      timing, single-owner multihost benchmarks, or when any such device has no
+      XProf durations.
+  """
+
+  durations: list[float]
+  measured_device: Optional[XprofDevice] = None
+  per_local_device_durations: Optional[dict[XprofDevice, list[float]]] = None
+
+
+def _make_parse_result(
+    durations: list[float],
+    measured_device: Optional[XprofDevice] = None,
+    per_local_device_durations: Optional[dict[XprofDevice, list[float]]] = None,
+) -> XprofParseResult:
+  """Builds an `XprofParseResult` that never names a device for no data.
+
+  Args:
+    durations: Headline per-step durations (ms).
+    measured_device: Device behind `durations`; dropped if `durations` is empty.
+    per_local_device_durations: Per-step durations of each measured local
+      device; dropped if any device (or the whole map) has no durations.
+
+  Returns:
+    The parse result.
+  """
+  if per_local_device_durations is not None and (
+      not per_local_device_durations
+      or not all(per_local_device_durations.values())
+  ):
+    per_local_device_durations = None
+  return XprofParseResult(
+      durations=durations,
+      measured_device=measured_device if durations else None,
+      per_local_device_durations=per_local_device_durations,
+  )
 
 
 class _XprofParseStatus(enum.IntEnum):
@@ -133,7 +195,7 @@ class BaseRunExecutor:
     # Every measured iteration runs inside the trace, so all `actual_runs`
     # should appear in it; fewer captured means the trace was truncated.
     return ExecutionResult(
-        raw_times_ms=raw_times,
+        durations_ms=raw_times,
         actual_runs=actual_runs,
         xprof_expected_runs=actual_runs if is_traced else None,
     )
@@ -164,62 +226,102 @@ class BaseRunExecutor:
       return []
     return trace.device_step_durations_ms(local_device_id=local_device_id)
 
-  def _resolve_max_device_id(self, trace_dir: str) -> Optional[int]:
-    """Selects the local device ID with the highest median kernel duration."""
-    if self.benchmark.xprof_target_host_cpu:
-      return None
-    trace = self._load_trace(trace_dir)
-    if trace is None:
-      return None
-    best_dev_id: Optional[int] = None
+  def _local_device_durations(
+      self,
+      trace: Optional[profiler.XprofTrace],
+      devices: Sequence[XprofDevice],
+  ) -> dict[XprofDevice, list[float]]:
+    """Returns per-step durations of each device in `devices`."""
+    per_device: dict[XprofDevice, list[float]] = {}
+    for device in devices:
+      try:
+        per_device[device] = self._durations_for_device(
+            trace, device.local_hardware_id
+        )
+      except ValueError:
+        raise
+      except Exception as e:
+        raise RuntimeError(
+            f"XProf parsing failed for {device.label}: {e}"
+        ) from e
+    return per_device
+
+  def _xprof_devices_to_measure(self) -> list[XprofDevice]:
+    """Returns `benchmark.get_devices_to_measure()` as local `XprofDevice`s.
+
+    Raises:
+      ValueError: If a returned device is not a local device of this process or
+        has no `local_hardware_id`.
+    """
+    raw_devices = self.benchmark.get_devices_to_measure()
+    local_devices = jax.local_devices()
+    if remote := [d for d in raw_devices if d not in local_devices]:
+      raise ValueError(
+          f"get_devices_to_measure() returned devices {remote} that are not"
+          f" local to process {jax.process_index()}."
+      )
+    process_index = jax.process_index()
+    devices: list[XprofDevice] = []
+    for dev in raw_devices:
+      if dev.local_hardware_id is None:
+        raise ValueError(f"Device {dev} has no local_hardware_id.")
+      devices.append(XprofDevice(process_index, dev.local_hardware_id))
+    return devices
+
+  @staticmethod
+  def _slowest_device(
+      per_device: dict[XprofDevice, list[float]],
+  ) -> Optional[XprofDevice]:
+    """Returns the device with the highest median duration (first wins on ties)."""
+    best_device: Optional[XprofDevice] = None
     best_median = -1.0
-    for dev in jax.local_devices():
-      dev_id = dev.local_hardware_id
-      durations = self._durations_for_device(trace, dev_id)
+    for device, durations in per_device.items():
       if durations:
         med = float(np.median(durations))
         if med > best_median:
           best_median = med
-          best_dev_id = dev_id
-    return best_dev_id
+          best_device = device
+    return best_device
 
   def _extract_local_device_slices(
       self,
       trace_dir: str,
-  ) -> tuple[_XprofParseStatus, list[list[float]]]:
+  ) -> tuple[_XprofParseStatus, dict[XprofDevice, list[float]]]:
     """Extracts per-device XProf duration lists and status code across local devices.
 
     Args:
       trace_dir: Directory containing XProf trace files.
 
     Returns:
-      A tuple `(status, device_slices)` where `device_slices` is a 2D list of
-      per-device step durations (`list[list[float]]`) when `status` is
-      `_XprofParseStatus.OK`, or `[]` otherwise.
+      A tuple `(status, device_slices)` where `device_slices` maps each local
+      device to its per-step durations when `status` is
+      `_XprofParseStatus.OK`, or is `{}` otherwise.
     """
     if not trace_dir:
-      return _XprofParseStatus.PARSE_FAILED, []
+      return _XprofParseStatus.PARSE_FAILED, {}
 
+    # Validate outside the broad except below: a non-local device or missing
+    # local_hardware_id is a benchmark bug that must raise, not become
+    # PARSE_FAILED.
+    devices = self._xprof_devices_to_measure()
     try:
-      trace = self._load_trace(trace_dir)
-      device_slices = [
-          self._durations_for_device(trace, dev.local_hardware_id)
-          for dev in jax.local_devices()
-      ]
+      device_slices = self._local_device_durations(
+          self._load_trace(trace_dir), devices
+      )
     except Exception:  # pylint: disable=broad-exception-caught
       print(
           "Warning: Local XProf parsing failed in multihost sync:\n"
           f"{traceback.format_exc()}"
       )
-      return _XprofParseStatus.PARSE_FAILED, []
+      return _XprofParseStatus.PARSE_FAILED, {}
 
     if not device_slices or any(
-        not device_slice for device_slice in device_slices
+        not device_slice for device_slice in device_slices.values()
     ):
-      return _XprofParseStatus.PARSE_FAILED, []
+      return _XprofParseStatus.PARSE_FAILED, {}
 
-    if len({len(device_slice) for device_slice in device_slices}) > 1:
-      return _XprofParseStatus.UNEQUAL_LOCAL_COUNTS, []
+    if len({len(device_slice) for device_slice in device_slices.values()}) > 1:
+      return _XprofParseStatus.UNEQUAL_LOCAL_COUNTS, {}
 
     return _XprofParseStatus.OK, device_slices
 
@@ -227,7 +329,7 @@ class BaseRunExecutor:
       self,
       trace_dir: str,
       agg_fn: Callable[..., Any] = np.max,
-  ) -> list[float]:
+  ) -> XprofParseResult:
     """Parses and aggregates XProf durations across local devices and hosts.
 
     Uses a two-stage `multihost_utils.process_allgather` protocol outside the
@@ -246,15 +348,20 @@ class BaseRunExecutor:
         `np.max`).
 
     Returns:
-      Aggregated per-step durations across all local devices and hosts, or an
-      empty list if any host failed local XProf parsing.
+      Aggregated per-step durations across all local devices and hosts (empty
+      if any host failed local XProf parsing) with this host's per-device
+      durations.
 
     Raises:
       ValueError: If any host has unequal per-device step counts or if step
         counts differ across hosts.
     """
     status, device_slices = self._extract_local_device_slices(trace_dir)
-    n_steps = len(device_slices[0]) if status == _XprofParseStatus.OK else 0
+    n_steps = (
+        len(next(iter(device_slices.values())))
+        if status == _XprofParseStatus.OK
+        else 0
+    )
     local_meta = np.array([status, n_steps], dtype=np.int32)
     gathered_meta = np.asarray(
         multihost_utils.process_allgather(local_meta), dtype=np.int32
@@ -273,18 +380,25 @@ class BaseRunExecutor:
       )
 
     if np.any(statuses != _XprofParseStatus.OK) or n_steps <= 0:
-      return []
+      return _make_parse_result(durations=[])
 
     local_agg = np.asarray(
-        agg_fn(np.asarray(device_slices, dtype=np.float32), axis=0),
+        agg_fn(
+            np.asarray(list(device_slices.values()), dtype=np.float32), axis=0
+        ),
         dtype=np.float32,
     )
     gathered_steps = np.asarray(
         multihost_utils.process_allgather(local_agg), dtype=np.float64
     ).reshape(-1, n_steps)
-    return [float(x) for x in agg_fn(gathered_steps, axis=0)]
+    return _make_parse_result(
+        durations=[float(x) for x in agg_fn(gathered_steps, axis=0)],
+        per_local_device_durations=device_slices,
+    )
 
-  def _parse_multihost_owner_durations(self, trace_dir: str) -> list[float]:
+  def _parse_multihost_owner_durations(
+      self, trace_dir: str
+  ) -> XprofParseResult:
     """Parses XProf durations on the owner host and broadcasts them to all hosts."""
     measured_device = self.benchmark.get_device_to_measure()
     is_owner = jax.process_index() == measured_device.process_index
@@ -293,9 +407,17 @@ class BaseRunExecutor:
         f" {measured_device.id}(p{measured_device.process_index}),"
         f" owner_process={measured_device.process_index}, is_owner={is_owner}"
     )
+    # Non-addressable devices report local_hardware_id=None, so the owner
+    # broadcasts its ID together with the step count. A missing owner ID is
+    # sent as -1 and raised after the broadcast so no host hangs in it.
+    owner_hw_id = (
+        measured_device.local_hardware_id
+        if is_owner and measured_device.local_hardware_id is not None
+        else -1
+    )
     local_durations: list[float] = []
     if is_owner:
-      if trace_dir:
+      if owner_hw_id >= 0 and trace_dir:
         try:
           local_durations = self._durations_for_device(
               self._load_trace(trace_dir), measured_device.local_hardware_id
@@ -310,13 +432,22 @@ class BaseRunExecutor:
       )
 
     try:
-      n_steps = int(
+      meta = np.asarray(
           multihost_utils.broadcast_one_to_all(
-              np.int32(len(local_durations)), is_source=is_owner
+              np.array([len(local_durations), owner_hw_id], dtype=np.int32),
+              is_source=is_owner,
           )
-      )
+      ).reshape(-1)
+      n_steps = int(meta[0])
+      owner_device_id = int(meta[1])
+      if owner_device_id < 0:
+        raise ValueError(
+            f"Device {measured_device} on owner process"
+            f" {measured_device.process_index} has no local_hardware_id."
+        )
+      measured = XprofDevice(measured_device.process_index, owner_device_id)
       if n_steps <= 0:
-        return []
+        return _make_parse_result(durations=[], measured_device=measured)
       local_arr = (
           np.asarray(local_durations, dtype=np.float32)
           if is_owner
@@ -325,69 +456,131 @@ class BaseRunExecutor:
       synced = multihost_utils.broadcast_one_to_all(
           local_arr, is_source=is_owner
       )
-      return [
-          float(x) for x in np.asarray(synced, dtype=np.float64).reshape(-1)
-      ]
+      return _make_parse_result(
+          durations=[
+              float(x) for x in np.asarray(synced, dtype=np.float64).reshape(-1)
+          ],
+          measured_device=measured,
+      )
+    except ValueError:
+      raise
     except Exception as e:  # pylint: disable=broad-exception-caught
       print(f"Warning: multihost broadcast failed ({e}); using local values.")
-      return local_durations
+      # Only the owner has local durations; the non-owner's are dropped.
+      return _make_parse_result(
+          durations=local_durations,
+          measured_device=(
+              XprofDevice(measured_device.process_index, owner_hw_id)
+              if is_owner
+              else None
+          ),
+      )
 
   def _parse_xprof_durations(
       self,
       trace_dir: str,
-      target_device_id: Optional[int] = None,
-  ) -> list[float]:
+  ) -> XprofParseResult:
     """Extracts XProf device durations from trace_dir according to XprofDeviceTimingAggregation.
 
     Each branch loads the trace at most once and reuses it for every device.
 
     Args:
       trace_dir: Directory containing XProf trace files.
-      target_device_id: Local hardware ID to parse instead of applying
-        `device_timing_aggregation`, or None.
 
     Returns:
-      Per-step durations in milliseconds.
+      The parsed durations, measured device, and per-local-device durations.
     """
     if self.benchmark.xprof_target_host_cpu:
-      return self._durations_for_device(self._load_trace(trace_dir), None)
-
-    if target_device_id is not None:
-      return self._durations_for_device(
-          self._load_trace(trace_dir), target_device_id
+      return _make_parse_result(
+          durations=self._durations_for_device(
+              self._load_trace(trace_dir), None
+          )
       )
 
+    aggregation = self.benchmark.xprof_config.device_timing_aggregation
     if (
-        self.benchmark.xprof_config.device_timing_aggregation
+        aggregation
         == constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP
     ):
-      return self._parse_multihost_durations(trace_dir, agg_fn=np.max)
+      return self._parse_multihost_durations(
+          trace_dir,
+          agg_fn=np.max,
+      )
 
     if self.benchmark.requires_multihost_sync:
       return self._parse_multihost_owner_durations(trace_dir)
 
     trace = self._load_trace(trace_dir)
-    if trace is None:
-      return []
     if (
-        self.benchmark.xprof_config.device_timing_aggregation
+        aggregation
         == constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE
     ):
-      device_slices: list[list[float]] = []
-      for dev in jax.local_devices():
-        dev_slice = self._durations_for_device(trace, dev.local_hardware_id)
-        if dev_slice:
-          device_slices.append(dev_slice)
-      return (
-          max(device_slices, key=lambda s: float(np.median(s)))
-          if device_slices
-          else []
+      per_device = self._local_device_durations(
+          trace, self._xprof_devices_to_measure()
+      )
+      slowest = self._slowest_device(per_device)
+      return _make_parse_result(
+          durations=per_device[slowest] if slowest is not None else [],
+          measured_device=slowest,
+          per_local_device_durations=per_device,
       )
 
+    # Without `requires_multihost_sync`, the measured device is local.
     measured_device = self.benchmark.get_device_to_measure()
-    return self._durations_for_device(trace, measured_device.local_hardware_id)
+    return self._parse_single_device(
+        trace,
+        XprofDevice(jax.process_index(), measured_device.local_hardware_id),
+    )
 
-  def get_xprof_durations(self, xprof_dir: str) -> list[float]:
+  def _parse_single_device(
+      self,
+      trace: Optional[profiler.XprofTrace],
+      measured: XprofDevice,
+  ) -> XprofParseResult:
+    """Returns `measured`'s durations, plus per-local-device ones when collected.
+
+    The headline series never depends on parsing other devices: a failure on
+    another device only drops `per_local_device_durations` (logged).
+
+    Args:
+      trace: Trace loaded by `_load_trace`, or None.
+      measured: Device behind the headline series.
+
+    Returns:
+      The parse result.
+
+    Raises:
+      ValueError: If `measured` is not one of `get_devices_to_measure()`.
+    """
+    devices = self._xprof_devices_to_measure()
+    if measured not in devices:
+      raise ValueError(
+          f"Measured device {measured.label} is not in"
+          f" get_devices_to_measure() ({[d.label for d in devices]})."
+      )
+    durations = self._durations_for_device(trace, measured.local_hardware_id)
+    per_device: dict[XprofDevice, list[float]] = {}
+    for device in devices:
+      if device == measured:
+        per_device[device] = durations
+        continue
+      try:
+        per_device[device] = self._durations_for_device(
+            trace, device.local_hardware_id
+        )
+      except Exception as e:  # pylint: disable=broad-exception-caught
+        print(
+            f"Warning: Per-local-device XProf parsing failed for {device.label}"
+            f" ({e}); metrics_per_local_device will be null."
+        )
+        return _make_parse_result(durations=durations, measured_device=measured)
+    return _make_parse_result(
+        durations=durations,
+        measured_device=measured,
+        per_local_device_durations=per_device,
+    )
+
+  def get_xprof_durations(self, xprof_dir: str) -> XprofParseResult:
     """Returns XProf kernel durations (ms) for the completed benchmark run."""
     return self._parse_xprof_durations(xprof_dir)
 
@@ -432,10 +625,9 @@ class BaseRunExecutor:
   def augment_xprof_metrics(
       self,
       metrics: dict[str, Any],
-      has_xprof_timings: bool = True,
   ) -> None:
     """Hook to attach execution-strategy-specific XProf metrics."""
-    del metrics, has_xprof_timings
+    del metrics
 
 
 class SoakingRunExecutor(BaseRunExecutor):
@@ -464,13 +656,11 @@ class SoakingRunExecutor(BaseRunExecutor):
 
   def __init__(self, benchmark: Any):
     super().__init__(benchmark)
-    self.xprof_durations: list[float] = []
     self.first_window_xprof_duration: list[float] = []
     self.last_window_xprof_duration: list[float] = []
     # Per-chunk wall-clock latency (ms/iter) of the untraced Phase 2 soak
     # chunks; the traced Phase 1/3 windows are excluded.
     self.soak_wall_ms: list[float] = []
-    self._target_device_id: Optional[int] = None
     self._result_details: dict[str, Any] = {}
 
   def _samples_per_run(self) -> int:
@@ -532,13 +722,13 @@ class SoakingRunExecutor(BaseRunExecutor):
     return inputs
 
   def _extract_window_durations(
-      self, window_trace_dir: str, target_device_id: Optional[int] = None
-  ) -> list[float]:
+      self,
+      window_trace_dir: str,
+  ) -> XprofParseResult:
     """Pure helper that extracts XProf durations from `window_trace_dir`."""
     try:
       return self._parse_xprof_durations(
           window_trace_dir,
-          target_device_id=target_device_id,
       )
     except ValueError:
       raise
@@ -547,7 +737,7 @@ class SoakingRunExecutor(BaseRunExecutor):
           f"Warning: Failed to parse XProf durations for {window_trace_dir}:"
           f" {e}"
       )
-      return []
+      return XprofParseResult(durations=[])
 
   def execute(
       self,
@@ -610,33 +800,60 @@ class SoakingRunExecutor(BaseRunExecutor):
         f" ({len(self.soak_wall_ms)} chunks), worst_window={worst_ms:.4f}"
     )
 
-    self._target_device_id = None
-    if (
-        self.benchmark.xprof_config.device_timing_aggregation
-        == constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE
-    ):
-      self._target_device_id = self._resolve_max_device_id(worst_dir)
-
     # xprof_* stats use only the traced worst_window (`samples_per_run`
     # iterations); baseline_window and the untraced soak are excluded.
     return ExecutionResult(
-        raw_times_ms=raw_times,
+        durations_ms=raw_times,
         actual_runs=actual_runs,
         xprof_expected_runs=samples_per_run,
     )
 
-  def get_xprof_durations(self, xprof_dir: str) -> list[float]:
-    """Returns aggregated baseline and worst-window XProf durations."""
+  def get_xprof_durations(self, xprof_dir: str) -> XprofParseResult:
+    """Parses both trace windows; returns the post-soak worst_window result.
+
+    Args:
+      xprof_dir: Directory containing the `baseline_window` and `worst_window`
+        trace subdirectories.
+
+    Returns:
+      The worst_window result (durations, measured device, and
+      per-local-device durations), which feeds the headline `xprof_*` metrics
+      and `detailed.json`; the baseline_window only feeds
+      `xprof_pre_soaking_p50_ms`.
+    """
     baseline_dir = os.path.join(xprof_dir, _BASELINE_TRACE_WINDOW_SUBDIR)
     worst_dir = os.path.join(xprof_dir, _WORST_TRACE_WINDOW_SUBDIR)
-    self.first_window_xprof_duration = self._extract_window_durations(
-        baseline_dir, target_device_id=self._target_device_id
-    )
-    self.last_window_xprof_duration = self._extract_window_durations(
-        worst_dir, target_device_id=self._target_device_id
-    )
-    self.xprof_durations = list(self.last_window_xprof_duration)
-    return list(self.xprof_durations)
+    if (
+        self.benchmark.xprof_config.device_timing_aggregation
+        == constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE
+    ):
+      worst_result = self._extract_window_durations(worst_dir)
+      if worst_result.measured_device is None:
+        self.first_window_xprof_duration = self._extract_window_durations(
+            baseline_dir
+        ).durations
+      else:
+        try:
+          self.first_window_xprof_duration = self._durations_for_device(
+              self._load_trace(baseline_dir),
+              worst_result.measured_device.local_hardware_id,
+          )
+        except ValueError:
+          raise
+        except Exception as e:  # pylint: disable=broad-exception-caught
+          print(
+              f"Warning: Failed to parse XProf durations for {baseline_dir}:"
+              f" {e}"
+          )
+          self.first_window_xprof_duration = []
+    else:
+      self.first_window_xprof_duration = self._extract_window_durations(
+          baseline_dir
+      ).durations
+      worst_result = self._extract_window_durations(worst_dir)
+
+    self.last_window_xprof_duration = worst_result.durations
+    return worst_result
 
   def calculate_latency_stats(
       self, times_ms: list[float], prefix: constants.TimingDomain
@@ -697,7 +914,6 @@ class SoakingRunExecutor(BaseRunExecutor):
   def augment_xprof_metrics(
       self,
       metrics: dict[str, Any],
-      has_xprof_timings: bool = True,
   ) -> None:
     """Computes soaking XProf latency (`pre_soaking_p50_ms`, `post_soaking_p50_ms`, `slowdown_ratio`).
 
@@ -706,7 +922,6 @@ class SoakingRunExecutor(BaseRunExecutor):
 
     Args:
       metrics: Metrics dictionary updated in place.
-      has_xprof_timings: Whether XProf durations are usable at all.
     """
 
     def window_p50(durations: Sequence[float]) -> Optional[float]:

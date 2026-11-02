@@ -68,6 +68,7 @@ _SWALLOWED_XPROF_PARSE_ERRORS = (
     "Error parsing local XProf trace",
     "Warning: Local XProf parsing failed",
     "Warning: Failed to parse XProf durations",
+    "Warning: Per-local-device XProf parsing failed",
 )
 
 
@@ -135,7 +136,6 @@ DEFAULT_IGNORED_KEYS: frozenset[str] = frozenset({
     "xprof_tflops_per_device",
     "wall_clock_bandwidth_per_device_gb_s",
     "xprof_bandwidth_per_device_gb_s",
-    "raw_times_ms",
     *constants.SOAKING_METRIC_KEYS,
     *constants.THERMAL_METRIC_KEYS,
     "intensity",

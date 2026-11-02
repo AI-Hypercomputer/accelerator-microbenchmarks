@@ -987,7 +987,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
             "xprof_bandwidth_per_chip_gb_s": 360.000,
             "xprof_p50_ms": 0.04812,
         },
-        raw_times_ms=[1.0],
+        timings=base.BenchmarkTimings(
+            wall_clock=base.WallClockTimings(durations_ms=[1.0])
+        ),
     )
     expected_cols = [
         "dtype",
@@ -1053,7 +1055,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
             "wall_clock_ici_roofline_efficiency_pct": 87.53075,
             "xprof_ici_roofline_efficiency_pct": 90.0,
         },
-        raw_times_ms=[1.0],
+        timings=base.BenchmarkTimings(
+            wall_clock=base.WallClockTimings(durations_ms=[1.0])
+        ),
     )
     expected_a2a_cols = [
         "dtype",

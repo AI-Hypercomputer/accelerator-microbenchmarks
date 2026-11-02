@@ -52,7 +52,7 @@ def _make_result(
     params: dict[str, Any] | None = None,
     metrics: dict[str, Any] | None = None,
     metadata: base.BenchmarkMetadata | None = None,
-    raw_times_ms: list[float] | None = None,
+    durations_ms: list[float] | None = None,
 ) -> base.BenchmarkResult:
   """Creates a dummy BenchmarkResult for testing."""
   if metadata is None:
@@ -60,7 +60,11 @@ def _make_result(
   return base.BenchmarkResult(
       metadata=metadata,
       metrics=metrics or {},
-      raw_times_ms=raw_times_ms if raw_times_ms is not None else [1.0],
+      timings=base.BenchmarkTimings(
+          wall_clock=base.WallClockTimings(
+              durations_ms=durations_ms if durations_ms is not None else [1.0]
+          )
+      ),
   )
 
 

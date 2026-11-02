@@ -422,7 +422,9 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
             "xprof_bandwidth_per_chip_gb_s": 7600.000,
             "xprof_p50_ms": 0.06543,
         },
-        raw_times_ms=[1.0],
+        timings=base.BenchmarkTimings(
+            wall_clock=base.WallClockTimings(durations_ms=[1.0])
+        ),
     )
     expected_cols = [
         "dtype",

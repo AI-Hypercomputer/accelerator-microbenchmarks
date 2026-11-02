@@ -251,7 +251,9 @@ class TestRunner(absltest.TestCase):
                   mock_bench_instance.run.return_value = base.BenchmarkResult(
                       metadata=mock_metadata,
                       metrics={"avg_ms": 1.0},
-                      raw_times_ms=[1.0],
+                      timings=base.BenchmarkTimings(
+                          wall_clock=base.WallClockTimings(durations_ms=[1.0])
+                      ),
                   )
                   mock_bench_instance.get_run_identifier.return_value = "run_1"
                   mock_bench_cls = mock.MagicMock(
@@ -320,7 +322,9 @@ class TestRunner(absltest.TestCase):
                 mock_bench_instance.run.return_value = base.BenchmarkResult(
                     metadata=mock_metadata,
                     metrics={"avg_ms": 1.0},
-                    raw_times_ms=[1.0],
+                    timings=base.BenchmarkTimings(
+                        wall_clock=base.WallClockTimings(durations_ms=[1.0])
+                    ),
                 )
                 mock_bench_instance.get_run_identifier.return_value = "run_1"
                 mock_bench_cls = mock.MagicMock(
@@ -385,7 +389,9 @@ class TestRunner(absltest.TestCase):
                 mock_bench_instance.run.return_value = base.BenchmarkResult(
                     metadata=mock_metadata,
                     metrics={"avg_ms": 1.0},
-                    raw_times_ms=[1.0],
+                    timings=base.BenchmarkTimings(
+                        wall_clock=base.WallClockTimings(durations_ms=[1.0])
+                    ),
                 )
                 mock_bench_cls = mock.MagicMock(return_value=mock_bench_instance)
                 mock_get_benchmark.return_value = mock_bench_cls
@@ -481,7 +487,9 @@ class TestRunner(absltest.TestCase):
                   mock_result = base.BenchmarkResult(
                       metadata=mock_metadata,
                       metrics={"avg_ms": 1.0},
-                      raw_times_ms=[1.0],
+                      timings=base.BenchmarkTimings(
+                          wall_clock=base.WallClockTimings(durations_ms=[1.0])
+                      ),
                   )
                   mock_bench_instance.run.return_value = mock_result
                   mock_bench_instance.get_run_identifier.return_value = "run_1"

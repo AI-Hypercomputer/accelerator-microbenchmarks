@@ -484,7 +484,32 @@ See **[Throughput & Bandwidth Metric Conventions in `docs/BENCHMARKS.md`](docs/B
 After every run, TPUMS automatically saves two files in the specified `--output_dir`, both exporting the **exact same complete set of metrics, benchmark parameters, and platform metadata**:
 
 1. **`summary.csv`**: A flat, tabular CSV containing all reported metrics, benchmark parameters, and platform metadata for every configuration tested. Ideal for loading into Pandas, Google Sheets, or dashboarding pipelines.
-2. **`detailed.json`**: A structured JSON record containing the complete benchmark metrics, configuration parameters, platform metadata, and execution timestamps for programmatic analysis and automation pipelines.
+2. **`detailed.json`**: A structured JSON record containing the complete
+   benchmark metrics, configuration parameters, platform metadata, and
+   raw timing series for programmatic analysis and automation pipelines.
+   Each record contains `metadata` (including `params`), `metrics` (all
+   `wall_clock_*`, `xprof_*`, workload, and roofline metrics), and
+   `timings`:
+    - **`timings.wall_clock`**: `durations_ms` (raw per-step wall-clock
+      latencies in ms).
+    - **`timings.xprof`**: `null` when XProf timing is disabled;
+      otherwise:
+        - **`durations_ms`**: The per-step XProf series (ms) behind the
+          headline `xprof_*` metrics.
+        - **`measured_device`**: The device behind that series, as
+          `process_{process_index}/TPU:{local_hardware_id}`. It is `null`
+          when no XProf data was parsed, for `global_slowest_per_step`
+          (which takes the per-step maximum across all devices), and for
+          host-side timing (`host_to_device` and `device_to_host`).
+        - **`metrics_per_local_device`**: XProf latency summary
+          (`p50_ms`, `avg_ms`, `p90_ms`, `std_ms`)
+          of each local device in `get_devices_to_measure()` (all local
+          devices by default, or the single target device for `hbm`),
+          keyed by `process_{process_index}/TPU:{local_hardware_id}`. It
+          is `null` when any of those devices has no XProf data, for
+          host-side timing (`host_to_device` and `device_to_host`), and
+          for `device_to_device` (its owner-host series is broadcast to
+          all hosts).
 
 <a id="profiling-traces-tensorboard--xprof"></a>
 ### Profiling Traces (TensorBoard / XProf)

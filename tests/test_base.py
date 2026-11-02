@@ -382,18 +382,25 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIsNotNone(result.metadata.platform_info)
     self.assertEqual(result.metadata.hardware_spec, hw_spec)
     self.assertIsNone(result.metadata.xprof_config)
+    self.assertLen(result.timings.wall_clock.durations_ms, 5)
+    self.assertIsNone(result.timings.xprof)
     # XProf run counts are omitted entirely when xprof_timing is disabled.
     self.assertNotIn("xprof_captured_runs", result.metrics)
     self.assertNotIn("xprof_expected_runs", result.metrics)
 
     # Validate Roofline values are NOT computed by default for NONE mode
-    self.assertNotIn("roofline_tflops_limit_per_device", result.metrics)
     self.assertNotIn(
-        "wall_clock_compute_roofline_efficiency_pct", result.metrics
+        "roofline_tflops_limit_per_device",
+        result.metrics,
+    )
+    self.assertNotIn(
+        "wall_clock_compute_roofline_efficiency_pct",
+        result.metrics,
     )
     self.assertNotIn("peak_hbm_bw_per_device_gb_s", result.metrics)
     self.assertNotIn(
-        "wall_clock_memory_roofline_efficiency_pct", result.metrics
+        "wall_clock_memory_roofline_efficiency_pct",
+        result.metrics,
     )
 
   def test_run_calls_teardown_on_success(self):
@@ -453,11 +460,18 @@ class BaseBenchmarkTest(absltest.TestCase):
     bm = ComputeDummyBenchmark(config=config, hardware_spec=hw_spec)
     result = bm.run()
 
-    self.assertIn("roofline_tflops_limit_per_device", result.metrics)
-    self.assertIn("wall_clock_compute_roofline_efficiency_pct", result.metrics)
+    self.assertIn(
+        "roofline_tflops_limit_per_device",
+        result.metrics,
+    )
+    self.assertIn(
+        "wall_clock_compute_roofline_efficiency_pct",
+        result.metrics,
+    )
     self.assertIn("peak_hbm_bw_per_device_gb_s", result.metrics)
     self.assertNotIn(
-        "wall_clock_memory_roofline_efficiency_pct", result.metrics
+        "wall_clock_memory_roofline_efficiency_pct",
+        result.metrics,
     )
 
   @mock.patch("jax.profiler.trace")
@@ -520,10 +534,27 @@ class BaseBenchmarkTest(absltest.TestCase):
 
     # Assert XProf metrics correctly reflect the mocked XProf durations
     self.assertEqual(result.metrics["xprof_avg_ms"], 5.0)
-    self.assertEqual(result.metrics["xprof_url"], "http://mock_xprof_url")
+    self.assertEqual(
+        result.metrics["xprof_url"],
+        "http://mock_xprof_url",
+    )
     self.assertEqual(result.metadata.xprof_config, xprof_config)
+    self.assertEqual(result.timings.xprof.durations_ms, [5.0] * 5)
+    self.assertEqual(result.timings.xprof.measured_device, "process_0/TPU:0")
+    self.assertEqual(
+        result.timings.xprof.metrics_per_local_device,
+        {
+            "process_0/TPU:0": {
+                "p50_ms": 5.0,
+                "avg_ms": 5.0,
+                "p90_ms": 5.0,
+                "std_ms": 0.0,
+            }
+        },
+    )
 
     mock_upload.assert_called_once()
+    self.mock_load_trace.assert_called_once()
     mock_parse_durations.assert_called_once()
 
   @mock.patch.object(
@@ -557,12 +588,15 @@ class BaseBenchmarkTest(absltest.TestCase):
         xprof_timing=True, xprof_dir="/tmp/test_xprof"
     )
     bm = HostCpuBenchmark(config=config, xprof_config=xprof_config)
-    bm.run()
+    result = bm.run()
 
     mock_parse_durations.assert_called_once()
     self.assertIsNone(
         mock_parse_durations.call_args.kwargs.get("local_device_id")
     )
+    self.assertEqual(result.timings.xprof.durations_ms, [2.0])
+    self.assertIsNone(result.timings.xprof.measured_device)
+    self.assertIsNone(result.timings.xprof.metrics_per_local_device)
 
   @mock.patch.object(
       profiler.XprofTrace, "device_step_durations_ms", autospec=True
@@ -593,6 +627,10 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_parse_durations.assert_called_once()
     self.assertIsNone(result.metrics["xprof_avg_ms"])
     self.assertIsNone(result.metrics["xprof_p50_ms"])
+    # No XProf data: neither a measured device nor zero-filled device stats.
+    self.assertEqual(result.timings.xprof.durations_ms, [])
+    self.assertIsNone(result.timings.xprof.measured_device)
+    self.assertIsNone(result.timings.xprof.metrics_per_local_device)
     self.assertGreater(result.metrics["wall_clock_avg_ms"], 0.0)
     self.assertEqual(result.metrics["xprof_captured_runs"], 0)
     self.assertEqual(result.metrics["xprof_expected_runs"], 1)
@@ -633,7 +671,7 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_trace.return_value = contextlib.nullcontext()
     mock_upload.return_value = "http://mock_xprof_url"
     mock_broadcast.side_effect = [
-        np.int32(3),
+        np.array([3, 0], dtype=np.int32),
         np.array([4.0, 4.1, 4.5], dtype=np.float32),
     ]
 
@@ -658,6 +696,8 @@ class BaseBenchmarkTest(absltest.TestCase):
     # Captured run count is derived from the broadcast owner durations
     # (the non-owner's local parse is skipped).
     self.assertEqual(result.metrics["xprof_captured_runs"], 3)
+    self.assertEqual(result.timings.xprof.measured_device, "process_0/TPU:0")
+    self.assertIsNone(result.timings.xprof.metrics_per_local_device)
 
     with self.subTest(
         "value_error_propagates_in_measured_device_or_first_mode"
@@ -855,8 +895,9 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertEqual(summary_rows[0]["xprof_expected_runs"], "4")
     with open(os.path.join(output_dir, "detailed.json")) as f:
       detailed = json.load(f)
-    self.assertEqual(detailed[0]["metrics"]["xprof_captured_runs"], 2)
-    self.assertEqual(detailed[0]["metrics"]["xprof_expected_runs"], 4)
+    measurement = detailed[0]
+    self.assertEqual(measurement["metrics"]["xprof_captured_runs"], 2)
+    self.assertEqual(measurement["metrics"]["xprof_expected_runs"], 4)
 
   @mock.patch("jax.experimental.multihost_utils.broadcast_one_to_all")
   @mock.patch("jax.experimental.multihost_utils.process_allgather")
@@ -920,9 +961,31 @@ class BaseBenchmarkTest(absltest.TestCase):
     mock_broadcast.assert_not_called()
     self.assertEqual(mock_allgather.call_count, 2)
     self.assertAlmostEqual(result.metrics["xprof_p50_ms"], 25.0, places=4)
-    self.assertAlmostEqual(result.metrics["xprof_avg_ms"], 70.0 / 3.0, places=4)
     self.assertAlmostEqual(
-        result.metrics["xprof_bandwidth_per_chip_gb_s"], 40.0, places=4
+        result.metrics["xprof_avg_ms"],
+        70.0 / 3.0,
+        places=4,
+    )
+    self.assertAlmostEqual(
+        result.metrics["xprof_bandwidth_per_chip_gb_s"],
+        40.0,
+        places=4,
+    )
+    self.assertEqual(result.timings.xprof.durations_ms, [15.0, 25.0, 30.0])
+    self.assertIsNone(result.timings.xprof.measured_device)
+    # Per-local-device entries are latency-only and keyed by this host.
+    self.assertEqual(
+        {
+            dev: entry["p50_ms"]
+            for dev, entry in (
+                result.timings.xprof.metrics_per_local_device.items()
+            )
+        },
+        {"process_1/TPU:0": 20.0, "process_1/TPU:1": 18.0},
+    )
+    self.assertCountEqual(
+        result.timings.xprof.metrics_per_local_device["process_1/TPU:0"],
+        ["p50_ms", "avg_ms", "p90_ms", "std_ms"],
     )
 
   @mock.patch("jax.experimental.multihost_utils.process_allgather")
@@ -1155,7 +1218,7 @@ class BaseBenchmarkTest(absltest.TestCase):
     metrics = {"wall_clock_bandwidth_per_device_gb_s": 50.0}
     # pylint: disable=protected-access
     # Simulate empty duration fallback (synced_avg = 0.0)
-    result_metrics = bm._apply_xprof_timing_and_sync(metrics)
+    result_metrics, _ = bm._apply_xprof_timing_and_sync(metrics)
 
     # Wall clock throughput remains intact!
     self.assertEqual(
@@ -1166,6 +1229,134 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIsNone(result_metrics["xprof_bandwidth_per_device_gb_s"])
     self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result_metrics)
     self.assertNotIn("xprof_tflops_per_device", result_metrics)
+
+  @mock.patch.object(
+      profiler.XprofTrace, "device_step_durations_ms", autospec=True
+  )
+  @mock.patch(
+      "accelerator_microbenchmarks.core.profiler.upload_xprof_trace"
+  )
+  @mock.patch("jax.profiler.trace")
+  def test_xprof_timings_by_mode(
+      self, mock_trace, mock_upload, mock_parse_durations
+  ):
+    """Verifies one trace load per run and timings.xprof per mode."""
+
+    class SingleDeviceDummyBenchmark(DummyBenchmark):
+      """Overrides get_devices_to_measure like HBMBandwidthBenchmark."""
+
+      def get_device_to_measure(self):
+        return jax.local_devices()[1]
+
+      def get_devices_to_measure(self):
+        return [self.get_device_to_measure()]
+
+    fake_devs = [
+        mock.MagicMock(process_index=0, local_hardware_id=0),
+        mock.MagicMock(process_index=0, local_hardware_id=1),
+    ]
+    mock_trace.return_value = contextlib.nullcontext()
+    mock_upload.return_value = None
+    mock_parse_durations.side_effect = (
+        lambda _trace, local_device_id: [2.0, 2.0, 2.0]
+        if local_device_id == 0
+        else [4.0, 4.0, 4.0]
+    )
+
+    def run(benchmark_cls, aggregation):
+      self.mock_load_trace.reset_mock()
+      mock_parse_durations.reset_mock()
+      result = benchmark_cls(
+          config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              xprof_dir="/tmp/test_xprof",
+              device_timing_aggregation=aggregation,
+          ),
+      ).run()
+      # Parse-once: one trace load shared by every per-device parse.
+      self.mock_load_trace.assert_called_once()
+      return result
+
+    with mock.patch.object(jax, "local_devices", return_value=fake_devs):
+      res_first = run(
+          DummyBenchmark,
+          constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST,
+      )
+      self.assertEqual(mock_parse_durations.call_count, 2)
+      res_slowest = run(
+          DummyBenchmark,
+          constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE,
+      )
+      self.assertEqual(mock_parse_durations.call_count, 2)
+      res_single = run(
+          SingleDeviceDummyBenchmark,
+          constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST,
+      )
+      mock_parse_durations.assert_called_once()
+
+    self.assertEqual(res_first.timings.xprof.measured_device, "process_0/TPU:0")
+    self.assertEqual(res_first.timings.xprof.durations_ms, [2.0, 2.0, 2.0])
+    self.assertEqual(
+        res_slowest.timings.xprof.measured_device, "process_0/TPU:1"
+    )
+    self.assertEqual(res_slowest.timings.xprof.durations_ms, [4.0, 4.0, 4.0])
+    self.assertEqual(
+        res_single.timings.xprof.measured_device, "process_0/TPU:1"
+    )
+    self.assertEqual(res_single.timings.xprof.durations_ms, [4.0, 4.0, 4.0])
+    expected_per_local_device = {
+        "process_0/TPU:0": {
+            "p50_ms": 2.0,
+            "avg_ms": 2.0,
+            "p90_ms": 2.0,
+            "std_ms": 0.0,
+        },
+        "process_0/TPU:1": {
+            "p50_ms": 4.0,
+            "avg_ms": 4.0,
+            "p90_ms": 4.0,
+            "std_ms": 0.0,
+        },
+    }
+    for result in (res_first, res_slowest):
+      self.assertEqual(
+          result.timings.xprof.metrics_per_local_device,
+          expected_per_local_device,
+      )
+    # get_devices_to_measure() override: a one-entry map for the target device.
+    self.assertEqual(
+        res_single.timings.xprof.metrics_per_local_device,
+        {"process_0/TPU:1": expected_per_local_device["process_0/TPU:1"]},
+    )
+
+    output_dir = self.create_tempdir().full_path
+    report.save_output([res_first], output_dir=output_dir)
+    with open(os.path.join(output_dir, "detailed.json")) as f:
+      detailed = json.load(f)[0]
+    self.assertEqual(
+        detailed["timings"]["xprof"],
+        {
+            "durations_ms": [2.0, 2.0, 2.0],
+            "measured_device": "process_0/TPU:0",
+            "metrics_per_local_device": expected_per_local_device,
+        },
+    )
+    self.assertLen(detailed["timings"]["wall_clock"]["durations_ms"], 3)
+
+  def test_get_devices_to_measure_rejects_non_local_devices(self):
+    """Verifies per-device collection raises on a device of another process."""
+
+    class RemoteDeviceDummyBenchmark(DummyBenchmark):
+
+      def get_devices_to_measure(self):
+        return [mock.MagicMock(local_hardware_id=0)]
+
+    bm = RemoteDeviceDummyBenchmark(
+        xprof_config=base.XprofConfig(xprof_timing=True)
+    )
+    with self.assertRaisesRegex(ValueError, "not local to process"):
+      bm.executor.get_xprof_durations("/tmp/fake")
 
   def test_device_timing_aggregation_validation(self):
     """Verifies supported_device_timing_aggregations and validation behavior."""

@@ -441,7 +441,9 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
             "wall_clock_p50_ms": 0.4200,
             "xprof_p50_ms": 0.4100,
         },
-        raw_times_ms=[1.0],
+        timings=base.BenchmarkTimings(
+            wall_clock=base.WallClockTimings(durations_ms=[1.0])
+        ),
     )
     expected_cols = [
         "in_dtype",

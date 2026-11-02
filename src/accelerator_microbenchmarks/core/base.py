@@ -221,12 +221,36 @@ class BenchmarkMetadata:
 
 
 @dataclasses.dataclass
+class WallClockTimings:
+  """Host wall-clock timings of a benchmark run."""
+
+  durations_ms: list[float]
+
+
+@dataclasses.dataclass
+class XprofTimings:
+  """XProf hardware timings of a benchmark run."""
+
+  durations_ms: list[float]
+  measured_device: Optional[str] = None
+  metrics_per_local_device: Optional[dict[str, dict[str, float]]] = None
+
+
+@dataclasses.dataclass
+class BenchmarkTimings:
+  """All timings for a benchmark run."""
+
+  wall_clock: WallClockTimings
+  xprof: Optional[XprofTimings] = None
+
+
+@dataclasses.dataclass
 class BenchmarkResult:
-  """Consolidated result of a benchmark run."""
+  """Results of a benchmark run."""
 
   metadata: BenchmarkMetadata
   metrics: dict[str, Any]
-  raw_times_ms: list[float]
+  timings: BenchmarkTimings
 
 
 TConfig = TypeVar("TConfig", bound=BaseBenchmarkParams)
@@ -405,6 +429,19 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     """Returns the local JAX Device to observe in XProf (default: local device 0)."""
     return jax.local_devices()[self.DEFAULT_LOCAL_DEVICE_ID]
 
+  def get_devices_to_measure(self) -> list[jax.Device]:
+    """Returns the local JAX Devices the workload runs on (default: all).
+
+    XProf per-device durations (`timings.xprof.metrics_per_local_device`,
+    `local_slowest_device`, and the per-host stage of
+    `global_slowest_per_step`) are collected over exactly these devices, in
+    this order. Every device must be local to this process. Single-device
+    benchmarks (`HBMBandwidthBenchmark`) return `[get_device_to_measure()]`; a
+    future HBM `scope: device|chip|host` would map onto this method. This is not
+    used for `xprof_target_host_cpu` or `requires_multihost_sync` benchmarks.
+    """
+    return jax.local_devices()
+
   @property
   def requires_multihost_sync(self) -> bool:
     """Whether this benchmark targets a single remote host and requires broadcast to collect metrics.
@@ -469,10 +506,39 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         f"{reason_suffix}."
     )
 
+  def _summarize_metrics_per_local_device(
+      self,
+      per_local_device_durations: Optional[
+          dict[executor.XprofDevice, list[float]]
+      ],
+  ) -> Optional[dict[str, dict[str, float]]]:
+    """Summarizes XProf latency per measured local device for `detailed.json`."""
+    if per_local_device_durations is None:
+      return None
+    latency_keys = [f"{stat}_ms" for stat in ("p50", "avg", "p90", "std")]
+    summary: dict[str, dict[str, float]] = {}
+    for device, durations in per_local_device_durations.items():
+      stats = self.calculate_latency_stats(
+          durations, prefix=constants.TimingDomain.XPROF
+      )
+      summary[device.label] = {
+          key: stats[f"{constants.TimingDomain.XPROF}_{key}"]
+          for key in latency_keys
+      }
+    return summary
+
   def _apply_xprof_timing_and_sync(
       self, metrics: dict[str, Any]
-  ) -> dict[str, Any]:
-    """Parses XProf trace, syncs across hosts, and recalculates metrics."""
+  ) -> tuple[dict[str, Any], executor.XprofParseResult]:
+    """Parses XProf trace, syncs across hosts, and recalculates metrics.
+
+    Args:
+      metrics: Wall-clock metrics, updated in place with `xprof_*` metrics.
+
+    Returns:
+      The updated metrics and the XProf parse result behind them (empty
+      durations if local trace parsing failed).
+    """
     xprof_dir = self._xprof_dir_actual
     cns_dir = self._xprof_dir_cns
 
@@ -486,13 +552,14 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     ]
     print(f"[Host {jax.process_index()}] All devices: {all_devs_str}")
     print(f"[Host {jax.process_index()}] Local devices: {local_devs_str}")
-    durations: list[float] = []
+    xprof_result = executor.XprofParseResult(durations=[])
     try:
-      durations = self.executor.get_xprof_durations(xprof_dir)
+      xprof_result = self.executor.get_xprof_durations(xprof_dir)
     except ValueError:
       raise
     except Exception as e:  # pylint: disable=broad-exception-caught
       print(f"Error parsing local XProf trace: {e}")
+    durations = xprof_result.durations
 
     xprof_avg, xprof_p50, xprof_p90, xprof_std = 0.0, 0.0, 0.0, 0.0
     if durations:
@@ -520,7 +587,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
           f"{constants.TimingDomain.XPROF}_p90_ms": xprof_p90,
           f"{constants.TimingDomain.XPROF}_std_ms": xprof_std,
       })
-      self.executor.augment_xprof_metrics(metrics, has_xprof_timings=True)
+      self.executor.augment_xprof_metrics(metrics)
       metrics.update(
           self.calculate_throughput_metrics(
               latency_ms=xprof_p50, prefix=constants.TimingDomain.XPROF
@@ -537,7 +604,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
           f"{constants.TimingDomain.XPROF}_p90_ms": None,
           f"{constants.TimingDomain.XPROF}_std_ms": None,
       })
-      self.executor.augment_xprof_metrics(metrics, has_xprof_timings=False)
+      self.executor.augment_xprof_metrics(metrics)
       for wall_clock_key, xprof_key in (
           (
               f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_device_gb_s",
@@ -566,7 +633,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
       ):
         if wall_clock_key in metrics:
           metrics[xprof_key] = None
-    return metrics
+    return metrics, xprof_result
 
   def derive_chip_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
     """Derives per-chip metrics from per-device metrics for available domains."""
@@ -681,10 +748,22 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
     # 4. Finalize Results
     # Calculate host-side metrics
-    metrics = self.calculate_metrics(exec_result.raw_times_ms)
+    metrics = self.calculate_metrics(exec_result.durations_ms)
+    xprof_timings: Optional[XprofTimings] = None
 
     if self.xprof_config.xprof_timing:
-      metrics = self._apply_xprof_timing_and_sync(metrics)
+      metrics, xprof_result = self._apply_xprof_timing_and_sync(metrics)
+      xprof_timings = XprofTimings(
+          durations_ms=xprof_result.durations,
+          measured_device=(
+              xprof_result.measured_device.label
+              if xprof_result.measured_device is not None
+              else None
+          ),
+          metrics_per_local_device=self._summarize_metrics_per_local_device(
+              xprof_result.per_local_device_durations
+          ),
+      )
       expected = exec_result.xprof_expected_runs
       if expected is not None:
         metrics["xprof_expected_runs"] = expected
@@ -722,9 +801,11 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         test_name=f"{benchmark_name}_{int(time.time())}",
         start_time=start_ts,
         end_time=end_ts,
-        params=dataclasses.asdict(self.config)
-        if dataclasses.is_dataclass(self.config)
-        else {},
+        params=(
+            dataclasses.asdict(self.config)
+            if dataclasses.is_dataclass(self.config)
+            else {}
+        ),
         # TODO(simonleesyuan): Platform description is independent of benchmark
         # execution logic; move platform_info capture out of BaseBenchmark into
         # the runner orchestrator.
@@ -740,5 +821,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     return BenchmarkResult(
         metadata=metadata,
         metrics=metrics,
-        raw_times_ms=exec_result.raw_times_ms,
+        timings=BenchmarkTimings(
+            wall_clock=WallClockTimings(durations_ms=exec_result.durations_ms),
+            xprof=xprof_timings,
+        ),
     )

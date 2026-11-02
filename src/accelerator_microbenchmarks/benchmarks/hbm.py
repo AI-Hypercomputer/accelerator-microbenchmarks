@@ -200,6 +200,10 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
   def get_device_to_measure(self) -> jax.Device:
     return jax.local_devices()[self.config.device_id]
 
+  def get_devices_to_measure(self) -> list[jax.Device]:
+    """HBM kernels run only on the configured `device_id`."""
+    return [self.get_device_to_measure()]
+
   @property
   def supported_device_timing_aggregations(
       self,

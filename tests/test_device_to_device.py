@@ -374,7 +374,9 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
             "wall_clock_p50_ms": 12.3456,
             "xprof_p50_ms": 12.3400,
         },
-        raw_times_ms=[1.0],
+        timings=base.BenchmarkTimings(
+            wall_clock=base.WallClockTimings(durations_ms=[1.0])
+        ),
     )
     expected_cols = [
         "dtype",
@@ -449,7 +451,9 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
             "wall_clock_p50_ms": 12.3456,
             "xprof_p50_ms": 12.3400,
         },
-        raw_times_ms=[12.3456],
+        timings=base.BenchmarkTimings(
+            wall_clock=base.WallClockTimings(durations_ms=[12.3456])
+        ),
     )
     res2 = base.BenchmarkResult(
         metadata=base.BenchmarkMetadata(
@@ -472,7 +476,9 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
             "wall_clock_p50_ms": 12.1000,
             "xprof_p50_ms": 12.0000,
         },
-        raw_times_ms=[12.1000],
+        timings=base.BenchmarkTimings(
+            wall_clock=base.WallClockTimings(durations_ms=[12.1000])
+        ),
     )
     df = report.results_to_dataframe([res1, res2])
     rep = report.generate_benchmark_report(df)

@@ -414,7 +414,9 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
             "wall_clock_p50_ms": 14.0274,
             "xprof_p50_ms": 14.0100,
         },
-        raw_times_ms=[1.0],
+        timings=base.BenchmarkTimings(
+            wall_clock=base.WallClockTimings(durations_ms=[1.0])
+        ),
     )
     df = report.results_to_dataframe([res])
     table = report.format_benchmark_table(
