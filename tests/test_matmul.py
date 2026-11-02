@@ -170,6 +170,26 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         np.asarray(jax.random.normal(k5, (64, 64)).astype(jnp.bfloat16)),
     )
 
+  def test_reset_data_regenerates_inputs_under_single_host(self):
+    """`reset_data` returns fresh, equal, ready inputs and deletes the old ones."""
+    self._setup_benchmark()
+    with mock.patch.object(
+        single_host, "is_single_host_tpu_init", return_value=True
+    ):
+      inputs = self.bm.generate_inputs()
+      old = np.asarray(inputs[0])
+      new_inputs = self.bm.reset_data(*inputs)
+    self.assertLen(new_inputs, len(inputs))
+    self.assertIsNot(new_inputs[0], inputs[0])
+    self.assertTrue(inputs[0].is_deleted())
+    np.testing.assert_array_equal(np.asarray(new_inputs[0]), old)
+
+  def test_reset_data_reuses_inputs_by_default(self):
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
+    for new, old in zip(self.bm.reset_data(*inputs), inputs, strict=True):
+      self.assertIs(new, old)
+
   def test_run_op(self):
     """Test run op without scaling factors."""
     self._setup_benchmark()

@@ -254,6 +254,16 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
 
     return (a, b, *sf_args, *acc_args)
 
+  def reset_data(self, *inputs, **kwargs) -> tuple[Any, ...]:
+    if not single_host.is_single_host_tpu_init():
+      return inputs
+    for arr in inputs:
+      if arr is not None:
+        arr.delete()
+    inputs = self._generate_inputs_single_host()
+    jax.block_until_ready(inputs)
+    return inputs
+
   def generate_inputs(self) -> tuple[Any, ...]:
     if single_host.is_single_host_tpu_init():
       return self._generate_inputs_single_host()
@@ -416,6 +426,10 @@ class GemmThrottlingBenchmark(GeneralizedGemmBenchmark):
           (constants.PSTATE_REQUESTED, report.format_str),
       )
   )
+
+  def reset_data(self, *inputs, **kwargs) -> tuple[Any, ...]:
+    # Soaking reuses the inputs so the MXU stays at full duty cycle.
+    return inputs
 
   def derive_chip_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
     metrics = super().derive_chip_metrics(metrics)
