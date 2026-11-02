@@ -6,6 +6,7 @@ import os
 from typing import Any, Callable, Optional
 
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import single_host
 
 import os
 MARKER = constants.MARKER
@@ -91,6 +92,24 @@ def _extract_candidate_events(
   return candidates
 
 
+def _event_start_us(event: dict[str, Any]) -> float:
+  """Returns the event start time in microseconds."""
+  if single_host.is_single_host_tpu_init():
+    device_offset_ps = event.get("args", {}).get("device_offset_ps")
+    if device_offset_ps is not None:
+      return float(device_offset_ps) / 1e6
+  return float(event["ts"])
+
+
+def _event_duration_us(event: dict[str, Any]) -> float:
+  """Returns the event duration in microseconds."""
+  if single_host.is_single_host_tpu_init():
+    device_duration_ps = event.get("args", {}).get("device_duration_ps")
+    if device_duration_ps:
+      return float(device_duration_ps) / 1e6
+  return float(event["dur"])
+
+
 def _calculate_step_durations_ms(
     all_events: list[dict[str, Any]],
     candidate_events: list[dict[str, Any]],
@@ -132,15 +151,17 @@ def _calculate_step_durations_ms(
     return durations_ms
 
   # 4. PRIMARY: Bound target events within each enclosure (earliest start to latest end).
-  bounding_events.sort(key=lambda x: float(x["ts"]))
+  bounding_events.sort(key=_event_start_us)
   durations_ms = []
   for c in bounding_events:
-    c_start = float(c["ts"])
-    c_end = c_start + float(c["dur"])
-    in_step = [e for e in target_events if c_start <= float(e["ts"]) <= c_end]
+    c_start = _event_start_us(c)
+    c_end = c_start + _event_duration_us(c)
+    in_step = [
+        e for e in target_events if c_start <= _event_start_us(e) <= c_end
+    ]
     if in_step:
-      s_start = min(float(e["ts"]) for e in in_step)
-      s_end = max(float(e["ts"]) + float(e["dur"]) for e in in_step)
+      s_start = min(_event_start_us(e) for e in in_step)
+      s_end = max(_event_start_us(e) + _event_duration_us(e) for e in in_step)
       durations_ms.append((s_end - s_start) / 1000.0)
 
   print(

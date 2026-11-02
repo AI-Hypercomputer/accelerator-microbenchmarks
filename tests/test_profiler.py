@@ -7,6 +7,7 @@ from unittest import mock
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import profiler
+from accelerator_microbenchmarks.core import single_host
 import os
 
 
@@ -59,6 +60,46 @@ class ProfilerTest(absltest.TestCase):
     )
     # Must be sorted chronologically: Step 1 (1.0 ms), Step 2 (2.0 ms), Step 3 (3.0 ms)
     self.assertEqual(durations, [1.0, 2.0, 3.0])
+
+  def test_calculate_step_durations_ms_prefers_device_ps_fields(self):
+    """Step bounds and ends come from `device_offset_ps`/`device_duration_ps`."""
+    all_events = [
+        # Corrupted timeline ts/dur (both at ts=1000, dur=0), distinct in ps.
+        {"pid": 1, "name": "jit_step1", "ts": 1000, "dur": 0,
+         "args": {"device_offset_ps": 1_000_000_000,
+                  "device_duration_ps": 1_500_000_000}},
+        {"pid": 1, "name": "jit_step2", "ts": 1000, "dur": 0,
+         "args": {"device_offset_ps": 3_000_000_000,
+                  "device_duration_ps": 2_500_000_000}},
+        # No ps fields: fall back to ts/dur.
+        {"pid": 1, "name": "jit_step3", "ts": 15000, "dur": 5000},
+    ]
+    candidate_events = [
+        {"pid": 1, "ts": 1000, "dur": 0,
+         "args": {"device_offset_ps": 1_100_000_000,
+                  "device_duration_ps": 1_000_000_000}},
+        {"pid": 1, "ts": 1000, "dur": 0,
+         "args": {"device_offset_ps": 3_100_000_000,
+                  "device_duration_ps": 2_000_000_000}},
+        {"pid": 1, "ts": 16000, "dur": 3000, "args": {}},
+    ]
+    with mock.patch.object(
+        single_host, "is_single_host_tpu_init", return_value=True
+    ):
+      durations = profiler._calculate_step_durations_ms(  # pylint: disable=protected-access
+          all_events=all_events,
+          candidate_events=candidate_events,
+          target_pid=1,
+      )
+    self.assertEqual(durations, [1.0, 2.0, 3.0])
+
+    # Flag off: uses ts/dur verbatim.
+    durations_default = profiler._calculate_step_durations_ms(  # pylint: disable=protected-access
+        all_events=all_events,
+        candidate_events=candidate_events,
+        target_pid=1,
+    )
+    self.assertEqual(durations_default, [0.0, 0.0, 3.0])
 
 
   @mock.patch.object(os, "walk")
