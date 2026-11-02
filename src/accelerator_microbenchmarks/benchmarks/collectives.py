@@ -545,7 +545,7 @@ class DcnCollectiveBenchmark(
   def setup(self):
     devices = jax.devices()
     device_key = lambda d: (*d.coords, int(d.core_on_chip))
-    slice_ids = sorted({getattr(d, "slice_index", 0) for d in devices})
+    slice_ids = sorted({platform.get_device_slice_index(d) for d in devices})
     if len(slice_ids) < 2:
       raise ValueError(
           f"{type(self).__name__} requires at least 2 slices for DCN "
@@ -554,7 +554,7 @@ class DcnCollectiveBenchmark(
       )
     slices = [
         sorted(
-            [d for d in devices if getattr(d, "slice_index", 0) == sid],
+            [d for d in devices if platform.get_device_slice_index(d) == sid],
             key=device_key,
         )
         for sid in slice_ids
@@ -963,7 +963,10 @@ class AllToAllBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
         raise ValueError(f"no ICI spec for {self.hardware_spec.name}")
       if any(getattr(d, "coords", None) is None for d in topology_devices):
         raise ValueError("devices have no physical chip coordinates (non-TPU)")
-      if len({getattr(d, "slice_index", 0) for d in topology_devices}) > 1:
+      if (
+          len({platform.get_device_slice_index(d) for d in topology_devices})
+          > 1
+      ):
         raise ValueError(
             "multi-slice run; cross-slice traffic uses DCN, not ICI"
         )

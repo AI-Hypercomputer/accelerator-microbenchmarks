@@ -25,11 +25,18 @@ class PlatformInfo:
 
   # Canonical TPU version, as resolved by `TpuVersion.from_device_kind`.
   tpu_type: system.TpuVersion
+  # ICI topology of a single slice; every slice of a multi-slice run has the
+  # same topology.
   topology: str
   total_devices: int
   local_devices: int
   process_count: int
   process_index: int
+  # Number of slices connected over the Data Center Network (DCN); 1 for
+  # single-slice runs.
+  slice_count: int
+  # Slice that this process's local devices belong to; 0 for single-slice runs.
+  slice_index: int
   python_version: str
   jax_version: str
   jaxlib_version: str
@@ -85,7 +92,13 @@ def _get_topology(
   """Computes slice topology from device coordinates bounding box."""
   if not devices:
     return "unknown"
-  coords_list = [getattr(d, "coords", None) for d in devices]
+  # Multi-slice runs repeat per-slice chip coordinates across slices; bound a
+  # single slice's devices so the result is always the per-slice ICI topology.
+  first_slice = get_device_slice_index(devices[0])
+  slice_devices = [
+      d for d in devices if get_device_slice_index(d) == first_slice
+  ]
+  coords_list = [getattr(d, "coords", None) for d in slice_devices]
   if any(c is None for c in coords_list):
     return "unknown"
   coords_list = [c for c in coords_list if c is not None]
@@ -112,6 +125,41 @@ def _get_topology(
     dims = dims[:topology_dimension]
 
   return "x".join(str(d) for d in dims)
+
+
+def get_device_slice_index(device: jax.Device) -> int:
+  """Returns the device's DCN slice index, defaulting to 0 on single-slice/CPU."""
+  return getattr(device, "slice_index", 0)
+
+
+def _get_slice_count(devices: Sequence[jax.Device]) -> int:
+  """Returns the number of distinct DCN slices across `devices`."""
+  if not devices:
+    raise ValueError("no devices provided to compute slice_count")
+  return len({get_device_slice_index(d) for d in devices})
+
+
+def _get_local_slice_index(local_devices: Sequence[jax.Device]) -> int:
+  """Returns the slice index shared by this process's local devices.
+
+  Args:
+    local_devices: The devices attached to this process (`jax.local_devices()`).
+
+  Returns:
+    The integer slice index of this process.
+
+  Raises:
+    RuntimeError: If `local_devices` is empty or spans more than one slice.
+  """
+  if not local_devices:
+    raise RuntimeError("No local TPU devices found for current process.")
+  local_slice_indices = {get_device_slice_index(d) for d in local_devices}
+  if len(local_slice_indices) > 1:
+    raise RuntimeError(
+        "Local devices of one process span multiple slices:"
+        f" {sorted(local_slice_indices)}."
+    )
+  return local_slice_indices.pop()
 
 
 def get_platform_info() -> PlatformInfo:
@@ -161,6 +209,8 @@ def get_platform_info() -> PlatformInfo:
   local_devices = int(jax.local_device_count())
   process_count = int(jax.process_count())
   process_index = int(jax.process_index())
+  slice_count = _get_slice_count(devices)
+  slice_index = _get_local_slice_index(jax.local_devices())
 
   return PlatformInfo(
       tpu_type=tpu_version,
@@ -169,6 +219,8 @@ def get_platform_info() -> PlatformInfo:
       local_devices=local_devices,
       process_count=process_count,
       process_index=process_index,
+      slice_count=slice_count,
+      slice_index=slice_index,
       python_version=py_platform.python_version(),
       jax_version=_get_package_version("jax"),
       jaxlib_version=_get_package_version("jaxlib"),

@@ -52,6 +52,8 @@ class TestCli(parameterized.TestCase):
           "local_devices",
           "process_count",
           "process_index",
+          "slice_count",
+          "slice_index",
           "python_version",
           "jax_version",
           "jaxlib_version",
@@ -60,6 +62,8 @@ class TestCli(parameterized.TestCase):
       self.assertEqual(set(data.keys()), expected_keys)
       self.assertEqual(data["tpu_type"], "tpu7x")
       self.assertEqual(data["topology"], "2x2x1")
+      self.assertEqual(data["slice_count"], 1)
+      self.assertEqual(data["slice_index"], 0)
       self.assertIsInstance(data["total_devices"], int)
       self.assertIsInstance(data["local_devices"], int)
       self.assertIsInstance(data["process_count"], int)

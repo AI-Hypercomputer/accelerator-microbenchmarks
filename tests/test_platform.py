@@ -87,10 +87,13 @@ class PlatformTest(absltest.TestCase):
     mock_device.platform = "tpu"
     mock_device.device_kind = "TPU v7x"
     mock_device.coords = (0, 0, 0)
+    mock_device.slice_index = 0
 
     with mock.patch("jax.distributed.initialize") as mock_dist_init, mock.patch(
         "jax.default_backend", return_value="tpu"
     ), mock.patch("jax.devices", return_value=[mock_device]), mock.patch(
+        "jax.local_devices", return_value=[mock_device]
+    ), mock.patch(
         "jax.device_count", return_value=4
     ), mock.patch(
         "jax.local_device_count", return_value=4
@@ -119,11 +122,77 @@ class PlatformTest(absltest.TestCase):
       self.assertEqual(desc.local_devices, 4)
       self.assertEqual(desc.process_count, 1)
       self.assertEqual(desc.process_index, 0)
+      self.assertEqual(desc.slice_count, 1)
+      self.assertEqual(desc.slice_index, 0)
       self.assertEqual(desc.python_version, "3.11.0")
       self.assertEqual(desc.jax_version, "0.4.30")
       self.assertEqual(desc.jaxlib_version, "0.4.30")
       self.assertEqual(desc.libtpu_version, "0.1.dev20240101")
 
+  def test_get_platform_info_multi_slice(self):
+    """Verify slice count, local slice index and per-slice topology."""
+    # Two 2x2x1 tpu7x slices; both slices reuse the same chip coordinates.
+    devices = []
+    for slice_index in range(2):
+      for x in range(2):
+        for y in range(2):
+          for core in range(2):
+            dev = mock.MagicMock()
+            dev.device_kind = "TPU7x"
+            dev.coords = (x, y, 0)
+            dev.core_on_chip = core
+            dev.slice_index = slice_index
+            devices.append(dev)
+    local_devices = [d for d in devices if d.slice_index == 1][:4]
+
+    with mock.patch("jax.distributed.initialize"), mock.patch(
+        "jax.default_backend", return_value="tpu"
+    ), mock.patch("jax.devices", return_value=devices), mock.patch(
+        "jax.local_devices", return_value=local_devices
+    ), mock.patch(
+        "jax.device_count", return_value=len(devices)
+    ), mock.patch(
+        "jax.local_device_count", return_value=len(local_devices)
+    ), mock.patch(
+        "jax.process_count", return_value=4
+    ), mock.patch(
+        "jax.process_index", return_value=2
+    ):
+      desc = platform.get_platform_info()
+
+    self.assertEqual(desc.tpu_type, system.TpuVersion.TPU7X)
+    self.assertEqual(desc.topology, "2x2x1")
+    self.assertEqual(desc.total_devices, 16)
+    self.assertEqual(desc.slice_count, 2)
+    self.assertEqual(desc.slice_index, 1)
+
+  def test_get_device_slice_index_defaults_to_zero_when_missing(self):
+    """Verify devices without a slice_index attribute (e.g. CPU) default to 0."""
+    dev_missing = mock.MagicMock(spec=[])
+    self.assertEqual(platform.get_device_slice_index(dev_missing), 0)
+
+    dev_tpu = mock.MagicMock()
+    dev_tpu.slice_index = 3
+    self.assertEqual(platform.get_device_slice_index(dev_tpu), 3)
+
+  def test_get_slice_count_empty_raises(self):
+    """Verify _get_slice_count raises ValueError on empty device sequence."""
+    with self.assertRaisesRegex(ValueError, "no devices provided"):
+      platform._get_slice_count([])
+
+  def test_get_local_slice_index_empty_raises(self):
+    """Verify _get_local_slice_index raises RuntimeError when local_devices is empty."""
+    with self.assertRaisesRegex(RuntimeError, "No local TPU devices"):
+      platform._get_local_slice_index([])
+
+  def test_get_local_slice_index_spans_slices_raises(self):
+    """Verify local devices from more than one slice raise RuntimeError."""
+    dev_0 = mock.MagicMock()
+    dev_0.slice_index = 0
+    dev_1 = mock.MagicMock()
+    dev_1.slice_index = 1
+    with self.assertRaisesRegex(RuntimeError, "span multiple slices"):
+      platform._get_local_slice_index([dev_0, dev_1])
 
   def test_get_platform_info_distributed_init_failure_ignored(self):
     """Verify get_platform_info proceeds if distributed.initialize fails."""
@@ -131,12 +200,15 @@ class PlatformTest(absltest.TestCase):
     mock_device.platform = "tpu"
     mock_device.device_kind = "TPU v6e"
     mock_device.coords = (0, 0, 0)
+    mock_device.slice_index = 0
 
     with mock.patch(
         "jax.distributed.initialize",
         side_effect=Exception("Not in distributed cluster"),
     ), mock.patch("jax.default_backend", return_value="tpu"), mock.patch(
         "jax.devices", return_value=[mock_device]
+    ), mock.patch(
+        "jax.local_devices", return_value=[mock_device]
     ), mock.patch(
         "jax.device_count", return_value=1
     ), mock.patch(
@@ -171,10 +243,13 @@ class PlatformTest(absltest.TestCase):
     mock_device.platform = "tpu"
     mock_device.device_kind = "TPU v7x"
     mock_device.coords = (0, 0, 0)
+    mock_device.slice_index = 0
 
     with mock.patch("jax.distributed.initialize"), mock.patch(
         "jax.default_backend", return_value="tpu"
     ), mock.patch("jax.devices", return_value=[mock_device]), mock.patch(
+        "jax.local_devices", return_value=[mock_device]
+    ), mock.patch(
         "jax.device_count", side_effect=ValueError("Simulated device failure")
     ):
       with self.assertRaises(ValueError) as cm:
@@ -238,6 +313,7 @@ class PlatformTest(absltest.TestCase):
       for y in range(4):
         dev = mock.MagicMock()
         dev.coords = (x, y, 0)
+        dev.slice_index = 0
         devices.append(dev)
     self.assertEqual(
         platform._get_topology(devices, topology_dimension=2), "2x4"
@@ -250,6 +326,7 @@ class PlatformTest(absltest.TestCase):
       for y in range(16):
         dev = mock.MagicMock()
         dev.coords = (x, y, 0)
+        dev.slice_index = 0
         devices.append(dev)
     self.assertEqual(
         platform._get_topology(devices, topology_dimension=2), "16x16"
@@ -263,6 +340,7 @@ class PlatformTest(absltest.TestCase):
         for _ in range(2):
           dev = mock.MagicMock()
           dev.coords = (x, y, 0)
+          dev.slice_index = 0
           devices.append(dev)
     self.assertEqual(
         platform._get_topology(devices, topology_dimension=3), "2x2x1"
@@ -276,9 +354,25 @@ class PlatformTest(absltest.TestCase):
         for z in range(4):
           dev = mock.MagicMock()
           dev.coords = (x, y, z)
+          dev.slice_index = 0
           devices.append(dev)
     self.assertEqual(
         platform._get_topology(devices, topology_dimension=3), "4x4x4"
+    )
+
+  def test_get_topology_filters_to_single_slice(self):
+    """Verify _get_topology bounds a single slice's devices."""
+    slice_0_dev = mock.MagicMock()
+    slice_0_dev.coords = (0, 0, 0)
+    slice_0_dev.slice_index = 0
+    slice_1_dev = mock.MagicMock()
+    slice_1_dev.coords = (3, 3, 0)
+    slice_1_dev.slice_index = 1
+    self.assertEqual(
+        platform._get_topology(
+            [slice_0_dev, slice_1_dev], topology_dimension=3
+        ),
+        "1x1x1",
     )
 
   def test_get_topology_fallback_unknown(self):
@@ -298,6 +392,7 @@ class PlatformTest(absltest.TestCase):
     # None coords
     dev_none_coords = mock.MagicMock()
     dev_none_coords.coords = None
+    dev_none_coords.slice_index = 0
     self.assertEqual(
         platform._get_topology([dev_none_coords], topology_dimension=2),
         "unknown",
@@ -306,8 +401,10 @@ class PlatformTest(absltest.TestCase):
     # Mismatched dimension lengths
     dev_2d = mock.MagicMock()
     dev_2d.coords = (0, 0)
+    dev_2d.slice_index = 0
     dev_3d = mock.MagicMock()
     dev_3d.coords = (0, 0, 0)
+    dev_3d.slice_index = 0
     self.assertEqual(
         platform._get_topology([dev_2d, dev_3d], topology_dimension=3),
         "unknown",

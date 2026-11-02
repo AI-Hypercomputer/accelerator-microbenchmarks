@@ -291,7 +291,7 @@ gs://<your-gcs-bucket>/tpums/<WORKLOAD_NAME>/
         └── <benchmark_case>/plugins/profile/<run>/<pod>.xplane.pb
 ```
 
-- **`summary.csv`**: Tabular summary of all executed configurations, platform metadata (`process_index`), and `xprof_*` / `wall_clock_*` metrics.
+- **`summary.csv`**: Tabular summary of all executed configurations, platform metadata (`process_index`, `slice_count`, `slice_index`), and `xprof_*` / `wall_clock_*` metrics.
 - **`detailed.json`**: Full per-iteration timings, hardware metadata, and configuration parameters.
 - **`execution.log`**: Complete stdout/stderr console log from that host.
 - **`<pod>.xplane.pb` & `<pod>.trace.json.gz`**: Exported XProf hardware trace files for TensorBoard / XProf inspection.

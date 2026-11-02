@@ -110,6 +110,8 @@ tpums platform describe
   "local_devices": 8,
   "process_count": 1,
   "process_index": 0,
+  "slice_count": 1,
+  "slice_index": 0,
   "python_version": "3.12.14",
   "jax_version": "0.10.1",
   "jaxlib_version": "0.10.1",
