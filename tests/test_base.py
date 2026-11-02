@@ -880,18 +880,7 @@ class BaseBenchmarkTest(absltest.TestCase):
     """Verifies global_slowest_per_step runs on all hosts, skips broadcast, and derives bandwidth from p50."""
 
     class MultihostCollectiveDummyBenchmark(DummyBenchmark):
-      """Dummy benchmark requiring multihost sync with bandwidth metrics."""
-
-      @property
-      def requires_multihost_sync(self) -> bool:
-        return True
-
-      def get_device_to_measure(self):
-        mock_device = mock.Mock()
-        mock_device.id = 0
-        mock_device.process_index = 0
-        mock_device.local_hardware_id = 0
-        return mock_device
+      """Dummy collective benchmark with bandwidth metrics."""
 
       def calculate_throughput_metrics(
           self, latency_ms: float, prefix: constants.TimingDomain
@@ -960,7 +949,10 @@ class BaseBenchmarkTest(absltest.TestCase):
       ):
         return {f"{prefix}_bandwidth_per_chip_gb_s": 1000.0 / latency_ms}
 
-    fake_devs = [mock.MagicMock(local_hardware_id=0)]
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
     mock_trace.return_value = contextlib.nullcontext()
     mock_upload.return_value = None
     mock_parse_durations.return_value = [15.0, 25.0, 30.0]
@@ -1001,7 +993,10 @@ class BaseBenchmarkTest(absltest.TestCase):
       mock_allgather,
   ):
     """Verifies _apply_xprof_timing_and_sync propagates ValueError under GLOBAL_SLOWEST_PER_STEP."""
-    fake_devs = [mock.MagicMock(local_hardware_id=0)]
+    fake_devs = [
+        mock.MagicMock(local_hardware_id=0),
+        mock.MagicMock(local_hardware_id=1),
+    ]
     mock_trace.return_value = contextlib.nullcontext()
     mock_upload.return_value = None
     mock_parse_durations.return_value = [15.0, 25.0, 30.0]
@@ -1171,6 +1166,132 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIsNone(result_metrics["xprof_bandwidth_per_device_gb_s"])
     self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result_metrics)
     self.assertNotIn("xprof_tflops_per_device", result_metrics)
+
+  def test_device_timing_aggregation_validation(self):
+    """Verifies supported_device_timing_aggregations and validation behavior."""
+
+    agg = constants.XprofDeviceTimingAggregation
+
+    class HostCpuDummyBenchmark(DummyBenchmark):
+
+      @property
+      def xprof_target_host_cpu(self) -> bool:
+        return True
+
+    class MultihostSyncDummyBenchmark(DummyBenchmark):
+
+      @property
+      def requires_multihost_sync(self) -> bool:
+        return True
+
+    class SingleDeviceDummyBenchmark(DummyBenchmark):
+
+      @property
+      def supported_device_timing_aggregations(
+          self,
+      ) -> frozenset[constants.XprofDeviceTimingAggregation]:
+        return frozenset({agg.MEASURED_DEVICE_OR_FIRST})
+
+    # Even on a 1-device CPU backend, a multi-device benchmark supports all 3.
+    self.assertLen(jax.local_devices(), 1)
+    default_bm = DummyBenchmark()
+    self.assertEqual(
+        default_bm.supported_device_timing_aggregations, frozenset(agg)
+    )
+    for aggregation in agg:
+      bm = DummyBenchmark(
+          xprof_config=base.XprofConfig(
+              xprof_timing=True, device_timing_aggregation=aggregation
+          )
+      )
+      bm._validate_device_timing_aggregation()  # pylint: disable=protected-access
+
+    for benchmark_cls, error_regex in (
+        (
+            HostCpuDummyBenchmark,
+            (
+                r"does not support xprof_device_timing_aggregation=.*;"
+                r" supported: measured_device_or_first \(XProf timing measures"
+                r" /host:CPU, not per-device kernels\)\."
+            ),
+        ),
+        (
+            MultihostSyncDummyBenchmark,
+            (
+                r"does not support xprof_device_timing_aggregation=.*;"
+                r" supported: measured_device_or_first \(results are already"
+                r" synced across hosts via owner broadcast\)\."
+            ),
+        ),
+        (
+            SingleDeviceDummyBenchmark,
+            (
+                r"does not support xprof_device_timing_aggregation=.*;"
+                r" supported: measured_device_or_first\."
+            ),
+        ),
+    ):
+      bm_first = benchmark_cls(
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=agg.MEASURED_DEVICE_OR_FIRST,
+          )
+      )
+      self.assertEqual(
+          bm_first.supported_device_timing_aggregations,
+          frozenset({agg.MEASURED_DEVICE_OR_FIRST}),
+      )
+      bm_first._validate_device_timing_aggregation()  # pylint: disable=protected-access
+
+      for unsupported in (
+          agg.LOCAL_SLOWEST_DEVICE,
+          agg.GLOBAL_SLOWEST_PER_STEP,
+      ):
+        with self.subTest(f"{benchmark_cls.__name__}_{unsupported}"):
+          bm = benchmark_cls(
+              xprof_config=base.XprofConfig(
+                  xprof_timing=True, device_timing_aggregation=unsupported
+              )
+          )
+          with self.assertRaisesRegex(ValueError, error_regex):
+            bm._validate_device_timing_aggregation()  # pylint: disable=protected-access
+
+  @mock.patch("jax.profiler.trace")
+  def test_run_validates_device_timing_aggregation_only_with_xprof_timing(
+      self, mock_trace
+  ):
+    """Verifies run() rejects an unsupported aggregation before setup, only with XProf."""
+
+    class MultihostSyncDummyBenchmark(DummyBenchmark):
+
+      @property
+      def requires_multihost_sync(self) -> bool:
+        return True
+
+    mock_trace.return_value = contextlib.nullcontext()
+    config = base.BaseBenchmarkParams(warmup_tries=0, num_runs=1)
+    aggregation = constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP
+    MultihostSyncDummyBenchmark(
+        config=config,
+        xprof_config=base.XprofConfig(
+            xprof_timing=False, device_timing_aggregation=aggregation
+        ),
+    ).run()
+
+    bm = MultihostSyncDummyBenchmark(
+        config=config,
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            xprof_dir="/tmp/test_xprof",
+            device_timing_aggregation=aggregation,
+        ),
+    )
+    with (
+        mock.patch.object(bm, "setup") as mock_setup,
+        self.assertRaisesRegex(ValueError, "synced across hosts"),
+    ):
+      bm.run()
+    mock_setup.assert_not_called()
 
 
 if __name__ == "__main__":

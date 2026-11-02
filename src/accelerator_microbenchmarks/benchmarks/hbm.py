@@ -200,6 +200,15 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
   def get_device_to_measure(self) -> jax.Device:
     return jax.local_devices()[self.config.device_id]
 
+  @property
+  def supported_device_timing_aggregations(
+      self,
+  ) -> frozenset[constants.XprofDeviceTimingAggregation]:
+    """HBM kernels execute only on the configured `device_id`."""
+    return frozenset(
+        {constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST}
+    )
+
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     assert self.spec is not None
     # 'num_elements' being the number of elements

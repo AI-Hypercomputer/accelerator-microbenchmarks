@@ -419,10 +419,55 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     """Whether XProf timing measures /host:CPU events instead of /device:TPU:{id}.
 
     Default is False (measures accelerator hardware kernels on
-    /device:TPU:{id}). HostToDeviceBenchmark overrides this to True because
+    /device:TPU:{id}). _HostDeviceBenchmark overrides this to True because
     H2D/D2H DMA transfers are recorded on the CPU host process.
     """
     return False
+
+  @property
+  def supported_device_timing_aggregations(
+      self,
+  ) -> frozenset[constants.XprofDeviceTimingAggregation]:
+    """XProf device timing aggregations this benchmark supports.
+
+    `/host:CPU` timing has no per-device series, and `requires_multihost_sync`
+    benchmarks already broadcast the owner host's series to every host, so
+    both support only `measured_device_or_first`. Single-device benchmarks
+    (such as `HBMBandwidthBenchmark`) override this property directly.
+    Other benchmarks support every aggregation.
+    """
+    if self.xprof_target_host_cpu or self.requires_multihost_sync:
+      return frozenset(
+          {constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST}
+      )
+    return frozenset(constants.XprofDeviceTimingAggregation)
+
+  def _validate_device_timing_aggregation(self) -> None:
+    """Rejects an XProf device timing aggregation this benchmark would ignore.
+
+    Raises:
+      ValueError: If `xprof_config.device_timing_aggregation` is not in
+        `supported_device_timing_aggregations`.
+    """
+    aggregation = self.xprof_config.device_timing_aggregation
+    supported = self.supported_device_timing_aggregations
+    if aggregation in supported:
+      return
+    if self.xprof_target_host_cpu:
+      reason_suffix = (
+          " (XProf timing measures /host:CPU, not per-device kernels)"
+      )
+    elif self.requires_multihost_sync:
+      reason_suffix = (
+          " (results are already synced across hosts via owner broadcast)"
+      )
+    else:
+      reason_suffix = ""
+    raise ValueError(
+        f"{self.name} does not support xprof_device_timing_aggregation="
+        f"{aggregation}; supported: {', '.join(sorted(supported))}"
+        f"{reason_suffix}."
+    )
 
   def _apply_xprof_timing_and_sync(
       self, metrics: dict[str, Any]
@@ -565,6 +610,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
 
   def _run(self) -> BenchmarkResult:
     """Runs setup, warmup, measurement, and metric finalization."""
+    if self.xprof_config and self.xprof_config.xprof_timing:
+      self._validate_device_timing_aggregation()
     if self.is_experimental:
       print(
           "===================================================================="

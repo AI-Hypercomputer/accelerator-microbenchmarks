@@ -4,7 +4,9 @@ from absl.testing import absltest
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.core import system
 
 
 class BenchmarkLoaderTest(absltest.TestCase):
@@ -103,6 +105,37 @@ class BenchmarkLoaderTest(absltest.TestCase):
             f"Soaking benchmark '{name}' ({bench_cls}) overrides"
             " post_run_processing, which SoakingRunExecutor never calls.",
         )
+
+  def test_all_benchmarks_declare_supported_device_timing_aggregations(self):
+    """Verify every registered benchmark declares expected timing aggregations."""
+    single_mode_benchmarks = {
+        "hbm",
+        "hbm_bandwidth",
+        "host_to_device",
+        "device_to_host",
+        "device_to_device",
+    }
+    single_mode_only = frozenset(
+        {constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST}
+    )
+    all_modes = frozenset(constants.XprofDeviceTimingAggregation)
+
+    for name, bench_cls in registry.benchmark_registry.get_all().items():
+      with self.subTest(benchmark=name):
+        # SoakingExecutionParamsMixin requires min_duration_s > 0.0.
+        bench_config = (
+            bench_cls.Config(min_duration_s=1.0)
+            if issubclass(bench_cls.Config, config.SoakingExecutionParamsMixin)
+            else bench_cls.Config()
+        )
+        bm = bench_cls(
+            config=bench_config,
+            hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        )
+        expected = (
+            single_mode_only if name in single_mode_benchmarks else all_modes
+        )
+        self.assertEqual(bm.supported_device_timing_aggregations, expected)
 
 
 if __name__ == "__main__":

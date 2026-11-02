@@ -9,6 +9,7 @@ from absl.testing import parameterized
 from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.benchmarks import hbm
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -476,6 +477,38 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
     """Verify REPORT_SCHEMA matches output keys and covers all metrics."""
     self._setup_benchmark("copy")
     test_report_utils.assert_schema_matches_output(self, self.bm)
+
+  @parameterized.parameters(
+      constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE,
+      constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+  )
+  def test_rejects_unsupported_device_timing_aggregation(self, aggregation):
+    """Verifies HBM supports only measured_device_or_first and rejects others before setup."""
+    bm = hbm.HBMBandwidthBenchmark(
+        config=hbm.HBMBandwidthParams(num_elements=64),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+        xprof_config=base.XprofConfig(
+            xprof_timing=True, device_timing_aggregation=aggregation
+        ),
+    )
+    self.assertEqual(
+        bm.supported_device_timing_aggregations,
+        frozenset(
+            {constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST}
+        ),
+    )
+    with (
+        mock.patch.object(bm, "setup") as mock_setup,
+        self.assertRaisesRegex(
+            ValueError,
+            r"HBMBandwidthBenchmark does not support"
+            r" xprof_device_timing_aggregation=.*; supported:"
+            r" measured_device_or_first\.",
+        ),
+    ):
+      bm.run()
+    mock_setup.assert_not_called()
 
 
 class HBMBandwidthParamsValidationTest(parameterized.TestCase):
