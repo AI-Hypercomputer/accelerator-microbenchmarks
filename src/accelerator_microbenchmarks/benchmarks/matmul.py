@@ -9,9 +9,11 @@ from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import single_host
 from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 
 @dataclasses.dataclass
@@ -80,6 +82,11 @@ class GemmParams(base.BaseBenchmarkParams):
 
 
 TGemmConfig = TypeVar("TGemmConfig", bound=base.BaseBenchmarkParams)
+
+
+def _sample_normal(key: jax.Array, shape: tuple[int, ...], dtype: Any):
+  """Module-level so `jax.jit` reuses its compile cache across calls."""
+  return jax.random.normal(key, shape).astype(dtype)
 
 
 class BaseGemmBenchmark(base.BaseBenchmark[TGemmConfig]):
@@ -198,7 +205,58 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
       run_identifier += "_sf"
     return run_identifier
 
+  def _replicated_normal(
+      self, key: jax.Array, shape: tuple[int, ...], dtype: Any
+  ) -> jax.Array:
+    """Samples on every mesh device; used under `single_host_tpu_init`.
+
+    Generating under `jit` with a replicated `out_shardings` (as in `hbm.py`)
+    produces each shard on its own device, and the key is passed as a host
+    array, so no data moves between devices. The result equals eager sampling
+    with the same key.
+    """
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    replicated_sharding = jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec()
+    )
+    generate = jax.jit(
+        _sample_normal,
+        static_argnums=(1, 2),
+        out_shardings=replicated_sharding,
+    )
+    return generate(np.asarray(key), shape, dtype)
+
+  def _generate_inputs_single_host(self) -> tuple[Any, ...]:
+    """`generate_inputs` for `single_host_tpu_init`: host->device transfers only."""
+    m, k, n = self.config.m, self.config.k, self.config.n
+    in_dtype = utils.parse_dtype(self.config.in_dtype)
+    key = jax.random.PRNGKey(self.config.seed)
+    k1, k2, k3, k4, k5 = jax.random.split(key, 5)
+
+    a_shape = (k, m) if self.config.transpose_a else (m, k)
+    b_shape = (n, k) if self.config.transpose_b else (k, n)
+    a = self._replicated_normal(k1, a_shape, in_dtype)
+    b = self._replicated_normal(k2, b_shape, in_dtype)
+
+    if self.config.use_scaling_factors:
+      sf_args = [
+          self._replicated_normal(k3, (m, 1), jnp.float32),
+          self._replicated_normal(k4, (1, n), jnp.float32),
+      ]
+    else:
+      sf_args = [None, None]
+
+    if self.config.beta != 0.0:
+      acc_args = [self._replicated_normal(k5, (m, n), in_dtype)]
+    else:
+      acc_args = []
+
+    return (a, b, *sf_args, *acc_args)
+
   def generate_inputs(self) -> tuple[Any, ...]:
+    if single_host.is_single_host_tpu_init():
+      return self._generate_inputs_single_host()
     (
         m,
         k,

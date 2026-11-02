@@ -20,6 +20,7 @@ class BenchmarkKey(str, enum.Enum):
   SWEEP = "sweep"
   XPROF_TIMING = "xprof_timing"
   XPROF_DEVICE_TIMING_AGGREGATION = "xprof_device_timing_aggregation"
+  SINGLE_HOST_TPU_INIT = "single_host_tpu_init"
 
 
 _ALLOWED_BENCHMARK_KEYS = frozenset(BenchmarkKey)
@@ -303,6 +304,16 @@ def load_config(path: str) -> list[dict[str, Any]]:
     base_params["xprof_device_timing_aggregation"] = (
         xprof_device_timing_aggregation
     )
+
+  single_host_tpu_init = benchmark_spec.get(BenchmarkKey.SINGLE_HOST_TPU_INIT)
+  if single_host_tpu_init is not None:
+    if not isinstance(single_host_tpu_init, bool):
+      raise ValueError(
+          f"Expected '{BenchmarkKey.SINGLE_HOST_TPU_INIT.value}' in benchmark"
+          f" '{benchmark_name}' to be a bool, but got"
+          f" {type(single_host_tpu_init).__name__}."
+      )
+    base_params["single_host_tpu_init"] = single_host_tpu_init
 
   # Stage 3: Cases (per-case parameter overrides over base_params)
   case_dicts = (

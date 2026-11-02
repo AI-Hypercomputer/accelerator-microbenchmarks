@@ -9,6 +9,7 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import single_host
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
@@ -79,6 +80,95 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.assertEqual(b.dtype, jnp.bfloat16)
     self.assertEqual(sf0.dtype, jnp.float32)
     self.assertEqual(sf1.dtype, jnp.float32)
+
+  def test_replicated_normal_passes_key_as_host_array(self):
+    """The PRNG key reaches the jitted sampler as a host array.
+
+    Under `single_host_tpu_init` every input has to arrive via the
+    host->device path, including the key.
+    """
+    self._setup_benchmark()
+    seen = {}
+    real_jit = jax.jit
+
+    def capturing_jit(fn, **kwargs):
+      jitted = real_jit(fn, **kwargs)
+
+      def call(key, *args):
+        seen["key"] = key
+        return jitted(key, *args)
+
+      return call
+
+    with mock.patch.object(jax, "jit", side_effect=capturing_jit):
+      out = self.bm._replicated_normal(
+          jax.random.PRNGKey(3), (8, 8), jnp.float32
+      )
+    self.assertIsInstance(seen["key"], np.ndarray)
+    self.assertTrue(out.sharding.is_fully_replicated)
+    np.testing.assert_array_equal(
+        np.asarray(out), np.asarray(jax.random.normal(jax.random.PRNGKey(3), (8, 8)))
+    )
+
+  def test_generate_inputs_default_broadcasts_from_default_device(self):
+    """Without `single_host_tpu_init`, `generate_inputs` is the upstream path.
+
+    Each operand is sampled on the default device and `jax.device_put` onto
+    the replicated sharding.
+    """
+    self._setup_benchmark(seed=7, use_scaling_factors=True, beta=1.0)
+    with mock.patch.object(
+        single_host, "is_single_host_tpu_init", return_value=False
+    ), mock.patch.object(
+        jax, "device_put", wraps=jax.device_put
+    ) as device_put:
+      inputs = self.bm.generate_inputs()
+    self.assertEqual(device_put.call_count, 5)
+    self.assertLen(inputs, 5)
+    for arr in inputs:
+      self.assertTrue(arr.sharding.is_fully_replicated)
+    key = jax.random.PRNGKey(7)
+    k1, _, _, _, _ = jax.random.split(key, 5)
+    np.testing.assert_array_equal(
+        np.asarray(inputs[0]),
+        np.asarray(jax.random.normal(k1, (64, 64)).astype(jnp.bfloat16)),
+    )
+
+  def test_generate_inputs_single_host_replicated_without_device_put(self):
+    """With `single_host_tpu_init`, operands are generated on every device.
+
+    They must be replicated, match eager sampling, and use no `device_put`,
+    so that no data moves between devices in that mode.
+    """
+    self._setup_benchmark(seed=7, use_scaling_factors=True, beta=1.0)
+    with mock.patch.object(
+        single_host, "is_single_host_tpu_init", return_value=True
+    ), mock.patch.object(
+        jax, "device_put", wraps=jax.device_put
+    ) as device_put:
+      inputs = self.bm.generate_inputs()
+    device_put.assert_not_called()
+    self.assertLen(inputs, 5)
+    for arr in inputs:
+      self.assertTrue(arr.sharding.is_fully_replicated)
+      self.assertEqual(
+          set(arr.sharding.device_set), set(self.mock_mesh.devices.flat)
+      )
+      self.assertLen(arr.addressable_shards, len(self.mock_mesh.devices.flat))
+      first = np.asarray(arr.addressable_shards[0].data)
+      for shard in arr.addressable_shards[1:]:
+        np.testing.assert_array_equal(np.asarray(shard.data), first)
+
+    key = jax.random.PRNGKey(7)
+    k1, _, _, _, k5 = jax.random.split(key, 5)
+    np.testing.assert_array_equal(
+        np.asarray(inputs[0]),
+        np.asarray(jax.random.normal(k1, (64, 64)).astype(jnp.bfloat16)),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(inputs[4]),
+        np.asarray(jax.random.normal(k5, (64, 64)).astype(jnp.bfloat16)),
+    )
 
   def test_run_op(self):
     """Test run op without scaling factors."""
