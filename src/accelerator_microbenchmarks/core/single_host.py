@@ -6,6 +6,8 @@ SliceBuilder/tpunetd and disables the cross-host XLA launch barrier. It is
 process-wide and must run before the first JAX device call. The slice's ICI
 routing is left untouched, so device-to-device transfers hang in this mode;
 only benchmarks listed in `SUPPORTED_BENCHMARKS` are known to avoid them.
+Benchmarks query `is_single_host_tpu_init()` to pick a transfer-free data
+path (see `GeneralizedGemmBenchmark.generate_inputs`).
 """
 
 import os
@@ -38,6 +40,13 @@ _SINGLE_HOST_LIBTPU_FLAGS = {
     "--xla_tpu_use_enhanced_launch_barrier": "false",
 }
 
+_enabled = False
+
+
+def is_single_host_tpu_init() -> bool:
+  """Returns whether `configure_single_host_tpu()` ran in this process."""
+  return _enabled
+
 
 def _set_env(name: str, value: str) -> None:
   """Sets `os.environ[name]`, logging the previous value when it changes."""
@@ -55,6 +64,8 @@ def _set_env(name: str, value: str) -> None:
 
 def configure_single_host_tpu() -> None:
   """Configures libtpu to initialize this host standalone. Call before JAX init."""
+  global _enabled
+  _enabled = True
   for name, value in _SINGLE_HOST_ENV.items():
     _set_env(name, value)
 

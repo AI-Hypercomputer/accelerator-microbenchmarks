@@ -9,6 +9,7 @@ from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import single_host
 from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
@@ -204,26 +205,37 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
       run_identifier += "_sf"
     return run_identifier
 
+  def _replicated_sharding(self, ndim: int) -> jax.sharding.NamedSharding:
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    return jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(*([None] * ndim))
+    )
+
+  def _broadcast_normal(
+      self, key: jax.Array, shape: tuple[int, ...], dtype: Any
+  ) -> jax.Array:
+    """Samples on the default device and broadcasts to the mesh (default)."""
+    return jax.device_put(
+        jax.random.normal(key, shape).astype(dtype),
+        self._replicated_sharding(len(shape)),
+    )
+
   def _replicated_normal(
       self, key: jax.Array, shape: tuple[int, ...], dtype: Any
   ) -> jax.Array:
-    """Returns standard-normal samples replicated across the mesh.
+    """Samples on every mesh device; used under `single_host_tpu_init`.
 
-    Generated on every mesh device under `jit` with a replicated
-    `out_shardings` (as in `hbm.py`), so no device-to-device broadcast is
-    needed; required for `single_host_tpu_init`, where such transfers hang.
-    The key is passed as a host array for the same reason: a key resident on
-    one device would be broadcast to the others device-to-device.
+    In that mode the slice's ICI routing is not set up for this host, so the
+    device-to-device broadcast done by `_broadcast_normal` hangs. Generating
+    under `jit` with a replicated `out_shardings` (as in `hbm.py`) produces
+    each shard locally, and the key is passed as a host array so it is not
+    broadcast from the default device either. The result is identical.
     """
-    if self.mesh is None:
-      raise ValueError("Mesh not initialized.")
-    replicated_sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(*([None] * len(shape)))
-    )
     generate = jax.jit(
         _sample_normal,
         static_argnums=(1, 2),
-        out_shardings=replicated_sharding,
+        out_shardings=self._replicated_sharding(len(shape)),
     )
     return generate(np.asarray(key), shape, dtype)
 
@@ -252,18 +264,23 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     # discrepancies between devices.
     # Note: JAX might require intermediate conversion for random.normal if
     # dtypes aren't supported
+    replicate = (
+        self._replicated_normal
+        if single_host.is_single_host_tpu_init()
+        else self._broadcast_normal
+    )
     a_shape = (k, m) if transpose_a else (m, k)
     b_shape = (n, k) if transpose_b else (k, n)
-    a = self._replicated_normal(k1, a_shape, in_dtype)
-    b = self._replicated_normal(k2, b_shape, in_dtype)
+    a = replicate(k1, a_shape, in_dtype)
+    b = replicate(k2, b_shape, in_dtype)
 
     # Row and column scaling factor vectors (sf0: m x 1, sf1: 1 x n)
     # Unpacked as sf0, sf1 args into gemm_fn(a, b, sf0, sf1, c) if enabled,
     # else (None, None).
     if self.config.use_scaling_factors:
       sf_args = [
-          self._replicated_normal(k3, (m, 1), jnp.float32),
-          self._replicated_normal(k4, (1, n), jnp.float32),
+          replicate(k3, (m, 1), jnp.float32),
+          replicate(k4, (1, n), jnp.float32),
       ]
     else:
       sf_args = [None, None]
@@ -271,7 +288,7 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     # Accumulator matrix C (M x N) for fused GEMM addition when beta != 0.0.
     # Unpacked as c arg into gemm_fn(a, b, sf0, sf1, c) if enabled, else [].
     if self.config.beta != 0.0:
-      acc_args = [self._replicated_normal(k5, (m, n), in_dtype)]
+      acc_args = [replicate(k5, (m, n), in_dtype)]
     else:
       acc_args = []
 

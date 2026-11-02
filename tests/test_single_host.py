@@ -114,6 +114,12 @@ class SingleHostTest(parameterized.TestCase):
       self.assertEqual(dict(os.environ), first)
       self.assertEqual(fake_out.getvalue(), "")
 
+  def test_is_single_host_tpu_init_reflects_configure(self):
+    with mock.patch.object(single_host, "_enabled", False):
+      self.assertFalse(single_host.is_single_host_tpu_init())
+      self._configure({})
+      self.assertTrue(single_host.is_single_host_tpu_init())
+
   def test_supported_benchmarks_are_registered_names(self):
     """The allow-list only names benchmarks (or aliases) that exist."""
     benchmark_loader.load_all_benchmarks()

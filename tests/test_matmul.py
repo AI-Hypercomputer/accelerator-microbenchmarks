@@ -9,6 +9,7 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import single_host
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
@@ -109,14 +110,40 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
         np.asarray(out), np.asarray(jax.random.normal(jax.random.PRNGKey(3), (8, 8)))
     )
 
-  def test_generate_inputs_replicated_without_device_put(self):
-    """Inputs are replicated, match eager sampling, and use no `device_put`.
+  def test_generate_inputs_default_broadcasts_from_default_device(self):
+    """Without `single_host_tpu_init`, operands are sampled once and broadcast.
 
-    `single_host_tpu_init` relies on operands being generated on every device
-    rather than broadcast from one; a `jax.device_put` broadcast would hang.
+    This is the pre-existing behaviour: each operand is a `jax.device_put` of
+    a default-device array onto the replicated sharding.
     """
     self._setup_benchmark(seed=7, use_scaling_factors=True, beta=1.0)
     with mock.patch.object(
+        single_host, "is_single_host_tpu_init", return_value=False
+    ), mock.patch.object(
+        jax, "device_put", wraps=jax.device_put
+    ) as device_put:
+      inputs = self.bm.generate_inputs()
+    self.assertEqual(device_put.call_count, 5)
+    self.assertLen(inputs, 5)
+    for arr in inputs:
+      self.assertTrue(arr.sharding.is_fully_replicated)
+    key = jax.random.PRNGKey(7)
+    k1, _, _, _, _ = jax.random.split(key, 5)
+    np.testing.assert_array_equal(
+        np.asarray(inputs[0]),
+        np.asarray(jax.random.normal(k1, (64, 64)).astype(jnp.bfloat16)),
+    )
+
+  def test_generate_inputs_single_host_replicated_without_device_put(self):
+    """With `single_host_tpu_init`, operands are generated on every device.
+
+    They must be replicated, match eager sampling, and use no `device_put`:
+    in that mode a `jax.device_put` broadcast from one device would hang.
+    """
+    self._setup_benchmark(seed=7, use_scaling_factors=True, beta=1.0)
+    with mock.patch.object(
+        single_host, "is_single_host_tpu_init", return_value=True
+    ), mock.patch.object(
         jax, "device_put", wraps=jax.device_put
     ) as device_put:
       inputs = self.bm.generate_inputs()
