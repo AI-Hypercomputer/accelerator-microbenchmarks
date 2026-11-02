@@ -46,8 +46,7 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
       help=(
           "Initialize this host standalone inside a multi-host slice for"
           " node-local diagnostics (forces a 1-host topology and skips"
-          " SliceBuilder). Device-to-device transfers hang in this mode;"
-          " supported benchmarks: gemm, gemm_throttling, hbm,"
+          " SliceBuilder). Supported benchmarks: gemm, gemm_throttling, hbm,"
           " host_to_device, device_to_host."
       ),
   )

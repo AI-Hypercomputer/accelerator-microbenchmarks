@@ -210,12 +210,10 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
   ) -> jax.Array:
     """Samples on every mesh device; used under `single_host_tpu_init`.
 
-    In that mode the slice's ICI routing is not set up for this host, so the
-    device-to-device broadcast of `jax.device_put(x, replicated_sharding)`
-    in `generate_inputs` hangs. Generating under `jit` with a replicated
-    `out_shardings` (as in `hbm.py`) produces each shard locally, and the key
-    is passed as a host array so it is not broadcast from the default device
-    either. The result equals eager sampling with the same key.
+    Generating under `jit` with a replicated `out_shardings` (as in `hbm.py`)
+    produces each shard on its own device, and the key is passed as a host
+    array, so no data moves between devices. The result equals eager sampling
+    with the same key.
     """
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
@@ -230,7 +228,7 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     return generate(np.asarray(key), shape, dtype)
 
   def _generate_inputs_single_host(self) -> tuple[Any, ...]:
-    """`generate_inputs` for `single_host_tpu_init`: no device-to-device copies."""
+    """`generate_inputs` for `single_host_tpu_init`: host->device transfers only."""
     m, k, n = self.config.m, self.config.k, self.config.n
     in_dtype = utils.parse_dtype(self.config.in_dtype)
     key = jax.random.PRNGKey(self.config.seed)

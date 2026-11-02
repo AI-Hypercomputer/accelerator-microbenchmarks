@@ -4,19 +4,20 @@ Opt-in (`single_host_tpu_init` config key / CLI flag) for node-local
 diagnostics. `configure_single_host_tpu()` forces a 1-host topology, skips
 SliceBuilder/tpunetd and disables the cross-host XLA launch barrier. It is
 process-wide and must run before the first JAX device call. The slice's ICI
-routing is left untouched, so device-to-device transfers hang in this mode;
-only benchmarks listed in `SUPPORTED_BENCHMARKS` are known to avoid them.
-Benchmarks query `is_single_host_tpu_init()` to pick a transfer-free data
-path (see `GeneralizedGemmBenchmark.generate_inputs`).
+routing is left untouched, so this mode provides no inter-device (ICI)
+communication; `SUPPORTED_BENCHMARKS` lists the benchmarks that keep all data
+movement on the host<->device path. Benchmarks query
+`is_single_host_tpu_init()` to select such a path (see
+`GeneralizedGemmBenchmark.generate_inputs`).
 """
 
 import os
 
-# Benchmarks known to perform no device-to-device transfers in this mode
+# Benchmarks whose data movement stays on the host<->device path
 # (gemm_throttling shares GeneralizedGemmBenchmark.generate_inputs;
-# host_to_device/device_to_host only move data between host buffers and
-# each local device). Lists primary names and registered aliases; keep in
-# sync with `@benchmark_registry.register(..., aliases=...)`.
+# host_to_device/device_to_host move data between host buffers and each
+# local device). Lists primary names and registered aliases; keep in sync
+# with `@benchmark_registry.register(..., aliases=...)`.
 SUPPORTED_BENCHMARKS = frozenset({
     "gemm",
     "gemm_generalized",

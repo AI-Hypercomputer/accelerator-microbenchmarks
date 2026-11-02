@@ -126,9 +126,8 @@ def set_xla_flags(
 def init_jax_distributed(distributed: bool = True):
   """Initializes the JAX backend, and the distributed coordinator if `distributed`.
 
-  With `single_host_tpu_init` the process is the only participant, so the
-  coordinator is skipped: on GKE, `jax.distributed.initialize()` would still
-  pick up the slice's other hosts from `TPU_PROCESS_ADDRESSES` and abort.
+  `single_host_tpu_init` runs this host as the only participant, so the
+  coordinator is not started in that mode.
   """
   if distributed:
     print("Initializing JAX distributed system...")
@@ -181,8 +180,8 @@ def run_benchmarks(
     if unsupported:
       print(
           f"Warning: single_host_tpu_init is not supported for {unsupported}:"
-          " device-to-device transfers hang in this mode, so collectives and"
-          " device_to_device cannot work and other benchmarks may hang."
+          " this mode keeps all data movement on the host<->device path and"
+          " provides no inter-device (ICI) communication."
           f" Supported: {sorted(single_host.SUPPORTED_BENCHMARKS)}."
       )
     single_host.configure_single_host_tpu()

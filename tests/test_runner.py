@@ -275,7 +275,7 @@ class TestRunner(absltest.TestCase):
         "Warning: single_host_tpu_init is not supported for ['all_reduce']",
         out,
     )
-    self.assertIn("hang", out)
+    self.assertIn("host<->device", out)
 
   def test_run_benchmarks(self):
     """Verifies that run_benchmarks executes typed benchmark tasks."""

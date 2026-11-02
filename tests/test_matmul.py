@@ -84,8 +84,8 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
   def test_replicated_normal_passes_key_as_host_array(self):
     """The PRNG key reaches the jitted sampler as a host array.
 
-    A key resident on one device would be broadcast to the other mesh devices
-    device-to-device, which hangs under `single_host_tpu_init`.
+    Under `single_host_tpu_init` every input has to arrive via the
+    host->device path, including the key.
     """
     self._setup_benchmark()
     seen = {}
@@ -137,8 +137,8 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
   def test_generate_inputs_single_host_replicated_without_device_put(self):
     """With `single_host_tpu_init`, operands are generated on every device.
 
-    They must be replicated, match eager sampling, and use no `device_put`:
-    in that mode a `jax.device_put` broadcast from one device would hang.
+    They must be replicated, match eager sampling, and use no `device_put`,
+    so that no data moves between devices in that mode.
     """
     self._setup_benchmark(seed=7, use_scaling_factors=True, beta=1.0)
     with mock.patch.object(
