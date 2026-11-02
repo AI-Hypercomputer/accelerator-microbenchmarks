@@ -218,7 +218,7 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
     replicated_sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(*([None] * len(shape)))
+        self.mesh, jax.sharding.PartitionSpec()
     )
     generate = jax.jit(
         _sample_normal,
