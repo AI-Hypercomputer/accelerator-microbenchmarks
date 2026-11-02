@@ -80,6 +80,35 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.assertEqual(sf0.dtype, jnp.float32)
     self.assertEqual(sf1.dtype, jnp.float32)
 
+  def test_replicated_normal_passes_key_as_host_array(self):
+    """The PRNG key reaches the jitted sampler as a host array.
+
+    A key resident on one device would be broadcast to the other mesh devices
+    device-to-device, which hangs under `single_host_tpu_init`.
+    """
+    self._setup_benchmark()
+    seen = {}
+    real_jit = jax.jit
+
+    def capturing_jit(fn, **kwargs):
+      jitted = real_jit(fn, **kwargs)
+
+      def call(key, *args):
+        seen["key"] = key
+        return jitted(key, *args)
+
+      return call
+
+    with mock.patch.object(jax, "jit", side_effect=capturing_jit):
+      out = self.bm._replicated_normal(
+          jax.random.PRNGKey(3), (8, 8), jnp.float32
+      )
+    self.assertIsInstance(seen["key"], np.ndarray)
+    self.assertTrue(out.sharding.is_fully_replicated)
+    np.testing.assert_array_equal(
+        np.asarray(out), np.asarray(jax.random.normal(jax.random.PRNGKey(3), (8, 8)))
+    )
+
   def test_generate_inputs_replicated_without_device_put(self):
     """Inputs are replicated, match eager sampling, and use no `device_put`.
 

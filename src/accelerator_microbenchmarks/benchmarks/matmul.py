@@ -12,6 +12,7 @@ from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 
 @dataclasses.dataclass
@@ -211,6 +212,8 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     Generated on every mesh device under `jit` with a replicated
     `out_shardings` (as in `hbm.py`), so no device-to-device broadcast is
     needed; required for `single_host_tpu_init`, where such transfers hang.
+    The key is passed as a host array for the same reason: a key resident on
+    one device would be broadcast to the others device-to-device.
     """
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
@@ -222,7 +225,7 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
         static_argnums=(1, 2),
         out_shardings=replicated_sharding,
     )
-    return generate(key, shape, dtype)
+    return generate(np.asarray(key), shape, dtype)
 
   def generate_inputs(self) -> tuple[Any, ...]:
     (
