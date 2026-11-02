@@ -111,10 +111,10 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     )
 
   def test_generate_inputs_default_broadcasts_from_default_device(self):
-    """Without `single_host_tpu_init`, operands are sampled once and broadcast.
+    """Without `single_host_tpu_init`, `generate_inputs` is the upstream path.
 
-    This is the pre-existing behaviour: each operand is a `jax.device_put` of
-    a default-device array onto the replicated sharding.
+    Each operand is sampled on the default device and `jax.device_put` onto
+    the replicated sharding.
     """
     self._setup_benchmark(seed=7, use_scaling_factors=True, beta=1.0)
     with mock.patch.object(

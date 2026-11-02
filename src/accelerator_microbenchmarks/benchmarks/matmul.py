@@ -205,41 +205,60 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
       run_identifier += "_sf"
     return run_identifier
 
-  def _replicated_sharding(self, ndim: int) -> jax.sharding.NamedSharding:
-    if self.mesh is None:
-      raise ValueError("Mesh not initialized.")
-    return jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(*([None] * ndim))
-    )
-
-  def _broadcast_normal(
-      self, key: jax.Array, shape: tuple[int, ...], dtype: Any
-  ) -> jax.Array:
-    """Samples on the default device and broadcasts to the mesh (default)."""
-    return jax.device_put(
-        jax.random.normal(key, shape).astype(dtype),
-        self._replicated_sharding(len(shape)),
-    )
-
   def _replicated_normal(
       self, key: jax.Array, shape: tuple[int, ...], dtype: Any
   ) -> jax.Array:
     """Samples on every mesh device; used under `single_host_tpu_init`.
 
     In that mode the slice's ICI routing is not set up for this host, so the
-    device-to-device broadcast done by `_broadcast_normal` hangs. Generating
-    under `jit` with a replicated `out_shardings` (as in `hbm.py`) produces
-    each shard locally, and the key is passed as a host array so it is not
-    broadcast from the default device either. The result is identical.
+    device-to-device broadcast of `jax.device_put(x, replicated_sharding)`
+    in `generate_inputs` hangs. Generating under `jit` with a replicated
+    `out_shardings` (as in `hbm.py`) produces each shard locally, and the key
+    is passed as a host array so it is not broadcast from the default device
+    either. The result equals eager sampling with the same key.
     """
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    replicated_sharding = jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(*([None] * len(shape)))
+    )
     generate = jax.jit(
         _sample_normal,
         static_argnums=(1, 2),
-        out_shardings=self._replicated_sharding(len(shape)),
+        out_shardings=replicated_sharding,
     )
     return generate(np.asarray(key), shape, dtype)
 
+  def _generate_inputs_single_host(self) -> tuple[Any, ...]:
+    """`generate_inputs` for `single_host_tpu_init`: no device-to-device copies."""
+    m, k, n = self.config.m, self.config.k, self.config.n
+    in_dtype = utils.parse_dtype(self.config.in_dtype)
+    key = jax.random.PRNGKey(self.config.seed)
+    k1, k2, k3, k4, k5 = jax.random.split(key, 5)
+
+    a_shape = (k, m) if self.config.transpose_a else (m, k)
+    b_shape = (n, k) if self.config.transpose_b else (k, n)
+    a = self._replicated_normal(k1, a_shape, in_dtype)
+    b = self._replicated_normal(k2, b_shape, in_dtype)
+
+    if self.config.use_scaling_factors:
+      sf_args = [
+          self._replicated_normal(k3, (m, 1), jnp.float32),
+          self._replicated_normal(k4, (1, n), jnp.float32),
+      ]
+    else:
+      sf_args = [None, None]
+
+    if self.config.beta != 0.0:
+      acc_args = [self._replicated_normal(k5, (m, n), in_dtype)]
+    else:
+      acc_args = []
+
+    return (a, b, *sf_args, *acc_args)
+
   def generate_inputs(self) -> tuple[Any, ...]:
+    if single_host.is_single_host_tpu_init():
+      return self._generate_inputs_single_host()
     (
         m,
         k,
@@ -260,39 +279,57 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     key = jax.random.PRNGKey(self.config.seed)
     k1, k2, k3, k4, k5 = jax.random.split(key, 5)
 
-    # Data generation in HBM, replicated across the mesh to avoid
-    # discrepancies between devices.
+    # Data generation in HBM
     # Note: JAX might require intermediate conversion for random.normal if
     # dtypes aren't supported
-    replicate = (
-        self._replicated_normal
-        if single_host.is_single_host_tpu_init()
-        else self._broadcast_normal
-    )
     a_shape = (k, m) if transpose_a else (m, k)
     b_shape = (n, k) if transpose_b else (k, n)
-    a = replicate(k1, a_shape, in_dtype)
-    b = replicate(k2, b_shape, in_dtype)
+    a = jax.random.normal(k1, a_shape).astype(in_dtype)
+    b = jax.random.normal(k2, b_shape).astype(in_dtype)
+
+    # Optional scaling factors
+    use_sf = self.config.use_scaling_factors
+    sf0 = jax.random.normal(k3, (m, 1)).astype(jnp.float32) if use_sf else None
+    sf1 = jax.random.normal(k4, (1, n)).astype(jnp.float32) if use_sf else None
+
+    use_accumulator_matrix = True if self.config.beta != 0.0 else False
+    c = (
+        jax.random.normal(k5, (m, n)).astype(in_dtype)
+        if use_accumulator_matrix
+        else None
+    )
+
+    # Replicated sharding for computation ops to avoid discrepancies
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    replicated_sharding = jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(None, None)
+    )
 
     # Row and column scaling factor vectors (sf0: m x 1, sf1: 1 x n)
     # Unpacked as sf0, sf1 args into gemm_fn(a, b, sf0, sf1, c) if enabled,
     # else (None, None).
-    if self.config.use_scaling_factors:
+    if use_sf:
       sf_args = [
-          replicate(k3, (m, 1), jnp.float32),
-          replicate(k4, (1, n), jnp.float32),
+          jax.device_put(sf0, replicated_sharding),
+          jax.device_put(sf1, replicated_sharding),
       ]
     else:
       sf_args = [None, None]
 
     # Accumulator matrix C (M x N) for fused GEMM addition when beta != 0.0.
     # Unpacked as c arg into gemm_fn(a, b, sf0, sf1, c) if enabled, else [].
-    if self.config.beta != 0.0:
-      acc_args = [replicate(k5, (m, n), in_dtype)]
+    if use_accumulator_matrix:
+      acc_args = [jax.device_put(c, replicated_sharding)]
     else:
       acc_args = []
 
-    return (a, b, *sf_args, *acc_args)
+    return (
+        jax.device_put(a, replicated_sharding),
+        jax.device_put(b, replicated_sharding),
+        *sf_args,
+        *acc_args,
+    )
 
   def run_op(self, *args) -> jnp.ndarray:
     if self._jit_fn is None:
