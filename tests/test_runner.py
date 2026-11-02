@@ -208,6 +208,11 @@ class TestRunner(absltest.TestCase):
       runner.init_jax_distributed()
       mock_init.assert_called_once()
 
+  def test_init_jax_distributed_skips_coordinator_for_single_host(self):
+    with mock.patch.object(runner.jax.distributed, "initialize") as mock_init:
+      runner.init_jax_distributed(distributed=False)
+      mock_init.assert_not_called()
+
   def _run_benchmarks_with_stages_mocked(self, task_names, **kwargs):
     """Runs run_benchmarks for `task_names` with TPU-touching stages mocked.
 
@@ -222,7 +227,11 @@ class TestRunner(absltest.TestCase):
         "configure_single_host_tpu",
         side_effect=lambda: calls.append("single_host"),
     ), mock.patch.object(
-        runner, "init_jax_distributed", side_effect=lambda: calls.append("jax")
+        runner,
+        "init_jax_distributed",
+        side_effect=lambda **kw: calls.append(
+            "jax" if kw.get("distributed", True) else "jax_local"
+        ),
     ), mock.patch.object(
         runner.platform, "get_platform_info"
     ), mock.patch.object(
@@ -253,7 +262,7 @@ class TestRunner(absltest.TestCase):
     calls, out = self._run_benchmarks_with_stages_mocked(
         ["gemm", "hbm"], single_host_tpu_init=True
     )
-    self.assertEqual(calls, ["xla", "single_host", "jax"])
+    self.assertEqual(calls, ["xla", "single_host", "jax_local"])
     self.assertNotIn("Warning: single_host_tpu_init", out)
 
   def test_run_benchmarks_single_host_tpu_init_warns_unsupported(self):
@@ -261,7 +270,7 @@ class TestRunner(absltest.TestCase):
     calls, out = self._run_benchmarks_with_stages_mocked(
         ["all_reduce"], single_host_tpu_init=True
     )
-    self.assertEqual(calls, ["xla", "single_host", "jax"])
+    self.assertEqual(calls, ["xla", "single_host", "jax_local"])
     self.assertIn(
         "Warning: single_host_tpu_init is not supported for ['all_reduce']",
         out,

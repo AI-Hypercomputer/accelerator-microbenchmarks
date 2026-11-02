@@ -123,13 +123,21 @@ def set_xla_flags(
   )
 
 
-def init_jax_distributed():
-  """Ensures JAX distributed coordinator is initialized."""
-  print("Initializing JAX distributed system...")
-  try:
-    jax.distributed.initialize()
-  except Exception as e:
-    print(f"Note: jax.distributed.initialize() failed or not needed: {e}")
+def init_jax_distributed(distributed: bool = True):
+  """Initializes the JAX backend, and the distributed coordinator if `distributed`.
+
+  With `single_host_tpu_init` the process is the only participant, so the
+  coordinator is skipped: on GKE, `jax.distributed.initialize()` would still
+  pick up the slice's other hosts from `TPU_PROCESS_ADDRESSES` and abort.
+  """
+  if distributed:
+    print("Initializing JAX distributed system...")
+    try:
+      jax.distributed.initialize()
+    except Exception as e:
+      print(f"Note: jax.distributed.initialize() failed or not needed: {e}")
+  else:
+    print("Skipping JAX distributed initialization (single_host_tpu_init).")
   try:
     devices = jax.devices()
     print(f"JAX devices: {len(devices)} (e.g. {devices[:4]}...)")
@@ -180,7 +188,7 @@ def run_benchmarks(
     single_host.configure_single_host_tpu()
 
   # 2. Ensure JAX is initialized
-  init_jax_distributed()
+  init_jax_distributed(distributed=not single_host_tpu_init)
 
   # 3. Detect Platform and Resolve HardwareSpec
   platform_info = platform.get_platform_info()
