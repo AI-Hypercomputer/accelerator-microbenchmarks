@@ -80,6 +80,20 @@ all_to_all:
     - "--xla_jf_debug_level=3"
     - "--xla_tpu_dvfs_p_state=7"
 
+# Note: On containers with glibc >= 2.35 (e.g., Ubuntu 22.04+), launch multi-slice
+# DCN benchmarks with `GLIBC_TUNABLES=glibc.pthread.rseq=0` in the process/container
+# environment. glibc reads GLIBC_TUNABLES at process start before Python runs, so
+# it cannot be applied via an in-process `env:` entry here.
+dcn_all_to_all:
+  flags:
+    - "--xla_tpu_use_enhanced_launch_barrier=true"
+    - "--xla_tpu_enable_async_all_to_all=true"
+    - "--megascale_max_reduction_shard_size=8388608"
+    - "--megascale_grpc_premap_memory_bytes=68719476736"
+    - "--megascale_grpc_dynamic_lb_max_outstanding_bytes=67108864"
+    - "--megascale_grpc_enable_xor_tracer=false"
+    - "--megascale_grpc_enable_numa_aware_transmit=false"
+
 host_device: &host_device
   flags:
     - "--xla_tpu_dvfs_p_state=7"

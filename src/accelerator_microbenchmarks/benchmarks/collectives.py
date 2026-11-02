@@ -1,5 +1,6 @@
 """Collective communication benchmarks."""
 
+import contextlib
 import dataclasses
 import enum
 import logging
@@ -211,10 +212,22 @@ class BaseCollectiveBenchmark(
 ):
   """Base class for all collective communication benchmarks.
 
-  Holds the topology-neutral logic: input generation, run_op, replica-group
-  slicing of the mesh and total bytes. A topology base builds `self.mesh` in
-  `setup()` and implements `_get_sharding_axes()`, `get_workload_metadata()`
-  and `calculate_throughput_metrics()`.
+  Holds the logic shared by every collective: input generation, run_op and
+  replica-group slicing of the mesh. A concrete benchmark combines an op with
+  a topology base, and the two split the remaining hooks:
+
+  Topology base (`IciCollectiveBenchmark` / `DcnCollectiveBenchmark`):
+    - `setup()`: builds `self.mesh`.
+    - `_get_sharding_axes()`: mesh axes the collective runs over.
+    - `get_total_bytes()`: per-device transfer size scaled to the reporting
+      scope (per chip for ICI, per device for DCN).
+    - `get_workload_metadata()` and `calculate_throughput_metrics()`.
+    - `_op_scope()` (optional): scope wrapped around the collective.
+  Op (`*OpMixin` or op class):
+    - `_setup_jit_fn()`: the jitted collective.
+    - `_get_transfer_size_bytes_per_device()`: topology-neutral bus bytes.
+    - `_get_shard_size_bytes()` and `_get_input_shape_and_sharding()`
+      (optional): input size and layout.
   """
 
   Config = CollectivesParams
@@ -248,6 +261,14 @@ class BaseCollectiveBenchmark(
 
   def _setup_jit_fn(self):
     raise NotImplementedError("Subclasses must implement _setup_jit_fn")
+
+  def _op_scope(self) -> contextlib.AbstractContextManager[Any]:
+    """Returns the scope wrapped around the collective inside shard_map.
+
+    The MARKER named scope lets xprof timing find the collective's events. A
+    topology base overrides this to change how its collectives are scoped.
+    """
+    return jax.named_scope(constants.MARKER)
 
   def _get_input_shape_and_sharding(
       self, num_devices: int, dim: int, sharding_axes
@@ -573,6 +594,11 @@ class DcnCollectiveBenchmark(
   def _get_sharding_axes(self):
     return "dcn"
 
+  def _op_scope(self) -> contextlib.AbstractContextManager[Any]:
+    # TODO(simonleesyuan): Check on hardware whether the MARKER scope is safe on
+    # DCN collectives; if so, drop this override so xprof timing works on DCN.
+    return contextlib.nullcontext()
+
   def _get_replica_group_rank(self) -> int:
     """Returns the number of slices in one replica group."""
     return len(self._get_first_replica_group_devices())
@@ -622,10 +648,10 @@ class AllReduceOpMixin(
   from `_get_sharding_axes()` and scales the per-device transfer size to its
   reporting scope in `get_total_bytes()`.
 
-  `_setup_jit_fn()` always wraps the op in the MARKER named scope and
-  `zero_crop`, with no hook to change either. Until such a hook exists, a
-  non-ICI topology must override `_setup_jit_fn()` itself; the rest of this
-  mixin is reusable as is.
+  `_setup_jit_fn()` wraps the op in the MARKER named scope and `zero_crop`
+  directly instead of using `_op_scope()`, since `zero_crop` is ICI-only, so
+  `DcnAllReduceBenchmark` overrides `_setup_jit_fn()`; the rest of this mixin
+  is reusable as is.
   """
 
   def _get_reduce_op(self) -> ReduceOp:
@@ -922,8 +948,74 @@ def all_to_all_peak_bandwidth_per_chip_gb_s(
   )
 
 
+class AllToAllOpMixin(
+    BaseCollectiveBenchmark[TCollectiveConfig], Generic[TCollectiveConfig]
+):
+  """All-to-all op logic shared by any topology base.
+
+  Provides the replicated input, the jitted tiled all-to-all (scoped by the
+  topology's `_op_scope()`), the matrix_dim divisibility check and the
+  per-device transfer size: every rank splits its local buffer into `rank`
+  chunks along axis 0 and sends one chunk to each peer reached over the
+  measured link, i.e. `P/R` of the buffer (`(R - 1)/R` on DCN). List it
+  before the topology base.
+  """
+
+  def setup(self):
+    super().setup()  # Builds the mesh; jax.jit is lazy, so nothing compiles.
+    group_size = self._get_num_sharded_devices()
+    if self.config.matrix_dim % group_size:
+      raise ValueError(
+          f"matrix_dim ({self.config.matrix_dim}) must be divisible by the"
+          f" all-to-all group size ({group_size}) for a tiled all_to_all."
+      )
+
+  def _setup_jit_fn(self):
+    sharding_axes = self._get_sharding_axes()
+
+    @jax.jit
+    def all_to_all_sharded(x):
+      def f(a):
+        with self._op_scope():
+          return jax.lax.all_to_all(
+              a,
+              axis_name=sharding_axes,
+              split_axis=0,
+              concat_axis=0,
+              tiled=True,
+          )
+
+      return jax.shard_map(
+          f,
+          mesh=self.mesh,
+          in_specs=jax.sharding.PartitionSpec(None, None, None),
+          out_specs=jax.sharding.PartitionSpec(None, None, None),
+          check_vma=False,
+      )(x)
+
+    self._jit_fn = all_to_all_sharded
+
+  def _get_input_shape_and_sharding(
+      self, num_devices: int, dim: int, sharding_axes
+  ):
+    shape = (dim, _BASE_N, _BASE_K)
+    sharding = jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
+    )
+    return shape, sharding
+
+  def _get_transfer_size_bytes_per_device(
+      self, rank: int, participating_ranks: int
+  ) -> float:
+    """S*P/R: each device sends one S/R chunk to every peer."""
+    return self._get_shard_size_bytes() * participating_ranks / max(rank, 1)
+
+
 @registry.benchmark_registry.register("all_to_all")
-class AllToAllBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
+class AllToAllBenchmark(
+    AllToAllOpMixin[IciCollectivesParams],
+    IciCollectiveBenchmark[IciCollectivesParams],
+):
   """Benchmarks the latency and bandwidth of jax.lax.all_to_all across devices.
 
   The theoretical ICI peak (and its derivation) is in
@@ -990,52 +1082,29 @@ class AllToAllBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
       )
       return None
 
-  def _setup_jit_fn(self):
-    sharding_axes = self._get_sharding_axes()
-
-    @jax.jit
-    def all_to_all_sharded(x):
-      def f(a):
-        with jax.named_scope(constants.MARKER):
-          return jax.lax.all_to_all(
-              a,
-              axis_name=sharding_axes,
-              split_axis=0,
-              concat_axis=0,
-              tiled=True,
-          )
-
-      return jax.shard_map(
-          f,
-          mesh=self.mesh,
-          in_specs=jax.sharding.PartitionSpec(None, None, None),
-          out_specs=jax.sharding.PartitionSpec(None, None, None),
-          check_vma=False,
-      )(x)
-
-    self._jit_fn = all_to_all_sharded
-
-  def _get_input_shape_and_sharding(
-      self, num_devices: int, dim: int, sharding_axes
-  ):
-    shape = (dim, _BASE_N, _BASE_K)
-    sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
-    )
-    return shape, sharding
-
-  def _get_transfer_size_bytes_per_device(
-      self, rank: int, participating_ranks: int
-  ) -> float:
-    """S*P/R: each device sends one S/R chunk to every peer."""
-    return self._get_shard_size_bytes() * participating_ranks / max(rank, 1)
-
   def _get_sending_devices_per_chip(self, group_type: ReplicaGroupType) -> int:
     # In All-to-All, every (source_rank -> dest_rank) chunk is distinct, so all
     # devices_per_chip cores on a chip independently transmit their own outbound
     # inter-chip data in both parallel and non-parallel replica group modes.
     del group_type
     return self.hardware_spec.devices_per_chip
+
+
+@registry.benchmark_registry.register("dcn_all_to_all")
+class DcnAllToAllBenchmark(
+    AllToAllOpMixin[DcnCollectivesParams],
+    DcnCollectiveBenchmark[DcnCollectivesParams],
+):
+  """Benchmarks multi-slice DCN AllToAll latency and bandwidth.
+
+  Each device splits its `(matrix_dim, 8, 128)` buffer into `num_slices`
+  chunks along axis 0 and exchanges one chunk with the device at the same ICI
+  position in every other slice, so it sends `(num_slices - 1) / num_slices`
+  of its buffer over DCN. Per-host bandwidth sums all local devices, since
+  each one sends its own data.
+  """
+
+  Config = DcnCollectivesParams
 
 
 @registry.benchmark_registry.register("reduce_scatter", is_experimental=True)
