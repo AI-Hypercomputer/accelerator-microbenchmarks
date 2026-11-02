@@ -257,7 +257,7 @@ tpums benchmark run-config configs/sample_configs/parameter_sweep.yaml \
 - **Report Output & Compiler Flags**:
     - **`--output_dir <path>`**: Directory to save `summary.csv` and `detailed.json` (defaults to `results/`).
     - **`--xla_flags_file_path <path>`**: Optional path to a custom YAML file overriding default per-benchmark XLA / compiler runtime flags.
-- **Standalone Single-Host Init (`--single_host_tpu_init` / `single_host_tpu_init: true`, optional)**: Initializes this host as a standalone 1-host topology inside a multi-host slice (skips SliceBuilder, disables the cross-host launch barrier) so that a single-host benchmark can be used for node-local diagnostics without the other hosts of the slice participating. The slice's ICI routing is left untouched, so device-to-device transfers hang in this mode; only `gemm`, `gemm_throttling` and `hbm` are known to avoid them (a warning is printed for other benchmarks). Off by default; has no effect on normal single- or multi-host runs.
+- **Standalone Single-Host Init (`--single_host_tpu_init` / `single_host_tpu_init: true`, optional)**: Initializes this host as a standalone 1-host topology inside a multi-host slice (skips SliceBuilder, disables the cross-host launch barrier) so that a single-host benchmark can be used for node-local diagnostics without the other hosts of the slice participating. The slice's ICI routing is left untouched, so device-to-device transfers hang in this mode; only `gemm`, `gemm_throttling`, `hbm`, `host_to_device` and `device_to_host` are known to avoid them (a warning is printed for other benchmarks). Off by default; has no effect on normal single- or multi-host runs.
 
 ---
 

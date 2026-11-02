@@ -11,15 +11,18 @@ only benchmarks listed in `SUPPORTED_BENCHMARKS` are known to avoid them.
 import os
 
 # Benchmarks known to perform no device-to-device transfers in this mode
-# (gemm_throttling shares GeneralizedGemmBenchmark.generate_inputs). Lists
-# primary names and registered aliases; keep in sync with
-# `@benchmark_registry.register(..., aliases=...)`.
+# (gemm_throttling shares GeneralizedGemmBenchmark.generate_inputs;
+# host_to_device/device_to_host only move data between host buffers and
+# each local device). Lists primary names and registered aliases; keep in
+# sync with `@benchmark_registry.register(..., aliases=...)`.
 SUPPORTED_BENCHMARKS = frozenset({
     "gemm",
     "gemm_generalized",
     "gemm_throttling",
     "hbm",
     "hbm_bandwidth",
+    "host_to_device",
+    "device_to_host",
 })
 
 _SINGLE_HOST_ENV = {
