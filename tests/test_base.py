@@ -43,7 +43,7 @@ def _dtype_names(exclude: frozenset[dtypes.DType] = frozenset()) -> str:
   """Returns the DType values not in `exclude`, as listed in dtype errors."""
   # The enum's content and order are pinned by test_dtypes.py. Expected subsets
   # exclude explicitly named members rather than reusing the code under test
-  # (e.g. `dtypes_matching` or `utils.is_sub_byte_dtype`).
+  # (e.g. `dtypes_matching` or `dtypes.is_sub_byte_dtype`).
   return ", ".join(d for d in dtypes.DType if d not in exclude)
 
 

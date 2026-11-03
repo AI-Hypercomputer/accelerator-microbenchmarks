@@ -10,7 +10,6 @@ from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
-from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
 
@@ -156,7 +155,7 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
   )
 
   def setup(self):
-    out_dtype = utils.parse_dtype(self.config.out_dtype)
+    out_dtype = dtypes.parse_dtype(self.config.out_dtype)
     alpha = self.config.alpha
     beta = self.config.beta
 
@@ -215,7 +214,7 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     )
 
     # Resolve dtypes
-    in_dtype = utils.parse_dtype(self.config.in_dtype)
+    in_dtype = dtypes.parse_dtype(self.config.in_dtype)
 
     key = jax.random.PRNGKey(self.config.seed)
     k1, k2, k3, k4, k5 = jax.random.split(key, 5)
@@ -283,8 +282,8 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
 
   def get_total_bytes(self) -> float:
     m, k, n = self.config.m, self.config.k, self.config.n
-    in_itemsize = jnp.dtype(utils.parse_dtype(self.config.in_dtype)).itemsize
-    out_itemsize = jnp.dtype(utils.parse_dtype(self.config.out_dtype)).itemsize
+    in_itemsize = jnp.dtype(dtypes.parse_dtype(self.config.in_dtype)).itemsize
+    out_itemsize = jnp.dtype(dtypes.parse_dtype(self.config.out_dtype)).itemsize
 
     # Base memory traffic: Load A (M x K) and B (K x N), Store Out (M x N)
     bytes_a = m * k * in_itemsize
@@ -575,8 +574,8 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
   def setup(self):
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
-    in_dtype = utils.parse_dtype(self.config.in_dtype)
-    out_dtype = utils.parse_dtype(self.config.out_dtype)
+    in_dtype = dtypes.parse_dtype(self.config.in_dtype)
+    out_dtype = dtypes.parse_dtype(self.config.out_dtype)
     self._jit_fn = make_chain_fn(
         mesh=self.mesh,
         chain_length=self.config.chain_length,
@@ -600,7 +599,7 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
         mesh=self.mesh,
         m=self.config.m,
         k=self.config.k,
-        in_dtype=utils.parse_dtype(self.config.in_dtype),
+        in_dtype=dtypes.parse_dtype(self.config.in_dtype),
         seed=self.config.seed,
     )
     return inputs_fn()
@@ -624,8 +623,8 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
 
   def get_total_bytes(self) -> float:
     m, k = self.config.m, self.config.k
-    in_itemsize = jnp.dtype(utils.parse_dtype(self.config.in_dtype)).itemsize
-    out_itemsize = jnp.dtype(utils.parse_dtype(self.config.out_dtype)).itemsize
+    in_itemsize = jnp.dtype(dtypes.parse_dtype(self.config.in_dtype)).itemsize
+    out_itemsize = jnp.dtype(dtypes.parse_dtype(self.config.out_dtype)).itemsize
     # Per step: load X (M x K) and B (K x K), store X (M x K).
     step_bytes = (m * k + k * k) * in_itemsize + m * k * out_itemsize
     return float(self.config.chain_length * step_bytes)

@@ -18,7 +18,6 @@ from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
 from accelerator_microbenchmarks.core import system
-from accelerator_microbenchmarks.core import utils
 import jax
 import numpy as np
 import pandas as pd
@@ -228,9 +227,9 @@ class BaseBenchmarkParams:
     for member in dtypes.DType:
       if matching is not None and member not in matching:
         reasons[member] = f"Unsupported dtype '{member.value}'."
-      # Pass the np.dtype rather than the name: `utils.parse_dtype()` would
+      # Pass the np.dtype rather than the name: `dtypes.parse_dtype()` would
       # reject 64-bit names while `jax_enable_x64` is off.
-      elif not cls.ALLOW_SUB_BYTE_DTYPES and utils.is_sub_byte_dtype(
+      elif not cls.ALLOW_SUB_BYTE_DTYPES and dtypes.is_sub_byte_dtype(
           member.jnp_dtype
       ):
         reasons[member] = (
@@ -277,7 +276,7 @@ class BaseBenchmarkParams:
 
     Checks, in order (ValueError on the first failure):
       1. `value` is a `DType` value.
-      2. `utils.parse_dtype` accepts it. Runs before 3 so a 64-bit dtype
+      2. `dtypes.parse_dtype` accepts it. Runs before 3 so a 64-bit dtype
          reports the `jax_enable_x64` fix rather than "unsupported".
       3. `_dtype_rejection_reasons()` accepts it for the field.
 
@@ -289,7 +288,7 @@ class BaseBenchmarkParams:
     if member is None:
       raise self._dtype_error(field_name, f"Invalid dtype {value!r}.")
     try:
-      utils.parse_dtype(member.value)
+      dtypes.parse_dtype(member.value)
     except ValueError as exc:
       raise ValueError(f"{field_name}: {exc}") from exc
     reason = self._dtype_rejection_reasons(field_name)[member]

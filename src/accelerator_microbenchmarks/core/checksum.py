@@ -14,7 +14,7 @@ import collections
 import logging
 from typing import Any, Callable, NamedTuple, Optional, Sequence
 
-from accelerator_microbenchmarks.core import utils
+from accelerator_microbenchmarks.core import dtypes
 import jax
 from jax.experimental import multihost_utils
 import jax.numpy as jnp
@@ -58,7 +58,7 @@ SUPPORTED_BITS = tuple(_UINT_BY_BITS)
 def is_checksummable_dtype(dtype: Any) -> bool:
   """Returns whether `checksum_words` supports elements of `dtype`."""
   try:
-    return utils.get_dtype_bits(dtype) in _UINT_BY_BITS
+    return dtypes.get_dtype_bits(dtype) in _UINT_BY_BITS
   except ValueError:  # Not a numeric dtype.
     return False
 
@@ -66,7 +66,7 @@ def is_checksummable_dtype(dtype: Any) -> bool:
 def get_bitcast_uint_dtype(dtype: Any) -> Any:
   """Returns the same-width unsigned integer dtype used to bitcast `dtype`."""
   try:
-    bits = utils.get_dtype_bits(dtype)
+    bits = dtypes.get_dtype_bits(dtype)
   except ValueError as e:
     raise ValueError(
         f"Checksum supports bit widths {SUPPORTED_BITS} only, got non-numeric"

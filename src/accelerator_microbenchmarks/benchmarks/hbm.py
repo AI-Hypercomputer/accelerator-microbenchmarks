@@ -5,6 +5,7 @@ import random
 from typing import Any, Callable, Sequence
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -174,7 +175,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
       )
     self.spec = spec
 
-    dtype = utils.parse_dtype(self.config.dtype)
+    dtype = dtypes.parse_dtype(self.config.dtype)
     # Any value >= 2 works (integers truncate to >= 2): XLA folds `x * 1` into
     # a copy without the MARKER scope.
     self.scalar = jnp.array(random.uniform(2.0, 5.0), dtype=dtype)
@@ -217,7 +218,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
     assert self.spec is not None
     # 'num_elements' being the number of elements
     num_elements = self.config.num_elements
-    dtype = utils.parse_dtype(self.config.dtype)
+    dtype = dtypes.parse_dtype(self.config.dtype)
 
     # Force execution on target local device for single-device benchmark
     device_to_measure = self.get_device_to_measure()
@@ -243,7 +244,7 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
   def get_total_bytes(self) -> float:
     assert self.spec is not None
     num_elements = self.config.num_elements
-    dtype = utils.parse_dtype(self.config.dtype)
+    dtype = dtypes.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
 
     return float(num_elements * itemsize * self.spec.num_arrays)

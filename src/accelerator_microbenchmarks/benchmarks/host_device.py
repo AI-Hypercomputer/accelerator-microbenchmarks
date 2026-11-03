@@ -5,6 +5,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import utils
@@ -128,7 +129,7 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
 
   @property
   def rows_per_device(self) -> int:
-    itemsize = jnp.dtype(utils.parse_dtype(self.config.dtype)).itemsize
+    itemsize = jnp.dtype(dtypes.parse_dtype(self.config.dtype)).itemsize
     return self.config.data_size_bytes // itemsize // _COLUMNS
 
   def get_buffer_shape(self) -> tuple[int, ...]:
@@ -192,7 +193,7 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
 
   def _make_host_shard(self) -> np.ndarray:
     """Returns a random host payload with the shape of one device shard."""
-    dtype = utils.parse_dtype(self.config.dtype)
+    dtype = dtypes.parse_dtype(self.config.dtype)
     shard_shape = (
         (1, self.rows_per_device, _COLUMNS)
         if self.use_tpu_sync
@@ -268,7 +269,7 @@ class HostToDeviceBenchmark(_HostDeviceBenchmark):
   def generate_inputs(self) -> tuple[Any, ...]:
     if self.use_tpu_sync:
       return (self.device_array,)
-    dtype = utils.parse_dtype(self.config.dtype)
+    dtype = dtypes.parse_dtype(self.config.dtype)
     host_data = utils.random_bits_array(self.get_buffer_shape(), dtype)
     return (host_data,)
 

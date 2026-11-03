@@ -8,6 +8,7 @@ import math
 from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
@@ -284,7 +285,7 @@ class BaseCollectiveBenchmark(
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
     dim = self.config.matrix_dim
-    dtype = utils.parse_dtype(self.config.dtype)
+    dtype = dtypes.parse_dtype(self.config.dtype)
 
     sharding_axes = self._get_sharding_axes()
     num_sharded_devices = self._get_num_sharded_devices(sharding_axes)
@@ -327,7 +328,7 @@ class BaseCollectiveBenchmark(
 
   def _get_shard_size_bytes(self) -> int:
     """Returns the per-device input shard size in bytes."""
-    itemsize = jnp.dtype(utils.parse_dtype(self.config.dtype)).itemsize
+    itemsize = jnp.dtype(dtypes.parse_dtype(self.config.dtype)).itemsize
     return self.config.matrix_dim * _BASE_N * _BASE_K * itemsize
 
   def _get_transfer_size_bytes_per_device(
@@ -1147,7 +1148,7 @@ class ReduceScatterBenchmark(IciCollectiveBenchmark[ReduceScatterParams]):
 
   def _get_shard_size_bytes(self) -> int:
     """Returns the size of one reduce-scatter chunk in bytes."""
-    itemsize = jnp.dtype(utils.parse_dtype(self.config.dtype)).itemsize
+    itemsize = jnp.dtype(dtypes.parse_dtype(self.config.dtype)).itemsize
     return self.config.matrix_dim * _REDUCE_SCATTER_K * itemsize
 
   def _get_transfer_size_bytes_per_device(

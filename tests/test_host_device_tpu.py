@@ -9,8 +9,8 @@ from accelerator_microbenchmarks.benchmarks import host_device
 from accelerator_microbenchmarks.core import (
     base,
 )
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import system
-from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -158,7 +158,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     self.bm.setup()
     inputs = self.bm.generate_inputs()
 
-    dtype = utils.parse_dtype(config.dtype)
+    dtype = dtypes.parse_dtype(config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
     num_elements = (1024 * 1024 * size_mib) // itemsize
     expected_shape = (num_elements // 128, 128)

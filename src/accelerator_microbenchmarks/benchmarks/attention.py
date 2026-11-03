@@ -4,9 +4,9 @@ import dataclasses
 from typing import Any, Callable, Sequence
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
-from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
 
@@ -143,7 +143,7 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
     heads_q = self.config.num_q_heads
     heads_kv = self.config.num_kv_heads
     head_dim = self.config.head_dim
-    dtype = utils.parse_dtype(self.config.dtype)
+    dtype = dtypes.parse_dtype(self.config.dtype)
 
     key = jax.random.PRNGKey(0)
     k1, k2, k3 = jax.random.split(key, 3)
@@ -212,7 +212,7 @@ class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
     heads_q = self.config.num_q_heads
     heads_kv = self.config.num_kv_heads
     head_dim = self.config.head_dim
-    dtype = utils.parse_dtype(self.config.dtype)
+    dtype = dtypes.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
     mode = self.config.mode
     q_shards = self._get_num_sharded_devices()

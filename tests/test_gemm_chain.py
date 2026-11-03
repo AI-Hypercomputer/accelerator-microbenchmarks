@@ -13,9 +13,9 @@ from accelerator_microbenchmarks.benchmarks import matmul
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import checksum
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
-from accelerator_microbenchmarks.core import utils
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import jax.numpy as jnp
@@ -138,8 +138,8 @@ class _CorruptedInputGemmChained(matmul.GemmChainedBenchmark):
         np.asarray(x0),
         b_host,
         self._start_step,
-        utils.parse_dtype(self.config.in_dtype),
-        utils.parse_dtype(self.config.out_dtype),
+        dtypes.parse_dtype(self.config.in_dtype),
+        dtypes.parse_dtype(self.config.out_dtype),
     )
     x_bad = self._device_index if self._operand == "x" else None
     b_bad = self._device_index if self._operand == "b" else None

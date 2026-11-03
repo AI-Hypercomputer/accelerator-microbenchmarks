@@ -8,7 +8,6 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
-from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
 
@@ -329,9 +328,9 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
   roofline_mode: constants.RooflineMode = constants.RooflineMode.MEMORY_HBM
 
   def setup(self):
-    out_dtype = utils.parse_dtype(self.config.quant_dtype)
-    sf_dtype = utils.parse_dtype(self.config.scale_dtype)
-    q_max = utils.get_dtype_max(out_dtype)
+    out_dtype = dtypes.parse_dtype(self.config.quant_dtype)
+    sf_dtype = dtypes.parse_dtype(self.config.scale_dtype)
+    q_max = dtypes.get_dtype_max(out_dtype)
     transpose = self.config.transpose
 
     @jax.jit
@@ -359,7 +358,7 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
 
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     m, n = self.config.m, self.config.n
-    in_dtype = utils.parse_dtype(self.config.dtype)
+    in_dtype = dtypes.parse_dtype(self.config.dtype)
     key = jax.random.PRNGKey(0)
     x = jax.random.normal(key, (m, n), dtype=in_dtype)
     if self.mesh is None:
@@ -379,9 +378,9 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
 
   def get_total_bytes(self) -> float:
     m, n = self.config.m, self.config.n
-    in_itemsize = utils.get_dtype_bytes(self.config.dtype)
-    out_itemsize = utils.get_dtype_bytes(self.config.quant_dtype)
-    sf_itemsize = utils.get_dtype_bytes(self.config.scale_dtype)
+    in_itemsize = dtypes.get_dtype_bytes(self.config.dtype)
+    out_itemsize = dtypes.get_dtype_bytes(self.config.quant_dtype)
+    sf_itemsize = dtypes.get_dtype_bytes(self.config.scale_dtype)
     # One scaling factor per output row: M rows, or N rows when transposed.
     num_scales = n if self.config.transpose else m
     # Read X, Write Out, Write SF

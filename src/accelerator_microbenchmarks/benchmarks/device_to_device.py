@@ -5,6 +5,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -190,7 +191,7 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
 
     num_devices = len(jax.devices())
     size_bytes = int(self.config.data_size_bytes)
-    dtype = utils.parse_dtype(self.config.dtype)
+    dtype = dtypes.parse_dtype(self.config.dtype)
     itemsize = jnp.dtype(dtype).itemsize
 
     num_elements = size_bytes // itemsize
