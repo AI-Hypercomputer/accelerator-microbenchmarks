@@ -4,6 +4,7 @@ import argparse
 import dataclasses
 import io
 import json
+import os
 import sys
 from unittest import mock
 
@@ -862,6 +863,68 @@ benchmark:
     cli.main()
     mock_app_run.assert_called_once_with(
         cli.run, flags_parser=cli._google_flags_parser
+    )
+
+  @mock.patch.object(os, "execvpe")
+  def test_maybe_reexec_for_op_env_reexecs_when_env_differs(self, mock_execvpe):
+    """Verifies _maybe_reexec_for_op_env re-execs when op_flags.yaml env differs."""
+    with mock.patch.dict(os.environ, {}, clear=True):
+      cli._maybe_reexec_for_op_env([{"name": "dcn_all_reduce"}])  # pylint: disable=protected-access
+    mock_execvpe.assert_called_once_with(
+        sys.orig_argv[0],
+        sys.orig_argv,
+        {
+            "GLIBC_TUNABLES": "glibc.pthread.rseq=0",
+            cli._REEXEC_SENTINEL: "1",  # pylint: disable=protected-access
+        },
+    )
+
+  @parameterized.named_parameters(
+      ("no_op_env_all_reduce", "all_reduce", {}),
+      ("no_op_env_gemm", "gemm", {}),
+      (
+          "already_matches",
+          "dcn_all_reduce",
+          {"GLIBC_TUNABLES": "glibc.pthread.rseq=0"},
+      ),
+      (
+          "sentinel_set",
+          "dcn_all_reduce",
+          {cli._REEXEC_SENTINEL: "1"},  # pylint: disable=protected-access
+      ),
+  )
+  @mock.patch.object(os, "execvpe")
+  def test_maybe_reexec_for_op_env_noop(
+      self, task_name, initial_env, mock_execvpe
+  ):
+    """Verifies _maybe_reexec_for_op_env is a no-op when not needed."""
+    with mock.patch.dict(os.environ, initial_env, clear=True):
+      cli._maybe_reexec_for_op_env([{"name": task_name}])  # pylint: disable=protected-access
+    mock_execvpe.assert_not_called()
+
+  @parameterized.named_parameters(
+      ("run", "run", "dcn_all_reduce"),
+      ("run_config", "run-config", "dcn_all_reduce"),
+  )
+  @mock.patch.object(runner, "run_benchmarks")
+  @mock.patch.object(cli, "_maybe_reexec_for_op_env")
+  def test_run_invokes_maybe_reexec_before_run_benchmarks(
+      self, action, task, mock_reexec, mock_run_benchmarks
+  ):
+    """Verifies cli.run calls _maybe_reexec_for_op_env before run_benchmarks."""
+    calls = mock.Mock()
+    calls.attach_mock(mock_reexec, "reexec")
+    calls.attach_mock(mock_run_benchmarks, "run_benchmarks")
+    if action == "run":
+      cli.run(["benchmark", "run", task])
+    else:
+      fake_config = self.create_tempfile(
+          content=f"benchmark:\n  name: {task}\n"
+      )
+      cli.run(["benchmark", "run-config", fake_config.full_path])
+    mock_reexec.assert_called_once_with([{"name": task}], None)
+    self.assertEqual(
+        [c[0] for c in calls.mock_calls], ["reexec", "run_benchmarks"]
     )
 
   def test_benchmark_run_help_lists_tasks(self):

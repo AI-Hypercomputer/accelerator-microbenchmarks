@@ -171,6 +171,18 @@ class TestRunner(absltest.TestCase):
     self.assertIsNotNone(init_args)
     self.assertIn("--xla_jf_debug_level=3", init_args)
 
+  def test_set_xla_flags_dcn_all_reduce(self):
+    """Verifies dcn_all_reduce resolves unified flags and env in op_flags.yaml."""
+    os.environ.pop("LIBTPU_INIT_ARGS", None)
+    os.environ.pop("GLIBC_TUNABLES", None)
+    runner.set_xla_flags([{"name": "dcn_all_reduce"}], None)
+    init_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+    self.assertIn("--xla_tpu_use_enhanced_launch_barrier=false", init_args)
+    self.assertIn(
+        "--megascale_grpc_premap_memory_bytes=137438953472", init_args
+    )
+    self.assertEqual(os.environ.get("GLIBC_TUNABLES"), "glibc.pthread.rseq=0")
+
   def test_set_xla_flags_default_path_google3(self):
     """Verifies that set_xla_flags resolves canonical benchmark names."""
     os.environ.pop("LIBTPU_INIT_ARGS", None)

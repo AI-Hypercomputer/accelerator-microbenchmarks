@@ -18,6 +18,38 @@ from accelerator_microbenchmarks.core import platform as core_platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
 
+_REEXEC_SENTINEL = "_TPUMS_ENV_REEXEC"
+
+
+def _maybe_reexec_for_op_env(
+    benchmark_configs: Sequence[dict[str, Any]],
+    xla_flags_file_path: str | None = None,
+) -> None:
+  """Re-execs once with env vars from op_flags.yaml if any are not yet applied.
+
+  Loader-read variables like GLIBC_TUNABLES are parsed by ld.so before main(),
+  so setting os.environ in runner.set_xla_flags() is too late on the CLI path.
+  Does nothing if op_flags.yaml defines no env for the benchmark, if all env
+  values already match os.environ, or if the re-exec sentinel is set.
+
+  Args:
+    benchmark_configs: Benchmark config dicts with `"name"` keys.
+    xla_flags_file_path: Optional path to a custom op_flags YAML file.
+  """
+  if os.environ.get(_REEXEC_SENTINEL) == "1":
+    return
+  _, op_env = runner.get_op_flags_and_env(
+      list(benchmark_configs), xla_flags_file_path=xla_flags_file_path
+  )
+  if not op_env or all(os.environ.get(k) == v for k, v in op_env.items()):
+    return
+  env = dict(os.environ)
+  env.update(op_env)
+  env[_REEXEC_SENTINEL] = "1"
+  sys.stdout.flush()
+  sys.stderr.flush()
+  os.execvpe(sys.orig_argv[0], sys.orig_argv, env)
+
 
 def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
   """Adds common output and profiling flags to a subparser."""
@@ -326,6 +358,9 @@ def run(argv: Sequence[str]) -> None:
       bench_cls = registry.benchmark_registry.get_benchmark(name)
       tasks.append((name, bench_cls.Config(**raw)))
 
+    _maybe_reexec_for_op_env(
+        [{"name": name} for name, _ in tasks], args.xla_flags_file_path
+    )
     runner.run_benchmarks(
         tasks=tasks,
         output_dir=args.output_dir,
@@ -343,6 +378,7 @@ def run(argv: Sequence[str]) -> None:
   if args.resource == "benchmark" and args.action == "run":
     bench_cls = registry.benchmark_registry.get_benchmark(args.task)
     task_configs = parse_cli_configs(bench_cls.Config, args)
+    _maybe_reexec_for_op_env([{"name": args.task}], args.xla_flags_file_path)
     runner.run_benchmarks(
         tasks=[(args.task, task_config) for task_config in task_configs],
         output_dir=args.output_dir,

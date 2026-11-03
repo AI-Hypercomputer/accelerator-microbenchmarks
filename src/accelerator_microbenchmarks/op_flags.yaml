@@ -39,12 +39,15 @@ all_reduce:
 
 dcn_all_reduce:
   flags:
-    - "--xla_tpu_use_enhanced_launch_barrier=true"
+    - "--xla_tpu_use_enhanced_launch_barrier=false"
     - "--xla_tpu_prefer_async_allgather_to_allreduce=true"
     - "--xla_tpu_data_parallel_opt_different_sized_ops=true"
     - "--xla_tpu_enable_data_parallel_all_reduce_opt=true"
     - "--megascale_max_reduction_shard_size=16777216"
     - "--xla_tpu_use_megascale_host_reduction=false"
+    - "--megascale_grpc_premap_memory_bytes=137438953472"
+  env:
+    GLIBC_TUNABLES: "glibc.pthread.rseq=0"
 
 reduce_scatter:
   flags:

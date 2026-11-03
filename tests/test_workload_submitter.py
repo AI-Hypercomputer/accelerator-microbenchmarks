@@ -493,8 +493,11 @@ class WorkloadSubmitterTest(parameterized.TestCase):
     self.assertCountEqual(
         [f"{p.parent.name}/{p.name}" for p in resolved],
         [
-            f"{t}/all_reduce.yaml"
-            for t in ("2x2", "2x4", "4x4", "4x8", "8x8", "8x16", "16x16")
+            "2x2/dcn_all_reduce.yaml",
+            *(
+                f"{t}/all_reduce.yaml"
+                for t in ("2x2", "2x4", "4x4", "4x8", "8x8", "8x16", "16x16")
+            ),
         ],
     )
 

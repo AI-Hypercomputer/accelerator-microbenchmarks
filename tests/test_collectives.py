@@ -1116,12 +1116,18 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
     )
 
-  def test_dcn_all_reduce_schema_coverage(self):
+  @parameterized.named_parameters(
+      ("tpu7x", system.TPU7X_HARDWARE_SPEC, (0, 0), 2),
+      ("v6e", system.V6E_HARDWARE_SPEC, (0,), 1),
+  )
+  def test_dcn_all_reduce_schema_coverage(
+      self, hardware_spec, extra_coords, cores_per_chip
+  ):
     """Verify DcnAllReduceBenchmark REPORT_SCHEMA, execution, and output keys."""
     params = {"matrix_dim": 64, "dtype": "float32"}
     config = collectives.DcnAllReduceParams(**params)
     bm = collectives.DcnAllReduceBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
+        config=config, hardware_spec=hardware_spec
     )
     dcn_mesh = jax.sharding.Mesh(
         np.array(jax.devices()).reshape((2, 2)), ("dcn", "ici")
@@ -1129,8 +1135,8 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     mock_devices = [
         mock.Mock(
             id=i,
-            coords=(i // 2, 0, 0),
-            core_on_chip=i % 2,
+            coords=(i // cores_per_chip, *extra_coords),
+            core_on_chip=i % cores_per_chip,
             slice_index=i // 2,
         )
         for i in range(4)
@@ -1206,11 +1212,17 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         expected,
     )
 
-  def test_dcn_setup_single_slice_raises_error(self):
+  @parameterized.named_parameters(
+      ("tpu7x", system.TPU7X_HARDWARE_SPEC, (0, 0)),
+      ("v6e", system.V6E_HARDWARE_SPEC, (0,)),
+  )
+  def test_dcn_setup_single_slice_raises_error(
+      self, hardware_spec, extra_coords
+  ):
     """Verify DcnCollectiveBenchmark.setup rejects fewer than 2 slices."""
     bm = collectives.DcnAllReduceBenchmark(
         config=collectives.DcnAllReduceParams(matrix_dim=64, dtype="float32"),
-        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        hardware_spec=hardware_spec,
     )
     # Default CPU devices do not have slice_index -> treated as slice 0 only.
     with self.assertRaisesRegex(
@@ -1220,7 +1232,9 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
 
     # Single-slice TPU devices all having slice_index=0.
     single_slice_devices = [
-        mock.Mock(id=i, coords=(i, 0, 0), core_on_chip=0, slice_index=0)
+        mock.Mock(
+            id=i, coords=(i, *extra_coords), core_on_chip=0, slice_index=0
+        )
         for i in range(4)
     ]
     with mock.patch.object(jax, "devices", return_value=single_slice_devices):
@@ -1229,16 +1243,28 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       ):
         bm.setup()
 
-  def test_dcn_setup_unequal_slice_device_counts_raises_error(self):
+  @parameterized.named_parameters(
+      ("tpu7x", system.TPU7X_HARDWARE_SPEC, (0, 0)),
+      ("v6e", system.V6E_HARDWARE_SPEC, (0,)),
+  )
+  def test_dcn_setup_unequal_slice_device_counts_raises_error(
+      self, hardware_spec, extra_coords
+  ):
     """Verify DcnCollectiveBenchmark.setup rejects slices with different device counts."""
     bm = collectives.DcnAllReduceBenchmark(
         config=collectives.DcnAllReduceParams(matrix_dim=64, dtype="float32"),
-        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        hardware_spec=hardware_spec,
     )
     mismatched_devices = [
-        mock.Mock(id=0, coords=(0, 0, 0), core_on_chip=0, slice_index=0),
-        mock.Mock(id=1, coords=(0, 0, 0), core_on_chip=1, slice_index=0),
-        mock.Mock(id=2, coords=(0, 0, 0), core_on_chip=0, slice_index=1),
+        mock.Mock(
+            id=0, coords=(0, *extra_coords), core_on_chip=0, slice_index=0
+        ),
+        mock.Mock(
+            id=1, coords=(1, *extra_coords), core_on_chip=0, slice_index=0
+        ),
+        mock.Mock(
+            id=2, coords=(0, *extra_coords), core_on_chip=0, slice_index=1
+        ),
     ]
     with mock.patch.object(jax, "devices", return_value=mismatched_devices):
       with self.assertRaisesRegex(
