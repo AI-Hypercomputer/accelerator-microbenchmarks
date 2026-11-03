@@ -1,5 +1,6 @@
 """Unit tests for the TPUMS CLI (cli.py)."""
 
+import argparse
 import dataclasses
 import io
 import json
@@ -14,12 +15,31 @@ from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.benchmarks import device_to_device
 from accelerator_microbenchmarks.benchmarks import hbm
 from accelerator_microbenchmarks.benchmarks import matmul
+from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import runner
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
+
+# Every DType value, in declaration order (pinned by test_dtypes.py), as listed
+# in dtype error messages.
+_ALL_DTYPE_NAMES = ", ".join(dtypes.DType)
+# The DType values `hbm` and the reduction collectives accept: every member
+# except bool and complex64 (excluded by their `DTYPE_CONSTRAINTS`) and the
+# sub-byte int4 and float4_e2m1fn (`ALLOW_SUB_BYTE_DTYPES = False`). Named
+# explicitly instead of reusing the code under test.
+_HBM_REJECTED_DTYPES = frozenset({
+    dtypes.DType.BOOL,
+    dtypes.DType.COMPLEX64,
+    dtypes.DType.INT4,
+    dtypes.DType.FLOAT4_E2M1FN,
+})
+_BYTE_NUMERIC_DTYPE_NAMES = ", ".join(
+    d for d in dtypes.DType if d not in _HBM_REJECTED_DTYPES
+)
 
 
 class TestCli(parameterized.TestCase):
@@ -433,7 +453,36 @@ benchmark:
   params:
     dtype: float16
 """,
-          "^dtype: Unsupported dtype: 'float16'",
+          (
+              r"^dtype: Unsupported dtype 'float16'\. Supported dtypes for"
+              r" dtype: bfloat16, float32$"
+          ),
+      ),
+      (
+          "hbm_dtype_typo",
+          """
+benchmark:
+  name: hbm
+  params:
+    dtype: bf16
+""",
+          (
+              rf"^dtype: Invalid dtype 'bf16'\. Supported dtypes for dtype:"
+              rf" {_BYTE_NUMERIC_DTYPE_NAMES}$"
+          ),
+      ),
+      (
+          "gemm_in_dtype_typo",
+          """
+benchmark:
+  name: gemm
+  params:
+    in_dtype: fp8
+""",
+          (
+              rf"^in_dtype: Invalid dtype 'fp8'\. Supported dtypes for"
+              rf" in_dtype: {_ALL_DTYPE_NAMES}$"
+          ),
       ),
       (
           "hbm_64_bit_dtype",
@@ -464,7 +513,10 @@ benchmark:
   sweep:
     dtype: [bfloat16, complex64]
 """,
-          "^dtype: Unsupported dtype: 'complex64'",
+          (
+              rf"^dtype: Unsupported dtype 'complex64'\. Supported dtypes for"
+              rf" dtype: {_BYTE_NUMERIC_DTYPE_NAMES}$"
+          ),
       ),
   )
   @mock.patch.object(runner, "run_benchmarks", autospec=True)
@@ -489,6 +541,70 @@ benchmark:
     ):
       cli.run(["benchmark", "run", "hbm", "--dtype", "float64"])
     mock_run_benchmarks.assert_not_called()
+
+  @parameterized.named_parameters(
+      ("hbm_typo", "hbm", "--dtype", "bf16", _BYTE_NUMERIC_DTYPE_NAMES),
+      ("gemm_in_dtype_typo", "gemm", "--in_dtype", "fp8", _ALL_DTYPE_NAMES),
+  )
+  @mock.patch.object(runner, "run_benchmarks", autospec=True)
+  def test_benchmark_run_invalid_dtype_choice_exits(
+      self, task_name, flag_name, invalid_val, choices, mock_run_benchmarks
+  ):
+    """Verifies argparse rejects dtypes outside the field's allowed dtypes."""
+    with mock.patch.object(sys, "stderr", new=io.StringIO()) as fake_err:
+      with self.assertRaises(SystemExit) as cm:
+        cli.run(["benchmark", "run", task_name, flag_name, invalid_val])
+    self.assertEqual(cm.exception.code, 2)
+    error = fake_err.getvalue()
+    self.assertIn(f"argument {flag_name}: invalid choice:", error)
+    self.assertIn(invalid_val, error)
+    # Python versions differ in how argparse quotes the choices.
+    self.assertIn(choices, error.replace("'", ""))
+    mock_run_benchmarks.assert_not_called()
+
+  def test_benchmark_run_help_lists_dtype_choices(self):
+    """Verifies `--help` lists a dtype flag's allowed dtypes and default."""
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
+      with self.assertRaises(SystemExit):
+        cli.run(["benchmark", "run", "hbm", "--help"])
+    output = fake_out.getvalue()
+    choices = _BYTE_NUMERIC_DTYPE_NAMES.replace(", ", ",")
+    self.assertIn(f"--dtype {{{choices}}}", output)
+    # Help text may wrap anywhere, so compare with normalized whitespace.
+    self.assertIn("(default: bfloat16)", " ".join(output.split()))
+
+  def test_dtype_flag_choices_match_allowed_dtypes(self):
+    """Verifies every dtype flag's choices are its field's allowed_dtypes()."""
+    cli.create_parser()  # Registers every benchmark.
+    tasks = registry.benchmark_registry.list_benchmark_names(
+        include_experimental=True, include_aliases=False
+    )
+    self.assertNotEmpty(tasks)
+    for task_name in tasks:
+      config_cls = registry.benchmark_registry.get_benchmark(task_name).Config
+      parser = argparse.ArgumentParser()
+      cli.add_dataclass_arguments(parser, config_cls)
+      choices_by_dest = {
+          action.dest: action.choices
+          for action in parser._actions  # pylint: disable=protected-access
+      }
+      for field in dataclasses.fields(config_cls):
+        if not base.is_dtype_field(field):
+          continue
+        with self.subTest(task=task_name, field=field.name):
+          self.assertEqual(
+              choices_by_dest[field.name],
+              [d.value for d in config_cls.allowed_dtypes(field.name)],
+          )
+
+  @mock.patch.object(runner, "run_benchmarks", autospec=True)
+  def test_benchmark_run_gemm_accepts_sub_byte_in_dtype(
+      self, mock_run_benchmarks
+  ):
+    """Verifies gemm, which allows sub-byte dtypes, accepts `int4`."""
+    cli.run(["benchmark", "run", "gemm", "--in_dtype", "int4"])
+    ((_, task_config),) = mock_run_benchmarks.call_args.kwargs["tasks"]
+    self.assertIs(task_config.in_dtype, dtypes.DType.INT4)
 
   _BENCHMARK_RUN_CONFIG_ENUM_CASES = (
       tuple(

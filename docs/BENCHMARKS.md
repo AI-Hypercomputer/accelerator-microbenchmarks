@@ -45,15 +45,20 @@ Every benchmark supports the following baseline execution and profiling paramete
 | `min_duration_s` | `float` | `0.0` | Minimum total measurement duration in seconds. When `> 0.0`, warmup also runs for at least `min(1.0, min_duration_s / 5)` seconds, and the measurement loop continues until both `num_runs` and `min_duration_s` are satisfied. Must be `0.0` for [`gemm_chained`](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental). |
 
 > [!NOTE]
-> Dtype parameters (e.g. `dtype`, `in_dtype`, `out_dtype`) are validated when
-> the config is built: 64-bit dtypes (`float64`, `int64`, `uint64`,
-> `complex128`) are rejected unless `jax_enable_x64` is enabled (e.g.
-> `JAX_ENABLE_X64=1`; JAX would otherwise silently truncate them to 32 bits),
-> and some benchmarks restrict them further via their params class's
-> `DTYPE_CONSTRAINTS`. `hbm`, the collectives, `device_to_device`,
-> `host_to_device` and `device_to_host` also reject sub-byte dtypes (e.g.
-> `int4`, `float4_e2m1fn`): TPUs store them packed below one byte per element,
-> while these benchmarks count 1 byte per element.
+> Dtype parameters (e.g. `dtype`, `in_dtype`, `out_dtype`) accept values from
+> the curated `DType` enum in
+> [`core/dtypes.py`](../src/accelerator_microbenchmarks/core/dtypes.py) (JAX
+> dtypes outside it, such as `uint16` or `complex128`, are rejected) and are
+> validated when the config is built: 64-bit dtypes (`float64`, `int64`) are
+> rejected unless `jax_enable_x64` is enabled (e.g. `JAX_ENABLE_X64=1`; JAX
+> would otherwise silently truncate them to 32 bits), and benchmarks restrict
+> each field further via `DTYPE_CONSTRAINTS` (shown as `{...}` choices in
+> `tpums benchmark run <benchmark_name> --help` and listed in
+> `Supported dtypes for <field>: ...` error messages). `hbm`, the collectives,
+> `device_to_device`, `host_to_device`, and `device_to_host` also reject
+> sub-byte dtypes (`int4`, `float4_e2m1fn`), so their choices and lists omit
+> them: TPUs store them packed below one byte per element, while these
+> benchmarks count 1 byte per element.
 
 <a id="per-device-vs-per-chip-scaling"></a>
 ### 1.2 Throughput & Bandwidth Metric Conventions (`<timing_domain>_<metric_type>_<hardware_scope>`)
@@ -185,8 +190,10 @@ run are compared after the measurement loop.
 | `seed` | `int` | `0` | PRNG seed for initializing `X_0` and `B`. |
 | `chain_length` | `int` | `1` | Number of chained matmuls per run (minimum `1`). |
 
-`in_dtype` and `out_dtype` must be 8/16/32-bit floats. Unlike `gemm`, there is
-no `n`, `transpose_a`, `transpose_b`, `alpha`, `beta`, or `use_scaling_factors`.
+`in_dtype` and `out_dtype` must be `bfloat16`, `float16`, `float32`,
+`float8_e4m3fn` or `float8_e5m2`: the floats whose bit width (8, 16 or 32) the
+checksum supports. Unlike `gemm`, there is no `n`, `transpose_a`,
+`transpose_b`, `alpha`, `beta`, or `use_scaling_factors`.
 `min_duration_s` is not supported and must remain `0.0` so that every host runs
 the same number of timed iterations (`num_runs`) before the cross-host checksum
 gather.

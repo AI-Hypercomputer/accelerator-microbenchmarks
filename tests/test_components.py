@@ -230,7 +230,10 @@ class ComponentsParamsValidationTest(parameterized.TestCase):
   def test_dtype_must_be_floating(self):
     """Verifies only floating-point dtypes are accepted."""
     components.TransformerLayerParams(dtype="float16")
-    with self.assertRaisesRegex(ValueError, "Unsupported dtype: 'complex64'"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"^dtype: Unsupported dtype 'complex64'\. Supported dtypes for dtype:",
+    ):
       components.TransformerLayerParams(dtype="complex64")
 
 

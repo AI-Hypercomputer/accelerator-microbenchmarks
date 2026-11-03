@@ -215,7 +215,10 @@ class HBMBandwidthBenchmarkTest(parameterized.TestCase):
 
   def test_bool_dtype_raises_error(self):
     """Verify bool is rejected, as copy/scale would constant-fold."""
-    with self.assertRaisesRegex(ValueError, "Unsupported dtype: 'bool'"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"^dtype: Unsupported dtype 'bool'\. Supported dtypes for dtype:",
+    ):
       hbm.HBMBandwidthParams(dtype="bool")
 
   def test_read_and_write_values(self):
@@ -533,15 +536,16 @@ class HBMBandwidthParamsValidationTest(parameterized.TestCase):
   def test_complex_dtype_raises_error(self):
     """Verify complex is rejected, as it reports above the HBM peak."""
     with self.assertRaisesRegex(
-        ValueError, "^dtype: Unsupported dtype: 'complex64'"
+        ValueError,
+        r"^dtype: Unsupported dtype 'complex64'\. Supported dtypes for dtype:",
     ):
       hbm.HBMBandwidthParams(dtype="complex64")
 
-  @parameterized.parameters("int4", "uint4", "float4_e2m1fn")
+  @parameterized.parameters("int4", "float4_e2m1fn")
   def test_sub_byte_dtype_raises_error(self, dtype):
     """Verify sub-byte dtypes are rejected, as bytes count 1 per element."""
     with self.assertRaisesRegex(
-        ValueError, f"^dtype: Unsupported sub-byte dtype: '{dtype}'"
+        ValueError, f"^dtype: Unsupported sub-byte dtype '{dtype}'"
     ):
       hbm.HBMBandwidthParams(dtype=dtype)
 

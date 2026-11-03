@@ -1,23 +1,30 @@
 """Unit tests for utils.py."""
 
 import math
+import re
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import utils
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+_ALL_DTYPE_NAMES = ", ".join(dtypes.DType)
 
 
 class UtilsTest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ("bfloat16", "bfloat16", jnp.bfloat16),
+      ("bfloat16_member", dtypes.DType.BFLOAT16, jnp.bfloat16),
       ("float32", "float32", jnp.float32),
       ("float16", "float16", jnp.float16),
       ("int32", "int32", jnp.int32),
+      ("int16", "int16", jnp.int16),
       ("int8", "int8", jnp.int8),
+      ("uint8", "uint8", jnp.uint8),
       ("int4", "int4", jnp.int4),
       ("float8_e4m3fn", "float8_e4m3fn", jnp.float8_e4m3fn),
       ("float8_e5m2", "float8_e5m2", jnp.float8_e5m2),
@@ -26,50 +33,44 @@ class UtilsTest(parameterized.TestCase):
       ("complex64", "complex64", jnp.complex64),
   )
   def test_parse_dtype_valid(self, dtype_str, expected_dtype):
-    """Verifies that valid dtype strings parse to their expected np.dtype."""
+    """Verifies that valid DType values parse to their expected np.dtype."""
     dtype = utils.parse_dtype(dtype_str)
     self.assertIsInstance(dtype, np.dtype)
     self.assertEqual(dtype, np.dtype(expected_dtype))
 
   @parameterized.named_parameters(
       ("invalid", "invalid_type"),
+      ("alias", "bf16"),
+      ("uppercase", "BFLOAT16"),
       ("empty", ""),
       ("numeric", "123"),
-  )
-  def test_parse_dtype_invalid(self, dtype_str):
-    with self.assertRaisesRegex(
-        ValueError, f"Invalid dtype string: '{dtype_str}'. Could not find"
-    ):
-      utils.parse_dtype(dtype_str)
-
-  @parameterized.named_parameters(
+      ("jnp_non_dtype_ones", "ones"),
+      ("jnp_non_dtype_linalg", "linalg"),
+      ("jax_dtype_outside_enum_uint16", "uint16"),
+      ("jax_dtype_outside_enum_uint64", "uint64"),
+      ("jax_dtype_outside_enum_complex128", "complex128"),
       ("none", None),
       ("int", 1),
       ("np_dtype", np.dtype("float32")),
+      ("jnp_scalar_type", jnp.float32),
   )
-  def test_parse_dtype_rejects_non_string(self, dtype_value):
-    """Verifies non-string values raise ValueError, not TypeError."""
-    with self.assertRaisesRegex(ValueError, "Expected a dtype name string"):
+  def test_parse_dtype_invalid(self, dtype_value):
+    """Verifies non-DType values (including non-str and non-enum JAX dtypes) raise ValueError."""
+    expected_msg = (
+        rf"^Invalid dtype {re.escape(repr(dtype_value))}\. Supported dtypes:"
+        rf" {_ALL_DTYPE_NAMES}$"
+    )
+    # Enable x64 as well so 64-bit JAX dtypes outside DType (uint64, complex128)
+    # are verified to fail at the DType lookup rather than the x64 guard.
+    with jax.enable_x64(True), self.assertRaisesRegex(ValueError, expected_msg):
       utils.parse_dtype(dtype_value)
-
-  @parameterized.parameters("ones", "array", "linalg", "pi")
-  def test_parse_dtype_rejects_non_dtype_jnp_attribute(self, dtype_str):
-    """Verifies non-dtype jnp attributes raise ValueError, not TypeError."""
-    with self.assertRaisesRegex(
-        ValueError,
-        f"Invalid dtype string: '{dtype_str}'. jax.numpy.{dtype_str} is not a"
-        " dtype.",
-    ):
-      utils.parse_dtype(dtype_str)
 
   @parameterized.named_parameters(
       ("float64", "float64", "float32"),
       ("int64", "int64", "int32"),
-      ("uint64", "uint64", "uint32"),
-      ("complex128", "complex128", "complex64"),
   )
   def test_parse_dtype_64_bit_requires_x64(self, dtype_str, canonical_str):
-    """Verifies 64-bit dtypes are rejected unless jax_enable_x64 is set."""
+    """Verifies 64-bit DType members are rejected unless jax_enable_x64 is set."""
     with jax.enable_x64(False), self.assertRaisesRegex(
         ValueError,
         f"JAX canonicalizes dtype '{dtype_str}' to '{canonical_str}' because"
@@ -194,55 +195,6 @@ class UtilsTest(parameterized.TestCase):
   def test_is_sub_byte_dtype(self, dtype_or_str, expected):
     """Verifies only < 8-bit integer and floating-point dtypes are sub-byte."""
     self.assertEqual(utils.is_sub_byte_dtype(dtype_or_str), expected)
-
-  @parameterized.parameters(
-      ("float64", "JAX canonicalizes dtype 'float64'"),
-      ("ones", "Invalid dtype string: 'ones'"),
-  )
-  def test_validate_dtype_propagates_parse_dtype_errors(
-      self, dtype_str, error_regex
-  ):
-    """Verifies validate_dtype rejects whatever parse_dtype rejects."""
-    with jax.enable_x64(False), self.assertRaisesRegex(
-        ValueError, error_regex
-    ):
-      utils.validate_dtype(dtype_str, (jnp.floating,))
-
-  @parameterized.parameters(
-      "bfloat16", "bool", "int4", "float8_e4m3fn", "complex64"
-  )
-  def test_validate_dtype_accepts_non_64_bit(self, dtype_str):
-    """Verifies <= 32-bit and complex64 (2 x 32-bit) dtypes are accepted."""
-    utils.validate_dtype(dtype_str)
-
-  @parameterized.named_parameters(
-      ("concrete", "float32", (jnp.bfloat16, jnp.float32)),
-      ("abstract", "float8_e5m2", (jnp.floating,)),
-  )
-  def test_validate_dtype_supported_dtypes_accepted(
-      self, dtype_str, supported_dtypes
-  ):
-    """Verifies `supported_dtypes` accepts concrete and abstract dtypes."""
-    utils.validate_dtype(dtype_str, supported_dtypes)
-
-  @parameterized.named_parameters(
-      (
-          "concrete",
-          "float16",
-          (jnp.bfloat16, jnp.float32),
-          (
-              r"Unsupported dtype: 'float16'. Supported dtypes: \['bfloat16',"
-              r" 'float32'\]"
-          ),
-      ),
-      ("abstract", "complex64", (jnp.floating,), "Unsupported dtype"),
-  )
-  def test_validate_dtype_supported_dtypes_rejected(
-      self, dtype_str, supported_dtypes, error_regex
-  ):
-    """Verifies dtypes outside `supported_dtypes` are rejected."""
-    with self.assertRaisesRegex(ValueError, error_regex):
-      utils.validate_dtype(dtype_str, supported_dtypes)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,11 @@ class AttentionBenchmarkTest(parameterized.TestCase):
   @parameterized.parameters("float16", "float8_e4m3fn", "complex64")
   def test_unsupported_dtype_raises_error(self, dtype):
     """Verify dtypes other than bfloat16 and float32 are rejected."""
-    with self.assertRaisesRegex(ValueError, f"Unsupported dtype: '{dtype}'"):
+    with self.assertRaisesRegex(
+        ValueError,
+        rf"^dtype: Unsupported dtype '{dtype}'\. Supported dtypes for dtype:"
+        r" bfloat16, float32$",
+    ):
       attention.AttentionParams(dtype=dtype)
 
   def test_64_bit_check_runs_before_dtype_constraints_check(self):

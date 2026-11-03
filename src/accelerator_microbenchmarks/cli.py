@@ -59,9 +59,10 @@ def add_dataclass_arguments(
 ) -> None:
   """Registers dataclass fields as argparse flags.
 
-  Flags are grouped under a `<ConfigClass> parameters` section. Boolean, enum,
-  numeric, and string flags all take explicit values and support `nargs="+"`;
-  booleans accept the literal tokens `true` and `false`.
+  Flags are grouped under a `<ConfigClass> parameters` section. Boolean, dtype,
+  enum, numeric, and string flags all take explicit values and support
+  `nargs="+"`; booleans accept the literal tokens `true` and `false`, and dtype
+  flags accept the `dtypes.DType` values in the field's `allowed_dtypes()`.
 
   Args:
     parser: The (sub)parser to register the flags on.
@@ -96,7 +97,18 @@ def add_dataclass_arguments(
           metavar="{true,false}",
           help=help_text,
       )
-    # 2. Enum flags (strictly lowercase values)
+    # 2. Dtype flags: choices are the field's allowed dtypes (checked before
+    #    enum flags, since dtype fields are annotated as `dtypes.DType`).
+    elif base.is_dtype_field(field):
+      group.add_argument(
+          *flag_names,
+          type=str,
+          nargs="+",
+          choices=[d.value for d in config_cls.allowed_dtypes(field.name)],
+          default=default.value if isinstance(default, enum.Enum) else default,
+          help=help_text,
+      )
+    # 3. Enum flags (strictly lowercase values)
     elif isinstance(field.type, type) and issubclass(field.type, enum.Enum):
       default_val = (
           default.value if isinstance(default, enum.Enum) else default
@@ -109,7 +121,7 @@ def add_dataclass_arguments(
           default=default_val,
           help=help_text,
       )
-    # 3. Numeric / string flags
+    # 4. Numeric / string flags
     else:
       # Non-class annotations (e.g. `Optional[str]`) fall back to str parsing;
       # the dataclass itself remains the source of truth for validation.

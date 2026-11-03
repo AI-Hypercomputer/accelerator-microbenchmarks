@@ -6,6 +6,7 @@ from typing import Any
 
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import utils
 import jax
@@ -72,8 +73,8 @@ class QuantParams(base.SingleDtypeBenchmarkParams):
       default=4096,
       metadata={"min": 1, "help": "Matrix dimension N (columns)."},
   )
-  quant_dtype: str = base.dtype_field(
-      default="float8_e4m3fn",
+  quant_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.FLOAT8_E4M3FN,
       metadata={
           "help": (
               "Target quantized data type (e.g., 'float8_e4m3fn',"
@@ -81,8 +82,8 @@ class QuantParams(base.SingleDtypeBenchmarkParams):
           )
       },
   )
-  scale_dtype: str = base.dtype_field(
-      default="bfloat16",
+  scale_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.BFLOAT16,
       metadata={
           "help": (
               "Data type for rowwise scaling factors (e.g., 'bfloat16',"

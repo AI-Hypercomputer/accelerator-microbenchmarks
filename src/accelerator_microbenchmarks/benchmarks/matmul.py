@@ -7,6 +7,7 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import checksum
 from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import utils
@@ -39,14 +40,14 @@ class GemmParams(base.BaseBenchmarkParams):
           "help": "Matrix dimension N (columns of operand B / output C).",
       },
   )
-  in_dtype: str = base.dtype_field(
-      default="bfloat16",
+  in_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.BFLOAT16,
       metadata={
           "help": "Input operand data type (e.g. float8_e4m3fn, bfloat16)."
       },
   )
-  out_dtype: str = base.dtype_field(
-      default="bfloat16",
+  out_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.BFLOAT16,
       metadata={
           "help": "Output accumulation/result data type (e.g. bfloat16)."
       },
@@ -392,6 +393,15 @@ class GemmThrottlingBenchmark(GeneralizedGemmBenchmark):
     return metrics
 
 
+# Dtypes of the chained GEMM's X and B: the floats whose bit width the checksum
+# supports (checksum.SUPPORTED_BITS), so float64 and float4_e2m1fn are excluded.
+_CHAIN_DTYPES = tuple(
+    d.jnp_dtype.type
+    for d in dtypes.dtypes_matching(jnp.floating)
+    if checksum.is_checksummable_dtype(d.jnp_dtype)
+)
+
+
 @dataclasses.dataclass
 class GemmChainedParams(base.BaseBenchmarkParams):
   """Configuration parameters for chained GEMM determinism benchmark.
@@ -400,11 +410,11 @@ class GemmChainedParams(base.BaseBenchmarkParams):
   a square K x K matrix, so there is no separate N.
   """
 
-  # Integer dtypes are rejected: B ~ N(0, 1) / sqrt(k) truncates to all zeros,
-  # so the chain collapses to 0 and every device trivially matches.
+  # Floats only (see _CHAIN_DTYPES): integer B ~ N(0, 1) / sqrt(k) truncates to
+  # all zeros, so the chain collapses to 0 and every device trivially matches.
   DTYPE_CONSTRAINTS = {
-      "in_dtype": (jnp.floating,),
-      "out_dtype": (jnp.floating,),
+      "in_dtype": _CHAIN_DTYPES,
+      "out_dtype": _CHAIN_DTYPES,
   }
 
   # Overrides the inherited field, which keeps its place in the field order.
@@ -436,8 +446,8 @@ class GemmChainedParams(base.BaseBenchmarkParams):
           "help": "Matrix dimension K (columns of X; B is K x K).",
       },
   )
-  in_dtype: str = base.dtype_field(
-      default="bfloat16",
+  in_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.BFLOAT16,
       metadata={
           "help": (
               "Input operand data type of each matmul (e.g. float8_e4m3fn,"
@@ -445,8 +455,8 @@ class GemmChainedParams(base.BaseBenchmarkParams):
           )
       },
   )
-  out_dtype: str = base.dtype_field(
-      default="bfloat16",
+  out_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.BFLOAT16,
       metadata={"help": "Data type of X after each matmul (e.g. bfloat16)."},
   )
   seed: int = dataclasses.field(
@@ -460,17 +470,6 @@ class GemmChainedParams(base.BaseBenchmarkParams):
           "help": "Number of sequential matrix multiplications in the chain.",
       },
   )
-
-  def __post_init__(self):
-    super().__post_init__()
-    for name in ("in_dtype", "out_dtype"):
-      dtype_str = getattr(self, name)
-      # The element width must be supported by the checksum.
-      if not checksum.is_checksummable_dtype(utils.parse_dtype(dtype_str)):
-        raise ValueError(
-            f"gemm_chained requires a {name} with a bit width in"
-            f" {checksum.SUPPORTED_BITS}, got {dtype_str!r}."
-        )
 
 
 def make_inputs_fn(

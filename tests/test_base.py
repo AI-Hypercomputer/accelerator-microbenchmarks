@@ -11,8 +11,10 @@ from typing import Any
 from unittest import mock
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -23,6 +25,31 @@ import numpy as np
 
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
+
+_SUB_BYTE = frozenset({dtypes.DType.INT4, dtypes.DType.FLOAT4_E2M1FN})
+_NON_FLOATING = frozenset({
+    dtypes.DType.BOOL,
+    dtypes.DType.INT4,
+    dtypes.DType.INT8,
+    dtypes.DType.INT16,
+    dtypes.DType.INT32,
+    dtypes.DType.INT64,
+    dtypes.DType.UINT8,
+    dtypes.DType.COMPLEX64,
+})
+
+
+def _dtype_names(exclude: frozenset[dtypes.DType] = frozenset()) -> str:
+  """Returns the DType values not in `exclude`, as listed in dtype errors."""
+  # The enum's content and order are pinned by test_dtypes.py. Expected subsets
+  # exclude explicitly named members rather than reusing the code under test
+  # (e.g. `dtypes_matching` or `utils.is_sub_byte_dtype`).
+  return ", ".join(d for d in dtypes.DType if d not in exclude)
+
+
+_ALL_DTYPE_NAMES = _dtype_names()
+_NON_SUB_BYTE_DTYPE_NAMES = _dtype_names(_SUB_BYTE)
+_FLOATING_DTYPE_NAMES = _dtype_names(_NON_FLOATING)
 
 
 class _Color(constants.ParamEnum):
@@ -69,7 +96,7 @@ class DummyBenchmark(base.BaseBenchmark):
     return {}
 
 
-class BaseBenchmarkParamsTest(absltest.TestCase):
+class BaseBenchmarkParamsTest(parameterized.TestCase):
   """Tests for BaseBenchmarkParams configuration and expansion contract."""
 
   def test_expand_test_cases_default_identity(self):
@@ -173,27 +200,181 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
           "dtype": (jnp.bfloat16,),
           "in_dtype": (jnp.floating,),
       }
-      in_dtype: str = base.dtype_field(default="bfloat16")
-      out_dtype: str = base.dtype_field(default="bfloat16")
+      in_dtype: dtypes.DType | str = base.dtype_field(default="bfloat16")
+      out_dtype: dtypes.DType | str = base.dtype_field(default="bfloat16")
 
     CustomParams(in_dtype="float32", out_dtype="int8")
-    with self.assertRaisesRegex(ValueError, "^dtype: Unsupported dtype"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"^dtype: Unsupported dtype 'float32'\. Supported dtypes for dtype:"
+        r" bfloat16$",
+    ):
       CustomParams(dtype="float32")
     with self.assertRaisesRegex(
-        ValueError, "^in_dtype: Unsupported dtype: 'int8'"
+        ValueError,
+        rf"^in_dtype: Unsupported dtype 'int8'\. Supported dtypes for"
+        rf" in_dtype: {_FLOATING_DTYPE_NAMES}$",
     ):
       CustomParams(in_dtype="int8")
     # Unconstrained dtype fields still get the parse_dtype checks.
-    with jax.enable_x64(False), self.assertRaisesRegex(
-        ValueError, "^out_dtype: .*jax_enable_x64 is off"
+    with (
+        jax.enable_x64(False),
+        self.assertRaisesRegex(
+            ValueError, "^out_dtype: .*jax_enable_x64 is off"
+        ),
     ):
       CustomParams(out_dtype="int64")
     with self.assertRaisesRegex(
-        ValueError, "^out_dtype: Invalid dtype string: 'ones'"
+        ValueError,
+        rf"^out_dtype: Invalid dtype 'ones'\. Supported dtypes for out_dtype:"
+        rf" {_ALL_DTYPE_NAMES}$",
     ):
       CustomParams(out_dtype="ones")
-    with self.assertRaisesRegex(ValueError, "^out_dtype: Invalid dtype: None"):
+    with self.assertRaisesRegex(
+        ValueError,
+        rf"^out_dtype: Invalid dtype None\. Supported dtypes for out_dtype:"
+        rf" {_ALL_DTYPE_NAMES}$",
+    ):
       CustomParams(out_dtype=None)
+
+  @parameterized.parameters(
+      # A valid JAX dtype that is not a DType member.
+      "uint16",
+      # Names have no aliases and are case-sensitive.
+      "bf16",
+      "BFLOAT16",
+  )
+  def test_dtype_field_rejects_non_member_names(self, dtype_str):
+    """Verifies names that are not DType values list the field's dtypes."""
+    with self.assertRaisesRegex(
+        ValueError,
+        rf"^dtype: Invalid dtype '{dtype_str}'\. Supported dtypes"
+        rf" for dtype: {_ALL_DTYPE_NAMES}$",
+    ):
+      base.SingleDtypeBenchmarkParams(dtype=dtype_str)
+
+  @parameterized.named_parameters(
+      ("np_dtype", np.dtype("float32"), r"dtype\('float32'\)"),
+      ("jnp_scalar_type", jnp.float32, r"<class 'jax\.numpy\.float32'>"),
+  )
+  def test_dtype_field_rejects_non_string_values(self, value, value_regex):
+    """Verifies non-string values raise ValueError."""
+    with self.assertRaisesRegex(
+        ValueError,
+        rf"^dtype: Invalid dtype {value_regex}\. Supported dtypes for dtype:"
+        rf" {_ALL_DTYPE_NAMES}$",
+    ):
+      base.SingleDtypeBenchmarkParams(dtype=value)
+
+  def test_dtype_field_coerced_to_dtype_member(self):
+    """Verifies dtype fields hold DType members that behave like strings."""
+
+    @dataclasses.dataclass
+    class CustomParams(base.SingleDtypeBenchmarkParams):
+      out_dtype: dtypes.DType | str = base.dtype_field(default="int8")
+
+    for params in (
+        CustomParams(dtype="float32"),
+        CustomParams(dtype=dtypes.DType.FLOAT32),
+    ):
+      with self.subTest(dtype=repr(params.dtype)):
+        self.assertIs(params.dtype, dtypes.DType.FLOAT32)
+        # String defaults are coerced too.
+        self.assertIs(params.out_dtype, dtypes.DType.INT8)
+        self.assertIsInstance(params.dtype, str)
+        self.assertEqual(params.dtype, "float32")
+        self.assertEqual(f"{params.dtype}", "float32")
+        self.assertEqual(
+            json.loads(json.dumps(dataclasses.asdict(params)))["dtype"],
+            "float32",
+        )
+
+  def test_dtype_field_64_bit_accepted_with_x64(self):
+    """Verifies 64-bit members are accepted once jax_enable_x64 is on."""
+    with jax.enable_x64(True):
+      params = base.SingleDtypeBenchmarkParams(dtype="int64")
+    self.assertIs(params.dtype, dtypes.DType.INT64)
+
+  def test_allowed_dtypes(self):
+    """Verifies allowed_dtypes expands DTYPE_CONSTRAINTS to DType members."""
+
+    @dataclasses.dataclass
+    class CustomParams(base.SingleDtypeBenchmarkParams):
+      DTYPE_CONSTRAINTS = {"dtype": (jnp.float32, jnp.integer)}
+      out_dtype: dtypes.DType | str = base.dtype_field(default="bfloat16")
+
+    self.assertEqual(
+        CustomParams.allowed_dtypes("dtype"),
+        (
+            dtypes.DType.INT4,
+            dtypes.DType.INT8,
+            dtypes.DType.INT16,
+            dtypes.DType.INT32,
+            dtypes.DType.INT64,
+            dtypes.DType.UINT8,
+            dtypes.DType.FLOAT32,
+        ),
+    )
+    self.assertEqual(
+        CustomParams.allowed_dtypes("out_dtype"), tuple(dtypes.DType)
+    )
+
+  @parameterized.parameters("num_runs", "not_a_field")
+  def test_allowed_dtypes_rejects_non_dtype_field(self, field_name):
+    """Verifies allowed_dtypes only accepts dtype field names."""
+    with self.assertRaisesRegex(
+        ValueError,
+        rf"^SingleDtypeBenchmarkParams\.{field_name} is not a dtype field\.$",
+    ):
+      base.SingleDtypeBenchmarkParams.allowed_dtypes(field_name)
+
+  def test_subclass_dtype_constraints_replace_parent(self):
+    """Verifies a subclass's DTYPE_CONSTRAINTS replaces its parent's."""
+
+    @dataclasses.dataclass
+    class ParentParams(base.SingleDtypeBenchmarkParams):
+      DTYPE_CONSTRAINTS = {"dtype": (jnp.bfloat16,)}
+
+    @dataclasses.dataclass
+    class ChildParams(ParentParams):
+      DTYPE_CONSTRAINTS = {"dtype": (jnp.float32,)}
+
+    self.assertEqual(
+        ChildParams.allowed_dtypes("dtype"), (dtypes.DType.FLOAT32,)
+    )
+    with self.assertRaisesRegex(
+        ValueError,
+        r"^dtype: Unsupported dtype 'bfloat16'\. Supported dtypes for dtype:"
+        r" float32$",
+    ):
+      ChildParams()
+
+  @parameterized.named_parameters(
+      ("no_member", (jnp.uint16,), True, "matches no allowed DType member"),
+      ("empty", (), True, "matches no allowed DType member"),
+      (
+          "sub_byte_only",
+          (jnp.int4, jnp.float4_e2m1fn),
+          False,
+          "matches no allowed DType member",
+      ),
+  )
+  def test_dtype_constraints_invalid_entry_raises(
+      self, constraint, allow_sub_byte, error_regex
+  ):
+    """Verifies misconfigured DTYPE_CONSTRAINTS entries raise TypeError."""
+
+    @dataclasses.dataclass
+    class CustomParams(base.SingleDtypeBenchmarkParams):
+      DTYPE_CONSTRAINTS = {"dtype": constraint}
+      ALLOW_SUB_BYTE_DTYPES = allow_sub_byte
+
+    # `allowed_dtypes()` raises too, so `cli.py` fails at parser construction
+    # instead of registering a flag with no valid choices.
+    with self.assertRaisesRegex(TypeError, error_regex):
+      CustomParams.allowed_dtypes("dtype")
+    with self.assertRaisesRegex(TypeError, error_regex):
+      CustomParams()
 
   def test_dtype_constraints_non_dtype_key_raises(self):
     """Verifies a DTYPE_CONSTRAINTS key that is not a dtype field raises."""
@@ -224,7 +405,7 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
     @dataclasses.dataclass
     class NoSubByteParams(base.SingleDtypeBenchmarkParams):
       ALLOW_SUB_BYTE_DTYPES = False
-      out_dtype: str = base.dtype_field(default="bfloat16")
+      out_dtype: dtypes.DType | str = base.dtype_field(default="bfloat16")
 
     @dataclasses.dataclass
     class ChildParams(NoSubByteParams):
@@ -245,10 +426,58 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
       with self.subTest(cls=params_cls.__name__, field=field):
         with self.assertRaisesRegex(
             ValueError,
-            rf"^{field}: Unsupported sub-byte dtype: '{dtype}'\..*"
-            rf"{params_cls.__name__} counts itemsize",
+            rf"^{field}: Unsupported sub-byte dtype '{dtype}'\..*"
+            rf"{params_cls.__name__} counts itemsize .*\. Supported dtypes"
+            rf" for {field}: {_NON_SUB_BYTE_DTYPE_NAMES}$",
         ):
           params_cls(**{field: dtype})
+
+  def test_allowed_dtypes_excludes_sub_byte_unless_allowed(self):
+    """Verifies allowed_dtypes honors ALLOW_SUB_BYTE_DTYPES."""
+
+    @dataclasses.dataclass
+    class NoSubByteParams(base.SingleDtypeBenchmarkParams):
+      DTYPE_CONSTRAINTS = {"dtype": (jnp.integer, jnp.floating)}
+      ALLOW_SUB_BYTE_DTYPES = False
+      out_dtype: dtypes.DType | str = base.dtype_field(default="bfloat16")
+
+    # Must not go through `parse_dtype`, which rejects 64-bit names without
+    # x64 (allowed_dtypes() runs when the CLI parser is built).
+    with jax.enable_x64(False):
+      self.assertEqual(
+          ", ".join(NoSubByteParams.allowed_dtypes("dtype")),
+          _dtype_names(_SUB_BYTE | {dtypes.DType.BOOL, dtypes.DType.COMPLEX64}),
+      )
+      self.assertEqual(
+          ", ".join(NoSubByteParams.allowed_dtypes("out_dtype")),
+          _NON_SUB_BYTE_DTYPE_NAMES,
+      )
+    self.assertIn(
+        dtypes.DType.INT4,
+        base.SingleDtypeBenchmarkParams.allowed_dtypes("dtype"),
+    )
+
+  def test_sub_byte_error_blames_constraint_before_sub_byte_flag(self):
+    """Verifies DTYPE_CONSTRAINTS errors take precedence over sub-byte ones."""
+
+    @dataclasses.dataclass
+    class CustomParams(base.SingleDtypeBenchmarkParams):
+      DTYPE_CONSTRAINTS = {"dtype": (jnp.floating,)}
+      ALLOW_SUB_BYTE_DTYPES = False
+
+    supported = "Supported dtypes for dtype: " + _dtype_names(
+        _NON_FLOATING | _SUB_BYTE
+    )
+    with self.assertRaisesRegex(
+        ValueError, rf"^dtype: Unsupported dtype 'int4'\. {supported}$"
+    ):
+      CustomParams(dtype="int4")
+    with self.assertRaisesRegex(
+        ValueError,
+        rf"^dtype: Unsupported sub-byte dtype 'float4_e2m1fn'\. .*"
+        rf" {supported}$",
+    ):
+      CustomParams(dtype="float4_e2m1fn")
 
   def test_only_dtype_field_fields_are_validated(self):
     """Verifies dtype fields are marked by dtype_field(), not by name."""
@@ -256,10 +485,16 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
     @dataclasses.dataclass
     class CustomParams(base.BaseBenchmarkParams):
       foo_dtype: str = "not_a_dtype"
-      precision: str = base.dtype_field(default="bfloat16")
+      precision: dtypes.DType | str = base.dtype_field(default="bfloat16")
 
-    CustomParams()
-    with self.assertRaisesRegex(ValueError, "^precision: Invalid dtype"):
+    params = CustomParams()
+    self.assertEqual(params.foo_dtype, "not_a_dtype")
+    fields = {f.name: f for f in dataclasses.fields(CustomParams)}
+    self.assertTrue(base.is_dtype_field(fields["precision"]))
+    self.assertFalse(base.is_dtype_field(fields["foo_dtype"]))
+    with self.assertRaisesRegex(
+        ValueError, "^precision: Invalid dtype 'not_a_dtype'"
+    ):
       CustomParams(precision="not_a_dtype")
 
   def test_dtype_field_keeps_metadata(self):
@@ -267,7 +502,7 @@ class BaseBenchmarkParamsTest(absltest.TestCase):
 
     @dataclasses.dataclass
     class CustomParams(base.BaseBenchmarkParams):
-      in_dtype: str = base.dtype_field(
+      in_dtype: dtypes.DType | str = base.dtype_field(
           default="float32", metadata={"help": "Input dtype."}
       )
 

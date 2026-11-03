@@ -149,7 +149,7 @@ class DeviceToDeviceParamsTest(parameterized.TestCase):
   def test_sub_byte_dtype_raises_error(self, params_cls, dtype):
     """Verifies sub-byte dtypes are rejected (the payload counts itemsize)."""
     with self.assertRaisesRegex(
-        ValueError, f"^dtype: Unsupported sub-byte dtype: '{dtype}'"
+        ValueError, f"^dtype: Unsupported sub-byte dtype '{dtype}'"
     ):
       params_cls(dtype=dtype)
 

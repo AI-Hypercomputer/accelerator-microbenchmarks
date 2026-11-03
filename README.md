@@ -182,7 +182,7 @@ tpums platform describe
 # 2. List all registered, production-ready benchmarks
 tpums benchmark list
 
-# 3. Inspect typed CLI flags and default values for a specific benchmark
+# 3. Inspect typed CLI flags, per-field allowed choices (e.g. dtypes), and defaults
 # tpums benchmark run <benchmark_name> --help
 tpums benchmark run gemm --help
 ```
@@ -220,7 +220,7 @@ tpums benchmark run all_reduce --xprof_timing --mesh_shape 2x2x2 --sharding_stra
 Pass multiple space-separated values to any flag in `tpums benchmark run` to expand and run their **Cartesian product** in a single invocation:
 
 ```bash
-# 1. Numeric + String DType Sweep (HBM: 2 num_elements × 2 dtypes = 4 runs)
+# 1. Numeric + DType Sweep (HBM: 2 num_elements × 2 dtypes = 4 runs)
 tpums benchmark run hbm --num_elements 134217728 268435456 --dtype bfloat16 float32
 
 # 2. Enum + Integer Dimension Sweep (All-Reduce: 2 ops × 2 dims = 4 runs)
@@ -556,7 +556,7 @@ accelerator_microbenchmarks/
 └── src/
     └── accelerator_microbenchmarks/
         ├── benchmarks/         # Concrete benchmark implementations (gemm, hbm, collectives, etc.)
-        ├── core/               # Core framework (base class, config, runner, reporting)
+        ├── core/               # Core framework (base class, dtypes, config, runner, reporting)
         ├── cli.py              # Canonical CLI entry point (tpums)
         └── op_flags.yaml       # Hardware-specific compiler & XLA flag mappings
 ```

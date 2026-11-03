@@ -30,6 +30,10 @@ jax.config.update("jax_num_cpu_devices", _NUM_CPU_DEVICES)
 # Set CPU backend for fast testing without TPU requirements
 jax.config.update("jax_platform_name", "cpu")
 
+# The dtypes GemmChainedParams lists for in_dtype / out_dtype: the floats with a
+# checksummable (8/16/32-bit) width.
+_CHAIN_DTYPE_NAMES = "bfloat16, float16, float32, float8_e4m3fn, float8_e5m2"
+
 
 def _flip_bit(x, flat_index, bit):
   """Returns `x` with bit `bit` of element `flat_index` (row-major) flipped."""
@@ -336,19 +340,30 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
     """Verifies integer (incl. sub-byte) dtypes are rejected."""
     with self.assertRaisesRegex(
         ValueError,
-        rf"^{field}: Unsupported dtype: '{dtype}'. Supported dtypes:"
-        r" \['floating'\]",
+        rf"^{field}: Unsupported dtype '{dtype}'\. Supported dtypes for"
+        rf" {field}: {_CHAIN_DTYPE_NAMES}$",
     ):
       matmul.GemmChainedParams(m=128, k=128, **dtype_kwargs)
 
   @parameterized.named_parameters(
-      ("float64_in", {"in_dtype": "float64"}, "in_dtype"),
-      ("float64_out", {"out_dtype": "float64"}, "out_dtype"),
+      ("float64_in", {"in_dtype": "float64"}, "in_dtype", "float64"),
+      ("float64_out", {"out_dtype": "float64"}, "out_dtype", "float64"),
+      (
+          "float4_e2m1fn_in",
+          {"in_dtype": "float4_e2m1fn"},
+          "in_dtype",
+          "float4_e2m1fn",
+      ),
   )
-  def test_params_reject_unsupported_width_dtypes(self, dtype_kwargs, field):
-    """Verifies float dtypes the checksum cannot handle are rejected."""
+  def test_params_reject_unsupported_width_dtypes(
+      self, dtype_kwargs, field, dtype
+  ):
+    """Verifies float dtypes the checksum cannot handle are not allowed."""
+    # With x64 off, float64 fails the x64 check before DTYPE_CONSTRAINTS.
     with jax.enable_x64(True), self.assertRaisesRegex(
-        ValueError, rf"{field} with a bit width in \(8, 16, 32\)"
+        ValueError,
+        rf"^{field}: Unsupported dtype '{dtype}'\. Supported dtypes for"
+        rf" {field}: {_CHAIN_DTYPE_NAMES}$",
     ):
       matmul.GemmChainedParams(m=128, k=128, **dtype_kwargs)
 

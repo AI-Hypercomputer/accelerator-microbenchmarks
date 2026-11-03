@@ -4,12 +4,15 @@ import abc
 import dataclasses
 import datetime
 import enum
+import functools
 import numbers
 import os
 import time
+import types
 from typing import Any, Callable, ClassVar, Generic, Mapping, Optional, Sequence, TypeVar
 
 from accelerator_microbenchmarks.core import constants
+from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import executor
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import profiler
@@ -37,19 +40,19 @@ _DTYPE_FIELD_KEY = "dtype"
 
 
 def dtype_field(
-    *, default: str, metadata: Mapping[str, Any] | None = None
+    *, default: dtypes.DType | str, metadata: Mapping[str, Any] | None = None
 ) -> Any:
-  """Returns a dataclass field that holds a dtype name (e.g. 'bfloat16').
+  """Returns a dataclass field holding a `dtypes.DType` (e.g. 'bfloat16').
 
-  `BaseBenchmarkParams` validates every field declared this way when the config
-  is built (see `BaseBenchmarkParams.DTYPE_CONSTRAINTS`).
+  `BaseBenchmarkParams` validates such fields and coerces them into `DType`
+  members (see `BaseBenchmarkParams.allowed_dtypes()`).
 
   Args:
-    default: The default dtype name.
+    default: The default dtype, as a `dtypes.DType` member or its value.
     metadata: Additional field metadata, e.g. `{"help": ...}`.
 
   Returns:
-    A `dataclasses.Field` with `metadata` plus the dtype-field marker.
+    A `dataclasses.Field` marked as a dtype field.
   """
   return dataclasses.field(
       default=default,
@@ -57,13 +60,19 @@ def dtype_field(
   )
 
 
+def is_dtype_field(field: dataclasses.Field[Any]) -> bool:
+  """Returns whether `field` was declared with `dtype_field()`."""
+  return bool(field.metadata.get(_DTYPE_FIELD_KEY, False))
+
+
 @dataclasses.dataclass
 class BaseBenchmarkParams:
   # Allowed dtypes per dtype field (declared with `dtype_field()`), as jnp
   # scalar types (e.g. `jnp.bfloat16`) or abstract dtype classes (e.g.
-  # `jnp.floating`). Dtype fields that are not listed accept any dtype
-  # `utils.parse_dtype` accepts. Every key must name a dtype field. Subclasses
-  # replace (rather than merge) `DTYPE_CONSTRAINTS`; merge explicitly via
+  # `jnp.floating`). Dtype fields that are not listed accept every
+  # `dtypes.DType` member. Every key must name a dtype field and match at least
+  # one `dtypes.DType` member. Subclasses replace (rather than merge)
+  # `DTYPE_CONSTRAINTS`; merge explicitly via
   # `{**Parent.DTYPE_CONSTRAINTS, ...}` to preserve inherited constraints.
   DTYPE_CONSTRAINTS: ClassVar[Mapping[str, Sequence[jax.typing.DTypeLike]]] = {}
   # Set False where bytes are counted with `itemsize`: TPUs pack sub-byte
@@ -131,6 +140,10 @@ class BaseBenchmarkParams:
       ValueError: If any field is not a valid member of its Enum type.
     """
     for field in dataclasses.fields(self):
+      # Dtype fields are coerced into `dtypes.DType` by `_validate_dtypes()`,
+      # whose errors list the dtypes the field accepts.
+      if is_dtype_field(field):
+        continue
       # Checks if the field is an enum by coercing raw values into their Enum
       # member. Only scalar enum fields are supported, not containers such as
       # list[Enum].
@@ -148,39 +161,148 @@ class BaseBenchmarkParams:
             f" {[member.value for member in enum_type]}."
         ) from exc
 
-  def _validate_dtypes(self) -> None:
-    """Validates every `dtype_field()` field via `utils.validate_dtype`.
+  @classmethod
+  def allowed_dtypes(cls, field_name: str) -> tuple[dtypes.DType, ...]:
+    """Returns the `dtypes.DType` members that dtype field `field_name` accepts.
 
-    Each dtype field must also match its `DTYPE_CONSTRAINTS` entry, if any, and
-    must not be a sub-byte dtype unless `ALLOW_SUB_BYTE_DTYPES` is set.
+    Args:
+      field_name: The name of a dtype field of this class.
+
+    Returns:
+      The members that `_dtype_rejection_reasons()` accepts, in `DType` order:
+      those matching the field's `DTYPE_CONSTRAINTS` entry (all if it has
+      none), without sub-byte members unless `ALLOW_SUB_BYTE_DTYPES` is set.
 
     Raises:
-      TypeError: If a `DTYPE_CONSTRAINTS` key is not a dtype field.
-      ValueError: If any dtype field is invalid or unsupported.
+      ValueError: If `field_name` is not a dtype field.
+      TypeError: If the field's `DTYPE_CONSTRAINTS` entry is invalid (see
+        `dtypes.dtypes_matching()`) or leaves no allowed member. Raising here
+        rather than returning `()` also fails `cli.py`, which uses this for
+        argparse `choices`, at parser construction.
+    """
+    if not any(
+        f.name == field_name and is_dtype_field(f)
+        for f in dataclasses.fields(cls)
+    ):
+      raise ValueError(f"{cls.__name__}.{field_name} is not a dtype field.")
+    members = tuple(
+        member
+        for member, reason in cls._dtype_rejection_reasons(field_name).items()
+        if reason is None
+    )
+    if not members:
+      raise TypeError(
+          f"{cls.__name__}.DTYPE_CONSTRAINTS[{field_name!r}] matches no"
+          " allowed DType member (sub-byte members count only if"
+          " ALLOW_SUB_BYTE_DTYPES is set)."
+      )
+    return members
+
+  @classmethod
+  @functools.cache
+  def _dtype_rejection_reasons(
+      cls, field_name: str
+  ) -> Mapping[dtypes.DType, str | None]:
+    """Returns why `field_name` rejects each `DType` member (None: accepts).
+
+    Checks `DTYPE_CONSTRAINTS`, then `ALLOW_SUB_BYTE_DTYPES` (x64 is checked in
+    `_to_allowed_dtype()`). Cached per (class, field), so don't patch these
+    after first use.
+
+    Args:
+      field_name: The name of a dtype field of this class.
+
+    Raises:
+      TypeError: If the field's `DTYPE_CONSTRAINTS` entry is invalid.
+    """
+    matching = None  # No entry: every member matches.
+    if field_name in cls.DTYPE_CONSTRAINTS:
+      constraints = cls.DTYPE_CONSTRAINTS[field_name]
+      # Unlike `dtypes_matching()`, an empty entry matches nothing.
+      matching = (
+          frozenset(dtypes.dtypes_matching(*constraints))
+          if constraints
+          else frozenset()
+      )
+    reasons = {}
+    for member in dtypes.DType:
+      if matching is not None and member not in matching:
+        reasons[member] = f"Unsupported dtype '{member.value}'."
+      # Pass the np.dtype rather than the name: `utils.parse_dtype()` would
+      # reject 64-bit names while `jax_enable_x64` is off.
+      elif not cls.ALLOW_SUB_BYTE_DTYPES and utils.is_sub_byte_dtype(
+          member.jnp_dtype
+      ):
+        reasons[member] = (
+            f"Unsupported sub-byte dtype '{member.value}'. TPUs store it"
+            f" packed below one byte per element, but {cls.__name__} counts"
+            " itemsize (1 byte), which over-reports bandwidth."
+        )
+      else:
+        reasons[member] = None
+    return types.MappingProxyType(reasons)
+
+  def _validate_dtypes(self) -> None:
+    """Validates every dtype field and coerces it into a `DType` member.
+
+    Raises:
+      TypeError: If `DTYPE_CONSTRAINTS` is misconfigured.
+      ValueError: If a dtype field's value is invalid or unsupported.
+    """
+    self._check_dtype_config()
+    for field in dataclasses.fields(self):
+      if is_dtype_field(field):
+        value = getattr(self, field.name)
+        setattr(self, field.name, self._to_allowed_dtype(field.name, value))
+
+  def _check_dtype_config(self) -> None:
+    """Raises TypeError if `DTYPE_CONSTRAINTS` doesn't fit the dtype fields.
+
+    That is, if a key is not a dtype field, or a dtype field allows no `DType`.
     """
     dtype_fields = [
-        field
-        for field in dataclasses.fields(self)
-        if field.metadata.get(_DTYPE_FIELD_KEY)
+        f.name for f in dataclasses.fields(self) if is_dtype_field(f)
     ]
-    unknown = set(self.DTYPE_CONSTRAINTS) - {f.name for f in dtype_fields}
+    unknown = set(self.DTYPE_CONSTRAINTS) - set(dtype_fields)
     if unknown:
       raise TypeError(
           f"{type(self).__name__}.DTYPE_CONSTRAINTS names non-dtype fields:"
           f" {sorted(unknown)}."
       )
-    for field in dtype_fields:
-      value = getattr(self, field.name)
-      try:
-        utils.validate_dtype(value, self.DTYPE_CONSTRAINTS.get(field.name))
-      except ValueError as exc:
-        raise ValueError(f"{field.name}: {exc}") from exc
-      if not self.ALLOW_SUB_BYTE_DTYPES and utils.is_sub_byte_dtype(value):
-        raise ValueError(
-            f"{field.name}: Unsupported sub-byte dtype: '{value}'. TPUs store"
-            f" it packed below one byte per element, but {type(self).__name__}"
-            " counts itemsize (1 byte), which over-reports bandwidth."
-        )
+    for name in dtype_fields:
+      self.allowed_dtypes(name)  # Raises TypeError if no member is allowed.
+
+  def _to_allowed_dtype(self, field_name: str, value: Any) -> dtypes.DType:
+    """Returns `value` as a `DType` member allowed for `field_name`.
+
+    Checks, in order (ValueError on the first failure):
+      1. `value` is a `DType` value.
+      2. `utils.parse_dtype` accepts it. Runs before 3 so a 64-bit dtype
+         reports the `jax_enable_x64` fix rather than "unsupported".
+      3. `_dtype_rejection_reasons()` accepts it for the field.
+
+    Args:
+      field_name: The name of a dtype field.
+      value: The field's value.
+    """
+    member = dtypes.DType.from_value(value)
+    if member is None:
+      raise self._dtype_error(field_name, f"Invalid dtype {value!r}.")
+    try:
+      utils.parse_dtype(member.value)
+    except ValueError as exc:
+      raise ValueError(f"{field_name}: {exc}") from exc
+    reason = self._dtype_rejection_reasons(field_name)[member]
+    if reason is not None:
+      raise self._dtype_error(field_name, reason)
+    return member
+
+  def _dtype_error(self, field_name: str, reason: str) -> ValueError:
+    """Returns a ValueError for `field_name` that lists its allowed dtypes."""
+    allowed = ", ".join(self.allowed_dtypes(field_name))
+    return ValueError(
+        f"{field_name}: {reason} Supported dtypes for {field_name}: {allowed}"
+    )
 
   def __post_init__(self):
     self._coerce_enums()
@@ -196,8 +318,8 @@ class BaseBenchmarkParams:
 class SingleDtypeBenchmarkParams(BaseBenchmarkParams):
   """Base parameters for benchmarks using a single tensor data type."""
 
-  dtype: str = dtype_field(
-      default="bfloat16",
+  dtype: dtypes.DType = dtype_field(
+      default=dtypes.DType.BFLOAT16,
       metadata={
           "help": "Data type for tensor operations (e.g. bfloat16, float32)."
       },

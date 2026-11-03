@@ -3,6 +3,7 @@
 import math
 from typing import Sequence
 
+from accelerator_microbenchmarks.core import dtypes
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,13 +11,13 @@ from numpy import typing as npt
 
 
 def parse_dtype(dtype_str: str) -> np.dtype:
-  """Parses a dtype name into the dtype JAX materializes arrays with.
+  """Parses a `dtypes.DType` name into the dtype JAX materializes arrays with.
 
   This is the single dtype parser for all benchmarks, so it only returns dtypes
-  that JAX uses as-is: names that are not `jax.numpy` dtypes, and dtypes that
-  JAX would canonicalize to a different dtype (e.g. 'float64' while
-  `jax_enable_x64` is off, which JAX silently truncates to float32), are
-  rejected instead of being benchmarked under the wrong byte count.
+  that JAX uses as-is: values outside `dtypes.DType`, and dtypes that JAX would
+  canonicalize to a different dtype (e.g. 'float64' while `jax_enable_x64` is
+  off, which JAX silently truncates to float32), are rejected instead of being
+  benchmarked under the wrong byte count.
 
   Args:
     dtype_str: The string representation of the dtype (e.g., 'bfloat16').
@@ -25,80 +26,31 @@ def parse_dtype(dtype_str: str) -> np.dtype:
     The corresponding dtype (e.g. `np.dtype(jnp.bfloat16)`).
 
   Raises:
-    ValueError: If `dtype_str` is not a string (e.g. None), is not a
-      `jax.numpy` dtype (including non-dtype attributes such as 'ones'), or JAX
-      would canonicalize it to a different dtype (e.g. a 64-bit dtype while
+    ValueError: If `dtype_str` is not a `dtypes.DType` value (including non-str
+      inputs such as None and JAX dtypes outside `DType` such as 'uint16'), or
+      JAX would canonicalize it to a different dtype (e.g. a 64-bit dtype while
       `jax_enable_x64` is off).
   """
-  if not isinstance(dtype_str, str):
+  member = dtypes.DType.from_value(dtype_str)
+  if member is None:
+    supported = ", ".join(dtypes.DType)
     raise ValueError(
-        f"Invalid dtype: {dtype_str!r}. Expected a dtype name string."
+        f"Invalid dtype {dtype_str!r}. Supported dtypes: {supported}"
     )
-  attr = getattr(jnp, dtype_str, None)
-  if attr is None:
-    raise ValueError(
-        f"Invalid dtype string: '{dtype_str}'. Could not find"
-        f" jax.numpy.{dtype_str}."
-    )
-  try:
-    dtype = jnp.dtype(attr)
-  except TypeError as exc:
-    raise ValueError(
-        f"Invalid dtype string: '{dtype_str}'. jax.numpy.{dtype_str} is not a"
-        " dtype."
-    ) from exc
+  dtype = member.jnp_dtype
   canonical = jax.dtypes.canonicalize_dtype(dtype)
   if canonical != dtype:
     if jax.config.jax_enable_x64:
       raise ValueError(
-          f"Unexpected: JAX canonicalizes dtype '{dtype_str}' to"
+          f"Unexpected: JAX canonicalizes dtype '{member.value}' to"
           f" '{canonical}' even though jax_enable_x64 is on."
       )
     raise ValueError(
-        f"JAX canonicalizes dtype '{dtype_str}' to '{canonical}' because"
+        f"JAX canonicalizes dtype '{member.value}' to '{canonical}' because"
         " jax_enable_x64 is off; set JAX_ENABLE_X64=1 to benchmark real"
         " 64-bit tensors."
     )
   return dtype
-
-
-def validate_dtype(
-    dtype_str: str,
-    supported_dtypes: Sequence[jax.typing.DTypeLike] | None = None,
-) -> None:
-  """Validates that a dtype string can be benchmarked as requested.
-
-  Args:
-    dtype_str: The string representation of the dtype (e.g., 'bfloat16').
-    supported_dtypes: Optional jnp scalar types (e.g. `jnp.bfloat16`) or
-      abstract dtype classes (e.g. `jnp.floating`) the dtype must be a
-      sub-dtype of.
-
-  Raises:
-    ValueError: If `parse_dtype` rejects `dtype_str`, or the dtype is not in
-      `supported_dtypes`.
-    TypeError: If a `supported_dtypes` entry is not a class (e.g. an
-      `np.dtype` instance).
-  """
-  dtype = parse_dtype(dtype_str)
-  if supported_dtypes is not None:
-    supported_names = []
-    for supported in supported_dtypes:
-      # jnp scalar types (e.g. `jnp.bfloat16`) are classes at runtime, even
-      # though JAX's type stubs declare them as a Protocol.
-      if not isinstance(supported, type):
-        raise TypeError(
-            "supported_dtypes entries must be jnp scalar types or abstract"
-            f" dtype classes, got {supported!r}."
-        )
-      supported_names.append(supported.__name__)
-    if not any(
-        jnp.issubdtype(dtype, supported) for supported in supported_dtypes
-    ):
-      raise ValueError(
-          f"Unsupported dtype: '{dtype_str}'. Supported dtypes:"
-          f" {supported_names}."
-      )
 
 
 def random_bits_array(

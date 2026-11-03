@@ -217,7 +217,7 @@ class HostDeviceParamsValidationTest(parameterized.TestCase):
   def test_sub_byte_dtype_raises_error(self, dtype):
     """Verifies sub-byte dtypes are rejected (bytes count itemsize)."""
     with self.assertRaisesRegex(
-        ValueError, f"^dtype: Unsupported sub-byte dtype: '{dtype}'"
+        ValueError, f"^dtype: Unsupported sub-byte dtype '{dtype}'"
     ):
       host_device.HostDeviceParams(dtype=dtype)
 
@@ -491,7 +491,8 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
   def test_invalid_dtype_raises_error(self, bm_cls):
     """Verify config construction raises ValueError for invalid dtype."""
     with self.assertRaisesRegex(
-        ValueError, "Invalid dtype string: 'invalid_dtype'"
+        ValueError,
+        r"^dtype: Invalid dtype 'invalid_dtype'\. Supported dtypes for dtype:",
     ):
       self._make_benchmark(
           bm_cls, dtype="invalid_dtype", transfer_backend="jax"

@@ -243,7 +243,10 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         collectives.DcnAllReduceParams,
         collectives.ReduceScatterParams,
     ):
-      with self.assertRaisesRegex(ValueError, f"Unsupported dtype: '{dtype}'"):
+      with self.assertRaisesRegex(
+          ValueError,
+          rf"^dtype: Unsupported dtype '{dtype}'\. Supported dtypes for dtype:",
+      ):
         params_cls(dtype=dtype)
 
   def test_all_reduce_invalid_op_raises_error(self):
@@ -1817,7 +1820,7 @@ class CollectivesParamsValidationTest(parameterized.TestCase):
   def test_sub_byte_dtype_raises_error(self, params_cls, dtype):
     """Verify every collective rejects sub-byte dtypes (1 byte/elem counted)."""
     with self.assertRaisesRegex(
-        ValueError, f"^dtype: Unsupported sub-byte dtype: '{dtype}'"
+        ValueError, f"^dtype: Unsupported sub-byte dtype '{dtype}'"
     ):
       params_cls(dtype=dtype)
 

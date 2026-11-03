@@ -288,13 +288,14 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
       ("int_scale", "scale_dtype", "int8"),
       ("complex_scale", "scale_dtype", "complex64"),
       ("fp8_scale", "scale_dtype", "float8_e4m3fn"),
-      ("e8m0_scale", "scale_dtype", "float8_e8m0fnu"),
       ("fp4_scale", "scale_dtype", "float4_e2m1fn"),
   )
   def test_params_reject_unsupported_dtypes(self, field, dtype):
     """Verifies the input, scale and quant dtype constraints are enforced."""
     with self.assertRaisesRegex(
-        ValueError, f"^{field}: Unsupported dtype: '{dtype}'"
+        ValueError,
+        rf"^{field}: Unsupported dtype '{dtype}'\. Supported dtypes for"
+        rf" {field}:",
     ):
       compute_ops.QuantParams(**{field: dtype})
 
