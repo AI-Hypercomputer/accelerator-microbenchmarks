@@ -501,6 +501,9 @@ benchmark:
         "xprof_device_timing_aggregation",
     )
     self.assertEqual(
+        config.BenchmarkKey.STANDALONE_HOST_INIT, "standalone_host_init"
+    )
+    self.assertEqual(
         {k.value for k in config.BenchmarkKey},
         {
             "name",
@@ -511,6 +514,7 @@ benchmark:
             "sweep",
             "xprof_timing",
             "xprof_device_timing_aggregation",
+            "standalone_host_init",
         },
     )
 
@@ -652,6 +656,76 @@ benchmark:
     with self.assertRaises(ValueError) as ctx:
       config.load_config(config_path)
     self.assertIn("Expected 'xprof_timing' in benchmark", str(ctx.exception))
+    self.assertIn("to be a bool", str(ctx.exception))
+
+  @parameterized.named_parameters(
+      ("true", "benchmark:\n  name: gemm\n  standalone_host_init: true\n", True),
+      (
+          "false",
+          "benchmark:\n  name: gemm\n  standalone_host_init: false\n",
+          False,
+      ),
+      ("omitted", "benchmark:\n  name: gemm\n", None),
+  )
+  def test_load_config_benchmark_level_standalone_host_init_extracted(
+      self, yaml_content, expected
+  ):
+    """Verifies `benchmark:`-level standalone_host_init lands in base params."""
+    config_path = os.path.join(self.test_dir.name, "config_standalone_host.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+    expanded = config.load_config(config_path)
+    self.assertNotEmpty(expanded)
+    self.assertEqual(expanded[0].get("standalone_host_init"), expected)
+
+  @parameterized.named_parameters(
+      ("in_params", "params:\n  standalone_host_init: true\n"),
+      ("in_sweep", "sweep:\n  standalone_host_init: [true, false]\n"),
+  )
+  def test_load_config_standalone_host_init_reserved_key_raises_error(
+      self, snippet
+  ):
+    """Verifies reserved key standalone_host_init in config sections raises."""
+    yaml_content = "benchmark:\n  name: gemm\n" + "".join(
+        f"  {line}\n" for line in snippet.splitlines()
+    )
+    config_path = os.path.join(
+        self.test_dir.name, "config_reserved_standalone_host.yaml"
+    )
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    with self.assertRaises(ValueError) as ctx:
+      config.load_config(config_path)
+    self.assertIn("reserved key(s)", str(ctx.exception))
+    self.assertIn("standalone_host_init", str(ctx.exception))
+
+  @parameterized.named_parameters(
+      ("string_true", '"true"'),
+      ("integer", "1"),
+  )
+  def test_load_config_standalone_host_init_non_bool_raises_error(
+      self, value
+  ):
+    """Verifies non-bool `benchmark:`-level standalone_host_init raises."""
+    yaml_content = f"""
+benchmark:
+  name: gemm
+  standalone_host_init: {value}
+  params:
+    m: 1024
+"""
+    config_path = os.path.join(
+        self.test_dir.name, "config_invalid_standalone_host.yaml"
+    )
+    with open(config_path, "w", encoding="utf-8") as f:
+      f.write(yaml_content)
+
+    with self.assertRaises(ValueError) as ctx:
+      config.load_config(config_path)
+    self.assertIn(
+        "Expected 'standalone_host_init' in benchmark", str(ctx.exception)
+    )
     self.assertIn("to be a bool", str(ctx.exception))
 
   @parameterized.named_parameters(_find_all_benchmark_configs())

@@ -74,6 +74,96 @@ class ProfilerTest(absltest.TestCase):
     # Must be sorted chronologically: Step 1 (1.0 ms), Step 2 (2.0 ms), Step 3 (3.0 ms)
     self.assertEqual(durations, [1.0, 2.0, 3.0])
 
+  def test_calculate_step_durations_ms_prefers_device_ps_fields(self):
+    """Step bounds and ends come from `device_offset_ps`/`device_duration_ps`."""
+    all_events = [
+        # Corrupted timeline ts/dur (both at ts=1000, dur=0), distinct in ps.
+        {
+            "pid": 1,
+            "name": "jit_step1",
+            "ts": 1000,
+            "dur": 0,
+            "args": {
+                "device_offset_ps": 1_000_000_000,
+                "device_duration_ps": 1_500_000_000,
+            },
+        },
+        {
+            "pid": 1,
+            "name": "jit_step2",
+            "ts": 1000,
+            "dur": 0,
+            "args": {
+                "device_offset_ps": 3_000_000_000,
+                "device_duration_ps": 2_500_000_000,
+            },
+        },
+        # No ps fields: fall back to ts/dur.
+        {"pid": 1, "name": "jit_step3", "ts": 15000, "dur": 5000},
+    ]
+    candidate_events = [
+        {
+            "pid": 1,
+            "ts": 1000,
+            "dur": 0,
+            "args": {
+                "device_offset_ps": 1_100_000_000,
+                "device_duration_ps": 1_000_000_000,
+            },
+        },
+        {
+            "pid": 1,
+            "ts": 1000,
+            "dur": 0,
+            "args": {
+                "device_offset_ps": 3_100_000_000,
+                "device_duration_ps": 2_000_000_000,
+            },
+        },
+        {"pid": 1, "ts": 16000, "dur": 3000, "args": {}},
+    ]
+    durations = profiler._calculate_step_durations_ms(  # pylint: disable=protected-access
+        target_events=candidate_events,
+        step_spans=profiler._get_step_spans_by_pid(all_events)[1],  # pylint: disable=protected-access
+        target_pid=1,
+    )
+    self.assertEqual(durations, [1.0, 2.0, 3.0])
+
+  def test_event_span_us_requires_both_device_ps_fields(self):
+    """Start and duration always come from the same time base.
+
+    If only one of `device_offset_ps` / `device_duration_ps` is present the
+    event falls back to `ts`/`dur` entirely, never mixing a device start with
+    a host duration (or vice versa). A `device_duration_ps` of 0 is a valid
+    device value, not a missing one.
+    """
+    both = {
+        "ts": 10,
+        "dur": 20,
+        "args": {"device_offset_ps": 5_000_000, "device_duration_ps": 0},
+    }
+    offset_only = {"ts": 10, "dur": 20, "args": {"device_offset_ps": 5e6}}
+    duration_only = {"ts": 10, "dur": 20, "args": {"device_duration_ps": 7e6}}
+    neither = {"ts": 10, "dur": 20}
+    self.assertEqual(profiler._event_span_us(both), (5.0, 0.0))  # pylint: disable=protected-access
+    self.assertEqual(profiler._event_span_us(offset_only), (10.0, 20.0))  # pylint: disable=protected-access
+    self.assertEqual(profiler._event_span_us(duration_only), (10.0, 20.0))  # pylint: disable=protected-access
+    self.assertEqual(profiler._event_span_us(neither), (10.0, 20.0))  # pylint: disable=protected-access
+
+  def test_get_step_spans_by_pid_partial_device_ps_falls_back_to_ts_dur(self):
+    """A `jit_` step with only one device_* field uses its `ts`/`dur` span."""
+    events = [
+        {
+            "pid": 1,
+            "name": "jit_step1",
+            "ts": 1000,
+            "dur": 500,
+            "args": {"device_offset_ps": 9_000_000_000},
+        },
+    ]
+    spans = profiler._get_step_spans_by_pid(events)  # pylint: disable=protected-access
+    self.assertEqual(spans, {1: [(1000.0, 1500.0)]})
+
   @mock.patch.object(os, "walk")
   def test_parse_xprof_durations_no_trace(self, mock_walk):
     """Test parse_xprof_durations when no trace file is found."""

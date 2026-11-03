@@ -83,6 +83,8 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
 
   Config = HostDeviceParams  # pylint: disable=invalid-name
   derive_chip_bandwidth: bool = False
+  # Data moves between host buffers and each local device only; no ICI.
+  requires_ici: bool = False
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("transfer_backend", report.format_str),

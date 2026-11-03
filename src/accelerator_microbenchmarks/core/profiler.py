@@ -201,6 +201,21 @@ def _extract_candidate_events(
   return candidates
 
 
+def _event_span_us(event: TraceEvent) -> tuple[float, float]:
+  """Returns (start_us, duration_us), preferring on-device timestamps.
+
+  TPU device events carry `device_offset_ps` / `device_duration_ps` taken
+  from the on-chip cycle counter; host events carry neither. Both fields are
+  required together so start and duration always share one time base.
+  """
+  args = event.get("args", {})
+  offset_ps = args.get("device_offset_ps")
+  duration_ps = args.get("device_duration_ps")
+  if offset_ps is not None and duration_ps is not None:
+    return float(offset_ps) / 1e6, float(duration_ps) / 1e6
+  return float(event["ts"]), float(event["dur"])
+
+
 def _calculate_step_durations_ms(
     target_events: list[TraceEvent],
     step_spans: list[tuple[float, float]],
@@ -241,10 +256,14 @@ def _calculate_step_durations_ms(
   # 2. PRIMARY: Span from earliest start to latest end within each enclosure.
   durations_ms = []
   for c_start, c_end in step_spans:
-    in_step = [e for e in target_events if c_start <= float(e["ts"]) <= c_end]
+    in_step = [
+        span
+        for span in map(_event_span_us, target_events)
+        if c_start <= span[0] <= c_end
+    ]
     if in_step:
-      s_start = min(float(e["ts"]) for e in in_step)
-      s_end = max(float(e["ts"]) + float(e["dur"]) for e in in_step)
+      s_start = min(start for start, _ in in_step)
+      s_end = max(start + dur for start, dur in in_step)
       durations_ms.append((s_end - s_start) / 1000.0)
 
   print(
@@ -287,8 +306,8 @@ def _get_step_spans_by_pid(
         and "ts" in e
         and "dur" in e
     ):
-      start = float(e["ts"])
-      spans_by_pid.setdefault(pid, []).append((start, start + float(e["dur"])))
+      start, dur = _event_span_us(e)
+      spans_by_pid.setdefault(pid, []).append((start, start + dur))
   for spans in spans_by_pid.values():
     spans.sort(key=lambda span: span[0])
   return spans_by_pid

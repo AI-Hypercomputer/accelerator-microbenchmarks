@@ -14,6 +14,7 @@ from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.core import standalone_host
 from accelerator_microbenchmarks.core import system
 import jax
 import yaml
@@ -122,13 +123,20 @@ def set_xla_flags(
   )
 
 
-def init_jax_distributed():
-  """Ensures JAX distributed coordinator is initialized."""
-  print("Initializing JAX distributed system...")
-  try:
-    jax.distributed.initialize()
-  except Exception as e:
-    print(f"Note: jax.distributed.initialize() failed or not needed: {e}")
+def init_jax_distributed(distributed: bool = True):
+  """Initializes the JAX backend, and the distributed coordinator if `distributed`.
+
+  `standalone_host_init` runs this host as the only participant, so the
+  coordinator is not started in that mode.
+  """
+  if distributed:
+    print("Initializing JAX distributed system...")
+    try:
+      jax.distributed.initialize()
+    except Exception as e:
+      print(f"Note: jax.distributed.initialize() failed or not needed: {e}")
+  else:
+    print("Skipping JAX distributed initialization (standalone_host_init).")
   try:
     devices = jax.devices()
     print(f"JAX devices: {len(devices)} (e.g. {devices[:4]}...)")
@@ -147,6 +155,7 @@ def run_benchmarks(
     xprof_device_timing_aggregation: str = (
         constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
     ),
+    standalone_host_init: bool = False,
 ) -> List[base.BenchmarkResult]:
   """Core execution engine for typed benchmark task configurations."""
   xprof_config = base.XprofConfig(
@@ -162,9 +171,28 @@ def run_benchmarks(
       [{"name": task_name} for task_name, _ in tasks],
       xla_flags_file_path=xla_flags_file_path,
   )
+  # Optional standalone single-host init. Must follow set_xla_flags (which
+  # replaces LIBTPU_INIT_ARGS) and precede any JAX device call.
+  if standalone_host_init:
+    # Without SliceBuilder neither intra- nor inter-host ICI links are
+    # configured, so benchmarks that need ICI would hang or fail: reject them
+    # up front via each benchmark's `requires_ici` attribute.
+    unsupported = sorted({
+        name
+        for name, _ in tasks
+        if registry.benchmark_registry.get_benchmark(name).requires_ici
+    })
+    if unsupported:
+      raise ValueError(
+          f"standalone_host_init is not supported for {unsupported}: this mode"
+          " initializes the host without SliceBuilder and provides no"
+          " inter-device (ICI) communication. Only benchmarks that do not"
+          " require ICI (requires_ici = False) can run in this mode."
+      )
+    standalone_host.configure_standalone_host()
 
   # 2. Ensure JAX is initialized
-  init_jax_distributed()
+  init_jax_distributed(distributed=not standalone_host_init)
 
   # 3. Detect Platform and Resolve HardwareSpec
   platform_info = platform.get_platform_info()

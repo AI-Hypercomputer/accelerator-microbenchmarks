@@ -128,6 +128,8 @@ class HBMBandwidthBenchmark(base.BaseBenchmark[HBMBandwidthParams]):
 
   Config = HBMBandwidthParams
   derive_chip_bandwidth: bool = False
+  # Per-device HBM kernels; no inter-device (ICI) traffic.
+  requires_ici: bool = False
   roofline_mode: constants.RooflineMode = constants.RooflineMode.MEMORY_HBM
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),

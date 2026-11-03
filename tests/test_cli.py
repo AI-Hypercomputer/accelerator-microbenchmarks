@@ -741,6 +741,58 @@ benchmark:
     self.assertEqual(kwargs["xprof_dir"], "/tmp/tensorboard")
 
   @parameterized.named_parameters(
+      ("flag_set", ["--standalone_host_init"], True),
+      ("flag_omitted", [], False),
+  )
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_standalone_host_init(
+      self, extra_flags, expected, mock_run_benchmarks
+  ):
+    """Verifies that `benchmark run` forwards --standalone_host_init."""
+    cli.run(
+        ["benchmark", "run", "gemm", "-m", "128", "-n", "128", "-k", "128"]
+        + extra_flags
+    )
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertIs(kwargs["standalone_host_init"], expected)
+
+  @parameterized.named_parameters(
+      ("yaml_true", "  standalone_host_init: true\n", [], True),
+      ("yaml_false", "  standalone_host_init: false\n", [], False),
+      ("omitted", "", [], False),
+      ("cli_flag", "", ["--standalone_host_init"], True),
+      (
+          "cli_flag_overrides_yaml_false",
+          "  standalone_host_init: false\n",
+          ["--standalone_host_init"],
+          True,
+      ),
+  )
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_config_standalone_host_init(
+      self, yaml_snippet, extra_flags, expected, mock_run_benchmarks
+  ):
+    """Verifies standalone_host_init resolution for benchmark run-config."""
+    config_yaml = (
+        "benchmark:\n"
+        "  name: gemm\n"
+        f"{yaml_snippet}"
+        "  params:\n"
+        "    warmup_tries: 1\n"
+        "    num_runs: 1\n"
+    )
+    fake_config = self.create_tempfile(content=config_yaml)
+    cli.run(["benchmark", "run-config", fake_config.full_path] + extra_flags)
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertIs(kwargs["standalone_host_init"], expected)
+    # The `benchmark:`-level key must not leak into the benchmark Config
+    # dataclass.
+    _, task_config = kwargs["tasks"][0]
+    self.assertFalse(hasattr(task_config, "standalone_host_init"))
+
+  @parameterized.named_parameters(
       (
           "yaml_xprof_true",
           """

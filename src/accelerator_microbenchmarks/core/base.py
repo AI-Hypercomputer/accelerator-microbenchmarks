@@ -392,6 +392,11 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   ] = None
   derive_chip_bandwidth: bool = True
   roofline_mode: constants.RooflineMode = constants.RooflineMode.NONE
+  # Whether the benchmark needs inter-device (ICI) communication. Fail-closed
+  # default: benchmarks that keep all data movement on the host<->device path
+  # opt out by setting this to False, which allows them to run under
+  # `standalone_host_init` (no SliceBuilder, hence no ICI).
+  requires_ici: bool = True
 
   def __init_subclass__(cls, **kwargs):
     super().__init_subclass__(**kwargs)

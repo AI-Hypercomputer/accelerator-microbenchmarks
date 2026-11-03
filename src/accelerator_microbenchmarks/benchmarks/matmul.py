@@ -12,6 +12,7 @@ from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 
 @dataclasses.dataclass
@@ -82,6 +83,11 @@ class GemmParams(base.BaseBenchmarkParams):
 TGemmConfig = TypeVar("TGemmConfig", bound=base.BaseBenchmarkParams)
 
 
+def _sample_normal(key: jax.Array, shape: tuple[int, ...], dtype: Any):
+  """Module-level so `jax.jit` reuses its compile cache across calls."""
+  return jax.random.normal(key, shape).astype(dtype)
+
+
 class BaseGemmBenchmark(base.BaseBenchmark[TGemmConfig]):
   """Base class for GEMM benchmarks.
 
@@ -136,6 +142,8 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
   """
 
   Config = GemmParams
+  # Per-device GEMM on replicated inputs; no inter-device (ICI) traffic.
+  requires_ici: bool = False
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("in_dtype", report.format_str),
       ("out_dtype", report.format_str),
@@ -198,6 +206,29 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
       run_identifier += "_sf"
     return run_identifier
 
+  def _replicated_normal(
+      self, key: jax.Array, shape: tuple[int, ...], dtype: Any
+  ) -> jax.Array:
+    """Samples a normal array replicated on every mesh device.
+
+    Generating under `jit` with a replicated `out_shardings` (as in `hbm.py`)
+    produces each shard on its own device, and the key is passed as a host
+    array, so no data moves between devices. The result equals eager sampling
+    with the same key.
+    """
+    # Replicated sharding for computation ops to avoid discrepancies
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    replicated_sharding = jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(None, None)
+    )
+    generate = jax.jit(
+        _sample_normal,
+        static_argnums=(1, 2),
+        out_shardings=replicated_sharding,
+    )
+    return generate(np.asarray(key), shape, dtype)
+
   def generate_inputs(self) -> tuple[Any, ...]:
     (
         m,
@@ -224,52 +255,37 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
     # dtypes aren't supported
     a_shape = (k, m) if transpose_a else (m, k)
     b_shape = (n, k) if transpose_b else (k, n)
-    a = jax.random.normal(k1, a_shape).astype(in_dtype)
-    b = jax.random.normal(k2, b_shape).astype(in_dtype)
+    a = self._replicated_normal(k1, a_shape, in_dtype)
+    b = self._replicated_normal(k2, b_shape, in_dtype)
 
     # Optional scaling factors
     use_sf = self.config.use_scaling_factors
-    sf0 = jax.random.normal(k3, (m, 1)).astype(jnp.float32) if use_sf else None
-    sf1 = jax.random.normal(k4, (1, n)).astype(jnp.float32) if use_sf else None
+    sf0 = self._replicated_normal(k3, (m, 1), jnp.float32) if use_sf else None
+    sf1 = self._replicated_normal(k4, (1, n), jnp.float32) if use_sf else None
 
     use_accumulator_matrix = True if self.config.beta != 0.0 else False
     c = (
-        jax.random.normal(k5, (m, n)).astype(in_dtype)
+        self._replicated_normal(k5, (m, n), in_dtype)
         if use_accumulator_matrix
         else None
-    )
-
-    # Replicated sharding for computation ops to avoid discrepancies
-    if self.mesh is None:
-      raise ValueError("Mesh not initialized.")
-    replicated_sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None)
     )
 
     # Row and column scaling factor vectors (sf0: m x 1, sf1: 1 x n)
     # Unpacked as sf0, sf1 args into gemm_fn(a, b, sf0, sf1, c) if enabled,
     # else (None, None).
     if use_sf:
-      sf_args = [
-          jax.device_put(sf0, replicated_sharding),
-          jax.device_put(sf1, replicated_sharding),
-      ]
+      sf_args = [sf0, sf1]
     else:
       sf_args = [None, None]
 
     # Accumulator matrix C (M x N) for fused GEMM addition when beta != 0.0.
     # Unpacked as c arg into gemm_fn(a, b, sf0, sf1, c) if enabled, else [].
     if use_accumulator_matrix:
-      acc_args = [jax.device_put(c, replicated_sharding)]
+      acc_args = [c]
     else:
       acc_args = []
 
-    return (
-        jax.device_put(a, replicated_sharding),
-        jax.device_put(b, replicated_sharding),
-        *sf_args,
-        *acc_args,
-    )
+    return (a, b, *sf_args, *acc_args)
 
   def run_op(self, *args) -> jnp.ndarray:
     if self._jit_fn is None:
@@ -548,6 +564,8 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
 
   # Runtime: the params dataclass the CLI / YAML loader instantiates.
   Config = GemmChainedParams
+  # Per-device chained GEMM with host-side checksum comparison; no ICI.
+  requires_ici: bool = False
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("in_dtype", report.format_str),
       ("out_dtype", report.format_str),

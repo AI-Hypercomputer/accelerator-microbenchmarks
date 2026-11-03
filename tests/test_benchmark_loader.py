@@ -139,6 +139,27 @@ class BenchmarkLoaderTest(absltest.TestCase):
         )
         self.assertEqual(bm.supported_device_timing_aggregations, expected)
 
+  def test_benchmarks_without_ici(self):
+    """Verify only the expected benchmarks opt out of `requires_ici`."""
+    no_ici = {
+        name
+        for name, bench_cls in registry.benchmark_registry.get_all().items()
+        if not bench_cls.requires_ici
+    }
+    self.assertEqual(
+        no_ici,
+        {
+            "gemm",
+            "gemm_generalized",
+            "gemm_throttling",
+            "gemm_chained",
+            "hbm",
+            "hbm_bandwidth",
+            "host_to_device",
+            "device_to_host",
+        },
+    )
+
 
 if __name__ == "__main__":
   absltest.main()

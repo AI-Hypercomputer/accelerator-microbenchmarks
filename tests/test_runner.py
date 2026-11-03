@@ -1,6 +1,8 @@
 """Unit tests for the benchmark execution runner (runner.py)."""
 
+import io
 import os
+import sys
 import tempfile
 from unittest import mock
 
@@ -217,6 +219,139 @@ class TestRunner(absltest.TestCase):
     with mock.patch.object(runner.jax.distributed, "initialize") as mock_init:
       runner.init_jax_distributed()
       mock_init.assert_called_once()
+
+  def test_init_jax_distributed_skips_coordinator_for_standalone_host(self):
+    with mock.patch.object(runner.jax.distributed, "initialize") as mock_init:
+      runner.init_jax_distributed(distributed=False)
+      mock_init.assert_not_called()
+
+  # Fake registry for the standalone-init tests: `requires_ici` per name.
+  _FAKE_REQUIRES_ICI = {
+      "gemm": False,
+      "hbm": False,
+      "all_reduce": True,
+      "device_to_device": True,
+  }
+
+  def _fake_get_benchmark(self, name):
+    return mock.MagicMock(
+        requires_ici=self._FAKE_REQUIRES_ICI[name], __name__=name
+    )
+
+  def _run_benchmarks_with_stages_mocked(self, task_names, **kwargs):
+    """Runs run_benchmarks for `task_names` with TPU-touching stages mocked.
+
+    Returns the ordered list of init stages invoked and the captured stdout.
+    """
+    calls = []
+    params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    with mock.patch.object(
+        runner, "set_xla_flags", side_effect=lambda *a, **k: calls.append("xla")
+    ), mock.patch.object(
+        runner.standalone_host,
+        "configure_standalone_host",
+        side_effect=lambda: calls.append("standalone_host"),
+    ), mock.patch.object(
+        runner,
+        "init_jax_distributed",
+        side_effect=lambda **kw: calls.append(
+            "jax" if kw.get("distributed", True) else "jax_local"
+        ),
+    ), mock.patch.object(
+        runner.platform, "get_platform_info"
+    ), mock.patch.object(
+        runner.system, "get_hardware_spec"
+    ), mock.patch.object(
+        runner.benchmark_loader, "load_all_benchmarks"
+    ), mock.patch.object(
+        runner.registry.benchmark_registry,
+        "get_benchmark",
+        side_effect=self._fake_get_benchmark,
+    ), mock.patch.object(
+        runner.report, "report_results"
+    ), mock.patch.object(
+        sys, "stdout", new=io.StringIO()
+    ) as fake_out:
+      runner.run_benchmarks(
+          tasks=[(name, params) for name in task_names],
+          output_dir=self.temp_dir.name,
+          **kwargs,
+      )
+    return calls, fake_out.getvalue()
+
+  def test_run_benchmarks_standalone_host_init_off_by_default(self):
+    """Without the flag, standalone host configuration is never applied."""
+    calls, _ = self._run_benchmarks_with_stages_mocked(["gemm"])
+    self.assertEqual(calls, ["xla", "jax"])
+
+  def test_run_benchmarks_standalone_host_init_order(self):
+    """Standalone host env is applied after op_flags and before JAX init."""
+    calls, _ = self._run_benchmarks_with_stages_mocked(
+        ["gemm", "hbm"], standalone_host_init=True
+    )
+    self.assertEqual(calls, ["xla", "standalone_host", "jax_local"])
+
+  def test_run_benchmarks_standalone_host_init_rejects_requires_ici(self):
+    """Benchmarks with `requires_ici` raise before any TPU init is touched."""
+    with self.assertRaises(ValueError) as ctx:
+      self._run_benchmarks_with_stages_mocked(
+          ["gemm", "device_to_device", "all_reduce"], standalone_host_init=True
+      )
+    message = str(ctx.exception)
+    self.assertIn(
+        "standalone_host_init is not supported for"
+        " ['all_reduce', 'device_to_device']",
+        message,
+    )
+    self.assertIn("inter-device (ICI)", message)
+    self.assertNotIn("gemm", message)
+
+  def test_run_benchmarks_standalone_host_init_raises_before_configure(self):
+    """The ValueError fires before configure_standalone_host and JAX init."""
+    calls = []
+    params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    with mock.patch.object(
+        runner, "set_xla_flags", side_effect=lambda *a, **k: calls.append("xla")
+    ), mock.patch.object(
+        runner.standalone_host,
+        "configure_standalone_host",
+        side_effect=lambda: calls.append("standalone_host"),
+    ), mock.patch.object(
+        runner,
+        "init_jax_distributed",
+        side_effect=lambda **kw: calls.append("jax"),
+    ), mock.patch.object(
+        runner.benchmark_loader, "load_all_benchmarks"
+    ), mock.patch.object(
+        runner.registry.benchmark_registry,
+        "get_benchmark",
+        side_effect=self._fake_get_benchmark,
+    ):
+      with self.assertRaises(ValueError):
+        runner.run_benchmarks(
+            tasks=[("all_reduce", params)],
+            output_dir=self.temp_dir.name,
+            standalone_host_init=True,
+        )
+    self.assertEqual(calls, ["xla"])
+
+  def test_requires_ici_defaults_to_true_on_base_benchmark(self):
+    """Fail-closed: a benchmark that does not opt out is treated as needing ICI."""
+
+    class _Unmarked(base.BaseBenchmark):
+
+      def run_op(self, *args, **kwargs):
+        return None
+
+    class _OptedOut(base.BaseBenchmark):
+      requires_ici = False
+
+      def run_op(self, *args, **kwargs):
+        return None
+
+    self.assertTrue(base.BaseBenchmark.requires_ici)
+    self.assertTrue(_Unmarked.requires_ici)
+    self.assertFalse(_OptedOut.requires_ici)
 
   def test_run_benchmarks(self):
     """Verifies that run_benchmarks executes typed benchmark tasks."""

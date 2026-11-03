@@ -273,6 +273,7 @@ tpums benchmark run-config configs/sample_configs/parameter_sweep.yaml \
 - **Report Output & Compiler Flags**:
     - **`--output_dir <path>`**: Directory to save `summary.csv` and `detailed.json` (defaults to `results/`).
     - **`--xla_flags_file_path <path>`**: Optional path to a custom YAML file overriding default per-benchmark XLA / compiler runtime flags.
+- **Standalone Host Init (`--standalone_host_init` / `standalone_host_init: true` under `benchmark:`, optional)**: Initializes this host as a standalone 1-host topology inside a multi-host topology (skips SliceBuilder, disables the cross-host launch barrier, does not start the JAX distributed coordinator) so that a benchmark can be used for node-local diagnostics without the other hosts of the topology participating. ICI routing is not configured in this mode (neither intra- nor inter-host), so it is limited to benchmarks that do not require ICI (`requires_ici = False`, e.g. `gemm`, `gemm_throttling`, `hbm`, `host_to_device` and `device_to_host`); other benchmarks raise an error. Off by default; has no effect on normal single- or multi-host runs. Relies on internal `libtpu` flags (`--deepsea_hal_test_*`) that are not a stable public interface and may change across `libtpu` versions.
 
 ---
 
@@ -289,6 +290,7 @@ Configuration files define a top-level `benchmark:` mapping containing:
 - **`name:` (`<benchmark_name>`)** — Target benchmark name (e.g., `gemm`, `hbm`, `all_reduce`; see [Benchmark Catalog](#benchmark-catalog)).
 - **`xprof_timing:`** *(optional)* — Boolean (`true` / `false`) to enable XProf hardware trace collection and device timing analysis.
 - **`xprof_device_timing_aggregation:`** *(optional)* — Device timing aggregation mode when `xprof_timing: true` (`measured_device_or_first` [default], `local_slowest_device`, or `global_slowest_per_step`).
+- **`standalone_host_init:`** *(optional)* — Boolean (`true` / `false`, default `false`) to initialize this host standalone inside a multi-host topology for node-local diagnostics (see [Common Execution Flags](#4-common-execution-flags)).
 - **`params:`** *(optional)* — Baseline execution parameters shared across all generated runs.
 - **`cases:` / `cases_from_csv:` / `sweep:`** *(optional)* — Case override and parameter sweep generators.
 

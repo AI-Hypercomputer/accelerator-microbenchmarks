@@ -80,6 +80,79 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.assertEqual(sf0.dtype, jnp.float32)
     self.assertEqual(sf1.dtype, jnp.float32)
 
+  def test_replicated_normal_passes_key_as_host_array(self):
+    """The PRNG key reaches the jitted sampler as a host array.
+
+    Every input has to arrive via the host->device path, including the key,
+    so that no data moves between devices during input generation.
+    """
+    self._setup_benchmark()
+    seen = {}
+    real_jit = jax.jit
+
+    def capturing_jit(fn, **kwargs):
+      jitted = real_jit(fn, **kwargs)
+
+      def call(key, *args):
+        seen["key"] = key
+        return jitted(key, *args)
+
+      return call
+
+    with mock.patch.object(jax, "jit", side_effect=capturing_jit):
+      out = self.bm._replicated_normal(
+          jax.random.PRNGKey(3), (8, 8), jnp.float32
+      )
+    self.assertIsInstance(seen["key"], np.ndarray)
+    self.assertTrue(out.sharding.is_fully_replicated)
+    np.testing.assert_array_equal(
+        np.asarray(out),
+        np.asarray(jax.random.normal(jax.random.PRNGKey(3), (8, 8))),
+    )
+
+  def test_generate_inputs_replicated_on_every_device_without_device_put(
+      self,
+  ):
+    """Operands are generated on every local device, not broadcast from one.
+
+    They must be replicated, identical on each device, match eager sampling
+    with the same key, and use no cross-device `jax.device_put`.
+    """
+    self._setup_benchmark(seed=7, use_scaling_factors=True, beta=1.0)
+    with mock.patch.object(
+        jax, "device_put", wraps=jax.device_put
+    ) as device_put:
+      inputs = self.bm.generate_inputs()
+    device_put.assert_not_called()
+    self.assertLen(inputs, 5)
+    for arr in inputs:
+      self.assertTrue(arr.sharding.is_fully_replicated)
+      self.assertEqual(
+          set(arr.sharding.device_set), set(self.mock_mesh.devices.flat)
+      )
+      self.assertLen(arr.addressable_shards, len(self.mock_mesh.devices.flat))
+      first = np.asarray(arr.addressable_shards[0].data)
+      for shard in arr.addressable_shards[1:]:
+        np.testing.assert_array_equal(np.asarray(shard.data), first)
+
+    key = jax.random.PRNGKey(7)
+    k1, _, _, _, k5 = jax.random.split(key, 5)
+    np.testing.assert_array_equal(
+        np.asarray(inputs[0]),
+        np.asarray(jax.random.normal(k1, (64, 64)).astype(jnp.bfloat16)),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(inputs[4]),
+        np.asarray(jax.random.normal(k5, (64, 64)).astype(jnp.bfloat16)),
+    )
+
+  def test_reset_data_reuses_inputs(self):
+    """Inputs are generated once and reused across timed runs."""
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
+    for new, old in zip(self.bm.reset_data(*inputs), inputs, strict=True):
+      self.assertIs(new, old)
+
   def test_run_op(self):
     """Test run op without scaling factors."""
     self._setup_benchmark()
