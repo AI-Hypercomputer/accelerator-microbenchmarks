@@ -18,10 +18,11 @@ from jax.experimental import multihost_utils
 import numpy as np
 
 # Subdirectory names under `local_xprof_dir` for soaking trace snapshots:
-# `baseline_window` captures the post-warmup baseline at t=0; `worst_window`
-# captures the post-soak throttled state immediately after Phase 2 soak.
-_BASELINE_TRACE_WINDOW_SUBDIR = "baseline_window"
-_WORST_TRACE_WINDOW_SUBDIR = "worst_window"
+# `pre_soaking_window` captures the post-warmup state at t=0;
+# `post_soaking_window` captures the post-soak throttled state immediately after
+# Phase 2 soak.
+_PRE_SOAKING_TRACE_WINDOW_SUBDIR = "pre_soaking_window"
+_POST_SOAKING_TRACE_WINDOW_SUBDIR = "post_soaking_window"
 
 # Trace-reduction `ProfileOptions.advanced_configuration` applied to every
 # traced benchmark loop. These drop profiler events that no TPUMS parser
@@ -631,15 +632,14 @@ class BaseRunExecutor:
 
 
 class SoakingRunExecutor(BaseRunExecutor):
-  """Continuous soaking execution strategy with baseline, untraced soak, and post-soak worst window.
+  """Continuous soaking execution strategy with pre-soaking, untraced soak, and post-soaking windows.
 
   Chronological Execution Pipeline:
     1. Warmup (`run_warmup`): Executes untraced chunks (up to `samples_per_run`
        iterations per chunk) until `warmup_tries` iterations have elapsed.
-    2. Phase 1 — Post-Warmup Baseline (`baseline_window` at `t = 0s`): Executes
+    2. Phase 1 — Pre-Soaking Window (`pre_soaking_window` at `t = 0s`): Executes
        1 traced window of `samples_per_run` iterations immediately after warmup
-       to capture post-warmup baseline device latency
-       (`xprof_pre_soaking_p50_ms`).
+       to capture pre-soaking device latency (`xprof_pre_soaking_p50_ms`).
     3. Phase 2 — Untraced Thermal Soak (`min_duration_s` > 0.0): Executes
        continuous, untraced chunks of `samples_per_run` iterations until elapsed
        Phase 2 time `>= min_duration_s` to drive the accelerator to thermal
@@ -648,16 +648,16 @@ class SoakingRunExecutor(BaseRunExecutor):
        (`wall_clock_pre_soaking_p50_ms`, `wall_clock_post_soaking_p50_ms`,
        `wall_clock_slowdown_ratio`) are derived exclusively from the first and
        last untraced soak chunks (`soak_wall_ms[0]` and `soak_wall_ms[-1]`).
-    4. Phase 3 — Post-Soak Worst Window (`worst_window` at `t = end of soak`):
-       Executes 1 traced window (`worst_window`) of `samples_per_run` iterations
-       immediately after Phase 2 soak to capture post-soak device latency
-       (`xprof_post_soaking_p50_ms`) and firmware thermal telemetry.
+    4. Phase 3 — Post-Soaking Window (`post_soaking_window` at
+       `t = end of soak`): Executes 1 traced window of `samples_per_run`
+       iterations immediately after Phase 2 soak to capture post-soaking device
+       latency (`xprof_post_soaking_p50_ms`) and firmware thermal telemetry.
   """
 
   def __init__(self, benchmark: Any):
     super().__init__(benchmark)
-    self.first_window_xprof_duration: list[float] = []
-    self.last_window_xprof_duration: list[float] = []
+    self.pre_soaking_xprof_durations: list[float] = []
+    self.post_soaking_xprof_durations: list[float] = []
     # Per-chunk wall-clock latency (ms/iter) of the untraced Phase 2 soak
     # chunks; the traced Phase 1/3 windows are excluded.
     self.soak_wall_ms: list[float] = []
@@ -744,7 +744,7 @@ class SoakingRunExecutor(BaseRunExecutor):
       inputs: tuple[Any, ...],
       local_xprof_dir: Optional[str],
   ) -> ExecutionResult:
-    """Executes Phase 1 (`baseline_window`), Phase 2 (`min_duration_s` soak), and Phase 3 (`worst_window`)."""
+    """Executes Phase 1 (`pre_soaking_window`), Phase 2 (`min_duration_s` soak), and Phase 3 (`post_soaking_window`)."""
     if not self.benchmark.xprof_config.xprof_timing or not local_xprof_dir:
       raise ValueError(
           "SoakingRunExecutor requires xprof_timing=True and a valid"
@@ -761,15 +761,17 @@ class SoakingRunExecutor(BaseRunExecutor):
     self.soak_wall_ms = []
     actual_runs = 0
 
-    # Phase 1: Post-warmup baseline window at t=0 before soaking begins.
-    baseline_dir = os.path.join(local_xprof_dir, _BASELINE_TRACE_WINDOW_SUBDIR)
-    inputs, baseline_ms = self._run_window(
+    # Phase 1: Pre-soaking window at t=0 before soaking begins.
+    pre_soaking_dir = os.path.join(
+        local_xprof_dir, _PRE_SOAKING_TRACE_WINDOW_SUBDIR
+    )
+    inputs, pre_soaking_ms = self._run_window(
         inputs,
         samples_per_run,
-        trace_dir=baseline_dir,
+        trace_dir=pre_soaking_dir,
         **trace_kwargs,
     )
-    raw_times.append(baseline_ms)
+    raw_times.append(pre_soaking_ms)
     actual_runs += samples_per_run
 
     # Phase 2: Continuous untraced thermal soak (`min_duration_s`)
@@ -782,26 +784,29 @@ class SoakingRunExecutor(BaseRunExecutor):
       if (time.perf_counter() - soak_start) >= self.config.min_duration_s:
         break
 
-    # Phase 3: Post-soak worst window immediately after Phase 2 soak.
-    worst_dir = os.path.join(local_xprof_dir, _WORST_TRACE_WINDOW_SUBDIR)
-    inputs, worst_ms = self._run_window(
+    # Phase 3: Post-soaking window immediately after Phase 2 soak.
+    post_soaking_dir = os.path.join(
+        local_xprof_dir, _POST_SOAKING_TRACE_WINDOW_SUBDIR
+    )
+    inputs, post_soaking_ms = self._run_window(
         inputs,
         samples_per_run,
-        trace_dir=worst_dir,
+        trace_dir=post_soaking_dir,
         **trace_kwargs,
     )
     raw_times.extend(self.soak_wall_ms)
-    raw_times.append(worst_ms)
+    raw_times.append(post_soaking_ms)
     actual_runs += samples_per_run
     print(
         "SoakingRunExecutor wall-clock ms/iter:"
-        f" baseline_window={baseline_ms:.4f},"
+        f" pre_soaking_window={pre_soaking_ms:.4f},"
         f" soak_p50={np.percentile(self.soak_wall_ms, 50):.4f}"
-        f" ({len(self.soak_wall_ms)} chunks), worst_window={worst_ms:.4f}"
+        f" ({len(self.soak_wall_ms)} chunks),"
+        f" post_soaking_window={post_soaking_ms:.4f}"
     )
 
-    # xprof_* stats use only the traced worst_window (`samples_per_run`
-    # iterations); baseline_window and the untraced soak are excluded.
+    # xprof_* stats use only the traced post_soaking_window (`samples_per_run`
+    # iterations); pre_soaking_window and the untraced soak are excluded.
     return ExecutionResult(
         durations_ms=raw_times,
         actual_runs=actual_runs,
@@ -809,51 +814,53 @@ class SoakingRunExecutor(BaseRunExecutor):
     )
 
   def get_xprof_durations(self, xprof_dir: str) -> XprofParseResult:
-    """Parses both trace windows; returns the post-soak worst_window result.
+    """Parses both trace windows; returns the post_soaking_window result.
 
     Args:
-      xprof_dir: Directory containing the `baseline_window` and `worst_window`
-        trace subdirectories.
+      xprof_dir: Directory containing the `pre_soaking_window` and
+        `post_soaking_window` trace subdirectories.
 
     Returns:
-      The worst_window result (durations, measured device, and
+      The post_soaking_window result (durations, measured device, and
       per-local-device durations), which feeds the headline `xprof_*` metrics
-      and `detailed.json`; the baseline_window only feeds
+      and `detailed.json`; the pre_soaking_window only feeds
       `xprof_pre_soaking_p50_ms`.
     """
-    baseline_dir = os.path.join(xprof_dir, _BASELINE_TRACE_WINDOW_SUBDIR)
-    worst_dir = os.path.join(xprof_dir, _WORST_TRACE_WINDOW_SUBDIR)
+    pre_soaking_dir = os.path.join(xprof_dir, _PRE_SOAKING_TRACE_WINDOW_SUBDIR)
+    post_soaking_dir = os.path.join(
+        xprof_dir, _POST_SOAKING_TRACE_WINDOW_SUBDIR
+    )
     if (
         self.benchmark.xprof_config.device_timing_aggregation
         == constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE
     ):
-      worst_result = self._extract_window_durations(worst_dir)
-      if worst_result.measured_device is None:
-        self.first_window_xprof_duration = self._extract_window_durations(
-            baseline_dir
+      post_soaking_result = self._extract_window_durations(post_soaking_dir)
+      if post_soaking_result.measured_device is None:
+        self.pre_soaking_xprof_durations = self._extract_window_durations(
+            pre_soaking_dir
         ).durations
       else:
         try:
-          self.first_window_xprof_duration = self._durations_for_device(
-              self._load_trace(baseline_dir),
-              worst_result.measured_device.local_hardware_id,
+          self.pre_soaking_xprof_durations = self._durations_for_device(
+              self._load_trace(pre_soaking_dir),
+              post_soaking_result.measured_device.local_hardware_id,
           )
         except ValueError:
           raise
         except Exception as e:  # pylint: disable=broad-exception-caught
           print(
-              f"Warning: Failed to parse XProf durations for {baseline_dir}:"
+              f"Warning: Failed to parse XProf durations for {pre_soaking_dir}:"
               f" {e}"
           )
-          self.first_window_xprof_duration = []
+          self.pre_soaking_xprof_durations = []
     else:
-      self.first_window_xprof_duration = self._extract_window_durations(
-          baseline_dir
+      self.pre_soaking_xprof_durations = self._extract_window_durations(
+          pre_soaking_dir
       ).durations
-      worst_result = self._extract_window_durations(worst_dir)
+      post_soaking_result = self._extract_window_durations(post_soaking_dir)
 
-    self.last_window_xprof_duration = worst_result.durations
-    return worst_result
+    self.post_soaking_xprof_durations = post_soaking_result.durations
+    return post_soaking_result
 
   def calculate_latency_stats(
       self, times_ms: list[float], prefix: constants.TimingDomain
@@ -867,8 +874,8 @@ class SoakingRunExecutor(BaseRunExecutor):
 
     # Wall-clock pre_soaking/post_soaking windows are from the first and last
     # untraced Phase 2 soak chunks (each averaging `samples_per_run` iterations,
-    # matching XProf's first-window vs last-window definition). The traced
-    # Phase 1/3 windows are excluded because `worst_window` can read
+    # matching XProf's pre-soaking vs post-soaking definition). The traced
+    # Phase 1/3 windows are excluded because `post_soaking_window` can read
     # un-throttled on fast clock-skip throttling hosts, whereas the soak chunks
     # reflect the throttled steady state. Falls back to `times_ms` when no soak
     # samples were recorded.
@@ -895,18 +902,20 @@ class SoakingRunExecutor(BaseRunExecutor):
     """Merges per-window firmware telemetry."""
     local_xprof_dir = self.benchmark._xprof_dir_actual or ""  # pylint: disable=protected-access
 
-    baseline_dir = ""
-    worst_dir = ""
+    pre_soaking_dir = ""
+    post_soaking_dir = ""
     if local_xprof_dir:
-      baseline_dir = os.path.join(
-          local_xprof_dir, _BASELINE_TRACE_WINDOW_SUBDIR
+      pre_soaking_dir = os.path.join(
+          local_xprof_dir, _PRE_SOAKING_TRACE_WINDOW_SUBDIR
       )
-      worst_dir = os.path.join(local_xprof_dir, _WORST_TRACE_WINDOW_SUBDIR)
+      post_soaking_dir = os.path.join(
+          local_xprof_dir, _POST_SOAKING_TRACE_WINDOW_SUBDIR
+      )
 
     thermal_metrics, self._result_details = (
         throttle_profiler.XprofThermalProfiler.parse_soaking_windows(
-            baseline_dir=baseline_dir,
-            worst_dir=worst_dir,
+            pre_soaking_dir=pre_soaking_dir,
+            post_soaking_dir=post_soaking_dir,
         )
     )
     metrics.update(thermal_metrics)
@@ -930,8 +939,8 @@ class SoakingRunExecutor(BaseRunExecutor):
       p50 = float(np.percentile(durations, 50))
       return p50 if p50 > 0 else None
 
-    pre_soak_p50 = window_p50(self.first_window_xprof_duration)
-    post_soak_p50 = window_p50(self.last_window_xprof_duration)
+    pre_soak_p50 = window_p50(self.pre_soaking_xprof_durations)
+    post_soak_p50 = window_p50(self.post_soaking_xprof_durations)
     ratio = None
     if pre_soak_p50 is not None and post_soak_p50 is not None:
       ratio = post_soak_p50 / pre_soak_p50 if pre_soak_p50 > 0 else 1.0

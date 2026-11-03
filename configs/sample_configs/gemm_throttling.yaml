@@ -3,7 +3,7 @@
 # Chronological Execution Timeline (`SoakingRunExecutor`):
 #   1. Warmup (`warmup_tries`): Executes `warmup_tries` (10) untraced warmup
 #      iterations (chunked up to `samples_per_run`) to complete JIT compilation.
-#   2. Phase 1 - Post-Warmup Cold Baseline (`baseline_window` at t = 0s):
+#   2. Phase 1 - Pre-Soaking Window (`pre_soaking_window` at t = 0s):
 #      Immediately after warmup, runs 1 traced window of `samples_per_run` (25)
 #      iterations to capture the un-throttled device latency
 #      (`xprof_pre_soaking_p50_ms`).
@@ -16,7 +16,7 @@
 #      `wall_clock_pre_soaking_p50_ms` = the first soak chunk,
 #      `wall_clock_post_soaking_p50_ms` = the last soak chunk, and
 #      `wall_clock_slowdown_ratio` = post_soaking / pre_soaking.
-#   4. Phase 3 - Post-Soak Worst Window (`worst_window` at t = end of soak):
+#   4. Phase 3 - Post-Soaking Window (`post_soaking_window` at t = end of soak):
 #      Runs 1 traced window of `samples_per_run` (25) iterations immediately
 #      after Phase 2 soak to capture post-soak device latency
 #      (`xprof_post_soaking_p50_ms`, `xprof_slowdown_ratio`) and firmware

@@ -343,8 +343,8 @@ class SoakingExecutionParamsMixin:
           "help": (
               "Number of back-to-back iterations dispatched per window before"
               " host `jax.block_until_ready` synchronization across Warmup,"
-              " Phase 1 (`baseline_window`), Phase 2 (`min_duration_s` soak),"
-              " and Phase 3 (`worst_window`)."
+              " Phase 1 (`pre_soaking_window`), Phase 2 (`min_duration_s`"
+              " soak), and Phase 3 (`post_soaking_window`)."
           ),
       },
   )

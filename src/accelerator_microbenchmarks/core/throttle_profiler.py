@@ -264,12 +264,12 @@ class XprofThermalProfiler:
 
   @classmethod
   def parse_soaking_windows(
-      cls, baseline_dir: str, worst_dir: str
+      cls, pre_soaking_dir: str, post_soaking_dir: str
   ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Parses thermal metrics for baseline and worst-case soaking windows."""
+    """Parses thermal metrics for pre-soaking and post-soaking trace windows."""
 
-    post_soaking_per_device = cls(worst_dir).parse_per_device_metrics()
-    pre_soaking_per_device = cls(baseline_dir).parse_per_device_metrics()
+    post_soaking_per_device = cls(post_soaking_dir).parse_per_device_metrics()
+    pre_soaking_per_device = cls(pre_soaking_dir).parse_per_device_metrics()
     post_soaking = aggregate_thermal_metrics(post_soaking_per_device.values())
     pre_soaking = aggregate_thermal_metrics(pre_soaking_per_device.values())
     metrics = dict(post_soaking)

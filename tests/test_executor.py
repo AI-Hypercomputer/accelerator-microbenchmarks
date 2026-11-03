@@ -155,15 +155,17 @@ class SoakingBenchmarkTest(absltest.TestCase):
         os.path.dirname(__file__), "data", "tpu7x_fw_counters.xplane.pb"
     )
     with tempfile.TemporaryDirectory() as tmpdir:
-      worst_dir = os.path.join(tmpdir, "worst_window")
-      os.makedirs(worst_dir)
+      post_soaking_dir = os.path.join(tmpdir, "post_soaking_window")
+      os.makedirs(post_soaking_dir)
       shutil.copy(
-          data_path, os.path.join(worst_dir, "tpu7x_fw_counters.xplane.pb")
+          data_path,
+          os.path.join(post_soaking_dir, "tpu7x_fw_counters.xplane.pb"),
       )
-      baseline_dir = os.path.join(tmpdir, "baseline_window")
-      os.makedirs(baseline_dir)
+      pre_soaking_dir = os.path.join(tmpdir, "pre_soaking_window")
+      os.makedirs(pre_soaking_dir)
       shutil.copy(
-          data_path, os.path.join(baseline_dir, "tpu7x_fw_counters.xplane.pb")
+          data_path,
+          os.path.join(pre_soaking_dir, "tpu7x_fw_counters.xplane.pb"),
       )
       bench = SoakingDummyBenchmark(
           config=SoakingDummyParams(min_duration_s=1.0)
@@ -222,8 +224,9 @@ class SoakingBenchmarkTest(absltest.TestCase):
       self.assertGreaterEqual(res.metrics["actual_runs"], 6)
       self.assertGreaterEqual(len(res.timings.wall_clock.durations_ms), 3)
       self.assertEqual(res.timings.xprof.durations_ms, [1.0])
-      # Worst window has samples_per_run=2 traced iterations but the mocked
-      # trace yields 1 duration, so the truncation is recorded and warned.
+      # Post-soaking window has samples_per_run=2 traced iterations but the
+      # mocked trace yields 1 duration, so the truncation is recorded and
+      # warned.
       self.assertEqual(res.metrics["xprof_captured_runs"], 1)
       self.assertEqual(res.metrics["xprof_expected_runs"], 2)
       self.assertIn("Warning: XProf captured 1/2 traced runs", buf.getvalue())
@@ -275,8 +278,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
     ):
       bm_zero_dur.run()
 
-  def test_soaking_loop_records_baseline_and_worst_windows(self):
-    """Verifies SoakingRunExecutor.execute records baseline_window and worst_window."""
+  def test_soaking_loop_records_pre_and_post_soaking_windows(self):
+    """Verifies SoakingRunExecutor.execute records pre_soaking_window and post_soaking_window."""
     cfg = SoakingDummyParams(
         warmup_tries=0, samples_per_run=1, min_duration_s=0.01
     )
@@ -310,10 +313,11 @@ class SoakingBenchmarkTest(absltest.TestCase):
         res = bm.run()
       actual_trace_root = bm._xprof_dir_actual  # pylint: disable=protected-access
       self.assertCountEqual(
-          os.listdir(actual_trace_root), ["baseline_window", "worst_window"]
+          os.listdir(actual_trace_root),
+          ["pre_soaking_window", "post_soaking_window"],
       )
-    self.assertEqual(bm.executor.first_window_xprof_duration, [1.0])
-    self.assertEqual(bm.executor.last_window_xprof_duration, [2.5])
+    self.assertEqual(bm.executor.pre_soaking_xprof_durations, [1.0])
+    self.assertEqual(bm.executor.post_soaking_xprof_durations, [2.5])
     self.assertAlmostEqual(
         res.metrics["xprof_pre_soaking_p50_ms"],
         1.0,
@@ -329,7 +333,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
         2.5,
         places=4,
     )
-    # Soaking counts only the worst window: samples_per_run=1, 1 duration.
+    # Soaking counts only the post-soaking window (samples_per_run=1,
+    # 1 duration).
     self.assertEqual(res.metrics["xprof_captured_runs"], 1)
     self.assertEqual(
         res.metrics["xprof_expected_runs"],
@@ -395,17 +400,17 @@ class SoakingBenchmarkTest(absltest.TestCase):
     raw_times = exec_result.durations_ms
     actual_runs = exec_result.actual_runs
 
-    baseline_enter = events.index("trace_enter:baseline_window")
-    baseline_exit = events.index("trace_exit:baseline_window")
-    worst_enter = events.index("trace_enter:worst_window")
-    worst_exit = events.index("trace_exit:worst_window")
+    pre_enter = events.index("trace_enter:pre_soaking_window")
+    pre_exit = events.index("trace_exit:pre_soaking_window")
+    post_enter = events.index("trace_enter:post_soaking_window")
+    post_exit = events.index("trace_exit:post_soaking_window")
     # Both traced windows execute `samples_per_run` iterations and block once.
     self.assertEqual(
-        events[baseline_enter + 1 : baseline_exit],
+        events[pre_enter + 1 : pre_exit],
         ["run_op"] * cfg.samples_per_run + ["block"],
     )
     self.assertEqual(
-        events[worst_enter + 1 : worst_exit],
+        events[post_enter + 1 : post_exit],
         ["run_op"] * cfg.samples_per_run + ["block"],
     )
     # Every executed iteration is counted once in actual_runs and each chunk
@@ -416,7 +421,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
     self.assertGreaterEqual(len(raw_times), 3)
     self.assertLen(bm.executor.soak_wall_ms, len(raw_times) - 2)
     self.assertEqual(raw_times[1:-1], bm.executor.soak_wall_ms)
-    # Only the traced `worst_window` feeds xprof_* stats.
+    # Only the traced `post_soaking_window` feeds xprof_* stats.
     self.assertEqual(exec_result.xprof_expected_runs, cfg.samples_per_run)
 
   def test_soak_wall_ms_reflects_device_completion_time(self):
@@ -455,9 +460,9 @@ class SoakingBenchmarkTest(absltest.TestCase):
   def test_wall_clock_soaking_stats_derived_from_untraced_soak_chunks(self):
     """Verifies wall-clock pre_soaking/post_soaking p50 use first vs last soak chunk and ignore Phase 1/3 windows.
 
-    On fast clock-skip throttling hosts the traced `worst_window` can read
-    un-throttled after a profiler-init gap, so the wall-clock slowdown must be
-    sourced from the untraced Phase 2 soak chunks (`soak_wall_ms[0]` vs
+    On fast clock-skip throttling hosts the traced `post_soaking_window` can
+    read un-throttled after a profiler-init gap, so the wall-clock slowdown must
+    be sourced from the untraced Phase 2 soak chunks (`soak_wall_ms[0]` vs
     `soak_wall_ms[-1]`).
     """
     cfg = SoakingDummyParams(
@@ -486,7 +491,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
   def test_soaking_local_slowest_device_selects_slowest_throttled_device(
       self,
   ):
-    """Verifies soaking local_slowest_device selects the slowest local device and slices baseline once."""
+    """Verifies soaking local_slowest_device selects the slowest local device and slices pre-soaking window once."""
     cfg = SoakingDummyParams(
         warmup_tries=0, min_duration_s=0.01, samples_per_run=2
     )
@@ -500,15 +505,15 @@ class SoakingBenchmarkTest(absltest.TestCase):
     fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
 
     def fake_parse_xprof(trace, local_device_id=0):
-      if "baseline_window" in trace.trace_dir:
+      if "pre_soaking_window" in trace.trace_dir:
         return [5.008, 5.010]
       if local_device_id in (4, 5):
         return [6.021, 6.019]
       return [5.009, 5.009]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-      w0 = os.path.join(tmpdir, "baseline_window")
-      w1 = os.path.join(tmpdir, "worst_window")
+      w0 = os.path.join(tmpdir, "pre_soaking_window")
+      w1 = os.path.join(tmpdir, "post_soaking_window")
       os.makedirs(w0, exist_ok=True)
       os.makedirs(w1, exist_ok=True)
       with (
@@ -525,24 +530,24 @@ class SoakingBenchmarkTest(absltest.TestCase):
               wraps=getattr(bm.executor, "_load_trace"),
           ) as mock_load_trace,
       ):
-        worst = bm.executor.get_xprof_durations(tmpdir)
+        post_soaking = bm.executor.get_xprof_durations(tmpdir)
 
         self.assertEqual(mock_load_trace.call_count, 2)
         self.assertEqual(mock_parse.call_count, 9)
 
-    self.assertEqual(bm.executor.first_window_xprof_duration, [5.008, 5.010])
-    self.assertEqual(bm.executor.last_window_xprof_duration, [6.021, 6.019])
+    self.assertEqual(bm.executor.pre_soaking_xprof_durations, [5.008, 5.010])
+    self.assertEqual(bm.executor.post_soaking_xprof_durations, [6.021, 6.019])
 
-    self.assertEqual(worst.durations, [6.021, 6.019])
+    self.assertEqual(post_soaking.durations, [6.021, 6.019])
 
-    target_dev_id = worst.measured_device.local_hardware_id
+    target_dev_id = post_soaking.measured_device.local_hardware_id
     self.assertIn(target_dev_id, (4, 5))
     self.assertEqual(
-        worst.measured_device,
+        post_soaking.measured_device,
         executor.XprofDevice(jax.process_index(), target_dev_id),
     )
     self.assertEqual(
-        worst.per_local_device_durations,
+        post_soaking.per_local_device_durations,
         {
             executor.XprofDevice(jax.process_index(), i): (
                 [6.021, 6.019] if i in (4, 5) else [5.009, 5.009]
@@ -554,22 +559,25 @@ class SoakingBenchmarkTest(absltest.TestCase):
     class HostCpuSoakingDummyBenchmark(SoakingDummyBenchmark):
       xprof_target_host_cpu = True
 
-    host_cpu_bm = HostCpuSoakingDummyBenchmark(config=cfg)
+    host_cpu_bm = HostCpuSoakingDummyBenchmark(
+        config=cfg,
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE,
+        ),
+    )
+    host_cpu_trace = mock.create_autospec(profiler.XprofTrace, instance=True)
+    host_cpu_trace.device_step_durations_ms.return_value = [1.0]
     with (
         mock.patch.object(jax, "local_devices", return_value=fake_devs),
         mock.patch.object(
-            host_cpu_bm.executor, "_load_trace"
-        ) as mock_load_trace,
-        mock.patch.object(
-            profiler.XprofTrace,
-            "device_step_durations_ms",
-            autospec=True,
-            return_value=[1.0],
+            host_cpu_bm.executor, "_load_trace", return_value=host_cpu_trace
         ),
     ):
-      host_cpu_worst = host_cpu_bm.executor.get_xprof_durations(tmpdir)
-      self.assertIsNone(host_cpu_worst.measured_device)
-      self.assertIsNone(host_cpu_worst.per_local_device_durations)
+      host_cpu_post_soaking = host_cpu_bm.executor.get_xprof_durations(tmpdir)
+      self.assertIsNone(host_cpu_post_soaking.measured_device)
+      self.assertIsNone(host_cpu_post_soaking.per_local_device_durations)
+      self.assertEqual(host_cpu_bm.executor.pre_soaking_xprof_durations, [1.0])
 
   def test_xprof_device_timing_aggregation_measured_or_first_vs_local_slowest(
       self,
@@ -1054,10 +1062,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
         bm.executor.get_xprof_durations("/tmp/fake")
     mock_gather.assert_called_once()
 
-  def test_soaking_executor_global_slowest_per_step_both_windows_and_baseline_error_raises_immediately(
+  def test_soaking_executor_global_slowest_per_step_both_windows_and_pre_soaking_error_raises_immediately(
       self,
   ):
-    """Verifies SoakingRunExecutor runs two-stage gathers on both windows and raises immediately on baseline ValueError."""
+    """Verifies SoakingRunExecutor runs two-stage gathers on both windows and raises immediately on pre-soaking ValueError."""
     fake_devs = [
         mock.MagicMock(local_hardware_id=0),
         mock.MagicMock(local_hardware_id=1),
@@ -1076,7 +1084,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
     with self.subTest("both_windows_ok"):
 
       def fake_parse_both(trace, local_device_id=0):
-        if "baseline_window" in trace.trace_dir:
+        if "pre_soaking_window" in trace.trace_dir:
           return [5.0, 6.0] if local_device_id == 0 else [5.5, 5.8]
         return [7.0, 8.0] if local_device_id == 0 else [7.5, 7.2]
 
@@ -1103,17 +1111,17 @@ class SoakingBenchmarkTest(absltest.TestCase):
 
       np.testing.assert_allclose(durations, [7.5, 8.5], rtol=1e-5)
       np.testing.assert_allclose(
-          bm.executor.first_window_xprof_duration, [5.9, 6.0], rtol=1e-5
+          bm.executor.pre_soaking_xprof_durations, [5.9, 6.0], rtol=1e-5
       )
       np.testing.assert_allclose(
-          bm.executor.last_window_xprof_duration, [7.5, 8.5], rtol=1e-5
+          bm.executor.post_soaking_xprof_durations, [7.5, 8.5], rtol=1e-5
       )
       self.assertEqual(mock_gather.call_count, 4)
 
-    with self.subTest("baseline_error_raises_immediately"):
+    with self.subTest("pre_soaking_error_raises_immediately"):
 
-      def fake_parse_baseline_bad(trace, local_device_id=0):
-        if "baseline_window" in trace.trace_dir:
+      def fake_parse_pre_soaking_bad(trace, local_device_id=0):
+        if "pre_soaking_window" in trace.trace_dir:
           return [5.0, 6.0] if local_device_id == 0 else [5.5]
         return [7.0, 8.0]
 
@@ -1123,7 +1131,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
               profiler.XprofTrace,
               "device_step_durations_ms",
               autospec=True,
-              side_effect=fake_parse_baseline_bad,
+              side_effect=fake_parse_pre_soaking_bad,
           ),
           mock.patch.object(
               multihost_utils,
