@@ -12,23 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for TPUMS nightly_runner orchestrator."""
+"""Unit tests for TPUMS suite_runner orchestrator."""
 
 import pathlib
 from unittest import mock
 from absl.testing import absltest
 from absl.testing import parameterized
 from automation import metrics_aggregator
-from automation import nightly_runner
 from automation import report_generator
+from automation import suite_runner
 from automation import utils
 from automation import workload_submitter
 
 _CONFIG_DIR = str(pathlib.Path(__file__).parent.parent / "configs" / "tpu7x")
 
 
-class NightlyRunnerTest(parameterized.TestCase):
-  """Tests for the nightly_runner pipeline orchestrator."""
+class SuiteRunnerTest(parameterized.TestCase):
+  """Tests for the suite_runner pipeline orchestrator."""
 
   def setUp(self):
     super().setUp()
@@ -52,7 +52,7 @@ class NightlyRunnerTest(parameterized.TestCase):
   )
   def test_run_pipeline_dry_run_canonical_suite(self, suite_file, acc):
     with self.assertLogs(level="INFO") as logs:
-      results = nightly_runner.run_pipeline(dry_run=True, suite_file=suite_file)
+      results = suite_runner.run_pipeline(dry_run=True, suite_file=suite_file)
     self.assertIn(f"Accelerator      : {acc}", "\n".join(logs.output))
     self.assertLen(results, 11)
     for r in results:
@@ -66,7 +66,7 @@ class NightlyRunnerTest(parameterized.TestCase):
       ("v6e", {"accelerator": "v6e"}, "v6e"),
   )
   def test_run_pipeline_with_categories(self, kwargs, acc):
-    results = nightly_runner.run_pipeline(
+    results = suite_runner.run_pipeline(
         categories=["gemm"], dry_run=True, **kwargs
     )
     self.assertNotEmpty(results)
@@ -84,7 +84,7 @@ class NightlyRunnerTest(parameterized.TestCase):
   ):
     """An inaccessible bucket fails before credentials are fetched."""
     with self.assertRaises(RuntimeError):
-      nightly_runner.run_pipeline(
+      suite_runner.run_pipeline(
           accelerator="tpu7x",
           gcs_bucket="gs://non-existent-bucket",
           dry_run=False,
@@ -110,14 +110,14 @@ class NightlyRunnerTest(parameterized.TestCase):
   ):
     """Selection errors surface before any GCS or cluster access."""
     with self.assertRaisesRegex(ValueError, regex):
-      nightly_runner.run_pipeline(gcs_bucket="gs://b", dry_run=False, **kwargs)
+      suite_runner.run_pipeline(gcs_bucket="gs://b", dry_run=False, **kwargs)
     mock_verify_bucket.assert_not_called()
     self.mock_creds.assert_not_called()
 
   def test_run_pipeline_v6e_topologies(self):
     """--accelerator v6e --topologies 4x4 scans configs/v6e."""
     with self.assertLogs(level="INFO") as logs:
-      results = nightly_runner.run_pipeline(
+      results = suite_runner.run_pipeline(
           accelerator="v6e", topologies=["4x4"], dry_run=True
       )
     self.assertNotEmpty(results)
@@ -131,7 +131,7 @@ class NightlyRunnerTest(parameterized.TestCase):
   def test_run_pipeline_no_matching_configs_raises(self):
     """An empty selection fails instead of exiting 0 with nothing run."""
     with self.assertRaisesRegex(ValueError, "No YAML"):
-      nightly_runner.run_pipeline(
+      suite_runner.run_pipeline(
           accelerator="tpu7x",
           config_dir=_CONFIG_DIR,
           categories=["no_such_benchmark"],
@@ -142,7 +142,7 @@ class NightlyRunnerTest(parameterized.TestCase):
   def test_run_pipeline_accelerator_topology_mismatch_raises(self):
     """--accelerator v6e with a 3D topology fails before any submission."""
     with self.assertRaisesRegex(ValueError, "do not match accelerator"):
-      nightly_runner.run_pipeline(
+      suite_runner.run_pipeline(
           accelerator="v6e", topologies=["2x2x1"], dry_run=True
       )
     self.mock_creds.assert_not_called()
@@ -174,7 +174,7 @@ class NightlyRunnerTest(parameterized.TestCase):
         ),
         self.assertLogs(level="INFO") as logs,
     ):
-      results = nightly_runner.run_pipeline(
+      results = suite_runner.run_pipeline(
           configs=["configs/tpu7x/2x2x1/gemm.yaml"],
           gcs_bucket="gs://b",
           dry_run=False,
@@ -186,11 +186,11 @@ class NightlyRunnerTest(parameterized.TestCase):
     reported = self.mock_gen_report.call_args.kwargs["results"]
     self.assertEqual(reported[0].status, status)
 
-  @mock.patch.object(nightly_runner, "run_pipeline")
+  @mock.patch.object(suite_runner, "run_pipeline")
   def test_main_forwards_accelerator_and_selection_flags(self, mock_run):
     """CLI parses --accelerator / --topologies / --config-dir defaults."""
-    nightly_runner.main([
-        "nightly_runner",
+    suite_runner.main([
+        "suite_runner",
         "--dry-run",
         "--accelerator",
         "v6e",
@@ -205,23 +205,21 @@ class NightlyRunnerTest(parameterized.TestCase):
     self.assertIsNone(kwargs["suite_file"])
     self.assertTrue(kwargs["cleanup"])
 
-    nightly_runner.main(
-        ["nightly_runner", "--dry-run", "--suite-file", "custom.yaml"]
+    suite_runner.main(
+        ["suite_runner", "--dry-run", "--suite-file", "custom.yaml"]
     )
     kwargs = mock_run.call_args.kwargs
     self.assertIsNone(kwargs["accelerator"])
     self.assertEqual(kwargs["suite_file"], "custom.yaml")
 
     with self.assertRaises(SystemExit):
-      nightly_runner.main(
-          ["nightly_runner", "--dry-run", "--accelerator", "v5p"]
-      )
+      suite_runner.main(["suite_runner", "--dry-run", "--accelerator", "v5p"])
 
-  @mock.patch.object(nightly_runner, "run_pipeline")
+  @mock.patch.object(suite_runner, "run_pipeline")
   def test_main_accepts_full_production_flags(self, mock_run):
     """Accepts the full flag set of a production nightly invocation."""
-    nightly_runner.main([
-        "nightly_runner",
+    suite_runner.main([
+        "suite_runner",
         "--cluster=c",
         "--project=p",
         "--region=southamerica-west1",
@@ -248,13 +246,13 @@ class NightlyRunnerTest(parameterized.TestCase):
     self.assertFalse(kwargs["dry_run"])
 
     with self.assertRaisesRegex(ValueError, "--cluster"):
-      nightly_runner.main(
-          ["nightly_runner", "--gcs-bucket=gs://b", "--accelerator=v6e"]
+      suite_runner.main(
+          ["suite_runner", "--gcs-bucket=gs://b", "--accelerator=v6e"]
       )
     # --accelerator and --suite-file are different selection modes.
     with self.assertRaises(SystemExit):
-      nightly_runner.main([
-          "nightly_runner",
+      suite_runner.main([
+          "suite_runner",
           "--dry-run",
           "--accelerator=v6e",
           "--suite-file=automation/canonical_suite_v6e.yaml",

@@ -63,10 +63,10 @@ nightly runs after they are exported to GitHub.
 
 To validate your configurations and preview generated Kubernetes `JobSet`
 manifests without submitting workloads or consuming TPU quota, run
-[`nightly_runner.py`](../automation/nightly_runner.py) with `--dry-run`:
+[`suite_runner.py`](../automation/suite_runner.py) with `--dry-run`:
 
 ```bash
-python3 -m automation.nightly_runner --dry-run \
+python3 -m automation.suite_runner --dry-run \
   --suite-file=automation/canonical_suite_v7x.yaml
 ```
 
@@ -81,7 +81,7 @@ fails with `ModuleNotFoundError`.
 
 ## 3. Running the Benchmark Pipeline
 
-[`nightly_runner.py`](../automation/nightly_runner.py) is the single pipeline
+[`suite_runner.py`](../automation/suite_runner.py) is the single pipeline
 orchestrator for TPUMS automation. It handles CLI argument and environment
 variable parsing (`CLUSTER`, `PROJECT`, `REGION`, `ZONE`, `NAMESPACE`, `QUEUE`,
 `PRIORITY`, `DOCKER_IMAGE`, `GCS_BUCKET`, `RESERVATION_NAME`), GKE cluster
@@ -98,7 +98,7 @@ selection whose configs span both accelerators, or whose topology or accelerator
 cannot be inferred, is rejected rather than guessed.
 
 ```bash
-python3 -m automation.nightly_runner \
+python3 -m automation.suite_runner \
   --suite-file="automation/canonical_suite_<v7x|v6e>.yaml" \
   --cluster="<your-gke-cluster>" \
   --project="<your-gcp-project>" \
@@ -116,7 +116,7 @@ python3 -m automation.nightly_runner \
 
 You can select specific subsets of benchmarks instead of running the entire
 suite by passing selection flags to
-[`nightly_runner.py`](../automation/nightly_runner.py) (or
+[`suite_runner.py`](../automation/suite_runner.py) (or
 [`workload_submitter.py`](../automation/workload_submitter.py)). Exactly one
 selection mode is required; mixing flags from different modes is an error.
 
@@ -141,7 +141,7 @@ selection mode is required; mixing flags from different modes is an error.
     against the repository root first, then the current directory.
 
 > **Note on Report Generation:** No subsequent commands are required after
-> running any filtered or custom suite command below. `nightly_runner.py`
+> running any filtered or custom suite command below. `suite_runner.py`
 > executes the complete end-to-end pipeline automatically: it submits the
 > selected JobSets, polls until completion, aggregates metrics from GCS, and
 > publishes the final Markdown and HTML reports to both local disk and
@@ -153,7 +153,7 @@ Select benchmarks by file-name substring (e.g. `all_gather` and `gemm`) across
 all tpu7x topologies:
 
 ```bash
-python3 -m automation.nightly_runner \
+python3 -m automation.suite_runner \
   --accelerator=tpu7x \
   --categories all_gather gemm \
   --cluster="<cluster>" \
@@ -166,7 +166,7 @@ python3 -m automation.nightly_runner \
 Target specific TPU topologies (e.g. single-host `2x2x1` or multi-node `4x4x4`):
 
 ```bash
-python3 -m automation.nightly_runner \
+python3 -m automation.suite_runner \
   --accelerator=tpu7x \
   --topologies 2x2x1 4x4x4 \
   --cluster="<cluster>" \
@@ -179,7 +179,7 @@ For example, this runs only `configs/v6e/2x2/all_gather.yaml` and
 `configs/v6e/4x4/all_gather.yaml`:
 
 ```bash
-python3 -m automation.nightly_runner \
+python3 -m automation.suite_runner \
   --accelerator=v6e \
   --topologies 2x2 4x4 \
   --categories all_gather \
@@ -196,7 +196,7 @@ a topology subdirectory or any directory whose configs sit under a
 found must match `--accelerator`. For example, run every v6e `4x4` config:
 
 ```bash
-python3 -m automation.nightly_runner \
+python3 -m automation.suite_runner \
   --accelerator=v6e \
   --config-dir=configs/v6e/4x4 \
   --cluster="<cluster>" \
@@ -211,7 +211,7 @@ live inside the repository.
 ### Run Explicit Config Files
 
 ```bash
-python3 -m automation.nightly_runner \
+python3 -m automation.suite_runner \
   --configs configs/v6e/4x4/all_gather.yaml configs/v6e/2x2/gemm.yaml \
   --cluster="<cluster>" \
   --project="<project>" \
@@ -242,7 +242,7 @@ Then pass the suite file path (absolute, or relative to the repository root or
 the current directory) via `--suite-file`:
 
 ```bash
-python3 -m automation.nightly_runner \
+python3 -m automation.suite_runner \
   --suite-file="path/to/custom_suite.yaml" \
   --cluster="<cluster>" \
   --project="<project>" \
