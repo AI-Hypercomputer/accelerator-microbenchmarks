@@ -6,6 +6,7 @@ import os
 import tempfile
 from typing import Any
 from unittest import mock
+import warnings
 
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import base
@@ -174,13 +175,233 @@ class ReportTest(absltest.TestCase):
     self.assertTrue(table.startswith("="))
     self.assertTrue(table.endswith("="))
 
+  def test_format_benchmark_table_scope_bandwidth_missing_markers(self):
+    """Tests format_benchmark_table keeps all scope-bandwidth columns and renders None as '-'."""
+    schema = [
+        ("scope", report.format_str),
+        ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
+        ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
+        ("wall_clock_bandwidth_per_host_gb_s", report.format_2f),
+        ("xprof_bandwidth_per_device_gb_s", report.format_2f),
+        ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
+        ("xprof_bandwidth_per_host_gb_s", report.format_2f),
+    ]
+    # Single-scope device DataFrame without XProf: all three wall_clock scope
+    # columns are present (larger scopes all-None -> '-'); xprof_* omitted.
+    df_device = pd.DataFrame([{
+        "scope": "device",
+        "wall_clock_bandwidth_per_device_gb_s": 56.6,
+        "wall_clock_bandwidth_per_chip_gb_s": None,
+        "wall_clock_bandwidth_per_host_gb_s": None,
+    }])
+    with warnings.catch_warnings():
+      warnings.simplefilter("error", FutureWarning)
+      table_device = report.format_benchmark_table(
+          df_device, schema=schema, title="DeviceOnly"
+      )
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", table_device)
+    self.assertIn("wall_clock_bandwidth_per_chip_gb_s", table_device)
+    self.assertIn("wall_clock_bandwidth_per_host_gb_s", table_device)
+    self.assertNotIn("xprof_bandwidth_per_", table_device)
+    self.assertIn("56.60", table_device)
+    self.assertIn("-", table_device)
+    self.assertNotIn("None", table_device)
+
+    # Single-scope chip DataFrame with XProf: all six bandwidth columns are
+    # present; per_device is derived, per_chip is measured, per_host is '-'.
+    df_xprof = pd.DataFrame([{
+        "scope": "chip",
+        "wall_clock_bandwidth_per_device_gb_s": 28.35,
+        "wall_clock_bandwidth_per_chip_gb_s": 56.7,
+        "wall_clock_bandwidth_per_host_gb_s": None,
+        "xprof_bandwidth_per_device_gb_s": 29.0,
+        "xprof_bandwidth_per_chip_gb_s": 58.0,
+        "xprof_bandwidth_per_host_gb_s": None,
+    }])
+    with warnings.catch_warnings():
+      warnings.simplefilter("error", FutureWarning)
+      table_xprof = report.format_benchmark_table(
+          df_xprof, schema=schema, title="ChipXprof"
+      )
+    for col_name, _ in schema:
+      self.assertIn(col_name, table_xprof)
+    self.assertIn("28.35", table_xprof)
+    self.assertIn("56.70", table_xprof)
+    self.assertIn("29.00", table_xprof)
+    self.assertIn("58.00", table_xprof)
+    self.assertIn("-", table_xprof)
+    self.assertNotIn("None", table_xprof)
+
+    # Multi-scope sweep DataFrame (device, chip, host).
+    df_sweep = pd.DataFrame([
+        {
+            "scope": "device",
+            "wall_clock_bandwidth_per_device_gb_s": 15.0,
+            "wall_clock_bandwidth_per_chip_gb_s": None,
+            "wall_clock_bandwidth_per_host_gb_s": None,
+        },
+        {
+            "scope": "chip",
+            "wall_clock_bandwidth_per_device_gb_s": 15.0,
+            "wall_clock_bandwidth_per_chip_gb_s": 30.0,
+            "wall_clock_bandwidth_per_host_gb_s": None,
+        },
+        {
+            "scope": "host",
+            "wall_clock_bandwidth_per_device_gb_s": 15.0,
+            "wall_clock_bandwidth_per_chip_gb_s": 30.0,
+            "wall_clock_bandwidth_per_host_gb_s": 120.0,
+        },
+    ])
+    with warnings.catch_warnings():
+      warnings.simplefilter("error", FutureWarning)
+      table_sweep = report.format_benchmark_table(
+          df_sweep, schema=schema, title="Sweep"
+      )
+    self.assertIn("wall_clock_bandwidth_per_device_gb_s", table_sweep)
+    self.assertIn("wall_clock_bandwidth_per_chip_gb_s", table_sweep)
+    self.assertIn("wall_clock_bandwidth_per_host_gb_s", table_sweep)
+    self.assertIn("15.00", table_sweep)
+    self.assertIn("30.00", table_sweep)
+    self.assertIn("120.00", table_sweep)
+    self.assertIn("-", table_sweep)
+    self.assertNotIn("None", table_sweep)
+
+  def test_host_to_device_host_scope_console_csv_json_rendering(self):
+    """Verifies console table, CSV, and JSON renderings of derived and None scopes."""
+    res_host = _make_result(
+        "HostToDeviceBenchmark",
+        params={
+            "dtype": "bfloat16",
+            "transfer_backend": "tpu_sync",
+            "scope": "host",
+            "data_size_mib": 256,
+        },
+        metrics={
+            "num_devices": 8,
+            "wall_clock_p50_ms": 14.0274,
+            "wall_clock_bandwidth_per_device_gb_s": 19.15,
+            "wall_clock_bandwidth_per_chip_gb_s": 38.30,
+            "wall_clock_bandwidth_per_host_gb_s": 153.20,
+            "xprof_p50_ms": 14.0100,
+            "xprof_bandwidth_per_device_gb_s": 19.17,
+            "xprof_bandwidth_per_chip_gb_s": 38.34,
+            "xprof_bandwidth_per_host_gb_s": 153.36,
+        },
+    )
+    res_chip = _make_result(
+        "HostToDeviceBenchmark",
+        params={
+            "dtype": "bfloat16",
+            "transfer_backend": "tpu_sync",
+            "scope": "chip",
+            "data_size_mib": 256,
+        },
+        metrics={
+            "num_devices": 2,
+            "wall_clock_p50_ms": 9.4600,
+            "wall_clock_bandwidth_per_device_gb_s": 28.35,
+            "wall_clock_bandwidth_per_chip_gb_s": 56.70,
+            "wall_clock_bandwidth_per_host_gb_s": None,
+            "xprof_p50_ms": 9.4500,
+            "xprof_bandwidth_per_device_gb_s": 28.40,
+            "xprof_bandwidth_per_chip_gb_s": 56.80,
+            "xprof_bandwidth_per_host_gb_s": None,
+        },
+    )
+
+    class DummyH2D:
+      REPORT_SCHEMA = (
+          ("dtype", report.format_str),
+          ("transfer_backend", report.format_str),
+          ("scope", report.format_str),
+          ("num_devices", report.format_str),
+          ("data_size_mib", report.format_str),
+          ("wall_clock_p50_ms", report.format_4f),
+          ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
+          ("wall_clock_bandwidth_per_chip_gb_s", report.format_2f),
+          ("wall_clock_bandwidth_per_host_gb_s", report.format_2f),
+          ("xprof_p50_ms", report.format_4f),
+          ("xprof_bandwidth_per_device_gb_s", report.format_2f),
+          ("xprof_bandwidth_per_chip_gb_s", report.format_2f),
+          ("xprof_bandwidth_per_host_gb_s", report.format_2f),
+      )
+
+    df = report.results_to_dataframe([res_host, res_chip])
+    table = report.format_standard_table(df, DummyH2D)
+    for col_name, _ in DummyH2D.REPORT_SCHEMA:
+      self.assertIn(col_name, table)
+    self.assertNotIn("None", table)
+    self.assertNotIn("NaN", table)
+    for val in ("19.15", "38.30", "153.20", "28.35", "56.70"):
+      self.assertIn(val, table)
+    self.assertIn("-", table)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      report.save_output([res_host, res_chip], tmpdir)
+      csv_path = os.path.join(tmpdir, "summary.csv")
+      json_path = os.path.join(tmpdir, "detailed.json")
+
+      with open(csv_path, "r") as f:
+        csv_text = f.read()
+      self.assertNotIn("None", csv_text)
+      self.assertNotIn("NaN", csv_text)
+      csv_df = pd.read_csv(csv_path)
+      self.assertAlmostEqual(
+          csv_df["wall_clock_bandwidth_per_device_gb_s"].iloc[0], 19.15
+      )
+      self.assertAlmostEqual(
+          csv_df["wall_clock_bandwidth_per_chip_gb_s"].iloc[0], 38.30
+      )
+      self.assertAlmostEqual(
+          csv_df["wall_clock_bandwidth_per_host_gb_s"].iloc[0], 153.20
+      )
+      self.assertAlmostEqual(
+          csv_df["wall_clock_bandwidth_per_device_gb_s"].iloc[1], 28.35
+      )
+      self.assertAlmostEqual(
+          csv_df["wall_clock_bandwidth_per_chip_gb_s"].iloc[1], 56.70
+      )
+      self.assertTrue(
+          pd.isna(csv_df["wall_clock_bandwidth_per_host_gb_s"].iloc[1])
+      )
+      self.assertTrue(pd.isna(csv_df["xprof_bandwidth_per_host_gb_s"].iloc[1]))
+
+      with open(json_path, "r") as f:
+        json_text = f.read()
+      self.assertNotIn("None", json_text)
+      self.assertNotIn("NaN", json_text)
+      parsed = json.loads(json_text)
+      host_metrics = parsed[0]["metrics"]
+      self.assertEqual(
+          host_metrics["wall_clock_bandwidth_per_device_gb_s"], 19.15
+      )
+      self.assertEqual(
+          host_metrics["wall_clock_bandwidth_per_chip_gb_s"], 38.30
+      )
+      self.assertEqual(
+          host_metrics["wall_clock_bandwidth_per_host_gb_s"], 153.20
+      )
+      chip_metrics = parsed[1]["metrics"]
+      self.assertEqual(
+          chip_metrics["wall_clock_bandwidth_per_device_gb_s"], 28.35
+      )
+      self.assertEqual(
+          chip_metrics["wall_clock_bandwidth_per_chip_gb_s"], 56.70
+      )
+      self.assertIsNone(chip_metrics["wall_clock_bandwidth_per_host_gb_s"])
+      self.assertIsNone(chip_metrics["xprof_bandwidth_per_host_gb_s"])
+
   def test_results_to_dataframe(self):
     """Tests flattening BenchmarkResult objects into an unformatted DataFrame."""
     self.assertTrue(report.results_to_dataframe([]).empty)
     res = _make_result(
         "DummyBenchmark",
         params={"m": 1024, "n": 2048},
-        metrics={"wall_clock_avg_ms": 1.23, "wall_clock_tflops_per_device": 500.0},
+        metrics={
+            "wall_clock_avg_ms": 1.23,
+            "wall_clock_tflops_per_device": 500.0,
+        },
         metadata=_make_metadata(
             "DummyBenchmark",
             params={"m": 1024, "n": 2048},
@@ -807,7 +1028,7 @@ class ReportTest(absltest.TestCase):
     self.assertEqual(df["wall_clock_bandwidth_per_device_gb_s"].iloc[1], 16.0)
     self.assertEqual(df["wall_clock_bandwidth_per_device_gb_s"].iloc[2], 64.0)
 
-    # Format table for H2D and verify wall_clock_bandwidth_per_device_gb_s column appears
+    # Format table for H2D and verify bandwidth column appears
     table_h2d = report.format_benchmark_table(
         df[df["benchmark"] == "HostToDeviceBenchmark"],
         schema=[("wall_clock_bandwidth_per_device_gb_s", report.format_2f)],

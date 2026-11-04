@@ -66,6 +66,8 @@ def is_dtype_field(field: dataclasses.Field[Any]) -> bool:
 
 @dataclasses.dataclass
 class BaseBenchmarkParams:
+  """Base configuration parameters for microbenchmarks."""
+
   # Allowed dtypes per dtype field (declared with `dtype_field()`), as jnp
   # scalar types (e.g. `jnp.bfloat16`) or abstract dtype classes (e.g.
   # `jnp.floating`). Dtype fields that are not listed accept every
@@ -326,6 +328,33 @@ class SingleDtypeBenchmarkParams(BaseBenchmarkParams):
 
 
 @dataclasses.dataclass
+class ScopeParamsMixin:
+  """Mixin for benchmarks targeting a host-local device, chip, or host scope."""
+
+  scope: constants.Scope = dataclasses.field(
+      default=constants.Scope.DEVICE,
+      metadata={
+          "help": (
+              "Target measurement scope: 'device' (single local device),"
+              " 'chip' (all devices on one local chip), or 'host' (all local"
+              " devices)."
+          ),
+      },
+  )
+  local_index: int = dataclasses.field(
+      default=0,
+      metadata={
+          "min": 0,
+          "help": (
+              "Host-local index of the target unit within `scope`: the N-th"
+              " local device (scope=device) or N-th local chip (scope=chip)."
+              " Must be 0 for scope=host."
+          ),
+      },
+  )
+
+
+@dataclasses.dataclass
 class BenchmarkMetadata:
   """Metadata for a single benchmark run."""
 
@@ -381,9 +410,8 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
   """Abstract base class for microbenchmarks."""
 
   name: str = ""
-  Config = BaseBenchmarkParams
+  Config = BaseBenchmarkParams  # pylint: disable=invalid-name
   is_experimental: bool = False
-  DEFAULT_LOCAL_DEVICE_ID: int = 0
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = ()
   # TODO(b/555967269): Redesign and decouple circular dependency between
   # BaseBenchmark and report formatters.
@@ -453,6 +481,10 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     Called only by BaseRunExecutor, not in warmup or by SoakingRunExecutor.
     Runs inside the profiler trace, so it must not emit MARKER named scopes,
     and must synchronize any device work it dispatches before returning.
+
+    Args:
+      outputs: Outputs returned by `run_op` for the timed iteration.
+      run_index: Zero-based index of the timed iteration.
     """
     del outputs, run_index  # Unused in base class.
 
@@ -552,8 +584,12 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     return self.config.dtype
 
   def get_device_to_measure(self) -> jax.Device:
-    """Returns the local JAX Device to observe in XProf (default: local device 0)."""
-    return jax.local_devices()[self.DEFAULT_LOCAL_DEVICE_ID]
+    """Returns the local JAX Device to observe in XProf.
+
+    Defaults to the first device in `get_devices_to_measure()` (local device 0
+    unless a subclass narrows the participating devices).
+    """
+    return self.get_devices_to_measure()[0]
 
   def get_devices_to_measure(self) -> list[jax.Device]:
     """Returns the local JAX Devices the workload runs on (default: all).
@@ -561,12 +597,122 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     XProf per-device durations (`timings.xprof.metrics_per_local_device`,
     `local_slowest_device`, and the per-host stage of
     `global_slowest_per_step`) are collected over exactly these devices, in
-    this order. Every device must be local to this process. Single-device
-    benchmarks (`HBMBandwidthBenchmark`) return `[get_device_to_measure()]`; a
-    future HBM `scope: device|chip|host` would map onto this method. This is not
-    used for `xprof_target_host_cpu` or `requires_multihost_sync` benchmarks.
+    this order. Every device must be local to this process. Scope-parameterized
+    benchmarks (`HBMBandwidthBenchmark`, `_HostDeviceBenchmark`) return
+    `self.get_devices_for_scope()`. This is not used for `xprof_target_host_cpu`
+    or `requires_multihost_sync` benchmarks.
     """
-    return jax.local_devices()
+    return list(jax.local_devices())
+
+  def get_xprof_device_timing_aggregation(self) -> str:
+    """Returns the effective XProf device timing aggregation mode."""
+    return self.xprof_config.device_timing_aggregation
+
+  @staticmethod
+  def _group_devices_by_chip(
+      local_devices: Sequence[jax.Device],
+      devices_per_chip: int,
+  ) -> list[list[jax.Device]]:
+    """Groups `local_devices` into chips in encounter order."""
+    if devices_per_chip == 1:
+      return [[device] for device in local_devices]
+    chips_by_coords: dict[tuple[int, ...], list[jax.Device]] = {}
+    for device in local_devices:
+      coords = tuple(device.coords)
+      chips_by_coords.setdefault(coords, []).append(device)
+    for coords, chip_devices in chips_by_coords.items():
+      if len(chip_devices) != devices_per_chip:
+        raise ValueError(
+            f"Chip at coords={coords} has {len(chip_devices)} local device(s),"
+            f" expected devices_per_chip={devices_per_chip}."
+        )
+    return list(chips_by_coords.values())
+
+  def get_devices_for_scope(self) -> list[jax.Device]:
+    """Resolves local JAX devices for `self.config.scope` and `local_index`."""
+    scope = self.config.scope  # pyrefly: ignore[missing-attribute]
+    idx = self.config.local_index  # pyrefly: ignore[missing-attribute]
+    local_devices = list(jax.local_devices())
+    if not local_devices:
+      raise ValueError("No local JAX devices available.")
+
+    if scope == constants.Scope.HOST:
+      if idx != 0:
+        raise ValueError(f"local_index must be 0 when scope='host', got {idx}.")
+      return local_devices
+    if scope == constants.Scope.DEVICE:
+      if idx >= len(local_devices):
+        raise ValueError(
+            f"local_index {idx} out of range for scope='device' with"
+            f" {len(local_devices)} local device(s) (valid:"
+            f" 0..{len(local_devices) - 1})."
+        )
+      return [local_devices[idx]]
+    if scope == constants.Scope.CHIP:
+      if self.hardware_spec is None:
+        raise ValueError(
+            "scope='chip' requires a non-None hardware_spec to determine"
+            " devices_per_chip."
+        )
+      chips = self._group_devices_by_chip(
+          local_devices, self.hardware_spec.devices_per_chip
+      )
+      if idx >= len(chips):
+        raise ValueError(
+            f"local_index {idx} out of range for scope='chip' with"
+            f" {len(chips)} local chip(s) (valid: 0..{len(chips) - 1})."
+        )
+      return chips[idx]
+    raise ValueError(f"Unsupported scope: {scope!r}")
+
+  def scope_bandwidth_metrics(
+      self,
+      prefix: constants.TimingDomain | str,
+      bandwidth_gb_s: float | None,
+  ) -> dict[str, float | None]:
+    """Builds `{prefix}_bandwidth_per_{device,chip,host}_gb_s` for `self.config.scope`.
+
+    Populates the active `scope` with `bandwidth_gb_s`, derives smaller scopes
+    as the average share of the concurrent aggregate measurement, and leaves
+    larger scopes as `None` (no upward extrapolation, since shared hardware
+    bottlenecks such as a dual-die PCIe link do not scale linearly). Preserves
+    `None` (all three keys `None`) and `float("inf")` on populated keys.
+
+    Args:
+      prefix: Timing domain prefix (e.g., `wall_clock` or `xprof`).
+      bandwidth_gb_s: Achieved bandwidth in GB/s for the active scope.
+
+    Returns:
+      Dictionary mapping `{prefix}_bandwidth_per_{device,chip,host}_gb_s` to
+      the measured bandwidth on `scope`, average-share values on smaller scopes,
+      and `None` on larger scopes.
+    """
+    scope = self.config.scope  # pyrefly: ignore[missing-attribute]
+    num_devices = len(self.get_devices_to_measure())
+    if bandwidth_gb_s is None:
+      per_device, per_chip, per_host = None, None, None
+    else:
+      per_device = bandwidth_gb_s / num_devices
+      if scope == constants.Scope.DEVICE:
+        per_chip, per_host = None, None
+      elif scope == constants.Scope.CHIP:
+        per_chip, per_host = bandwidth_gb_s, None
+      elif scope == constants.Scope.HOST:
+        per_chip = (
+            per_device * self.hardware_spec.devices_per_chip
+            if self.hardware_spec is not None
+            else None
+        )
+        per_host = bandwidth_gb_s
+      else:
+        raise ValueError(f"Unsupported scope: {scope!r}")
+    return {
+        f"{prefix}_bandwidth_per_{constants.Scope.DEVICE.value}_gb_s": (
+            per_device
+        ),
+        f"{prefix}_bandwidth_per_{constants.Scope.CHIP.value}_gb_s": per_chip,
+        f"{prefix}_bandwidth_per_{constants.Scope.HOST.value}_gb_s": per_host,
+    }
 
   @property
   def requires_multihost_sync(self) -> bool:
@@ -737,12 +883,12 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
               f"{constants.TimingDomain.XPROF}_bandwidth_per_device_gb_s",
           ),
           (
-              f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_host_gb_s",
-              f"{constants.TimingDomain.XPROF}_bandwidth_per_host_gb_s",
-          ),
-          (
               f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_chip_gb_s",
               f"{constants.TimingDomain.XPROF}_bandwidth_per_chip_gb_s",
+          ),
+          (
+              f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_host_gb_s",
+              f"{constants.TimingDomain.XPROF}_bandwidth_per_host_gb_s",
           ),
           (
               f"{constants.TimingDomain.WALL_CLOCK}_bandwidth_per_host_gbps",
@@ -922,6 +1068,17 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     metrics["total_duration_s"] = time.perf_counter() - loop_start
     metrics["actual_runs"] = exec_result.actual_runs
 
+    effective_xprof_config: Optional[XprofConfig] = None
+    if self.xprof_config.xprof_timing:
+      effective_agg = self.get_xprof_device_timing_aggregation()
+      if effective_agg != self.xprof_config.device_timing_aggregation:
+        effective_xprof_config = dataclasses.replace(
+            self.xprof_config,
+            device_timing_aggregation=effective_agg,
+        )
+      else:
+        effective_xprof_config = self.xprof_config
+
     metadata = BenchmarkMetadata(
         benchmark_name=benchmark_name,
         test_name=f"{benchmark_name}_{int(time.time())}",
@@ -939,9 +1096,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         hardware_spec=self.hardware_spec,
         xla_flags=os.environ.get("XLA_FLAGS", ""),
         libtpu_init_args=os.environ.get("LIBTPU_INIT_ARGS", ""),
-        xprof_config=(
-            self.xprof_config if self.xprof_config.xprof_timing else None
-        ),
+        xprof_config=effective_xprof_config,
     )
 
     return BenchmarkResult(

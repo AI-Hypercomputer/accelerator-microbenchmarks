@@ -657,6 +657,110 @@ class SoakingBenchmarkTest(absltest.TestCase):
           self.assertEqual(result.measured_device, expected_device)
           self.assertIsNone(result.per_local_device_durations)
 
+  def test_get_devices_to_measure_scopes_multi_device_xprof_aggregation(self):
+    """Multi-device XProf aggregations inspect only get_devices_to_measure()."""
+    fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(8)]
+    per_dev = {
+        0: [99.0, 99.0],
+        1: [99.0, 99.0],
+        2: [3.0, 3.2],
+        3: [4.5, 4.7],
+        4: [88.0, 88.0],
+        5: [88.0, 88.0],
+        6: [88.0, 88.0],
+        7: [88.0, 88.0],
+    }
+
+    class ScopedChipBenchmark(DummyBenchmark):
+      """Measures only devices [2, 3] (e.g. a single 2-die chip)."""
+
+      def get_devices_to_measure(self):
+        return list(jax.local_devices()[2:4])
+
+    class ScopedChipSoakingBenchmark(SoakingDummyBenchmark):
+      """Soaking benchmark measuring only devices [2, 3]."""
+
+      def get_devices_to_measure(self):
+        return list(jax.local_devices()[2:4])
+
+    queried_ids: list[int | None] = []
+
+    def fake_step_durations(unused_trace, local_device_id=0):
+      queried_ids.append(local_device_id)
+      return list(per_dev[local_device_id])
+
+    with (
+        mock.patch.object(jax, "local_devices", return_value=fake_devs),
+        mock.patch.object(
+            profiler.XprofTrace,
+            "device_step_durations_ms",
+            autospec=True,
+            side_effect=fake_step_durations,
+        ),
+    ):
+      # 1. LOCAL_SLOWEST_DEVICE parses only [2, 3] and picks device 3.
+      bm_local = ScopedChipBenchmark(
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE,
+          )
+      )
+      res_local = bm_local.executor.get_xprof_durations("/tmp/fake")
+      self.assertEqual(res_local.durations, [4.5, 4.7])
+      self.assertEqual(res_local.measured_device, executor.XprofDevice(0, 3))
+      self.assertEqual(queried_ids, [2, 3])
+
+      # 2. SoakingRunExecutor LOCAL_SLOWEST_DEVICE scopes worst_window to [2, 3]
+      # and reuses device 3 for baseline_window.
+      queried_ids.clear()
+      bm_soak = ScopedChipSoakingBenchmark(
+          config=SoakingDummyParams(min_duration_s=1.0),
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE,
+          ),
+      )
+      self.assertIsInstance(bm_soak.executor, executor.SoakingRunExecutor)
+      res_soak = bm_soak.executor.get_xprof_durations("/tmp/fake")
+      self.assertEqual(res_soak.durations, [4.5, 4.7])
+      self.assertEqual(res_soak.measured_device, executor.XprofDevice(0, 3))
+      self.assertEqual(queried_ids, [2, 3, 3])
+
+      # 3. GLOBAL_SLOWEST_PER_STEP local stage parses only [2, 3].
+      queried_ids.clear()
+      bm_global = ScopedChipBenchmark(
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+          )
+      )
+      with mock.patch.object(
+          multihost_utils,
+          "process_allgather",
+          wraps=multihost_utils.process_allgather,
+      ):
+        res_global = bm_global.executor.get_xprof_durations("/tmp/fake")
+        np.testing.assert_allclose(res_global.durations, [4.5, 4.7], rtol=1e-5)
+      self.assertEqual(queried_ids, [2, 3])
+
+      # 4. Non-local device in get_devices_to_measure() raises ValueError
+      # rather than being swallowed as PARSE_FAILED.
+      remote_dev = mock.MagicMock(local_hardware_id=99)
+
+      class BadRemoteBenchmark(DummyBenchmark):
+
+        def get_devices_to_measure(self):
+          return [fake_devs[0], remote_dev]
+
+      bm_remote = BadRemoteBenchmark(
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP,
+          )
+      )
+      with self.assertRaisesRegex(ValueError, "not local to process"):
+        bm_remote.executor.get_xprof_durations("/tmp/fake")
+
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
       return_value=None,

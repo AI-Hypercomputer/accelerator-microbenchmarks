@@ -274,6 +274,34 @@ class MetricsAggregatorTest(parameterized.TestCase):
         ["benchmark", "dtype", "extra", "later"],
     )
 
+    scope_rows = [{
+        "wall_clock_p50_ms": "1.0",
+        "xprof_bandwidth_per_host_gb_s": "120.0",
+        "xprof_bandwidth_per_chip_gb_s": "30.0",
+        "xprof_bandwidth_per_device_gb_s": "15.0",
+        "xprof_p50_ms": "0.9",
+        "data_size_mib": "64",
+        "local_index": "0",
+        "scope": "host",
+        "dtype": "bfloat16",
+        "benchmark": "HostToDeviceBenchmark",
+    }]
+    self.assertEqual(
+        metrics_aggregator.ordered_columns("host_device", scope_rows),
+        [
+            "benchmark",
+            "dtype",
+            "scope",
+            "local_index",
+            "data_size_mib",
+            "xprof_p50_ms",
+            "xprof_bandwidth_per_device_gb_s",
+            "xprof_bandwidth_per_chip_gb_s",
+            "xprof_bandwidth_per_host_gb_s",
+            "wall_clock_p50_ms",
+        ],
+    )
+
   def test_aggregate_uploads_csv_via_stdin(self):
     """Aggregated CSVs stream to gcloud via stdin, not /tmp."""
     raw_data = [{

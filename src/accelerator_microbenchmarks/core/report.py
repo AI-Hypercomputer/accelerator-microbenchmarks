@@ -123,7 +123,9 @@ def format_benchmark_table(
   cols = [col_name for col_name, _ in active_schema]
   formatters = [formatter for _, formatter in active_schema]
 
-  sub_df = df.reindex(columns=cols)
+  # Use .map rather than .fillna(np.nan) to avoid the object-downcast
+  # FutureWarning on all-None columns in pandas < 3.0.
+  sub_df = df.reindex(columns=cols).map(lambda x: np.nan if x is None else x)
   table_body = sub_df.to_string(index=False, formatters=formatters, na_rep="-")
 
   banner_title = (

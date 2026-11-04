@@ -7,10 +7,12 @@ from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import csv_loader
+from accelerator_microbenchmarks.core import registry
 
 
 def _find_all_benchmark_configs() -> list[tuple[str, str]]:
@@ -37,6 +39,11 @@ def _find_all_benchmark_configs() -> list[tuple[str, str]]:
 
 class ConfigTest(parameterized.TestCase):
   """Unit tests for config.py."""
+
+  @classmethod
+  def setUpClass(cls):
+    super().setUpClass()
+    benchmark_loader.load_all_benchmarks()
 
   def setUp(self):
     super().setUp()
@@ -748,9 +755,17 @@ benchmark:
         csv_loader, "load_cases_from_csv", side_effect=_load_csv_for_test
     ):
       expanded = config.load_config(config_path)
+    is_sample_config = "sample_configs" in config_path.split(os.sep)
     self.assertNotEmpty(expanded)
     for item in expanded:
       self.assertIn("name", item)
+      if not is_sample_config:
+        params = dict(item)
+        name = params.pop("name")
+        params.pop("xprof_timing", None)
+        params.pop("xprof_device_timing_aggregation", None)
+        bench_cls = registry.benchmark_registry.get_benchmark(name)
+        bench_cls.Config(**params)
 
   @parameterized.named_parameters(
       (

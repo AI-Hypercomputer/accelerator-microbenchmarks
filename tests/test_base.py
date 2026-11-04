@@ -711,6 +711,8 @@ class BaseBenchmarkTest(absltest.TestCase):
 
   @mock.patch("jax.profiler.trace")
   def test_xprof_naming_with_identifier(self, mock_trace):
+    """Tests XProf directory naming when get_run_identifier is non-empty."""
+
     class BenchmarkWithId(DummyBenchmark):
 
       def get_run_identifier(self) -> str:
@@ -1333,6 +1335,29 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIsInstance(bm.xprof_config, base.XprofConfig)
     self.assertFalse(bm.xprof_config.xprof_timing)
     self.assertEqual(bm.xprof_config.xprof_dir, "/tmp/tensorboard")
+    self.assertEqual(bm.get_devices_to_measure(), list(jax.local_devices()))
+    self.assertEqual(
+        bm.get_xprof_device_timing_aggregation(),
+        constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST,
+    )
+
+  def test_get_device_to_measure_defaults_to_first_device_to_measure(self):
+    """Tests get_device_to_measure() returns get_devices_to_measure()[0]."""
+    devs = [mock.MagicMock(id=i) for i in range(4)]
+
+    class NarrowedBenchmark(DummyBenchmark):
+
+      def get_devices_to_measure(self) -> list[jax.Device]:
+        return devs[2:]
+
+    with mock.patch.object(jax, "local_devices", return_value=devs):
+      # Default: get_devices_to_measure() is all local devices.
+      bm = DummyBenchmark()
+      self.assertEqual(bm.get_devices_to_measure(), devs)
+      self.assertIs(bm.get_device_to_measure(), devs[0])
+      # Subclass narrowing get_devices_to_measure() is inherited.
+      narrowed = NarrowedBenchmark()
+      self.assertIs(narrowed.get_device_to_measure(), devs[2])
 
   def test_run_metadata_env_flags(self):
     """Tests BaseBenchmark.run() captures runtime flags or defaults to empty."""
@@ -1371,14 +1396,14 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIn("wall_clock_bandwidth_per_chip_gb_s", derived)
     self.assertEqual(derived["wall_clock_bandwidth_per_chip_gb_s"], 200.0)
 
-    # If wall_clock_bandwidth_per_device_gb_s is None, wall_clock_bandwidth_per_chip_gb_s is also None
+    # If wall_clock_bandwidth_per_device_gb_s is None, chip bw is also None
     metrics_none = {"wall_clock_bandwidth_per_device_gb_s": None}
     derived_none = bm.derive_chip_metrics(metrics_none)
     self.assertIn("wall_clock_bandwidth_per_device_gb_s", derived_none)
     self.assertIn("wall_clock_bandwidth_per_chip_gb_s", derived_none)
     self.assertIsNone(derived_none["wall_clock_bandwidth_per_chip_gb_s"])
 
-    # If wall_clock_bandwidth_per_chip_gb_s is already present, it is not overwritten
+    # If wall_clock_bandwidth_per_chip_gb_s is already present, keep it
     metrics_existing = {
         "wall_clock_bandwidth_per_device_gb_s": 100.0,
         "wall_clock_bandwidth_per_chip_gb_s": 300.0,
@@ -1420,7 +1445,7 @@ class BaseBenchmarkTest(absltest.TestCase):
     self.assertIn("wall_clock_tflops_per_chip", derived)
     self.assertEqual(derived["wall_clock_tflops_per_chip"], 300.0)
 
-    # If wall_clock_tflops_per_device is None, wall_clock_tflops_per_chip is also None
+    # If wall_clock_tflops_per_device is None, tflops_per_chip is also None
     metrics_none = {"wall_clock_tflops_per_device": None}
     derived_none = bm.derive_chip_metrics(metrics_none)
     self.assertIn("wall_clock_tflops_per_device", derived_none)
@@ -1718,6 +1743,441 @@ class BaseBenchmarkTest(absltest.TestCase):
     ):
       bm.run()
     mock_setup.assert_not_called()
+
+  def test_scope_params_mixin_defaults_and_validation(self):
+    """Tests ScopeParamsMixin defaults, override, and non-negative integer validation."""
+
+    @dataclasses.dataclass
+    class DefaultScopedParams(base.ScopeParamsMixin, base.BaseBenchmarkParams):
+      pass
+
+    @dataclasses.dataclass
+    class HostDefaultParams(base.ScopeParamsMixin, base.BaseBenchmarkParams):
+      scope: constants.Scope = constants.Scope.HOST
+
+    self.assertFalse(
+        issubclass(base.ScopeParamsMixin, base.BaseBenchmarkParams)
+    )
+
+    p_default = DefaultScopedParams()
+    self.assertEqual(p_default.scope, constants.Scope.DEVICE)
+    self.assertEqual(p_default.local_index, 0)
+
+    p_chip = DefaultScopedParams(scope="chip", local_index=2)
+    self.assertEqual(p_chip.scope, constants.Scope.CHIP)
+    self.assertEqual(p_chip.local_index, 2)
+
+    p_host = HostDefaultParams()
+    self.assertEqual(p_host.scope, constants.Scope.HOST)
+    self.assertEqual(p_host.local_index, 0)
+
+    p_host_to_dev = HostDefaultParams(scope="device", local_index=3)
+    self.assertEqual(p_host_to_dev.scope, constants.Scope.DEVICE)
+    self.assertEqual(p_host_to_dev.local_index, 3)
+
+    with self.assertRaisesRegex(ValueError, "local_index must be >= 0"):
+      DefaultScopedParams(local_index=-1)
+
+    with self.assertRaisesRegex(
+        ValueError, "local_index must be an integer >= 0"
+    ):
+      DefaultScopedParams(local_index=True)
+
+  def test_get_devices_for_scope(self):
+    """Tests get_devices_for_scope across scopes, local_index, and chip grouping."""
+
+    @dataclasses.dataclass
+    class ScopedParams(base.ScopeParamsMixin, base.BaseBenchmarkParams):
+      pass
+
+    tpu7x_spec = system.HardwareSpec(
+        name=system.TpuVersion.TPU7X, devices_per_chip=2
+    )
+    v6e_spec = system.HardwareSpec(
+        name=system.TpuVersion.V6E, devices_per_chip=1
+    )
+
+    def make_bm(
+        scope: constants.Scope = constants.Scope.DEVICE,
+        local_index: int = 0,
+        hardware_spec: system.HardwareSpec | None = tpu7x_spec,
+    ) -> DummyBenchmark:
+      bm = DummyBenchmark(
+          config=ScopedParams(scope=scope, local_index=local_index),
+          hardware_spec=hardware_spec or tpu7x_spec,
+      )
+      if hardware_spec is None:
+        bm.hardware_spec = None
+      return bm
+
+    tpu7x_devs = [
+        mock.MagicMock(id=i, coords=(i // 2, 0, 0), core_on_chip=i % 2)
+        for i in range(4)
+    ]
+
+    # 1. Dual-die (devices_per_chip=2, e.g. TPU7x) across scopes and local_index
+    with mock.patch.object(jax, "local_devices", return_value=tpu7x_devs):
+      self.assertEqual(
+          make_bm(constants.Scope.DEVICE).get_devices_for_scope(),
+          tpu7x_devs[:1],
+      )
+      self.assertEqual(
+          make_bm(
+              constants.Scope.DEVICE, local_index=3
+          ).get_devices_for_scope(),
+          [tpu7x_devs[3]],
+      )
+      self.assertEqual(
+          make_bm(constants.Scope.CHIP).get_devices_for_scope(),
+          tpu7x_devs[:2],
+      )
+      self.assertEqual(
+          make_bm(constants.Scope.CHIP, local_index=1).get_devices_for_scope(),
+          tpu7x_devs[2:4],
+      )
+      self.assertEqual(
+          make_bm(constants.Scope.HOST).get_devices_for_scope(),
+          tpu7x_devs,
+      )
+
+      # Out-of-range local_index raises loudly without clamping
+      with self.assertRaisesRegex(
+          ValueError, "local_index 4 out of range for scope='device'"
+      ):
+        make_bm(constants.Scope.DEVICE, local_index=4).get_devices_for_scope()
+      with self.assertRaisesRegex(
+          ValueError, "local_index 2 out of range for scope='chip'"
+      ):
+        make_bm(constants.Scope.CHIP, local_index=2).get_devices_for_scope()
+      with self.assertRaisesRegex(
+          ValueError, "local_index must be 0 when scope='host', got 1"
+      ):
+        make_bm(constants.Scope.HOST, local_index=1).get_devices_for_scope()
+
+    # Real PJRT TpuDevice exposes `coords` as a list[int].
+    tpu7x_list_devs = [
+        mock.MagicMock(id=i, coords=[i // 2, 0, 0], core_on_chip=i % 2)
+        for i in range(4)
+    ]
+    with mock.patch.object(jax, "local_devices", return_value=tpu7x_list_devs):
+      self.assertEqual(
+          make_bm(constants.Scope.CHIP).get_devices_for_scope(),
+          tpu7x_list_devs[:2],
+      )
+
+    # 2. Reordered / interleaved local_devices groups by `coords` in encounter
+    # order instead of blindly slicing `local_devices[:devices_per_chip]`.
+    interleaved_devs = [
+        tpu7x_devs[0],  # chip (0, 0, 0), core 0
+        tpu7x_devs[2],  # chip (1, 0, 0), core 0
+        tpu7x_devs[1],  # chip (0, 0, 0), core 1
+        tpu7x_devs[3],  # chip (1, 0, 0), core 1
+    ]
+    with mock.patch.object(jax, "local_devices", return_value=interleaved_devs):
+      selected = make_bm(constants.Scope.CHIP).get_devices_for_scope()
+      self.assertEqual(selected, [tpu7x_devs[0], tpu7x_devs[1]])
+      self.assertEqual({d.coords for d in selected}, {(0, 0, 0)})
+      self.assertEqual(
+          make_bm(constants.Scope.CHIP, local_index=1).get_devices_for_scope(),
+          [tpu7x_devs[2], tpu7x_devs[3]],
+      )
+
+    chip1_first_devs = [
+        tpu7x_devs[3],  # chip (1, 0, 0), core 1
+        tpu7x_devs[0],  # chip (0, 0, 0), core 0
+        tpu7x_devs[2],  # chip (1, 0, 0), core 0
+        tpu7x_devs[1],  # chip (0, 0, 0), core 1
+    ]
+    with mock.patch.object(jax, "local_devices", return_value=chip1_first_devs):
+      selected_chip1 = make_bm(constants.Scope.CHIP).get_devices_for_scope()
+      self.assertEqual(selected_chip1, [tpu7x_devs[3], tpu7x_devs[2]])
+      self.assertEqual({d.coords for d in selected_chip1}, {(1, 0, 0)})
+
+    # 3. Single-die (devices_per_chip=1, e.g. v6e and coords-less CPU devices)
+    v6e_devs = [
+        mock.MagicMock(id=i, coords=(i, 0, 0), core_on_chip=0) for i in range(4)
+    ]
+    with mock.patch.object(jax, "local_devices", return_value=v6e_devs):
+      self.assertEqual(
+          make_bm(
+              constants.Scope.CHIP, hardware_spec=v6e_spec
+          ).get_devices_for_scope(),
+          v6e_devs[:1],
+      )
+      self.assertEqual(
+          make_bm(
+              constants.Scope.CHIP, local_index=2, hardware_spec=v6e_spec
+          ).get_devices_for_scope(),
+          [v6e_devs[2]],
+      )
+    cpu_devs = [mock.MagicMock(spec=["id"], id=i) for i in range(4)]
+    with mock.patch.object(jax, "local_devices", return_value=cpu_devs):
+      self.assertEqual(
+          make_bm(
+              constants.Scope.CHIP, hardware_spec=v6e_spec
+          ).get_devices_for_scope(),
+          cpu_devs[:1],
+      )
+      self.assertEqual(
+          make_bm(
+              constants.Scope.CHIP, local_index=2, hardware_spec=v6e_spec
+          ).get_devices_for_scope(),
+          [cpu_devs[2]],
+      )
+
+    # 4. hardware_spec=None raises on Scope.CHIP, succeeds on DEVICE and HOST
+    with mock.patch.object(jax, "local_devices", return_value=tpu7x_devs):
+      self.assertEqual(
+          make_bm(
+              constants.Scope.DEVICE, hardware_spec=None
+          ).get_devices_for_scope(),
+          tpu7x_devs[:1],
+      )
+      self.assertEqual(
+          make_bm(
+              constants.Scope.HOST, hardware_spec=None
+          ).get_devices_for_scope(),
+          tpu7x_devs,
+      )
+      with self.assertRaisesRegex(
+          ValueError, "scope='chip' requires a non-None hardware_spec"
+      ):
+        make_bm(
+            constants.Scope.CHIP, hardware_spec=None
+        ).get_devices_for_scope()
+
+    # 5. Mismatched chip device count (len != devices_per_chip) raises
+    # ValueError.
+    incomplete_chip_devs = [
+        tpu7x_devs[0],
+        tpu7x_devs[1],
+        tpu7x_devs[2],  # chip (1, 0, 0) missing core 1
+    ]
+    with mock.patch.object(
+        jax, "local_devices", return_value=incomplete_chip_devs
+    ):
+      with self.assertRaisesRegex(
+          ValueError, "has 1 local device\\(s\\), expected devices_per_chip=2"
+      ):
+        make_bm(constants.Scope.CHIP).get_devices_for_scope()
+
+    oversized_chip_devs = [
+        mock.MagicMock(id=i, coords=(0, 0, 0), core_on_chip=i) for i in range(3)
+    ]
+    with mock.patch.object(
+        jax, "local_devices", return_value=oversized_chip_devs
+    ):
+      with self.assertRaisesRegex(
+          ValueError, "has 3 local device\\(s\\), expected devices_per_chip=2"
+      ):
+        make_bm(constants.Scope.CHIP).get_devices_for_scope()
+
+    # 6. Missing config.scope, empty local_devices, and unsupported scope
+    with mock.patch.object(jax, "local_devices", return_value=tpu7x_devs):
+      with self.assertRaises(AttributeError):
+        DummyBenchmark().get_devices_for_scope()
+
+      bm_bad_scope = make_bm(constants.Scope.DEVICE)
+      bm_bad_scope.config.scope = "rack"  # pyrefly: ignore[bad-assignment]
+      with self.assertRaisesRegex(ValueError, "Unsupported scope"):
+        bm_bad_scope.get_devices_for_scope()
+
+    with mock.patch.object(jax, "local_devices", return_value=[]):
+      with self.assertRaisesRegex(ValueError, "No local JAX devices available"):
+        make_bm(constants.Scope.DEVICE).get_devices_for_scope()
+
+  def test_scope_bandwidth_metrics_and_xprof_fallback(self):
+    """Tests scope_bandwidth_metrics derives smaller scopes and mirrors None on XProf fallback."""
+
+    @dataclasses.dataclass
+    class ScopedParams(base.ScopeParamsMixin, base.BaseBenchmarkParams):
+      scope: constants.Scope = constants.Scope.HOST
+
+    class ScopedBenchmark(DummyBenchmark):
+      derive_chip_bandwidth = False
+
+      def get_devices_to_measure(self) -> list[jax.Device]:
+        return self.get_devices_for_scope()
+
+      def calculate_throughput_metrics(
+          self, latency_ms: float, prefix: constants.TimingDomain
+      ):
+        del latency_ms
+        return self.scope_bandwidth_metrics(prefix, 240.0)
+
+    tpu7x_devs = [
+        mock.MagicMock(id=i, coords=(i // 2, 0, 0), core_on_chip=i % 2)
+        for i in range(8)
+    ]
+    v6e_devs = [
+        mock.MagicMock(id=i, coords=(i, 0, 0), core_on_chip=0) for i in range(8)
+    ]
+    with mock.patch.object(jax, "local_devices", return_value=tpu7x_devs):
+      # 1. tpu7x (devices_per_chip=2, 8 local devices)
+      bm_tpu7x_dev = ScopedBenchmark(
+          config=ScopedParams(scope=constants.Scope.DEVICE),
+          hardware_spec=system.TPU7X_HARDWARE_SPEC,
+      )
+      bm_tpu7x_chip = ScopedBenchmark(
+          config=ScopedParams(scope=constants.Scope.CHIP),
+          hardware_spec=system.TPU7X_HARDWARE_SPEC,
+      )
+      bm_tpu7x = ScopedBenchmark(
+          config=ScopedParams(scope=constants.Scope.HOST),
+          hardware_spec=system.TPU7X_HARDWARE_SPEC,
+      )
+      self.assertEqual(
+          bm_tpu7x_dev.scope_bandwidth_metrics(
+              constants.TimingDomain.WALL_CLOCK,
+              50.0,
+          ),
+          {
+              "wall_clock_bandwidth_per_device_gb_s": 50.0,
+              "wall_clock_bandwidth_per_chip_gb_s": None,
+              "wall_clock_bandwidth_per_host_gb_s": None,
+          },
+      )
+      self.assertEqual(
+          bm_tpu7x_chip.scope_bandwidth_metrics(
+              constants.TimingDomain.XPROF, 100.0
+          ),
+          {
+              "xprof_bandwidth_per_device_gb_s": 50.0,
+              "xprof_bandwidth_per_chip_gb_s": 100.0,
+              "xprof_bandwidth_per_host_gb_s": None,
+          },
+      )
+      self.assertEqual(
+          bm_tpu7x.scope_bandwidth_metrics(
+              constants.TimingDomain.WALL_CLOCK, 240.0
+          ),
+          {
+              "wall_clock_bandwidth_per_device_gb_s": 30.0,
+              "wall_clock_bandwidth_per_chip_gb_s": 60.0,
+              "wall_clock_bandwidth_per_host_gb_s": 240.0,
+          },
+      )
+
+      # 2. hardware_spec=None raises on CHIP, succeeds on DEVICE, and on HOST
+      # derives per_device while leaving per_chip None.
+      bm_no_spec_chip = ScopedBenchmark(
+          config=ScopedParams(scope=constants.Scope.CHIP),
+      )
+      bm_no_spec_chip.hardware_spec = None
+      with self.assertRaisesRegex(
+          ValueError, "scope='chip' requires a non-None hardware_spec"
+      ):
+        bm_no_spec_chip.scope_bandwidth_metrics(
+            constants.TimingDomain.WALL_CLOCK, 60.0
+        )
+      bm_no_spec_dev = ScopedBenchmark(
+          config=ScopedParams(scope=constants.Scope.DEVICE),
+      )
+      bm_no_spec_dev.hardware_spec = None
+      self.assertEqual(
+          bm_no_spec_dev.scope_bandwidth_metrics(
+              constants.TimingDomain.WALL_CLOCK,
+              60.0,
+          ),
+          {
+              "wall_clock_bandwidth_per_device_gb_s": 60.0,
+              "wall_clock_bandwidth_per_chip_gb_s": None,
+              "wall_clock_bandwidth_per_host_gb_s": None,
+          },
+      )
+
+      bm_no_spec_host = ScopedBenchmark(
+          config=ScopedParams(scope=constants.Scope.HOST),
+      )
+      bm_no_spec_host.hardware_spec = None
+      self.assertEqual(
+          bm_no_spec_host.scope_bandwidth_metrics(
+              constants.TimingDomain.WALL_CLOCK, 240.0
+          ),
+          {
+              "wall_clock_bandwidth_per_device_gb_s": 30.0,
+              "wall_clock_bandwidth_per_chip_gb_s": None,
+              "wall_clock_bandwidth_per_host_gb_s": 240.0,
+          },
+      )
+
+      # 3. None and float("inf") preservation
+      self.assertEqual(
+          bm_tpu7x.scope_bandwidth_metrics(
+              constants.TimingDomain.WALL_CLOCK, None
+          ),
+          {
+              "wall_clock_bandwidth_per_device_gb_s": None,
+              "wall_clock_bandwidth_per_chip_gb_s": None,
+              "wall_clock_bandwidth_per_host_gb_s": None,
+          },
+      )
+      self.assertEqual(
+          bm_tpu7x_chip.scope_bandwidth_metrics(
+              constants.TimingDomain.WALL_CLOCK,
+              float("inf"),
+          ),
+          {
+              "wall_clock_bandwidth_per_device_gb_s": float("inf"),
+              "wall_clock_bandwidth_per_chip_gb_s": float("inf"),
+              "wall_clock_bandwidth_per_host_gb_s": None,
+          },
+      )
+      self.assertEqual(
+          bm_tpu7x.scope_bandwidth_metrics(
+              constants.TimingDomain.WALL_CLOCK,
+              float("inf"),
+          ),
+          {
+              "wall_clock_bandwidth_per_device_gb_s": float("inf"),
+              "wall_clock_bandwidth_per_chip_gb_s": float("inf"),
+              "wall_clock_bandwidth_per_host_gb_s": float("inf"),
+          },
+      )
+
+      # 4. Config without scope raises AttributeError
+      with self.assertRaises(AttributeError):
+        DummyBenchmark().scope_bandwidth_metrics(
+            constants.TimingDomain.WALL_CLOCK, 10.0
+        )
+
+      # 5. Empty XProf durations fallback mirrors all three wall_clock scope
+      # keys to xprof_bandwidth_per_{device,chip,host}_gb_s = None.
+      wc_metrics = bm_tpu7x.calculate_metrics([10.0, 10.0])
+      # pylint: disable=protected-access
+      fallback_metrics, _ = bm_tpu7x._apply_xprof_timing_and_sync(
+          dict(wc_metrics)
+      )
+      self.assertEqual(
+          fallback_metrics["wall_clock_bandwidth_per_device_gb_s"], 30.0
+      )
+      self.assertEqual(
+          fallback_metrics["wall_clock_bandwidth_per_chip_gb_s"], 60.0
+      )
+      self.assertEqual(
+          fallback_metrics["wall_clock_bandwidth_per_host_gb_s"], 240.0
+      )
+      for s in constants.Scope:
+        key = f"xprof_bandwidth_per_{s.value}_gb_s"
+        self.assertIn(key, fallback_metrics)
+        self.assertIsNone(fallback_metrics[key])
+
+    # 6. v6e (devices_per_chip=1, 8 local devices)
+    with mock.patch.object(jax, "local_devices", return_value=v6e_devs):
+      bm_v6e = ScopedBenchmark(
+          config=ScopedParams(scope=constants.Scope.CHIP),
+          hardware_spec=system.V6E_HARDWARE_SPEC,
+      )
+      self.assertEqual(
+          bm_v6e.scope_bandwidth_metrics(
+              constants.TimingDomain.WALL_CLOCK, 60.0
+          ),
+          {
+              "wall_clock_bandwidth_per_device_gb_s": 60.0,
+              "wall_clock_bandwidth_per_chip_gb_s": 60.0,
+              "wall_clock_bandwidth_per_host_gb_s": None,
+          },
+      )
 
 
 if __name__ == "__main__":

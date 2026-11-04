@@ -122,7 +122,8 @@ def assert_swallowed_xprof_parse_error(
 # intended to be displayed in concise ASCII summary tables.
 DEFAULT_IGNORED_KEYS: frozenset[str] = frozenset({
     # Framework & execution parameters
-    "device_id",
+    "scope",
+    "local_index",
     "warmup_tries",
     "num_runs",
     "min_duration_s",
@@ -195,6 +196,14 @@ def assert_schema_matches_output(
   1. Forward check: All columns in REPORT_SCHEMA exist in output keys (or
   extra_available_keys).
   2. Reverse check: All output keys exist in REPORT_SCHEMA or ignored_keys.
+
+  Args:
+    test_case: Active TestCase instance used for assertions.
+    benchmark: Benchmark instance under test.
+    ignored_keys: Additional output keys allowed to be omitted from schema.
+    unignored_keys: Keys in COMMON_IGNORED_KEYS that must appear in schema.
+    extra_available_keys: Additional schema columns conditionally populated.
+    dummy_times_ms: Synthetic latency samples in milliseconds.
   """
   schema = getattr(benchmark, "REPORT_SCHEMA", None)
   test_case.assertIsNotNone(

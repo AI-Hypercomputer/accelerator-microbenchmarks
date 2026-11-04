@@ -498,7 +498,7 @@ class BaseRunExecutor:
           )
       )
 
-    aggregation = self.benchmark.xprof_config.device_timing_aggregation
+    aggregation = self.benchmark.get_xprof_device_timing_aggregation()
     if (
         aggregation
         == constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP
@@ -831,7 +831,7 @@ class SoakingRunExecutor(BaseRunExecutor):
         xprof_dir, _POST_SOAKING_TRACE_WINDOW_SUBDIR
     )
     if (
-        self.benchmark.xprof_config.device_timing_aggregation
+        self.benchmark.get_xprof_device_timing_aggregation()
         == constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_DEVICE
     ):
       post_soaking_result = self._extract_window_durations(post_soaking_dir)

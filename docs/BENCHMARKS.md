@@ -78,21 +78,28 @@ Every throughput and bandwidth metric reported by TPUMS follows a standardized 3
 2. **`<metric_type>` & `[_<unit>]` (`tflops` vs. `bandwidth_..._gb_s`)** — Performance rate category:
     - **`tflops_<hardware_scope>`**: Floating-point compute throughput in teraFLOPs per second ($$10^{12}$$ FLOPS).
     - **`bandwidth_<hardware_scope>_gb_s`**: Data transfer bandwidth in decimal gigabytes per second ($$10^9$$ bytes/sec).
-3. **`<hardware_scope>` (`per_device` vs. `per_chip`)** — Hardware aggregation boundary:
+3. **`<hardware_scope>` (`per_device`, `per_chip`, `per_host`)** — Hardware
+   aggregation boundary:
     - **Physical TPU Chips vs. Logical JAX Devices**:
         - **Dual-Device TPU Chips (e.g., `tpu7x`)**: Each physical TPU chip exposes **2 logical JAX devices** (`TPU:0` and `TPU:1`), so per-chip performance equals **`2 × per_device`**.
         - **Single-Device TPU Chips (e.g., `v6e`)**: Each physical TPU chip exposes **1 logical JAX device** (`TPU:0`), so per-chip performance equals **`1 × per_device`**.
-    - **Per-Device vs. Per-Chip Metrics**:
-        - **`*_per_device` (`*_tflops_per_device`, `*_bandwidth_per_device_gb_s`)**: Reports the throughput or bandwidth achieved by a single logical JAX device.
-        - **`*_per_chip` (`*_tflops_per_chip`, `*_bandwidth_per_chip_gb_s`)**: Reports the aggregate performance of a physical TPU chip.
+    - **Per-Device, Per-Chip, and Per-Host Metrics**:
+        - **`*_per_device` (`*_tflops_per_device`,
+          `*_bandwidth_per_device_gb_s`)**: Reports the throughput or bandwidth
+          achieved by a single logical JAX device (`scope="device"`).
+        - **`*_per_chip` (`*_tflops_per_chip`,
+          `*_bandwidth_per_chip_gb_s`)**: Reports the aggregate performance of a
+          physical TPU chip (`scope="chip"`).
+        - **`*_per_host` (`*_bandwidth_per_host_gb_s`)**: Reports the aggregate
+          bandwidth across all local devices on a host (`scope="host"`).
 
 The table below summarizes which `<metric_type>` and `<hardware_scope>` each benchmark reports:
 
 | Benchmark | Primary Metric Type | Reported Throughput / Bandwidth Scope | Metric Meaning & Scope |
 | :--- | :--- | :--- | :--- |
 | **`gemm`** | **Compute Throughput (`TFLOPS`)** & Roofline (`%`) | **Both Per-Chip & Per-Device**<br>(`*_tflops_per_chip`, `*_tflops_per_device`) | **Measures** per-device and aggregate per-chip matrix compute throughput (`TFLOPS`), and **compares** against peak chip compute rooflines (`%`). |
-| **`hbm`** | **Memory Bandwidth (`GB/s`)** & Roofline (`%`) | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** HBM memory bandwidth (`GB/s`) on a single local logical device (`device_id`), and **compares** against peak per-device HBM bandwidth rooflines (`%`). |
-| **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** | **Per-Device & Per-Host**<br>(`*_bandwidth_per_device_gb_s`, `*_bandwidth_per_host_gb_s`) | **Measures** per-device and aggregate per-host PCIe transfer bandwidth (`GB/s`) between the host CPU and either all local devices concurrently (`device_id: -1`, default) or one selected local device (`device_id >= 0`). |
+| **`hbm`** | **Memory Bandwidth (`GB/s`)** & Roofline (`%`) | **All Three Scopes (`Per-Device`, `Per-Chip`, `Per-Host`; active measured, smaller derived, larger `None`)**<br>(`*_bandwidth_per_{device,chip,host}_gb_s`) | **Measures** HBM memory bandwidth (`GB/s`) across the selected hardware `scope` (`device` default, `chip`, or `host`), **derives** smaller scopes as the average share of the concurrent aggregate measurement, leaves larger scopes as `None` (no upward extrapolation), and **compares** against peak per-device HBM bandwidth rooflines (`%`). |
+| **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** | **All Three Scopes (`Per-Device`, `Per-Chip`, `Per-Host`; active measured, smaller derived, larger `None`)**<br>(`*_bandwidth_per_{device,chip,host}_gb_s`) | **Measures** PCIe transfer bandwidth (`GB/s`) between the host CPU and the selected hardware `scope`: all local devices concurrently (`scope: "host"`, default), one physical chip (`scope: "chip"`), or one local device (`scope: "device"`), **deriving** smaller scopes as the average share while leaving larger scopes as `None` (since shared PCIe links do not scale linearly across cores). |
 | **`device_to_device`** | **ICI Link Bandwidth (`GB/s`)** | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** point-to-point ICI link bandwidth (`GB/s`) between each logical device pair `(src_device_index, dst_device_index)`. |
 | **`all_reduce` / `all_gather` / `all_to_all`** | **Collective Bus Bandwidth (`GB/s`)** | **Per-Chip**<br>(`*_bandwidth_per_chip_gb_s`) | **Measures** aggregate external ICI collective bus bandwidth (`GB/s`) per physical TPU chip across the active device mesh. |
 
@@ -225,11 +232,31 @@ such as a stuck bit.
 <a id="22-hbm-memory-bandwidth-hbm"></a>
 ### 2.2 HBM Memory Bandwidth (`hbm`)
 
-- **Operation**: Executes 1D STREAM memory operations on a target local device (`device_id`) to measure High-Bandwidth Memory (HBM) throughput (**GB/s**) and memory roofline efficiency (**%**).
-- **HBM Traffic Calculation (`data_size_mib`)**: `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`
-  - **Single-Array Size (`MiB`)**: `(num_elements * dtype_bytes) / (1024 * 1024)` — By default, `num_elements = 134,217,728` (`128 * 1024 * 1024` elements) and `dtype = bfloat16` (`2 bytes`), allocating **`256 MiB` per array**.
+- **Operation**: Executes 1D STREAM memory operations across the local devices
+  selected by `scope` (`device` default, `chip`, or `host`) with zero
+  cross-device ICI collectives to measure High-Bandwidth Memory (HBM)
+  throughput (**GB/s**) and memory roofline efficiency (**%**).
+- **Default `scope` & Multi-Device Scaling**: Defaults to `scope="device"`
+  (unlike `host_to_device` and `device_to_host`, which default to
+  `scope="host"` to saturate shared chip PCIe links and host memory channels)
+  because HBM stacks are isolated per die: on-device `xprof_*` bandwidth scales
+  linearly across `chip` and `host` with zero per-die contention, whereas
+  sub-millisecond HBM kernels incur higher `wall_clock_*` latency at larger
+  scopes from multi-device host dispatch and `block_until_ready()`
+  synchronization skew (and `N×` buffer allocation).
+- **Per-Device HBM Traffic Calculation (`data_size_mib`)**:
+  `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`
+  - **Single-Array Size (`MiB`)**:
+    `(num_elements * dtype_bytes) / (1024 * 1024)` — `num_elements` is
+    specified **per device**. By default, `num_elements = 134,217,728`
+    (`128 * 1024 * 1024` elements) and `dtype = bfloat16` (`2 bytes`),
+    allocating **`256 MiB` per array per device**.
   - **Array Transfer Count (Reads + Writes)**: Total full-array HBM reads + writes executed by the kernel (`1` for `read_only`/`write_only`, `2` for `copy`/`scale`, `3` for `add`/`triad`).
-  - **Total HBM Traffic (`data_size_mib`)**: `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)` — Total HBM traffic moved per iteration (e.g., `2 × 256 MiB = 512 MiB` for `copy`, `3 × 256 MiB = 768 MiB` for `triad`).
+  - **Per-Device HBM Traffic (`data_size_mib`)**:
+    `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)` —
+    Per-device HBM traffic moved per iteration (e.g., `2 × 256 MiB = 512 MiB`
+    for `copy`, `3 × 256 MiB = 768 MiB` for `triad`). Aggregate bytes across
+    the scope equal `num_devices × per_device_bytes`.
 
 #### Supported `op_type` STREAM Kernels
 
@@ -247,21 +274,44 @@ such as a stuck bit.
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `op_type` | `str` | `"copy"` | Memory kernel operation (`copy`, `scale`, `add`, `triad`, `read_only`, `write_only`). |
-| `num_elements` | `int` | `134217728` | Number of elements per 1D array (`Single-Array Size (MiB) = (num_elements * dtype_bytes) / (1024 * 1024)`). Default `134,217,728` (`128 * 1024 * 1024` elements) × `2 bytes` (`bfloat16`) = `256 MiB` per array. |
+| `num_elements` | `int` | `134217728` | Number of elements per 1D array per device (`Single-Array Size (MiB) = (num_elements * dtype_bytes) / (1024 * 1024)`). Default `134,217,728` (`128 * 1024 * 1024` elements) × `2 bytes` (`bfloat16`) = `256 MiB` per array per device. |
 | `dtype` | `str` | `"bfloat16"` | Element data type (e.g., `bfloat16`, `float32`, `int8`). |
-| `device_id` | `int` | `0` | Target local accelerator device index (`0` by default). |
+| `scope` | `str` | `"device"` | Hardware measurement scope: `"device"` (1 local device, default), `"chip"` (1 physical chip = `devices_per_chip` local devices), or `"host"` (all local devices). |
+| `local_index` | `int` | `0` | Host-local index of the target unit within `scope`: the N-th local device (`scope="device"`) or N-th local chip (`scope="chip"`). Must be `0` for `scope="host"`. |
 
 #### Reported Metrics
 
 - **Memory Bandwidth & Roofline**:
-  - `{wall_clock|xprof}_bandwidth_per_device_gb_s` — HBM memory bandwidth on the target logical JAX device (`GB/s`).
-  - `{wall_clock|xprof}_memory_roofline_efficiency_pct` — Achieved HBM bandwidth as a percentage of hardware peak (`%`).
+  - `{wall_clock|xprof}_bandwidth_per_{device|chip|host}_gb_s` — Aggregate HBM
+    memory bandwidth (`GB/s`). All three scope columns are always emitted: the
+    column matching `scope` holds the **measured** bandwidth, smaller scopes are
+    **derived** as the average share of the concurrent measurement (`chip` sets
+    `per_device = per_chip / devices_per_chip`; `host` sets
+    `per_device = per_host / num_devices` and
+    `per_chip = per_device * devices_per_chip`), and larger scopes remain `None`
+    (`-` in console tables, empty in `summary.csv`, `null` in `detailed.json`),
+    with no upward extrapolation.
+  - `{wall_clock|xprof}_memory_roofline_efficiency_pct` — Achieved HBM
+    bandwidth as a percentage of hardware peak (`%`).
 - **Latency (`ms`)**:
-  - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
+  - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency
+    across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard
+    deviation (`std`) in milliseconds (`ms`). For multi-device scopes
+    (`scope="chip"` or `"host"` with multiple local devices), `xprof_*` latency
+    defaults to `local_slowest_device` across the devices in the scope so
+    `xprof_bandwidth_per_{chip,host}_gb_s` reflects the slowest device in the
+    scope.
 - **Benchmark Attributes**:
-  - `data_size_mib` — Total HBM traffic (`Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`) moved per iteration (`MiB`).
+  - `scope` — Selected hardware scope (`"device"`, `"chip"`, or `"host"`).
+  - `local_index` — Host-local unit index within `scope` (`0` for `"host"`).
+  - `num_devices` — Number of local devices participating in the measurement
+    (`1`, `devices_per_chip`, or the host's local device count).
+  - `data_size_mib` — Per-device HBM traffic
+    (`Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`) moved
+    per iteration (`MiB`).
   - `intensity` — Operational arithmetic intensity (`FLOPs / Byte`).
-  - `peak_hbm_bw_per_device_gb_s` — Hardware asymptotic peak HBM bandwidth per logical device (`GB/s`).
+  - `peak_hbm_bw_per_device_gb_s` — Hardware asymptotic peak HBM bandwidth per
+    logical device (`GB/s`).
 
 ---
 
@@ -303,19 +353,31 @@ such as a stuck bit.
 | `data_size_mib` | `int` | `64` | Payload size transferred per device per iteration in Mebibytes (`1 MiB = 1024 * 1024` bytes). |
 | `dtype` | `str` | `"bfloat16"` | Tensor element data type (e.g., `bfloat16`, `float32`, `int8`). |
 | `transfer_backend` | `str` | `"tpu_sync"` | Transfer implementation: `"tpu_sync"` (default) or `"jax"`. The canonical `tpu7x` and `v6e` configs sweep both `"jax"` and `"tpu_sync"`. |
-| `device_id` | `int` | `-1` | Target local accelerator device ID (`0..N-1`), or `-1` (`ALL_LOCAL_DEVICES`, default) to transfer across all local devices concurrently (which shares host PCIe/memory bandwidth across devices). |
+| `scope` | `str` | `"host"` | Hardware measurement scope: `"device"` (1 local device), `"chip"` (1 physical chip = `devices_per_chip` local devices), or `"host"` (all local devices concurrently, default). |
+| `local_index` | `int` | `0` | Host-local index of the target unit within `scope`: the N-th local device (`scope="device"`) or N-th local chip (`scope="chip"`). Must be `0` for `scope="host"`. |
 
 #### Reported Metrics
 
 - **PCIe Transfer Bandwidth**:
-  - `{wall_clock|xprof}_bandwidth_per_device_gb_s` — Host-to-device or device-to-host PCIe transfer bandwidth per participating local device (`GB/s`).
-  - `{wall_clock|xprof}_bandwidth_per_host_gb_s` — Aggregate host-to-device or device-to-host PCIe transfer bandwidth per host across all participating local devices (`num_devices × per_device`, `GB/s`).
+  - `{wall_clock|xprof}_bandwidth_per_{device|chip|host}_gb_s` — Aggregate
+    host-to-device or device-to-host PCIe transfer bandwidth
+    (`num_devices × per_device_bytes / latency_s`, `GB/s`). All three scope
+    columns are always emitted: the column matching `scope` holds the
+    **measured** bandwidth, smaller scopes are **derived** as the average share
+    of that concurrent transfer (`chip` sets
+    `per_device = per_chip / devices_per_chip`; `host` sets
+    `per_device = per_host / num_devices` and
+    `per_chip = per_device * devices_per_chip`), and larger scopes remain `None`
+    (`-` in console tables, empty in `summary.csv`, `null` in `detailed.json`)
+    because shared PCIe links (such as a dual-die TPU chip sharing one PCIe
+    endpoint) cannot be extrapolated upward from a smaller scope.
 - **Latency (`ms`)**:
   - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
 - **Benchmark Attributes**:
   - `data_size_mib` — Payload volume transferred per device per iteration (`MiB`).
   - `transfer_backend` — Active transfer implementation (`"jax"` or `"tpu_sync"`).
-  - `device_id` — Selected local device ID (`-1` for all local devices).
+  - `scope` — Selected hardware scope (`"device"`, `"chip"`, or `"host"`).
+  - `local_index` — Host-local unit index within `scope` (`0` for `"host"`).
   - `num_devices` — Number of local devices transferring concurrently.
 
 ---

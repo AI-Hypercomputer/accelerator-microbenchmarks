@@ -9,6 +9,7 @@ from accelerator_microbenchmarks.benchmarks import host_device
 from accelerator_microbenchmarks.core import (
     base,
 )
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import system
 import jax
@@ -31,7 +32,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
         "num_runs": 2,
         "warmup_tries": 1,
         "transfer_backend": "jax",
-        "device_id": 0,
+        "scope": "device",
     }
 
   def is_array_on_tpu(self, my_array):
@@ -117,9 +118,13 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
     self.bm.generate_inputs = wrapped_generate_inputs
     # Run the benchmark
     result = self.bm.run()
-    self.assertIn("wall_clock_bandwidth_per_device_gb_s", result.metrics)
+    self.assertGreater(
+        result.metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0
+    )
     self.assertIn("wall_clock_bandwidth_per_host_gb_s", result.metrics)
-    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertIsNone(result.metrics["wall_clock_bandwidth_per_host_gb_s"])
+    self.assertIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertIsNone(result.metrics["wall_clock_bandwidth_per_chip_gb_s"])
 
     # If reset_data() was executed, the generated array must have been deleted
     self.assertGreater(len(generated_arrays), 1)
@@ -144,7 +149,7 @@ class DeviceToHostBenchmarkTest(parameterized.TestCase):
         "num_runs": 20,
         "warmup_tries": 2,
         "transfer_backend": "jax",
-        "device_id": 0,
+        "scope": "device",
     }
     d2h_params = {
         k: v for k, v in params.items() if k not in ("num_runs", "warmup_tries")
@@ -204,7 +209,7 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
         "warmup_tries": 2,
         "dtype": "float32",
         "transfer_backend": "jax",
-        "device_id": 0,
+        "scope": "device",
     }
     config = host_device.HostDeviceParams(**params)
     bm = host_device.HostToDeviceBenchmark(
@@ -218,12 +223,11 @@ class HostToDeviceBenchmarkTest(parameterized.TestCase):
 
     self.assertIn("xprof_bandwidth_per_device_gb_s", result.metrics)
     self.assertIn("xprof_bandwidth_per_host_gb_s", result.metrics)
-    self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertIsNone(result.metrics["xprof_bandwidth_per_host_gb_s"])
+    self.assertIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
+    self.assertIsNone(result.metrics["xprof_bandwidth_per_chip_gb_s"])
     print(f"result: {result}")
     bandwidth_gb_s = result.metrics["xprof_bandwidth_per_device_gb_s"]
-    self.assertAlmostEqual(
-        result.metrics["xprof_bandwidth_per_host_gb_s"], bandwidth_gb_s
-    )
     print(f"bandwidth_gb_s: {bandwidth_gb_s}")
     self.assertGreater(bandwidth_gb_s, 0.0)
     # Theoretical maximum PCIe Gen5 bandwidth for v7x is 60 GB/s
@@ -246,21 +250,18 @@ _PCIE_MAX_GB_S = 60.0
 
 _TRANSFER_CASES = tuple(
     {
-        "testcase_name": f"{direction}_{backend}_dev{dev_name}",
+        "testcase_name": f"{direction}_{backend}_{scope}",
         "bm_cls": bm_cls,
         "transfer_backend": backend,
-        "device_id": device_id,
+        "scope": scope,
     }
-    for (direction, bm_cls), backend, (
-        dev_name,
-        device_id,
-    ) in itertools.product(
+    for (direction, bm_cls), backend, scope in itertools.product(
         (
             ("h2d", host_device.HostToDeviceBenchmark),
             ("d2h", host_device.DeviceToHostBenchmark),
         ),
         ("tpu_sync", "jax"),
-        (("all", -1), ("0", 0)),
+        ("device", "chip", "host"),
     )
 )
 
@@ -270,7 +271,7 @@ _TPU_SYNC_CASES = tuple(
 
 
 class TransferBackendTpuTest(parameterized.TestCase):
-  """Covers transfer_backend x device_id for H2D and D2H on TPU."""
+  """Covers transfer_backend x scope for H2D and D2H on TPU."""
 
   def setUp(self):
     super().setUp()
@@ -297,35 +298,66 @@ class TransferBackendTpuTest(parameterized.TestCase):
     self.addCleanup(bm.teardown)
     return bm
 
-  def _expected_devices(self, device_id):
-    if device_id == -1:
-      return list(jax.local_devices())
-    return [jax.local_devices()[device_id]]
+  def _expected_devices(self, scope: str, local_index: int = 0):
+    local_devices = list(jax.local_devices())
+    resolved = constants.Scope(scope)
+    if resolved == constants.Scope.DEVICE:
+      return [local_devices[local_index]]
+    if resolved == constants.Scope.CHIP:
+      chips_by_coords: dict[tuple[int, ...], list[jax.Device]] = {}
+      for dev in local_devices:
+        chips_by_coords.setdefault(tuple(dev.coords), []).append(dev)
+      return list(chips_by_coords.values())[local_index]
+    return local_devices
 
-  def _assert_bandwidth_in_range(self, metrics, key):
+  def _assert_bandwidth_in_range(self, metrics, key, num_devices=1):
     self.assertIn(key, metrics)
     bandwidth_gb_s = metrics[key]
+    max_bw = _PCIE_MAX_GB_S * num_devices
     self.assertGreater(bandwidth_gb_s, 0.0)
     self.assertLess(
         bandwidth_gb_s,
-        _PCIE_MAX_GB_S,
+        max_bw,
         f"{key}={bandwidth_gb_s:.2f} GB/s exceeds the theoretical PCIe max"
-        f" {_PCIE_MAX_GB_S} GB/s.",
+        f" {max_bw} GB/s.",
     )
+
+  def _assert_derived_scopes(self, metrics, prefix, scope, num_devices):
+    """Asserts derived average-share smaller scopes and None larger scopes."""
+    active_bw = metrics[f"{prefix}_bandwidth_per_{scope}_gb_s"]
+    devices_per_chip = system.TPU7X_HARDWARE_SPEC.devices_per_chip
+    if scope == "device":
+      self.assertIsNone(metrics[f"{prefix}_bandwidth_per_chip_gb_s"])
+      self.assertIsNone(metrics[f"{prefix}_bandwidth_per_host_gb_s"])
+    elif scope == "chip":
+      self.assertAlmostEqual(
+          metrics[f"{prefix}_bandwidth_per_device_gb_s"],
+          active_bw / devices_per_chip,
+      )
+      self.assertIsNone(metrics[f"{prefix}_bandwidth_per_host_gb_s"])
+    else:
+      per_dev = active_bw / num_devices
+      self.assertAlmostEqual(
+          metrics[f"{prefix}_bandwidth_per_device_gb_s"], per_dev
+      )
+      self.assertAlmostEqual(
+          metrics[f"{prefix}_bandwidth_per_chip_gb_s"],
+          per_dev * devices_per_chip,
+      )
 
   @parameterized.named_parameters(*_TPU_SYNC_CASES)
   def test_tpu_sync_setup_allocates_block_major_kv_cache(
-      self, bm_cls, transfer_backend, device_id
+      self, bm_cls, transfer_backend, scope
   ):
     """setup() builds a real KVCacheManager over (1, rows, 128) shards."""
     bm = self._make_benchmark(
         bm_cls,
         data_size_mib=64,
         transfer_backend=transfer_backend,
-        device_id=device_id,
+        scope=scope,
     )
     bm.setup()
-    devices = self._expected_devices(device_id)
+    devices = self._expected_devices(scope)
     self.assertIsInstance(
         bm.kv_manager, host_device.kv_cache_manager.KVCacheManager
     )
@@ -342,13 +374,13 @@ class TransferBackendTpuTest(parameterized.TestCase):
       self.assertIn("tpu", shard.device.platform.lower())
 
   @parameterized.named_parameters(*_TPU_SYNC_CASES)
-  def test_tpu_sync_run_op_repeats(self, bm_cls, transfer_backend, device_id):
+  def test_tpu_sync_run_op_repeats(self, bm_cls, transfer_backend, scope):
     """Repeated transfers reuse the registered buffer without deleting it."""
     bm = self._make_benchmark(
         bm_cls,
         data_size_mib=64,
         transfer_backend=transfer_backend,
-        device_id=device_id,
+        scope=scope,
     )
     bm.setup()
     inputs = bm.generate_inputs()
@@ -359,38 +391,37 @@ class TransferBackendTpuTest(parameterized.TestCase):
     self.assertFalse(bm.device_array.is_deleted())
 
   @parameterized.named_parameters(*_TRANSFER_CASES)
-  def test_run_wall_clock(self, bm_cls, transfer_backend, device_id):
-    """run() reports sane per-device bandwidth and releases resources."""
+  def test_run_wall_clock(self, bm_cls, transfer_backend, scope):
+    """run() reports sane active-scope bandwidth and releases resources."""
     bm = self._make_benchmark(
         bm_cls,
         data_size_mib=256,
         num_runs=5,
         warmup_tries=2,
         transfer_backend=transfer_backend,
-        device_id=device_id,
+        scope=scope,
     )
     result = bm.run()
-    expected_devices = self._expected_devices(device_id)
+    expected_devices = self._expected_devices(scope)
     self._assert_bandwidth_in_range(
-        result.metrics, "wall_clock_bandwidth_per_device_gb_s"
+        result.metrics,
+        f"wall_clock_bandwidth_per_{scope}_gb_s",
+        num_devices=len(expected_devices),
     )
-    self.assertAlmostEqual(
-        result.metrics["wall_clock_bandwidth_per_host_gb_s"],
-        result.metrics["wall_clock_bandwidth_per_device_gb_s"]
-        * len(expected_devices),
+    self._assert_derived_scopes(
+        result.metrics, "wall_clock", scope, len(expected_devices)
     )
-    self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", result.metrics)
     self.assertLen(expected_devices, result.metrics["num_devices"])
     self.assertEqual(
         result.metadata.params["transfer_backend"], transfer_backend
     )
-    self.assertEqual(result.metadata.params["device_id"], device_id)
+    self.assertEqual(result.metadata.params["scope"], scope)
     # run() must always release the pinned host staging pool.
     self.assertIsNone(bm.kv_manager)
     self.assertIsNone(bm.device_array)
 
   @parameterized.named_parameters(*_TPU_SYNC_CASES)
-  def test_tpu_sync_run_xprof(self, bm_cls, transfer_backend, device_id):
+  def test_tpu_sync_run_xprof(self, bm_cls, transfer_backend, scope):
     """XProf parses the /host:CPU MARKER events for tpu_sync transfers."""
     devices = jax.devices()
     if devices[0].device_kind != "TPU7x":
@@ -402,20 +433,20 @@ class TransferBackendTpuTest(parameterized.TestCase):
         num_runs=10,
         warmup_tries=2,
         transfer_backend=transfer_backend,
-        device_id=device_id,
+        scope=scope,
     )
     self.assertTrue(bm.xprof_target_host_cpu)
     result = bm.run()
     print(f"{bm.get_run_identifier()}: {result.metrics}")
+    expected_devices = self._expected_devices(scope)
     self._assert_bandwidth_in_range(
-        result.metrics, "xprof_bandwidth_per_device_gb_s"
+        result.metrics,
+        f"xprof_bandwidth_per_{scope}_gb_s",
+        num_devices=len(expected_devices),
     )
-    self.assertAlmostEqual(
-        result.metrics["xprof_bandwidth_per_host_gb_s"],
-        result.metrics["xprof_bandwidth_per_device_gb_s"]
-        * len(self._expected_devices(device_id)),
+    self._assert_derived_scopes(
+        result.metrics, "xprof", scope, len(expected_devices)
     )
-    self.assertNotIn("xprof_bandwidth_per_chip_gb_s", result.metrics)
     self.assertIsNone(bm.kv_manager)
 
   @parameterized.named_parameters(
@@ -431,11 +462,49 @@ class TransferBackendTpuTest(parameterized.TestCase):
           num_runs=2,
           warmup_tries=1,
           transfer_backend="tpu_sync",
-          device_id=-1,
+          scope="host",
       )
       bm.run()
       self.assertIsNone(bm.kv_manager)
       self.assertIsNone(bm.device_array)
+
+  @parameterized.named_parameters(
+      ("h2d_device_nonzero", host_device.HostToDeviceBenchmark, "device"),
+      ("d2h_chip_nonzero", host_device.DeviceToHostBenchmark, "chip"),
+  )
+  def test_nonzero_local_index_tpu_execution(self, bm_cls, scope):
+    """Non-zero local_index targets the requested TPU device or chip."""
+    local_devices = list(jax.local_devices())
+    chips_by_coords: dict[tuple[int, ...], list[jax.Device]] = {}
+    for dev in local_devices:
+      chips_by_coords.setdefault(tuple(dev.coords), []).append(dev)
+    num_units = (
+        len(local_devices) if scope == "device" else len(chips_by_coords)
+    )
+    if num_units < 2:
+      self.skipTest(f"Non-zero local_index for {scope} requires >= 2 units.")
+    local_index = min(3 if scope == "chip" else 7, num_units - 1)
+    bm = self._make_benchmark(
+        bm_cls,
+        data_size_mib=64,
+        num_runs=3,
+        warmup_tries=1,
+        transfer_backend="tpu_sync",
+        scope=scope,
+        local_index=local_index,
+    )
+    bm.setup()
+    expected_devices = self._expected_devices(scope, local_index=local_index)
+    self.assertEqual(bm.get_devices_to_measure(), expected_devices)
+    self.assertEqual(bm.device_array.devices(), set(expected_devices))
+    self.assertNotIn(local_devices[0], bm.device_array.devices())
+    result = bm.run()
+    self.assertEqual(result.metadata.params["local_index"], local_index)
+    self._assert_bandwidth_in_range(
+        result.metrics,
+        f"wall_clock_bandwidth_per_{scope}_gb_s",
+        num_devices=len(expected_devices),
+    )
 
 
 if __name__ == "__main__":
