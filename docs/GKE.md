@@ -142,20 +142,6 @@ envsubst '${WORKLOAD_NAME} ${ACCELERATOR_TYPE} ${TOPOLOGY} ${NUM_HOSTS} ${CHIPS_
   < templates/gke_job_template.yaml | kubectl apply -f -
 ```
 
-*Verified console output (`kubectl logs job/tpums-tpu7x-gemm-2x2x1`):*
-
-```text
-=================================================================================================================================================================================================
-Benchmark Results (GeneralizedGemmBenchmark)
-=================================================================================================================================================================================================
-     in_dtype out_dtype     m     k     n transpose_a transpose_b alpha beta use_scaling_factors      total_flops wall_clock_p50_ms wall_clock_tflops_per_chip xprof_p50_ms xprof_tflops_per_chip
-     bfloat16  bfloat16  8192  8192  8192       False       False   1.0  0.0               False 1099511627776.00            1.4393                    1527.80       1.0028               2192.93
-     bfloat16  bfloat16 16384 16384 16384       False       False   1.0  0.0               False 8796093022208.00            9.3947                    1872.56       8.8521               1987.34
-float8_e4m3fn  bfloat16  8192  8192  8192       False       False   1.0  0.0               False 1099511627776.00            0.9282                    2369.25       0.5138               4280.24
-float8_e4m3fn  bfloat16 16384 16384 16384       False       False   1.0  0.0               False 8796093022208.00            4.4757                    3930.59       4.0372               4357.50
-=================================================================================================================================================================================================
-```
-
 #### Example B: Multi-Host Collective (`all_gather` on `tpu7x` `4x4x4` — 16 Hosts / 64 Chips / 128 Devices)
 
 Only `WORKLOAD_NAME`, `TOPOLOGY`, `NUM_HOSTS`, and `CONFIG_PATH` change:
@@ -172,22 +158,6 @@ export GCS_XPROF_DIR="gs://<your-gcs-bucket>/tpums/${WORKLOAD_NAME}/xprof"     #
 
 envsubst '${WORKLOAD_NAME} ${ACCELERATOR_TYPE} ${TOPOLOGY} ${NUM_HOSTS} ${CHIPS_PER_NODE} ${CONFIG_PATH} ${GCS_OUTPUT_DIR} ${GCS_XPROF_DIR}' \
   < templates/gke_job_template.yaml | kubectl apply -f -
-```
-
-*Verified console output (`kubectl logs job/tpums-tpu7x-allgather-4x4x4`):*
-
-```text
-===============================================================================================================================================================
-Benchmark Results (AllGatherBenchmark)
-===============================================================================================================================================================
-   dtype mesh_shape sharding_strategy matrix_dim shard_size_mib wall_clock_p50_ms wall_clock_bandwidth_per_chip_gb_s xprof_p50_ms xprof_bandwidth_per_chip_gb_s
-bfloat16     16x4x2            16x4x1       8192          16.00            5.8752                             359.80       3.8297                        551.98
-bfloat16     16x4x2            16x4x1      16384          32.00           12.0646                             350.43       7.6263                        554.38
-bfloat16     16x4x2            16x4x1      32768          64.00           21.2463                             397.99      15.2165                        555.69
-bfloat16     16x4x2            16x4x2       8192          16.00            7.9645                             265.42       4.2250                        500.34
-bfloat16     16x4x2            16x4x2      16384          32.00           13.7713                             307.01       8.4095                        502.75
-bfloat16     16x4x2            16x4x2      32768          64.00           24.8586                             340.15      17.2008                        491.59
-===============================================================================================================================================================
 ```
 
 #### Example C: Single-Host Compute (`gemm` on `v6e` `2x2` `ct6e-standard-4t` — 1 Host / 4 Chips / 4 Devices)
@@ -208,18 +178,6 @@ envsubst '${WORKLOAD_NAME} ${ACCELERATOR_TYPE} ${TOPOLOGY} ${NUM_HOSTS} ${CHIPS_
   < templates/gke_job_template.yaml | kubectl apply -f -
 ```
 
-*Verified console output (`kubectl logs job/tpums-v6e-2x2-gemm`):*
-
-```text
-=========================================================================================================================================================================================
-Benchmark Results (GeneralizedGemmBenchmark)
-=========================================================================================================================================================================================
-in_dtype out_dtype    m    k    n transpose_a transpose_b alpha beta use_scaling_factors      total_flops wall_clock_p50_ms wall_clock_tflops_per_chip xprof_p50_ms xprof_tflops_per_chip
-bfloat16  bfloat16 4096 4096 4096       False       False   1.0  0.0               False  137438953472.00            0.5076                     270.78       0.1628                844.26
-bfloat16  bfloat16 8192 8192 8192       False       False   1.0  0.0               False 1099511627776.00            1.7234                     638.00       1.3196                833.23
-=========================================================================================================================================================================================
-```
-
 #### Example D: Multi-Host Collective (`all_gather` on `v6e` `2x4` `ct6e-standard-4t` — 2 Hosts / 8 Chips / 8 Devices)
 
 For a multi-host `v6e` `2x4` topology (`2` hosts of `ct6e-standard-4t`), set `NUM_HOSTS=2` and `CHIPS_PER_NODE=4`:
@@ -236,19 +194,6 @@ export GCS_XPROF_DIR="gs://<your-gcs-bucket>/tpums/${WORKLOAD_NAME}/xprof"     #
 
 envsubst '${WORKLOAD_NAME} ${ACCELERATOR_TYPE} ${TOPOLOGY} ${NUM_HOSTS} ${CHIPS_PER_NODE} ${CONFIG_PATH} ${GCS_OUTPUT_DIR} ${GCS_XPROF_DIR}' \
   < templates/gke_job_template.yaml | kubectl apply -f -
-```
-
-*Verified console output (`kubectl logs job/tpums-v6e-allgather-2x4`):*
-
-```text
-==============================================================================================================================================================
-Benchmark Results (AllGatherBenchmark)
-==============================================================================================================================================================
-   dtype mesh_shape sharding_strategy matrix_dim shard_size_mib wall_clock_p50_ms wall_clock_bandwidth_per_chip_gb_s xprof_p50_ms xprof_bandwidth_per_chip_gb_s
-bfloat16        2x4               2x4       8192          16.00            1.9204                              61.16       1.3613                         86.27
-bfloat16        2x4               2x4      16384          32.00            3.4875                              67.35       2.7226                         86.27
-bfloat16        2x4               2x4      32768          64.00            6.5876                              71.31       5.4447                         86.28
-==============================================================================================================================================================
 ```
 
 <a id="step-4-monitor-logs-inspect-gcs-results--clean-up"></a>
