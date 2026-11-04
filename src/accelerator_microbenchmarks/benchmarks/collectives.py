@@ -955,21 +955,55 @@ class AllToAllOpMixin(
   """All-to-all op logic shared by any topology base.
 
   Provides the replicated input, the jitted tiled all-to-all (scoped by the
-  topology's `_op_scope()`), the matrix_dim divisibility check and the
-  per-device transfer size: every rank splits its local buffer into `rank`
-  chunks along axis 0 and sends one chunk to each peer reached over the
-  measured link, i.e. `P/R` of the buffer (`(R - 1)/R` on DCN). List it
-  before the topology base.
+  topology's `_op_scope()`), `matrix_dim` flooring to a multiple of the
+  replica-group size (preserving the original value as `requested_matrix_dim`
+  in workload metadata) and the per-device transfer size: every rank splits its
+  local buffer into `rank` chunks along axis 0 and sends one chunk to each
+  peer reached over the measured link, i.e. `P/R` of the buffer (`(R - 1)/R`
+  on DCN). List it before the topology base.
   """
+
+  def __init__(
+      self,
+      config: TCollectiveConfig,
+      hardware_spec: system.HardwareSpec,
+      mesh: Optional[jax.sharding.Mesh] = None,
+      xprof_config: Optional[base.XprofConfig] = None,
+  ):
+    super().__init__(
+        config=config,
+        hardware_spec=hardware_spec,
+        mesh=mesh,
+        xprof_config=xprof_config,
+    )
+    self._requested_matrix_dim: int = self.config.matrix_dim
 
   def setup(self):
     super().setup()  # Builds the mesh; jax.jit is lazy, so nothing compiles.
     group_size = self._get_num_sharded_devices()
-    if self.config.matrix_dim % group_size:
+    requested_dim = self._requested_matrix_dim
+    if requested_dim < group_size:
       raise ValueError(
-          f"matrix_dim ({self.config.matrix_dim}) must be divisible by the"
+          f"matrix_dim ({requested_dim}) must be >= the"
           f" all-to-all group size ({group_size}) for a tiled all_to_all."
       )
+    effective_dim = (requested_dim // group_size) * group_size
+    if effective_dim != requested_dim:
+      logging.warning(
+          "Flooring all-to-all matrix_dim from %d to %d (largest multiple of"
+          " group size %d).",
+          requested_dim,
+          effective_dim,
+          group_size,
+      )
+    if self.config.matrix_dim != effective_dim:
+      self.config = dataclasses.replace(self.config, matrix_dim=effective_dim)
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    return {
+        **super().get_workload_metadata(),
+        "requested_matrix_dim": self._requested_matrix_dim,
+    }
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
@@ -1101,8 +1135,9 @@ class DcnAllToAllBenchmark(
   Each device splits its `(matrix_dim, 8, 128)` buffer into `num_slices`
   chunks along axis 0 and exchanges one chunk with the device at the same ICI
   position in every other slice, so it sends `(num_slices - 1) / num_slices`
-  of its buffer over DCN. Per-host bandwidth sums all local devices, since
-  each one sends its own data.
+  of its buffer over DCN. When `matrix_dim` is not divisible by `num_slices`,
+  `setup()` floors it down to `(matrix_dim // num_slices) * num_slices`.
+  Per-host bandwidth sums all local devices, since each one sends its own data.
   """
 
   Config = DcnCollectivesParams

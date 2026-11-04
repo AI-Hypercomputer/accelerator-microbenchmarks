@@ -26,14 +26,20 @@ import jax.numpy as jnp
 import numpy as np
 
 
+_ALL_CPU_DEVICES: tuple[jax.Device, ...] = ()
+
+
 def setUpModule():  # pylint: disable=invalid-name
-  # Force 4 CPU devices for testing collectives
+  global _ALL_CPU_DEVICES
+  # Force 5 CPU devices so DCN tests can form 2..5-slice meshes while
+  # CollectivesBenchmarkTest.setUp() scopes existing ICI tests to 4 devices.
   os.environ["XLA_FLAGS"] = (
       os.environ.get("XLA_FLAGS", "")
-      + " --xla_force_host_platform_device_count=4"
+      + " --xla_force_host_platform_device_count=5"
   )
   # Set CPU backend for fast testing without TPU requirements
   jax.config.update("jax_platform_name", "cpu")
+  _ALL_CPU_DEVICES = tuple(jax.devices())
 
 
 _ALL_DIMS_GE_4 = system.WraparoundRule.ALL_DIMS_GE_4
@@ -69,6 +75,7 @@ _COLLECTIVES_IGNORED_KEYS: frozenset[str] = frozenset({
     "transfer_size_per_device_mib",
     "replica_group_type",
     "replica_group_rank",
+    "requested_matrix_dim",
 })
 
 # Default and metadata of every collective param field, keyed by field name.
@@ -171,18 +178,23 @@ def _mock_tpu7x_devices(
 def _setup_on_dcn_mesh(
     bm: collectives.DcnCollectiveBenchmark, num_slices: int
 ) -> None:
-  """Runs bm.setup() with the CPU devices split evenly into num_slices slices.
+  """Runs bm.setup() with CPU devices split evenly into num_slices slices.
 
-  The mocked devices pass the DCN slice checks in setup(), and the patched
-  Mesh returns a real ("dcn", "ici") CPU mesh so the jitted op can run.
+  Uses `len(_ALL_CPU_DEVICES) // num_slices` devices per slice (2 per slice
+  for 2 slices, 1 per slice for 3..5 slices). The mocked devices pass the DCN
+  slice checks in setup(), and the patched Mesh returns a real ("dcn", "ici")
+  CPU mesh so the jitted op can run.
 
   Args:
     bm: DCN benchmark to set up.
     num_slices: Number of slices to split the CPU devices into.
   """
-  devices_per_slice = jax.device_count() // num_slices
+  devices_per_slice = len(_ALL_CPU_DEVICES) // num_slices
+  total_devices = num_slices * devices_per_slice
   dcn_mesh = jax.sharding.Mesh(
-      np.array(jax.devices()).reshape((num_slices, devices_per_slice)),
+      np.array(_ALL_CPU_DEVICES[:total_devices]).reshape(
+          (num_slices, devices_per_slice)
+      ),
       ("dcn", "ici"),
   )
   mock_devices = [
@@ -192,7 +204,7 @@ def _setup_on_dcn_mesh(
           core_on_chip=i % 2,
           slice_index=i // devices_per_slice,
       )
-      for i in range(jax.device_count())
+      for i in range(total_devices)
   ]
   with (
       mock.patch.object(jax, "devices", return_value=mock_devices),
@@ -206,9 +218,20 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
+    default_devices = list(_ALL_CPU_DEVICES[:4])
+    self.enter_context(
+        mock.patch.object(jax, "devices", return_value=default_devices)
+    )
+    self.enter_context(
+        mock.patch.object(jax, "local_devices", return_value=default_devices)
+    )
+    self.enter_context(mock.patch.object(jax, "device_count", return_value=4))
+    self.enter_context(
+        mock.patch.object(jax, "local_device_count", return_value=4)
+    )
     # Create a dummy mesh for testing on CPU
     self.mock_mesh = jax.sharding.Mesh(
-        np.array(jax.devices()), axis_names=("device",)
+        np.array(default_devices), axis_names=("device",)
     )
     # CPU devices lack core_on_chip, so tag each first replica group device
     # with id % 2 (TPU7x device ids are 2 * chip + core).
@@ -1324,36 +1347,70 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     )
     self.assertNotIn("wall_clock_bandwidth_per_chip_gb_s", metrics)
 
-  def test_dcn_all_to_all_indivisible_matrix_dim_raises_error(self):
-    """Verify DcnAllToAllBenchmark rejects matrix_dim not divisible by slices."""
+  @parameterized.named_parameters(
+      ("two_slices", 2, 64, 0.25),
+      ("three_slices", 3, 63, 0.24609375),
+      ("five_slices", 5, 60, 0.234375),
+  )
+  def test_dcn_all_to_all_floors_matrix_dim(
+      self, num_slices, effective_dim, expected_shard_mib
+  ):
+    """Verify DCN all-to-all floors matrix_dim across n in {2, 3, 5}."""
+    config = collectives.DcnCollectivesParams(matrix_dim=64, dtype="float32")
     bm = collectives.DcnAllToAllBenchmark(
-        config=collectives.DcnCollectivesParams(matrix_dim=66, dtype="float32"),
-        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC
     )
-    with self.assertRaisesRegex(
-        ValueError,
-        r"matrix_dim \(66\) must be divisible by the all-to-all group size"
-        r" \(4\)",
-    ):
-      _setup_on_dcn_mesh(bm, num_slices=4)
+    _setup_on_dcn_mesh(bm, num_slices)
 
-  def test_all_to_all_indivisible_matrix_dim_raises_error(self):
-    """Verify the shared check also rejects an indivisible ICI matrix_dim."""
-    group_size = jax.device_count()
-    matrix_dim = group_size * 16 + 1
+    (data,) = bm.generate_inputs()
+    metadata = bm.get_workload_metadata()
+    self.assertEqual(config.matrix_dim, 64)
+    self.assertEqual(bm.config.matrix_dim, effective_dim)
+    self.assertEqual(bm.get_run_identifier(), f"dim_{effective_dim}")
+    self.assertEqual(data.shape, (effective_dim, 8, 128))
+    self.assertAlmostEqual(metadata["shard_size_mib"], expected_shard_mib)
+    self.assertEqual(metadata["requested_matrix_dim"], 64)
+
+  def test_all_to_all_ici_floors_matrix_dim_and_logs_warning(self):
+    """Verify ICI AllToAllBenchmark floors indivisible matrix_dim with warning."""
     bm = collectives.AllToAllBenchmark(
-        config=collectives.IciCollectivesParams(
-            matrix_dim=matrix_dim, dtype="float32"
-        ),
+        config=collectives.IciCollectivesParams(matrix_dim=65, dtype="float32"),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    with self.assertLogs(level="WARNING") as cm:
+      bm.setup()
+
+    self.assertIn(
+        "Flooring all-to-all matrix_dim from 65 to 64 (largest multiple of"
+        " group size 4).",
+        "\n".join(cm.output),
+    )
+    self.assertEqual(bm.config.matrix_dim, 64)
+    self.assertEqual(bm.get_workload_metadata()["requested_matrix_dim"], 65)
+
+  def test_all_to_all_matrix_dim_smaller_than_group_size_raises_error(self):
+    """Verify ICI and DCN all-to-all reject matrix_dim < group_size."""
+    ici_bm = collectives.AllToAllBenchmark(
+        config=collectives.IciCollectivesParams(matrix_dim=3, dtype="float32"),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
         mesh=self.mock_mesh,
     )
     with self.assertRaisesRegex(
         ValueError,
-        rf"matrix_dim \({matrix_dim}\) must be divisible by the all-to-all"
-        rf" group size \({group_size}\)",
+        r"matrix_dim \(3\) must be >= the all-to-all group size \(4\)",
     ):
-      bm.setup()
+      ici_bm.setup()
+
+    dcn_bm = collectives.DcnAllToAllBenchmark(
+        config=collectives.DcnCollectivesParams(matrix_dim=4, dtype="float32"),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    with self.assertRaisesRegex(
+        ValueError,
+        r"matrix_dim \(4\) must be >= the all-to-all group size \(5\)",
+    ):
+      _setup_on_dcn_mesh(dcn_bm, num_slices=5)
 
   def test_all_to_all_op_scope_by_topology(self):
     """Verify ICI all-to-all lowers inside MARKER and DCN all-to-all does not."""
