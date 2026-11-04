@@ -116,8 +116,8 @@ class SystemTest(absltest.TestCase):
     package_dir = os.path.dirname(schema.__file__)
     discovered = {
         module_name
-        for _, module_name, _ in pkgutil.iter_modules([package_dir])
-        if module_name not in _INFRASTRUCTURE_MODULES
+        for _, module_name, is_pkg in pkgutil.iter_modules([package_dir])
+        if not is_pkg and module_name not in _INFRASTRUCTURE_MODULES
     }
     self.assertNotEmpty(discovered)
     self.assertContainsSubset(

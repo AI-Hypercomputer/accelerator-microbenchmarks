@@ -16,17 +16,16 @@ import enum
 DEFAULT_FALLBACK_DTYPE: str = "bfloat16"
 
 
-class TpuVersion(str, enum.Enum):
-  """Canonical TPU generation identifiers in TPUMS."""
-
-  TPU7X = "tpu7x"
-  V6E = "v6e"
+class TpuVersionBase(str, enum.Enum):
+  """Base class for canonical TPU generation identifiers in TPUMS."""
 
   def __str__(self) -> str:
     return str(self.value)
 
   @classmethod
-  def from_device_kind(cls, device_kind: "str | TpuVersion") -> "TpuVersion":
+  def from_device_kind(
+      cls, device_kind: "str | TpuVersionBase"
+  ) -> "TpuVersionBase":
     """Maps a JAX PJRT `device_kind` to a canonical TPU version.
 
     Only `device_kind` spellings are recognized, matched case insensitively
@@ -36,25 +35,32 @@ class TpuVersion(str, enum.Enum):
 
     Args:
       device_kind: A `jax.Device.device_kind` such as "TPU7x" or "TPU v6
-        lite", or an already resolved `TpuVersion`.
+        lite", or an already resolved `TpuVersionBase`.
 
     Returns:
-      The `TpuVersion` member of the matching generation.
+      The `TpuVersionBase` member of the matching generation.
 
     Raises:
       ValueError: If `device_kind` does not name a supported generation.
     """
-    if isinstance(device_kind, cls):
+    if isinstance(device_kind, TpuVersionBase):
       return device_kind
     normalized = str(device_kind).strip().lower()
     if normalized in ("tpu7x", "tpu v7x"):
-      return cls.TPU7X
+      return TpuVersion.TPU7X
     if normalized in ("v6e", "tpu v6e", "tpu v6 lite"):
-      return cls.V6E
+      return TpuVersion.V6E
     raise ValueError(
         f"Unsupported TPU device_kind '{device_kind}'. Available versions:"
-        f" {[version.value for version in cls]}"
+        f" {[version.value for version in TpuVersion]}"
     )
+
+
+class TpuVersion(TpuVersionBase):
+  """Canonical public TPU generation identifiers in TPUMS."""
+
+  TPU7X = "tpu7x"
+  V6E = "v6e"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -117,7 +123,7 @@ class HardwareSpec:
   """Hardware accelerator specifications."""
 
   # Canonical TPU generation identifier, e.g. `TpuVersion.TPU7X`.
-  name: TpuVersion
+  name: TpuVersionBase
   topology_dimension: int = 3
   devices_per_chip: int = 1
   tflops: TflopsSpec | None = None

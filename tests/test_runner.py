@@ -95,9 +95,10 @@ class TestRunner(absltest.TestCase):
     self.assertNotIn("LIBTPU_INIT_ARGS", os.environ)
 
   def test_set_xla_flags_missing_file(self):
-    runner.set_xla_flags(
-        [{"name": "test_op_flags_only"}], "non_existent_file.yaml"
-    )
+    with self.assertRaises(FileNotFoundError):
+      runner.set_xla_flags(
+          [{"name": "test_op_flags_only"}], "non_existent_file.yaml"
+      )
     self.assertNotIn("LIBTPU_INIT_ARGS", os.environ)
 
   def test_validate_op_flags_yaml_files(self):
@@ -258,7 +259,9 @@ class TestRunner(absltest.TestCase):
             "jax" if kw.get("distributed", True) else "jax_local"
         ),
     ), mock.patch.object(
-        runner.platform, "get_platform_info"
+        runner.platform,
+        "get_platform_info",
+        return_value=mock.MagicMock(tpu_type=system.TpuVersion.TPU7X),
     ), mock.patch.object(
         runner.system, "get_hardware_spec"
     ), mock.patch.object(
@@ -423,6 +426,9 @@ class TestRunner(absltest.TestCase):
                   mock_load_all.assert_called_once()
                   mock_set_xla.assert_called_once_with(
                       [{"name": "dummy"}], xla_flags_file_path=None
+                  )
+                  mock_get_benchmark.assert_called_once_with(
+                      "dummy", generation="tpu7x"
                   )
                   mock_init_jax.assert_called_once()
                   mock_bench_instance.run.assert_called_once()
@@ -671,6 +677,88 @@ class TestRunner(absltest.TestCase):
                       output_dir=tmpdir,
                       print_table=False,
                   )
+
+  def test_run_benchmarks_applies_param_defaults(self):
+    """Verifies run_benchmarks applies registered generation param_defaults without clobbering explicit values."""
+    default_params = base.BaseBenchmarkParams()
+    explicit_params = base.BaseBenchmarkParams(warmup_tries=7, num_runs=9)
+    explicit_default_val_params = base.BaseBenchmarkParams(
+        warmup_tries=0, num_runs=10
+    )
+    mock_platform = platform.PlatformInfo(
+        tpu_type=system.TpuVersion.TPU7X,
+        topology="2x2x1",
+        total_devices=4,
+        local_devices=4,
+        process_count=1,
+        process_index=0,
+        slice_count=1,
+        slice_index=0,
+        python_version="3.11.0",
+        jax_version="0.4.30",
+        jaxlib_version="0.4.30",
+        libtpu_version="0.1.dev20240101",
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with mock.patch.object(runner, "set_xla_flags"):
+        with mock.patch.object(runner, "init_jax_distributed"):
+          with mock.patch.object(
+              runner.platform, "get_platform_info", return_value=mock_platform
+          ):
+            with mock.patch.object(runner, "export_to_mlcompass"):
+              with mock.patch.object(
+                  runner.registry.benchmark_registry, "get_benchmark"
+              ) as mock_get_benchmark:
+                with mock.patch.object(
+                    runner.registry.benchmark_registry,
+                    "get_param_defaults",
+                    return_value={"warmup_tries": 5, "num_runs": 12},
+                ):
+                  mock_bench_instance = mock.MagicMock()
+                  mock_metadata = base.BenchmarkMetadata(
+                      benchmark_name="dummy",
+                      test_name="dummy_test",
+                      start_time="now",
+                      end_time="then",
+                      params={},
+                      platform_info=mock_platform,
+                      hardware_spec=system.TPU7X_HARDWARE_SPEC,
+                  )
+                  mock_bench_instance.run.return_value = base.BenchmarkResult(
+                      metadata=mock_metadata,
+                      metrics={"avg_ms": 1.0},
+                      timings=base.BenchmarkTimings(
+                          wall_clock=base.WallClockTimings(durations_ms=[1.0])
+                      ),
+                  )
+                  mock_bench_instance.get_run_identifier.return_value = "run_1"
+                  mock_bench_cls = mock.MagicMock(
+                      return_value=mock_bench_instance,
+                      __name__="MockBenchmark",
+                  )
+                  mock_get_benchmark.return_value = mock_bench_cls
+
+                  runner.run_benchmarks(
+                      tasks=[
+                          ("dummy", default_params),
+                          ("dummy", explicit_params),
+                          ("dummy", explicit_default_val_params),
+                      ],
+                      output_dir=tmpdir,
+                      print_table=False,
+                  )
+                  self.assertEqual(mock_bench_cls.call_count, 3)
+                  first_cfg = mock_bench_cls.call_args_list[0].kwargs["config"]
+                  second_cfg = mock_bench_cls.call_args_list[1].kwargs["config"]
+                  third_cfg = mock_bench_cls.call_args_list[2].kwargs["config"]
+                  self.assertEqual(first_cfg.warmup_tries, 5)
+                  self.assertEqual(first_cfg.num_runs, 12)
+                  self.assertEqual(second_cfg.warmup_tries, 7)
+                  self.assertEqual(second_cfg.num_runs, 9)
+                  # Explicitly passed 0 and 10 (even though 10 == field default)
+                  # are preserved over generation defaults.
+                  self.assertEqual(third_cfg.warmup_tries, 0)
+                  self.assertEqual(third_cfg.num_runs, 10)
 
 
 if __name__ == "__main__":

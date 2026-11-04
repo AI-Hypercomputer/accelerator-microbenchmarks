@@ -11,6 +11,7 @@ from accelerator_microbenchmarks.specs import tpu7x
 from accelerator_microbenchmarks.specs import v6e
 
 
+TpuVersionBase = schema.TpuVersionBase
 TpuVersion = schema.TpuVersion
 HardwareSpec = schema.HardwareSpec
 TflopsSpec = schema.TflopsSpec
@@ -25,16 +26,14 @@ TPU7X_HARDWARE_SPEC: HardwareSpec = tpu7x.TPU7X_HARDWARE_SPEC
 V6E_HARDWARE_SPEC: HardwareSpec = v6e.V6E_HARDWARE_SPEC
 
 # Every generation available in this checkout, keyed by canonical
-# `TpuVersion`. Adding a generation means adding its spec module and one entry
-# here; generations excluded from a checkout, for example by a Copybara
-# export, are absent from both `TpuVersion` and this mapping.
-HARDWARE_SPECS: dict[TpuVersion, HardwareSpec] = {
+# `TpuVersionBase`.
+HARDWARE_SPECS: dict[TpuVersionBase, HardwareSpec] = {
     TpuVersion.TPU7X: TPU7X_HARDWARE_SPEC,
     TpuVersion.V6E: V6E_HARDWARE_SPEC,
 }
 
 
-def get_hardware_spec(version: TpuVersion) -> HardwareSpec:
+def get_hardware_spec(version: TpuVersionBase) -> HardwareSpec:
   """Retrieves the hardware spec of a canonical TPU generation.
 
   Args:

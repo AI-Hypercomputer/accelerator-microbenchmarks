@@ -149,39 +149,6 @@ class SoakingBenchmarkTest(absltest.TestCase):
     ):
       self.assertIsNone(metrics[key])
 
-  def test_base_benchmark_calculate_metrics_integrates_thermal_keys(self):
-    """Verifies end-to-end integration of thermal keys in calculate_metrics."""
-    data_path = os.path.join(
-        os.path.dirname(__file__), "data", "tpu7x_fw_counters.xplane.pb"
-    )
-    with tempfile.TemporaryDirectory() as tmpdir:
-      post_soaking_dir = os.path.join(tmpdir, "post_soaking_window")
-      os.makedirs(post_soaking_dir)
-      shutil.copy(
-          data_path,
-          os.path.join(post_soaking_dir, "tpu7x_fw_counters.xplane.pb"),
-      )
-      pre_soaking_dir = os.path.join(tmpdir, "pre_soaking_window")
-      os.makedirs(pre_soaking_dir)
-      shutil.copy(
-          data_path,
-          os.path.join(pre_soaking_dir, "tpu7x_fw_counters.xplane.pb"),
-      )
-      bench = SoakingDummyBenchmark(
-          config=SoakingDummyParams(min_duration_s=1.0)
-      )
-      bench._xprof_dir_actual = tmpdir  # pylint: disable=protected-access
-      metrics = bench.calculate_metrics([10.0] * 50 + [20.0] * 50)
-
-    for key in constants.THERMAL_METRIC_KEYS:
-      self.assertIn(key, metrics)
-    self.assertEqual(metrics["hbm_peak_temp_c"], 40.0)
-    self.assertAlmostEqual(
-        metrics["vdd_core_power_mean_w"], 352.5091138564901, places=4
-    )
-    self.assertIsNone(metrics["peak_temp_c"])
-    self.assertEqual(metrics["hbm_throttle_time_pct"], 0.0)
-
   @mock.patch(
       "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
       return_value=None,

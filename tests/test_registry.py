@@ -1,5 +1,6 @@
 """Unit tests for registry.py."""
 
+import dataclasses
 from absl.testing import absltest
 from accelerator_microbenchmarks.core import registry
 
@@ -148,6 +149,136 @@ class RegistryTest(absltest.TestCase):
     # bm2 should only be in registry2
     self.assertIn("bm2", registry2.list_benchmark_names())
     self.assertNotIn("bm2", self.test_registry.list_benchmark_names())
+
+  def test_register_override_and_get_benchmark_by_generation(self):
+    """Verify generation-scoped benchmark override selection and fallback."""
+
+    @dataclasses.dataclass
+    class AllReduceConfig:
+      matrix_dim: int = 1024
+
+    @self.test_registry.register("all_reduce", aliases=["ar"])
+    class PublicAllReduce:
+      Config = AllReduceConfig  # pylint: disable=invalid-name
+      name = "all_reduce"
+
+    @self.test_registry.register_override("all_reduce", generation="gen_custom")
+    class CustomAllReduce(PublicAllReduce):
+      pass
+
+    self.assertEqual(CustomAllReduce.name, "all_reduce")
+    self.assertIs(CustomAllReduce.Config, AllReduceConfig)
+    self.assertIs(
+        self.test_registry.get_benchmark("all_reduce"), PublicAllReduce
+    )
+    self.assertIs(
+        self.test_registry.get_benchmark("all_reduce", generation="other_gen"),
+        PublicAllReduce,
+    )
+    self.assertIs(
+        self.test_registry.get_benchmark("all_reduce", generation="gen_custom"),
+        CustomAllReduce,
+    )
+    self.assertIs(
+        self.test_registry.get_benchmark("ar", generation="gen_custom"),
+        CustomAllReduce,
+    )
+
+  def test_register_override_requires_subclass_and_existing_benchmark(self):
+    """Verify register_override validates base class, Config, name, duplicate, and benchmark existence."""
+
+    @dataclasses.dataclass
+    class GemmConfig:
+      m: int = 1024
+
+    @dataclasses.dataclass
+    class DifferentConfig:
+      m: int = 1024
+
+    @self.test_registry.register("gemm")
+    class PublicGemm:
+      Config = GemmConfig  # pylint: disable=invalid-name
+      name = "gemm"
+
+    with self.assertRaises(TypeError):
+
+      @self.test_registry.register_override("gemm", generation="gen_custom")
+      class UnrelatedBenchmark:  # pylint: disable=unused-variable
+        pass
+
+    with self.assertRaisesRegex(TypeError, "Config must be"):
+
+      @self.test_registry.register_override("gemm", generation="gen_custom")
+      class DifferentConfigOverride(PublicGemm):  # pylint: disable=unused-variable
+        Config = DifferentConfig  # pylint: disable=invalid-name
+
+    with self.assertRaisesRegex(ValueError, "name must be 'gemm'"):
+
+      @self.test_registry.register_override("gemm", generation="gen_custom")
+      class DifferentNameOverride(PublicGemm):  # pylint: disable=unused-variable
+        name = "wrong_name"
+
+    with self.assertRaises(KeyError):
+
+      @self.test_registry.register_override("unknown", generation="gen_custom")
+      class UnknownOverride(PublicGemm):  # pylint: disable=unused-variable
+        pass
+
+    @self.test_registry.register_override("gemm", generation="gen_custom")
+    class ValidOverride(PublicGemm):  # pylint: disable=unused-variable
+      pass
+
+    with self.assertRaisesRegex(ValueError, "already registered"):
+
+      @self.test_registry.register_override("gemm", generation="gen_custom")
+      class DuplicateOverride(PublicGemm):  # pylint: disable=unused-variable
+        pass
+
+  def test_register_and_get_param_defaults(self):
+    """Verify generation-scoped default parameter overrides and validation."""
+
+    @dataclasses.dataclass
+    class RpaConfig:
+      block_q: int = 32
+      block_kv: int = 64
+
+    @self.test_registry.register("rpa", aliases=["ragged_paged_attention"])
+    class RpaBenchmark:
+      Config = RpaConfig  # pylint: disable=invalid-name
+
+    self.assertIs(self.test_registry.get_benchmark("rpa"), RpaBenchmark)
+    self.test_registry.register_param_defaults(
+        "rpa", generation="gen_custom", block_q=64, block_kv=128
+    )
+    self.assertEqual(self.test_registry.get_param_defaults("rpa"), {})
+    self.assertEqual(
+        self.test_registry.get_param_defaults("rpa", generation="other_gen"), {}
+    )
+    self.assertEqual(
+        self.test_registry.get_param_defaults("rpa", generation="gen_custom"),
+        {"block_q": 64, "block_kv": 128},
+    )
+    self.assertEqual(
+        self.test_registry.get_param_defaults(
+            "ragged_paged_attention", generation="gen_custom"
+        ),
+        {"block_q": 64, "block_kv": 128},
+    )
+
+    with self.assertRaisesRegex(KeyError, "unknown benchmark"):
+      self.test_registry.register_param_defaults(
+          "nonexistent", generation="gen_custom", block_q=64
+      )
+
+    with self.assertRaisesRegex(ValueError, "Unknown Config field"):
+      self.test_registry.register_param_defaults(
+          "rpa", generation="gen_other", invalid_field=123
+      )
+
+    with self.assertRaisesRegex(ValueError, "already registered"):
+      self.test_registry.register_param_defaults(
+          "rpa", generation="gen_custom", block_q=128
+      )
 
 
 if __name__ == "__main__":

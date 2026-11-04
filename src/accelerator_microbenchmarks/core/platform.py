@@ -24,7 +24,7 @@ class PlatformInfo:
   """Structured runtime topology, process ranks, and software versions."""
 
   # Canonical TPU version, as resolved by `TpuVersion.from_device_kind`.
-  tpu_type: system.TpuVersion
+  tpu_type: system.TpuVersionBase
   # ICI topology of a single slice; every slice of a multi-slice run has the
   # same topology.
   topology: str

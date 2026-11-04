@@ -11,8 +11,8 @@ def load_all_benchmarks():
   package_name = __package__
 
   # Iterate through all modules in the current package's directory
-  for _, module_name, _ in pkgutil.iter_modules([package_dir]):
-    if module_name == "benchmark_loader":
+  for _, module_name, is_pkg in pkgutil.iter_modules([package_dir]):
+    if is_pkg or module_name == "benchmark_loader":
       continue
     full_module_name = f"{package_name}.{module_name}"
     try:

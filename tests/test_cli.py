@@ -313,17 +313,18 @@ benchmark:
     warmup_tries: 1
     num_runs: 1
 """)
+    fake_flags = self.create_tempfile(content="gemm:\n  flags: []\n")
     config_path = fake_config.full_path
     cli.run([
         "benchmark",
         "run-config",
         config_path,
         "--xla_flags_file_path",
-        "/tmp/custom_op_flags.yaml",
+        fake_flags.full_path,
     ])
     mock_run_benchmarks.assert_called_once()
     _, kwargs = mock_run_benchmarks.call_args
-    self.assertEqual(kwargs["xla_flags_file_path"], "/tmp/custom_op_flags.yaml")
+    self.assertEqual(kwargs["xla_flags_file_path"], fake_flags.full_path)
 
   @parameterized.named_parameters(
       (
@@ -969,12 +970,20 @@ benchmark:
     calls.attach_mock(mock_run_benchmarks, "run_benchmarks")
     if action == "run":
       cli.run(["benchmark", "run", task])
+      mock_reexec.assert_called_once_with(
+          [{"name": task}], None, tpu_version=None
+      )
     else:
       fake_config = self.create_tempfile(
           content=f"benchmark:\n  name: {task}\n"
       )
       cli.run(["benchmark", "run-config", fake_config.full_path])
-    mock_reexec.assert_called_once_with([{"name": task}], None)
+      mock_reexec.assert_called_once_with(
+          [{"name": task}],
+          None,
+          config_path=fake_config.full_path,
+          tpu_version=None,
+      )
     self.assertEqual(
         [c[0] for c in calls.mock_calls], ["reexec", "run_benchmarks"]
     )
@@ -1331,6 +1340,24 @@ benchmark:
     self.assertEqual(
         kwargs["xprof_device_timing_aggregation"], device_timing_aggregation
     )
+
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_tpu_version_forwarded(self, mock_run_benchmarks):
+    """Verifies --tpu_version is forwarded to runner.run_benchmarks."""
+    cli.run([
+        "benchmark",
+        "run",
+        "gemm",
+        "--tpu_version",
+        "tpu7x",
+        "-m",
+        "1024",
+    ])
+    mock_run_benchmarks.assert_called_once()
+    _, kwargs = mock_run_benchmarks.call_args
+    self.assertEqual(kwargs["tpu_version"], "tpu7x")
+    _, task_config = kwargs["tasks"][0]
+    self.assertEqual(task_config.m, 1024)
 
 
 if __name__ == "__main__":

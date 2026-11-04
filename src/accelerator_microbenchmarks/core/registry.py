@@ -1,5 +1,6 @@
 """Registry system for JAX benchmarks."""
 
+import dataclasses
 from typing import Any, Sequence
 
 
@@ -13,6 +14,12 @@ class BenchmarkRegistry:
     self._aliases: dict[str, str] = {}
     # Set of primary benchmark names flagged as experimental (excluded from default CLI discovery).
     self._experimental: set[str] = set()
+    # Mapping of (primary_name, generation) to generation-specific benchmark
+    # subclass overrides.
+    self._overrides: dict[tuple[str, str], type[Any]] = {}
+    # Mapping of (primary_name, generation) to generation-specific parameter
+    # defaults.
+    self._param_defaults: dict[tuple[str, str], dict[str, Any]] = {}
 
   def register(
       self,
@@ -41,9 +48,86 @@ class BenchmarkRegistry:
 
     return wrapper
 
-  def get_benchmark(self, name: str) -> type[Any]:
+  def register_override(self, name: str, *, generation: str):
+    """Registers `cls` as the implementation of `name` on `generation`."""
+
+    def wrapper(cls: type[Any]) -> type[Any]:
+      primary = self._aliases.get(name, name)
+      if primary not in self._benchmarks:
+        raise KeyError(
+            f"Cannot register override for unknown benchmark '{name}'."
+        )
+      public_cls = self._benchmarks[primary]
+      if not issubclass(cls, public_cls):
+        raise TypeError(f"{cls.__name__} must subclass the public '{name}'.")
+      if cls.Config is not public_cls.Config:
+        raise TypeError(
+            f"{cls.__name__}.Config must be {public_cls.__name__}.Config."
+        )
+      if cls.name not in (public_cls.name, cls.__name__):
+        raise ValueError(
+            f"{cls.__name__}.name must be '{public_cls.name}', got"
+            f" '{cls.name}'."
+        )
+      cls.name = public_cls.name
+      gen_key = str(generation)
+      existing = self._overrides.get((primary, gen_key))
+      if existing is not None and existing is not cls:
+        raise ValueError(
+            f"Override for benchmark '{name}' on generation '{gen_key}' is"
+            " already registered."
+        )
+      self._overrides[(primary, gen_key)] = cls
+      return cls
+
+    return wrapper
+
+  def register_param_defaults(
+      self, name: str, *, generation: str, **defaults: Any
+  ) -> None:
+    """Registers generation-scoped default parameter overrides for `name`."""
+    primary = self._aliases.get(name, name)
+    if primary not in self._benchmarks:
+      raise KeyError(
+          f"Cannot register param defaults for unknown benchmark '{name}'."
+      )
+    public_cls = self._benchmarks[primary]
+    valid_fields = {
+        f.name for f in dataclasses.fields(public_cls.Config) if f.init
+    }
+    invalid_keys = sorted(set(defaults) - valid_fields)
+    if invalid_keys:
+      raise ValueError(
+          f"Unknown Config field(s) {invalid_keys} for benchmark '{name}'."
+          f" Valid fields: {sorted(valid_fields)}"
+      )
+    gen_key = str(generation)
+    if (primary, gen_key) in self._param_defaults:
+      raise ValueError(
+          f"Param defaults for benchmark '{name}' on generation '{gen_key}'"
+          " are already registered."
+      )
+    self._param_defaults[(primary, gen_key)] = dict(defaults)
+
+  def get_param_defaults(
+      self, name: str, generation: str | None = None
+  ) -> dict[str, Any]:
+    """Returns generation-scoped default parameter overrides for `name`."""
+    if generation is None:
+      return {}
+    primary = self._aliases.get(name, name)
+    return dict(self._param_defaults.get((primary, str(generation)), {}))
+
+  def get_benchmark(
+      self, name: str, generation: str | None = None
+  ) -> type[Any]:
     """Retrieve a benchmark class by name or alias."""
     primary_name = self._aliases.get(name, name)
+    if (
+        generation is not None
+        and (primary_name, str(generation)) in self._overrides
+    ):
+      return self._overrides[(primary_name, str(generation))]
     if primary_name in self._benchmarks:
       return self._benchmarks[primary_name]
 

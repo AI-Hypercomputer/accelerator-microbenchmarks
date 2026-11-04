@@ -79,6 +79,14 @@ class BaseBenchmarkParams:
   # Set False where bytes are counted with `itemsize`: TPUs pack sub-byte
   # dtypes (e.g. `int4`), so that would over-report bandwidth.
   ALLOW_SUB_BYTE_DTYPES: ClassVar[bool] = True
+  _explicit_fields: ClassVar[frozenset[str]] = frozenset()
+
+  def __new__(cls, *args: Any, **kwargs: Any):
+    instance = super().__new__(cls)
+    init_fields = [f.name for f in dataclasses.fields(cls) if f.init]
+    explicit = set(init_fields[: len(args)]) | (set(kwargs) & set(init_fields))
+    object.__setattr__(instance, "_explicit_fields", frozenset(explicit))
+    return instance
 
   warmup_tries: int = dataclasses.field(
       default=10,
@@ -309,6 +317,34 @@ class BaseBenchmarkParams:
     self._coerce_enums()
     self._validate_bounds()
     self._validate_dtypes()
+
+  def with_generation_defaults(
+      self, param_defaults: dict[str, Any]
+  ) -> "BaseBenchmarkParams":
+    """Returns a copy with `param_defaults` applied to non-explicit fields.
+
+    Must be called before `expand_test_cases()`, because `dataclasses.replace()`
+    and `dataclasses.asdict()` copies pass every field to `__init__` and mark
+    all fields as explicit.
+
+    Args:
+      param_defaults: Mapping of field names to generation-specific default
+        values.
+    """
+    if not param_defaults:
+      return self
+    explicit_fields = self._explicit_fields
+    init_fields = {f.name for f in dataclasses.fields(self) if f.init}
+    updates = {
+        k: v
+        for k, v in param_defaults.items()
+        if k in init_fields and k not in explicit_fields
+    }
+    if not updates:
+      return self
+    updated = dataclasses.replace(self, **updates)
+    object.__setattr__(updated, "_explicit_fields", explicit_fields)
+    return updated
 
   def expand_test_cases(self) -> Sequence["BaseBenchmarkParams"]:
     """Default 1-to-1 mapping: returns [self]."""

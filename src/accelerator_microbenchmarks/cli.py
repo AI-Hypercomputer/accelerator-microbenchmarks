@@ -24,6 +24,9 @@ _REEXEC_SENTINEL = "_TPUMS_ENV_REEXEC"
 def _maybe_reexec_for_op_env(
     benchmark_configs: Sequence[dict[str, Any]],
     xla_flags_file_path: str | None = None,
+    *,
+    config_path: str | None = None,
+    tpu_version: str | None = None,
 ) -> None:
   """Re-execs once with env vars from op_flags.yaml if any are not yet applied.
 
@@ -35,12 +38,22 @@ def _maybe_reexec_for_op_env(
   Args:
     benchmark_configs: Benchmark config dicts with `"name"` keys.
     xla_flags_file_path: Optional path to a custom op_flags YAML file.
+    config_path: Optional config path used to infer internal TPU generation.
+    tpu_version: Optional TPU generation identifier from `--tpu_version`.
   """
   if os.environ.get(_REEXEC_SENTINEL) == "1":
     return
-  _, op_env = runner.get_op_flags_and_env(
-      list(benchmark_configs), xla_flags_file_path=xla_flags_file_path
-  )
+  inferred_gen = None
+  if inferred_gen is not None:
+    _, op_env = runner.get_op_flags_and_env(
+        list(benchmark_configs),
+        xla_flags_file_path=xla_flags_file_path,
+        generation=inferred_gen,
+    )
+  else:
+    _, op_env = runner.get_op_flags_and_env(
+        list(benchmark_configs), xla_flags_file_path=xla_flags_file_path
+    )
   if not op_env or all(os.environ.get(k) == v for k, v in op_env.items()):
     return
   env = dict(os.environ)
@@ -81,6 +94,15 @@ def _add_common_execution_args(parser: argparse.ArgumentParser) -> None:
           " SliceBuilder, so no ICI is available). Only benchmarks that do not"
           " require ICI (e.g. gemm, hbm, host_to_device, device_to_host) are"
           " allowed; others raise an error."
+      ),
+  )
+  parser.add_argument(
+      "--tpu_version",
+      type=str,
+      default=None,
+      help=(
+          "Optional TPU generation identifier (e.g. tpu7x, v6e) used to"
+          " select generation-specific XLA flags and parameter defaults."
       ),
   )
 
@@ -185,10 +207,11 @@ def parse_cli_configs(
 ) -> list[base.BaseBenchmarkParams]:
   """Builds BaseBenchmarkParams instances from parsed CLI arguments.
 
-  Dataclass scalar defaults populate `base_params`, while explicitly provided
-  CLI flags (parsed as lists via `nargs="+"`) populate `sweep_spec` and are
-  expanded via `config.expand_sweep` into their Cartesian product (capped at
-  core.config._MAX_COMBINATIONS combinations).
+  Explicitly provided CLI flags (parsed as lists via `nargs="+"`) populate
+  `sweep_spec` and are expanded via `config.expand_sweep` into their Cartesian
+  product (capped at core.config._MAX_COMBINATIONS combinations). Unspecified
+  flags fall back to dataclass scalar defaults (with generation-scoped defaults
+  applied later in `runner.run_benchmarks`).
 
   Args:
     config_cls: The benchmark configuration dataclass to instantiate.
@@ -199,7 +222,6 @@ def parse_cli_configs(
     A list of `config_cls` instances covering the Cartesian product of all
     CLI parameter values.
   """
-  base_params: dict[str, Any] = {}
   sweep_spec: dict[str, list[Any]] = {}
 
   for field in dataclasses.fields(config_cls):
@@ -208,10 +230,8 @@ def parse_cli_configs(
     value = getattr(parsed_args, field.name)
     if isinstance(value, list):
       sweep_spec[field.name] = value
-    else:
-      base_params[field.name] = value
 
-  expanded_dicts = config.expand_sweep(base_params, sweep_spec or None)
+  expanded_dicts = config.expand_sweep({}, sweep_spec or None)
   return [config_cls(**params) for params in expanded_dicts]
 
 
@@ -344,8 +364,6 @@ def run(argv: Sequence[str]) -> None:
   # 3. Handle `tpums benchmark run-config <path_to_yaml>`
   if args.resource == "benchmark" and args.action == "run-config":
     resolved_path = args.config_path
-    if not os.path.exists(resolved_path) and os.path.exists(args.config_path):
-      resolved_path = args.config_path
 
     raw_configs = config.load_config(resolved_path)
     effective_xprof_timing = (
@@ -377,7 +395,10 @@ def run(argv: Sequence[str]) -> None:
       tasks.append((name, bench_cls.Config(**raw)))
 
     _maybe_reexec_for_op_env(
-        [{"name": name} for name, _ in tasks], args.xla_flags_file_path
+        [{"name": name} for name, _ in tasks],
+        args.xla_flags_file_path,
+        config_path=args.config_path,
+        tpu_version=args.tpu_version,
     )
     runner.run_benchmarks(
         tasks=tasks,
@@ -390,6 +411,7 @@ def run(argv: Sequence[str]) -> None:
         config_path=args.config_path,
         xla_flags_file_path=args.xla_flags_file_path,
         standalone_host_init=effective_standalone_host_init,
+        tpu_version=args.tpu_version,
     )
     return
 
@@ -397,7 +419,11 @@ def run(argv: Sequence[str]) -> None:
   if args.resource == "benchmark" and args.action == "run":
     bench_cls = registry.benchmark_registry.get_benchmark(args.task)
     task_configs = parse_cli_configs(bench_cls.Config, args)
-    _maybe_reexec_for_op_env([{"name": args.task}], args.xla_flags_file_path)
+    _maybe_reexec_for_op_env(
+        [{"name": args.task}],
+        args.xla_flags_file_path,
+        tpu_version=args.tpu_version,
+    )
     runner.run_benchmarks(
         tasks=[(args.task, task_config) for task_config in task_configs],
         output_dir=args.output_dir,
@@ -406,6 +432,7 @@ def run(argv: Sequence[str]) -> None:
         xprof_dir=args.xprof_dir,
         xla_flags_file_path=args.xla_flags_file_path,
         standalone_host_init=args.standalone_host_init,
+        tpu_version=args.tpu_version,
     )
     return
 
