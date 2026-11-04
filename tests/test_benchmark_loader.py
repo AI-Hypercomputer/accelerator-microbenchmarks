@@ -42,6 +42,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "transformer_layer_moe",
             "swiglu",
             "rmsnorm",
+            "sigmoid",
             "rope",
             "quantization",
             "quantize_transpose",
