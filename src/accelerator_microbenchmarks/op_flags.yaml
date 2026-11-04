@@ -127,7 +127,7 @@ gemm_throttling: *gemm_flags
 gemm_chained: *gemm_flags
 
 quantization: *gemm_flags
-transpose_quantization: *gemm_flags
+quantize_transpose: *gemm_flags
 quantization_static_scaling: *gemm_flags
 transpose_quantization_static_scaling: *gemm_flags
 swiglu_fwd: *gemm_flags

@@ -8,6 +8,7 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
+from accelerator_microbenchmarks.kernels import quantize_transpose
 import jax
 import jax.numpy as jnp
 
@@ -90,15 +91,6 @@ class QuantParams(base.SingleDtypeBenchmarkParams):
           )
       },
   )
-  transpose: bool = dataclasses.field(
-      default=False,
-      metadata={
-          "help": (
-              "Quantize the transpose of X: OUT<N, M> = cast(X^T * SF) with"
-              " one scaling factor per column of X (SF<N>, amax over M)."
-          )
-      },
-  )
 
 
 @dataclasses.dataclass
@@ -115,6 +107,7 @@ class SwiGLUBenchmark(base.BaseBenchmark[ComputeParams]):
 
   Y = Swish(A) * B, where [A, B] = Split(X, 2)
   """
+
   Config = ComputeParams
 
   def setup(self):
@@ -173,6 +166,7 @@ class SwiGLUBenchmark(base.BaseBenchmark[ComputeParams]):
 @registry.benchmark_registry.register("rmsnorm", is_experimental=True)
 class RMSNormBenchmark(base.BaseBenchmark[ComputeParams]):
   """RMSNorm benchmark: Y = X / rms(X) * weight."""
+
   Config = ComputeParams
 
   def setup(self):
@@ -234,6 +228,7 @@ class RMSNormBenchmark(base.BaseBenchmark[ComputeParams]):
 @registry.benchmark_registry.register("rope", is_experimental=True)
 class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
   """Rotary Positional Embedding (RoPE) benchmark."""
+
   Config = RoPEParams
 
   def setup(self):
@@ -318,9 +313,8 @@ class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
 class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
   """Rowwise quantization: OUT = cast_quant(X * SF).
 
-  With `transpose=True`, quantizes X^T instead (the legacy
-  `transpose_quantization` benchmark): OUT<N, M> = cast_quant(X^T * SF), where
-  SF<N> holds one scaling factor per column of X (amax over M).
+  For fused transposed quantization, see `QuantizeTransposeBenchmark`
+  (`quantize_transpose`).
   """
 
   Config = QuantParams
@@ -331,13 +325,10 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     out_dtype = dtypes.parse_dtype(self.config.quant_dtype)
     sf_dtype = dtypes.parse_dtype(self.config.scale_dtype)
     q_max = dtypes.get_dtype_max(out_dtype)
-    transpose = self.config.transpose
 
     @jax.jit
     def quant_fn(x):
       with jax.named_scope(constants.MARKER):
-        if transpose:
-          x = x.T
         # Rowwise scaling factor: Q_MAX / amax(row)
         sf = (q_max / jnp.max(jnp.abs(x), axis=-1, keepdims=True)).astype(
             sf_dtype
@@ -348,13 +339,10 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     self._jit_fn = quant_fn
 
   def get_run_identifier(self) -> str:
-    identifier = (
+    return (
         f"m_{self.config.m}_n_{self.config.n}_"
         f"{self.config.quant_dtype}_sf_{self.config.scale_dtype}"
     )
-    if self.config.transpose:
-      identifier += "_transpose"
-    return identifier
 
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     m, n = self.config.m, self.config.n
@@ -377,18 +365,29 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     return self._jit_fn(x)
 
   def get_total_bytes(self) -> float:
+    """Returns 1-pass algorithmic HBM traffic (read X, write OUT, write SF).
+
+    Like all other benchmarks in the suite (`RMSNormBenchmark`,
+    `SwiGLUBenchmark`, `RoPEBenchmark`, `FlashAttentionBenchmark`,
+    `MatmulBenchmark`, and rowwise `QuantizationBenchmark`), this reports the
+    minimum theoretical 1-pass algorithmic I/O bytes rather than physical
+    multi-pass or tile-rematerialization reads, even when multi-tile transposed
+    quantization physically reads X twice (amax phase + quantize phase).
+    """
     m, n = self.config.m, self.config.n
     in_itemsize = dtypes.get_dtype_bytes(self.config.dtype)
     out_itemsize = dtypes.get_dtype_bytes(self.config.quant_dtype)
     sf_itemsize = dtypes.get_dtype_bytes(self.config.scale_dtype)
-    # One scaling factor per output row: M rows, or N rows when transposed.
-    num_scales = n if self.config.transpose else m
-    # Read X, Write Out, Write SF
+    # Read X, Write Out, Write SF (one per output row)
     return float(
         (m * n * in_itemsize)
         + (m * n * out_itemsize)
-        + (num_scales * sf_itemsize)
+        + (self._num_scales() * sf_itemsize)
     )
+
+  def _num_scales(self) -> int:
+    """Number of scaling factors: one per output row."""
+    return self.config.m
 
   def get_arithmetic_intensity(self) -> float:
     m, n = self.config.m, self.config.n
@@ -426,9 +425,74 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     }
 
 
+@registry.benchmark_registry.register(
+    "quantize_transpose", is_experimental=True
+)
+class QuantizeTransposeBenchmark(QuantizationBenchmark):
+  """Transposed quantization: OUT<N, M> = cast_quant(X^T * SF).
+
+  SF<N> holds one scaling factor per column of X. Runs as a fused Pallas kernel
+  (`quantize_transpose.quantize_transpose`) that does not write X^T to HBM.
+  """
+
+  def setup(self):
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    out_dtype = dtypes.parse_dtype(self.config.quant_dtype)
+    sf_dtype = dtypes.parse_dtype(self.config.scale_dtype)
+    q_max = dtypes.get_dtype_max(out_dtype)
+    bm, bn = self._get_transpose_blocks()
+
+    def per_device_quant_fn(x):
+      with jax.named_scope(constants.MARKER):
+        return quantize_transpose.quantize_transpose(
+            x,
+            out_dtype=out_dtype,
+            scale_dtype=sf_dtype,
+            q_max=q_max,
+            block_m=bm,
+            block_n=bn,
+        )
+
+    # X is replicated, so every device runs the full [M, N] kernel, as in
+    # QuantizationBenchmark.
+    replicated = jax.sharding.PartitionSpec(None, None)
+    self._jit_fn = jax.jit(
+        jax.shard_map(
+            per_device_quant_fn,
+            mesh=self.mesh,
+            in_specs=replicated,
+            out_specs=(replicated, replicated),
+            check_vma=False,
+        )
+    )
+
+  def _num_scales(self) -> int:
+    """One scaling factor per column of X (output row of X^T)."""
+    return self.config.n
+
+  def _get_transpose_blocks(self) -> tuple[int, int]:
+    """Derives the `(block_m, block_n)` tile for the current config."""
+    return quantize_transpose.default_transpose_blocks(
+        self.config.m,
+        self.config.n,
+        in_dtype=dtypes.parse_dtype(self.config.dtype),
+        out_dtype=dtypes.parse_dtype(self.config.quant_dtype),
+        scale_dtype=dtypes.parse_dtype(self.config.scale_dtype),
+    )
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    metadata = super().get_workload_metadata()
+    bm, bn = self._get_transpose_blocks()
+    metadata["block_m"] = bm
+    metadata["block_n"] = bn
+    return metadata
+
+
 @registry.benchmark_registry.register("simple_add", is_experimental=True)
 class AddBenchmark(base.BaseBenchmark[AddParams]):
   """Simple Z = X + Y benchmark."""
+
   Config = AddParams
 
   def setup(self):

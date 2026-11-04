@@ -44,6 +44,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "rmsnorm",
             "rope",
             "quantization",
+            "quantize_transpose",
             "simple_add",
             "host_to_device",
             "device_to_host",

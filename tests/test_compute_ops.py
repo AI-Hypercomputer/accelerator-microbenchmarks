@@ -1,11 +1,15 @@
 """Unit tests for compute_ops.py."""
 
+import functools
+from unittest import mock
+
 from absl.testing import absltest
 from absl.testing import parameterized
 from accelerator_microbenchmarks.benchmarks import compute_ops
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import system
+from accelerator_microbenchmarks.kernels import quantize_transpose
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -33,7 +37,9 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
     self.bm = compute_ops.SwiGLUBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     (x,) = self.bm.generate_inputs()
@@ -44,7 +50,9 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
     self.bm = compute_ops.SwiGLUBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     (x,) = self.bm.generate_inputs()
@@ -56,7 +64,9 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
     self.bm = compute_ops.SwiGLUBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     # Read X (32 * 128 * 2 * 2) + Write Out (32 * 128 * 2)
     # 16384 + 8192 = 24576
@@ -67,7 +77,9 @@ class SwiGLUBenchmarkTest(absltest.TestCase):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
     self.bm = compute_ops.SwiGLUBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     # flops = 32 * 128 * 10 = 40960
     # intensity = 40960 / 24576 = 1.6666666666666667
@@ -97,7 +109,9 @@ class RMSNormBenchmarkTest(absltest.TestCase):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
     self.bm = compute_ops.RMSNormBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     x, w = self.bm.generate_inputs()
@@ -110,7 +124,9 @@ class RMSNormBenchmarkTest(absltest.TestCase):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
     self.bm = compute_ops.RMSNormBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     x, w = self.bm.generate_inputs()
@@ -122,7 +138,9 @@ class RMSNormBenchmarkTest(absltest.TestCase):
     params = {"dim": 128, "batch": 32}
     config = compute_ops.ComputeParams(**params)
     self.bm = compute_ops.RMSNormBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     # Read X (32 * 128 * 2), Read W (128 * 2), Write Out (32 * 128 * 2)
     # 8192 + 256 + 8192 = 16640
@@ -149,7 +167,9 @@ class RoPEBenchmarkTest(absltest.TestCase):
     params = {"seq_len": 64, "head_dim": 64, "batch": 8, "heads": 16}
     config = compute_ops.RoPEParams(**params)
     self.bm = compute_ops.RoPEBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     x, freq_cis = self.bm.generate_inputs()
@@ -162,7 +182,9 @@ class RoPEBenchmarkTest(absltest.TestCase):
     params = {"seq_len": 64, "head_dim": 64, "batch": 8, "heads": 16}
     config = compute_ops.RoPEParams(**params)
     self.bm = compute_ops.RoPEBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     x, freq_cis = self.bm.generate_inputs()
@@ -174,7 +196,9 @@ class RoPEBenchmarkTest(absltest.TestCase):
     params = {"seq_len": 64, "head_dim": 64, "batch": 8, "heads": 16}
     config = compute_ops.RoPEParams(**params)
     self.bm = compute_ops.RoPEBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     # batch * heads * seq_len * head_dim//2 * 8 * 2
     # 8 * 16 * 64 * 32 * 8 * 2 = 4194304
@@ -201,7 +225,9 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
     params = {"m": 64, "n": 128}
     config = compute_ops.QuantParams(**params)
     self.bm = compute_ops.QuantizationBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     (x,) = self.bm.generate_inputs()
@@ -212,7 +238,9 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
     params = {"m": 64, "n": 128}
     config = compute_ops.QuantParams(**params)
     self.bm = compute_ops.QuantizationBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     (x,) = self.bm.generate_inputs()
@@ -352,7 +380,9 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
     params = {"m": 64, "n": 128}
     config = compute_ops.QuantParams(**params)
     self.bm = compute_ops.QuantizationBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     # Read X (64 * 128 * 2), Write Out (64 * 128 * 1), Write SF (64 * 2)
     # 16384 + 8192 + 128 = 24704
@@ -363,6 +393,45 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
     self.assertIn("wall_clock_bandwidth_per_device_gb_s", metrics)
     self.assertGreater(metrics["wall_clock_bandwidth_per_device_gb_s"], 0.0)
 
+  def test_calculate_throughput_metrics_zero_latency_warns(self):
+    """Verifies non-positive latency logs a warning and returns inf."""
+    config = compute_ops.QuantParams(m=64, n=128)
+    bm = compute_ops.QuantizationBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    with self.assertLogs(level="WARNING") as cm:
+      metrics = bm.calculate_throughput_metrics(
+          0.0, constants.TimingDomain.WALL_CLOCK
+      )
+    self.assertEqual(
+        metrics["wall_clock_bandwidth_per_device_gb_s"], float("inf")
+    )
+    self.assertIn("Non-positive latency_s", "\n".join(cm.output))
+
+
+class QuantizeTransposeBenchmarkTest(parameterized.TestCase):
+  """Unit tests for the transposed quantization (Pallas kernel) benchmark."""
+
+  def setUp(self):
+    super().setUp()
+    self.mock_mesh = jax.sharding.Mesh(
+        np.array(jax.devices()), axis_names=("device",)
+    )
+
+  def test_benchmark_registered(self):
+    bm_class = registry.benchmark_registry.get_benchmark("quantize_transpose")
+    self.assertEqual(bm_class, compute_ops.QuantizeTransposeBenchmark)
+
+  def test_setup_without_mesh_raises(self):
+    bm = compute_ops.QuantizeTransposeBenchmark(
+        config=compute_ops.QuantParams(m=64, n=128),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    with self.assertRaisesRegex(ValueError, "Mesh not initialized"):
+      bm.setup()
+
   @parameterized.named_parameters(
       ("fp8_bf16_sf", "float8_e4m3fn", "bfloat16"),
       ("fp4_bf16_sf", "float4_e2m1fn", "bfloat16"),
@@ -370,29 +439,17 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
       ("fp8_fp32_sf", "float8_e4m3fn", "float32"),
       ("int4_fp32_sf", "int4", "float32"),
   )
-  def test_transpose_matches_rowwise_quantize_of_transposed_input(
+  def test_matches_rowwise_quantize_of_transposed_input(
       self, quant_dtype, scale_dtype
   ):
-    """Verifies transpose=True on X equals transpose=False on X^T."""
-    bm_t = compute_ops.QuantizationBenchmark(
+    """Verifies the kernel on X equals QuantizationBenchmark on X^T."""
+    bm_t = compute_ops.QuantizeTransposeBenchmark(
         config=compute_ops.QuantParams(
-            m=64,
-            n=128,
-            quant_dtype=quant_dtype,
-            scale_dtype=scale_dtype,
-            transpose=True,
+            m=64, n=128, quant_dtype=quant_dtype, scale_dtype=scale_dtype
         ),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
         mesh=self.mock_mesh,
     )
-    bm_t.setup()
-    (x,) = bm_t.generate_inputs()
-    out_t, sf_t = bm_t.run_op(x)
-    self.assertEqual(out_t.shape, (128, 64))
-    self.assertEqual(out_t.dtype, jnp.dtype(quant_dtype))
-    self.assertEqual(sf_t.shape, (128, 1))
-    self.assertEqual(sf_t.dtype, jnp.dtype(scale_dtype))
-
     bm_ref = compute_ops.QuantizationBenchmark(
         config=compute_ops.QuantParams(
             m=128, n=64, quant_dtype=quant_dtype, scale_dtype=scale_dtype
@@ -400,8 +457,24 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
         mesh=self.mock_mesh,
     )
+    bm_t.setup()
     bm_ref.setup()
+
+    (x,) = bm_t.generate_inputs()
+    with mock.patch.object(
+        quantize_transpose,
+        "quantize_transpose",
+        functools.partial(
+            quantize_transpose.quantize_transpose, interpret=True
+        ),
+    ):
+      out_t, sf_t = bm_t.run_op(x)
     out_ref, sf_ref = bm_ref.run_op(x.T)
+
+    self.assertEqual(out_t.shape, (128, 64))
+    self.assertEqual(out_t.dtype, jnp.dtype(quant_dtype))
+    self.assertEqual(sf_t.shape, (128, 1))
+    self.assertEqual(sf_t.dtype, jnp.dtype(scale_dtype))
     np.testing.assert_array_equal(
         np.asarray(out_t, dtype=np.float32),
         np.asarray(out_ref, dtype=np.float32),
@@ -420,61 +493,27 @@ class QuantizationBenchmarkTest(parameterized.TestCase):
       # 16384 + (64 * 128 * 0.5) + (128 * 2) = 20736
       ("int4_bf16_sf", "int4", "bfloat16", 20736.0),
   )
-  def test_transpose_total_bytes_identifier_and_metadata(
+  def test_total_bytes_identifier_and_metadata(
       self, quant_dtype, scale_dtype, expected_bytes
   ):
-    """Verifies N-length scales in bytes, the identifier suffix, and metadata."""
-    bm = compute_ops.QuantizationBenchmark(
+    """Verifies N-length scales in bytes, the identifier, and metadata."""
+    bm = compute_ops.QuantizeTransposeBenchmark(
         config=compute_ops.QuantParams(
-            m=64,
-            n=128,
-            quant_dtype=quant_dtype,
-            scale_dtype=scale_dtype,
-            transpose=True,
+            m=64, n=128, quant_dtype=quant_dtype, scale_dtype=scale_dtype
         ),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
         mesh=self.mock_mesh,
     )
     self.assertAlmostEqual(bm.get_total_bytes(), expected_bytes)
     self.assertEqual(
-        bm.get_run_identifier(),
-        f"m_64_n_128_{quant_dtype}_sf_{scale_dtype}_transpose",
+        bm.get_run_identifier(), f"m_64_n_128_{quant_dtype}_sf_{scale_dtype}"
     )
     metadata = bm.get_workload_metadata()
     self.assertAlmostEqual(
         metadata["total_bytes_mib"], expected_bytes / (1024 * 1024)
     )
-
-  def test_transpose_defaults_to_false(self):
-    """Verifies the default keeps the non-transposed identifier."""
-    bm = compute_ops.QuantizationBenchmark(
-        config=compute_ops.QuantParams(m=64, n=128),
-        hardware_spec=system.TPU7X_HARDWARE_SPEC,
-        mesh=self.mock_mesh,
-    )
-    self.assertFalse(bm.config.transpose)
-    self.assertEqual(
-        bm.get_run_identifier(), "m_64_n_128_float8_e4m3fn_sf_bfloat16"
-    )
-
-  def test_calculate_throughput_metrics_zero_latency_warns(self):
-    """Verifies zero/negative latency logs a warning and returns inf bandwidth."""
-    config = compute_ops.QuantParams(m=64, n=128)
-    bm = compute_ops.QuantizationBenchmark(
-        config=config,
-        hardware_spec=system.TPU7X_HARDWARE_SPEC,
-        mesh=self.mock_mesh,
-    )
-    with self.assertLogs(level="WARNING") as cm:
-      metrics = bm.calculate_throughput_metrics(
-          0.0, constants.TimingDomain.WALL_CLOCK
-      )
-    self.assertEqual(
-        metrics["wall_clock_bandwidth_per_device_gb_s"], float("inf")
-    )
-    self.assertTrue(
-        any("Non-positive latency_s" in msg for msg in cm.output)
-    )
+    self.assertEqual(metadata["block_m"], 64)
+    self.assertEqual(metadata["block_n"], 128)
 
 
 class AddBenchmarkTest(absltest.TestCase):
@@ -494,7 +533,9 @@ class AddBenchmarkTest(absltest.TestCase):
     params = {"size": 1024}
     config = compute_ops.AddParams(**params)
     self.bm = compute_ops.AddBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     x, y = self.bm.generate_inputs()
@@ -507,7 +548,9 @@ class AddBenchmarkTest(absltest.TestCase):
     params = {"size": 1024}
     config = compute_ops.AddParams(**params)
     self.bm = compute_ops.AddBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
     x, y = self.bm.generate_inputs()
@@ -519,7 +562,9 @@ class AddBenchmarkTest(absltest.TestCase):
     params = {"size": 1024}
     config = compute_ops.AddParams(**params)
     self.bm = compute_ops.AddBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     # Read X, Read Y, Write Z
     # 1024 * 2 * 3 = 6144
