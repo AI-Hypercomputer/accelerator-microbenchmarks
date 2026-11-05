@@ -377,7 +377,7 @@ metrics when `enable_checksum=True`.
 | :--- | :--- | :--- | :--- |
 | `data_size_mib` | `int` | `64` | Payload size transferred per device per iteration in Mebibytes (`1 MiB = 1024 * 1024` bytes). |
 | `dtype` | `str` | `"bfloat16"` | Tensor element data type (e.g., `bfloat16`, `float32`, `int8`). |
-| `transfer_backend` | `str` | `"tpu_sync"` | Transfer implementation: `"tpu_sync"` (default) or `"jax"`. The canonical `tpu7x` and `v6e` configs sweep both `"jax"` and `"tpu_sync"`. |
+| `transfer_backend` | `str` | `"tpu_sync"` | Transfer implementation: `"tpu_sync"` (default, used by canonical configs) or `"jax"`. |
 | `scope` | `str` | `"host"` | Hardware measurement scope: `"device"` (1 local device), `"chip"` (1 physical chip = `devices_per_chip` local devices), or `"host"` (all local devices concurrently, default). |
 | `local_index` | `int` | `0` | Host-local index of the target unit within `scope`: the N-th local device (`scope="device"`) or N-th local chip (`scope="chip"`). Must be `0` for `scope="host"`. |
 
