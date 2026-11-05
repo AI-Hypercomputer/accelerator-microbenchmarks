@@ -1,8 +1,9 @@
-"""Unit tests for BaseRunExecutor and SoakingRunExecutor."""
+"""Unit tests for BaseRunExecutor, WindowedRunExecutor, SoakingRunExecutor, and PulseRunExecutor."""
 
 import contextlib
 import dataclasses
 import io
+import itertools
 import os
 import shutil
 import tempfile
@@ -76,8 +77,27 @@ class SoakingDummyBenchmark(DummyBenchmark):
   Config = SoakingDummyParams  # pylint: disable=invalid-name
 
 
+@dataclasses.dataclass
+class PulseDummyParams(
+    config_module.PulseExecutionParamsMixin, base.BaseBenchmarkParams
+):
+  """Dummy parameters with PulseExecutionParamsMixin enabled."""
+
+
+class PulseDummyBenchmark(DummyBenchmark):
+  """Dummy benchmark using PulseDummyParams."""
+
+  Config = PulseDummyParams  # pylint: disable=invalid-name
+
+
+@contextlib.contextmanager
+def _fake_trace(trace_dir, **_kwargs):
+  os.makedirs(trace_dir, exist_ok=True)
+  yield
+
+
 class SoakingBenchmarkTest(absltest.TestCase):
-  """Tests for SoakingExecutionParamsMixin and SoakingRunExecutor."""
+  """Tests for WindowedRunExecutor, SoakingRunExecutor, and PulseRunExecutor."""
 
   def setUp(self):
     super().setUp()
@@ -160,10 +180,10 @@ class SoakingBenchmarkTest(absltest.TestCase):
       return_value=[1.0],
   )
   @mock.patch("jax.profiler.trace")
-  def test_samples_per_run_and_run_chunk(
+  def test_samples_per_run_and_run_window_ops(
       self, mock_trace, mock_parse_xprof, mock_upload_xprof
   ):
-    """Verifies _samples_per_run, _run_chunk(samples=...), and banner."""
+    """Verifies run_ops_per_window, _run_window_ops(num_ops=...), and banner."""
     del mock_trace, mock_parse_xprof, mock_upload_xprof
 
     class ExperimentalSoakingDummyBenchmark(SoakingDummyBenchmark):
@@ -178,9 +198,15 @@ class SoakingBenchmarkTest(absltest.TestCase):
           config=cfg,
           xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
       )
-      self.assertEqual(bm.executor._samples_per_run(), 2)  # pylint: disable=protected-access
-      out_inputs = bm.executor._run_chunk(*bm.generate_inputs(), samples=2)  # pylint: disable=protected-access
+      self.assertIsInstance(bm.executor, executor.SoakingRunExecutor)
+      self.assertIsInstance(bm.executor, executor.WindowedRunExecutor)
+      self.assertEqual(bm.executor.run_ops_per_window, 2)
+      # pylint: disable-next=protected-access
+      out_inputs, out_outputs = bm.executor._run_window_ops(
+          *bm.generate_inputs(), num_ops=2
+      )
       self.assertLen(out_inputs, 1)
+      self.assertIsNotNone(out_outputs)
       buf = io.StringIO()
       with contextlib.redirect_stdout(buf):
         res = bm.run()
@@ -211,7 +237,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
       self.assertEqual(mock_run_op.call_count, 10)
 
   def test_soaking_executor_validates_xprof_requirements(self):
-    """Verifies SoakingRunExecutor fails fast when XProf or soak requirements are unmet."""
+    """Verifies SoakingRunExecutor fails fast when XProf requirements are unmet."""
     # 1. xprof_timing=False
     bm_no_xprof = SoakingDummyBenchmark(
         config=SoakingDummyParams(warmup_tries=0, min_duration_s=0.01),
@@ -233,17 +259,6 @@ class SoakingBenchmarkTest(absltest.TestCase):
         ValueError, "SoakingRunExecutor requires xprof_timing=True"
     ):
       bm_no_dir.executor.execute(bm_no_dir.generate_inputs(), None)
-
-    # 3. min_duration_s <= 0.0
-    bm_zero_dur = SoakingDummyBenchmark(
-        config=SoakingDummyParams(warmup_tries=0, min_duration_s=0.01),
-        xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir="/tmp/soak"),
-    )
-    bm_zero_dur.config.min_duration_s = 0.0
-    with self.assertRaisesRegex(
-        ValueError, "SoakingRunExecutor requires min_duration_s > 0.0."
-    ):
-      bm_zero_dur.run()
 
   def test_soaking_loop_records_pre_and_post_soaking_windows(self):
     """Verifies SoakingRunExecutor.execute records pre_soaking_window and post_soaking_window."""
@@ -326,8 +341,8 @@ class SoakingBenchmarkTest(absltest.TestCase):
     self.assertIsNone(fallback_metrics[constants.XPROF_POST_SOAKING_P50_MS])
     self.assertIsNone(fallback_metrics[constants.XPROF_SLOWDOWN_RATIO])
 
-  def test_soaking_execute_phases_and_chunk_accounting(self):
-    """Verifies Phase 1, Phase 2 soak chunks, and Phase 3 execute via _run_window."""
+  def test_soaking_execute_phases_and_window_accounting(self):
+    """Verifies Phase 1, Phase 2 soak windows, and Phase 3 execute via _run_window."""
     cfg = SoakingDummyParams(
         warmup_tries=0, samples_per_run=2, min_duration_s=0.01
     )
@@ -380,19 +395,17 @@ class SoakingBenchmarkTest(absltest.TestCase):
         events[post_enter + 1 : post_exit],
         ["run_op"] * cfg.samples_per_run + ["block"],
     )
-    # Every executed iteration is counted once in actual_runs and each chunk
+    # Every executed iteration is counted once in actual_runs and each window
     # contributes one wall-clock sample.
     self.assertEqual(actual_runs, events.count("run_op"))
     self.assertEqual(actual_runs, len(raw_times) * cfg.samples_per_run)
-    # Phase 1 + >= 1 soak chunk + Phase 3.
+    # Phase 1 + >= 1 soak window + Phase 3.
     self.assertGreaterEqual(len(raw_times), 3)
-    self.assertLen(bm.executor.soak_wall_ms, len(raw_times) - 2)
-    self.assertEqual(raw_times[1:-1], bm.executor.soak_wall_ms)
     # Only the traced `post_soaking_window` feeds xprof_* stats.
     self.assertEqual(exec_result.xprof_expected_runs, cfg.samples_per_run)
 
-  def test_soak_wall_ms_reflects_device_completion_time(self):
-    """Verifies soak chunks are timed to device completion, not async dispatch."""
+  def test_window_durations_reflect_device_completion_time(self):
+    """Verifies windows are timed to device completion, not async dispatch."""
     cfg = SoakingDummyParams(
         warmup_tries=0, samples_per_run=1, min_duration_s=0.05
     )
@@ -418,28 +431,17 @@ class SoakingBenchmarkTest(absltest.TestCase):
             bm.generate_inputs(), tmpdir
         ).durations_ms
 
-    self.assertNotEmpty(bm.executor.soak_wall_ms)
-    for soak_ms in bm.executor.soak_wall_ms:
-      self.assertGreaterEqual(soak_ms, delay_s * 1000.0)
-    self.assertGreaterEqual(raw_times[0], delay_s * 1000.0)
-    self.assertGreaterEqual(raw_times[-1], delay_s * 1000.0)
+    self.assertGreaterEqual(len(raw_times), 3)
+    for window_ms in raw_times:
+      self.assertGreaterEqual(window_ms, delay_s * 1000.0)
 
-  def test_wall_clock_soaking_stats_derived_from_untraced_soak_chunks(self):
-    """Verifies wall-clock pre_soaking/post_soaking p50 use first vs last soak chunk and ignore Phase 1/3 windows.
-
-    On fast clock-skip throttling hosts the traced `post_soaking_window` can
-    read un-throttled after a profiler-init gap, so the wall-clock slowdown must
-    be sourced from the untraced Phase 2 soak chunks (`soak_wall_ms[0]` vs
-    `soak_wall_ms[-1]`).
-    """
+  def test_wall_clock_soaking_stats_derived_from_pre_and_post_windows(self):
+    """Verifies wall-clock pre_soaking/post_soaking p50 use pre_soaking_window and post_soaking_window."""
     cfg = SoakingDummyParams(
         warmup_tries=1, min_duration_s=1.0, samples_per_run=2
     )
     bm = SoakingDummyBenchmark(config=cfg)
-    soak = [10.0] * 7 + [11.0, 11.5, 12.0]
-    bm.executor.soak_wall_ms = list(soak)
-    # Traced windows (first/last) are deliberately faster than the soak.
-    times_ms = [9.0] + soak + [9.0]
+    times_ms = [10.0] + [11.0] * 8 + [12.0]
     metrics = bm.calculate_metrics(times_ms)
     self.assertAlmostEqual(
         metrics[constants.WALL_CLOCK_PRE_SOAKING_P50_MS], 10.0, places=4
@@ -1504,6 +1506,243 @@ class SoakingBenchmarkTest(absltest.TestCase):
     ):
       bm.executor.get_xprof_durations("/tmp/fake")
 
+  def test_pulse_execute_requires_xprof(self):
+    """Verifies PulseRunExecutor.execute fails fast without XProf timing."""
+    tmpdir = self.create_tempdir().full_path
+    bm_no_xprof = PulseDummyBenchmark(
+        config=PulseDummyParams(warmup_tries=0, num_cycles=2),
+        xprof_config=base.XprofConfig(xprof_timing=False, xprof_dir=tmpdir),
+    )
+    with self.assertRaisesRegex(
+        ValueError, "PulseRunExecutor requires xprof_timing=True"
+    ):
+      bm_no_xprof.executor.execute(bm_no_xprof.generate_inputs(), tmpdir)
+
+  def test_pulse_execute_min_duration_extends_middle_cycles(self):
+    """Verifies min_duration_s > 0.0 extends middle (sleep -> window) pulse cycles."""
+    tmpdir = self.create_tempdir().full_path
+    bm_soak = PulseDummyBenchmark(
+        config=PulseDummyParams(
+            warmup_tries=0, num_cycles=2, min_duration_s=0.05
+        ),
+        xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
+    )
+    # Every perf_counter() call advances 10 ms: soak starts at 0.03 s and the
+    # duration checks after middle windows 1 and 2 see 0.03 s and 0.06 s.
+    clock = itertools.count(start=0.01, step=0.01)
+    with (
+        mock.patch("jax.profiler.trace", side_effect=_fake_trace),
+        mock.patch("time.perf_counter", side_effect=lambda: next(clock)),
+        mock.patch("time.sleep") as mock_sleep,
+    ):
+      res_soak = bm_soak.executor.execute(bm_soak.generate_inputs(), tmpdir)
+    # pre_soaking_window + 2 middle windows + post_soaking_window, with an
+    # idle before each middle window and before post_soaking_window.
+    self.assertEqual(res_soak.actual_runs, 4)
+    self.assertLen(res_soak.durations_ms, 4)
+    self.assertEqual(mock_sleep.call_count, 3)
+
+  def test_pulse_execute_multi_cycle_without_soak(self):
+    """Verifies multi-cycle pulses with min_duration_s=0 run num_cycles pulsed windows with idle sleeps."""
+    for n_cycles in (2, 4):
+      with self.subTest(num_cycles=n_cycles):
+        tmpdir = self.create_tempdir().full_path
+        bm_n = PulseDummyBenchmark(
+            config=PulseDummyParams(warmup_tries=0, num_cycles=n_cycles),
+            xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
+        )
+        with (
+            mock.patch(
+                "jax.profiler.trace", side_effect=_fake_trace
+            ) as mock_trace,
+            mock.patch("time.sleep") as mock_sleep,
+            mock.patch("jax.process_count", return_value=1),
+            mock.patch.object(
+                multihost_utils, "sync_global_devices"
+            ) as mock_barrier,
+        ):
+          res_n = bm_n.executor.execute(bm_n.generate_inputs(), tmpdir)
+        self.assertEqual(res_n.actual_runs, n_cycles)
+        self.assertLen(res_n.durations_ms, n_cycles)
+        self.assertEqual(mock_trace.call_count, 2)
+        self.assertEqual(mock_sleep.call_count, n_cycles - 1)
+        mock_barrier.assert_not_called()
+
+  def test_windowed_calculate_latency_stats_uses_first_and_last_window(self):
+    """Verifies pre/post-soaking wall-clock stats use times_ms[0] and times_ms[-1]."""
+    bm_pulse = PulseDummyBenchmark(
+        config=PulseDummyParams(warmup_tries=0, num_cycles=4)
+    )
+    stats = bm_pulse.calculate_latency_stats(
+        [10.0, 12.0, 18.0, 20.0], constants.TimingDomain.WALL_CLOCK
+    )
+    self.assertAlmostEqual(
+        stats[constants.WALL_CLOCK_PRE_SOAKING_P50_MS], 10.0, places=4
+    )
+    self.assertAlmostEqual(
+        stats[constants.WALL_CLOCK_POST_SOAKING_P50_MS], 20.0, places=4
+    )
+    self.assertAlmostEqual(
+        stats[constants.WALL_CLOCK_SLOWDOWN_RATIO], 2.0, places=4
+    )
+
+  def test_pulse_execute_multihost_barriers_around_idle_sleep(self):
+    """Verifies multi-host pulses place a barrier before and after each idle."""
+    tmpdir = self.create_tempdir().full_path
+    bm_mh = PulseDummyBenchmark(
+        config=PulseDummyParams(
+            warmup_tries=0, num_cycles=3, min_duration_s=0.005
+        ),
+        xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
+    )
+    call_order: list[str] = []
+    clock_val = [0.0]
+
+    def fake_perf_counter():
+      clock_val[0] += 0.01
+      return clock_val[0]
+
+    with (
+        mock.patch("jax.profiler.trace", side_effect=_fake_trace),
+        mock.patch("jax.process_count", return_value=2),
+        mock.patch("time.perf_counter", side_effect=fake_perf_counter),
+        mock.patch.object(
+            multihost_utils,
+            "process_allgather",
+            side_effect=lambda val: val,
+        ) as mock_allgather,
+        mock.patch.object(
+            multihost_utils,
+            "sync_global_devices",
+            side_effect=lambda name: call_order.append(f"barrier:{name}"),
+        ) as mock_barrier,
+        mock.patch(
+            "time.sleep",
+            side_effect=lambda sec: call_order.append(f"sleep:{sec}"),
+        ) as mock_sleep,
+    ):
+      res_mh = bm_mh.executor.execute(bm_mh.generate_inputs(), tmpdir)
+
+    self.assertEqual(res_mh.actual_runs, 3)
+    self.assertLen(res_mh.durations_ms, 3)
+    self.assertEqual(mock_sleep.call_count, 2)
+    self.assertEqual(mock_barrier.call_count, 4)
+    self.assertEqual(mock_allgather.call_count, 1)
+    self.assertEqual(
+        call_order,
+        [
+            "barrier:pulse_idle_start_1",
+            "sleep:0.05",
+            "barrier:pulse_idle_end_1",
+            "barrier:pulse_idle_start_2",
+            "sleep:0.05",
+            "barrier:pulse_idle_end_2",
+        ],
+    )
+
+  def test_multihost_min_duration_soak_synchronizes_loop_exit(self):
+    """Verifies multi-host min_duration_s soak exits only when all hosts finish."""
+    tmpdir = self.create_tempdir().full_path
+    bm = SoakingDummyBenchmark(
+        config=SoakingDummyParams(
+            warmup_tries=0, samples_per_run=2, min_duration_s=1.0
+        ),
+        xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
+    )
+    allgather_replies = [
+        np.array([True, False], dtype=np.bool_),
+        np.array([True, True], dtype=np.bool_),
+    ]
+    clock_val = [0.0]
+
+    def fake_perf_counter():
+      clock_val[0] += 1.5
+      return clock_val[0]
+
+    with (
+        mock.patch("jax.profiler.trace", side_effect=_fake_trace),
+        mock.patch("jax.process_count", return_value=2),
+        mock.patch("time.perf_counter", side_effect=fake_perf_counter),
+        mock.patch.object(
+            multihost_utils,
+            "process_allgather",
+            side_effect=allgather_replies,
+        ) as mock_allgather,
+    ):
+      res = bm.executor.execute(bm.generate_inputs(), tmpdir)
+
+    self.assertEqual(mock_allgather.call_count, 2)
+    self.assertLen(res.durations_ms, 4)
+    self.assertEqual(res.actual_runs, 8)
+
+  def test_soaking_throughput_metrics_derived_for_wall_clock_and_xprof(self):
+    """Verifies SoakingRunExecutor derives pre/post-soaking throughput and validates key prefixes."""
+
+    class ThroughputSoakingDummyBenchmark(SoakingDummyBenchmark):
+      """Soaking dummy benchmark emitting synthetic throughput keys."""
+
+      def calculate_throughput_metrics(
+          self, latency_ms: float, prefix: constants.TimingDomain
+      ):
+        return {
+            f"{prefix}_tflops_per_device": 1000.0 / latency_ms,
+            f"{prefix}_bandwidth_per_device_gb_s": 500.0 / latency_ms,
+        }
+
+    cfg = SoakingDummyParams(
+        warmup_tries=1, min_duration_s=1.0, samples_per_run=2
+    )
+    bm = ThroughputSoakingDummyBenchmark(config=cfg)
+    metrics = bm.calculate_metrics([2.0, 3.0, 3.5, 4.0])
+
+    # Full XProf window availability populates both pre and post throughput.
+    bm.executor.pre_soaking_xprof_durations = [2.0]
+    bm.executor.post_soaking_xprof_durations = [5.0]
+    bm.executor.augment_xprof_metrics(metrics)
+    for key, val in {
+        "wall_clock_pre_soaking_tflops_per_device": 500.0,
+        "wall_clock_post_soaking_tflops_per_device": 250.0,
+        "wall_clock_pre_soaking_bandwidth_per_device_gb_s": 250.0,
+        "wall_clock_post_soaking_bandwidth_per_device_gb_s": 125.0,
+        "xprof_pre_soaking_tflops_per_device": 500.0,
+        "xprof_post_soaking_tflops_per_device": 200.0,
+        "xprof_pre_soaking_bandwidth_per_device_gb_s": 250.0,
+        "xprof_post_soaking_bandwidth_per_device_gb_s": 100.0,
+    }.items():
+      self.assertAlmostEqual(metrics[key], val, places=4)
+
+    # Partial XProf availability populates only the available window.
+    partial_bm = ThroughputSoakingDummyBenchmark(config=cfg)
+    partial_metrics = partial_bm.calculate_metrics([2.0, 3.0, 3.5, 4.0])
+    partial_bm.executor.pre_soaking_xprof_durations = [2.0]
+    partial_bm.executor.post_soaking_xprof_durations = []
+    partial_bm.executor.augment_xprof_metrics(partial_metrics)
+    for key, val in {
+        "xprof_pre_soaking_tflops_per_device": 500.0,
+        "xprof_pre_soaking_bandwidth_per_device_gb_s": 250.0,
+    }.items():
+      self.assertAlmostEqual(partial_metrics[key], val, places=4)
+    self.assertNotIn("xprof_post_soaking_tflops_per_device", partial_metrics)
+    self.assertNotIn(
+        "xprof_post_soaking_bandwidth_per_device_gb_s", partial_metrics
+    )
+
+    # Unprefixed throughput keys must raise ValueError loudly.
+    class BadThroughputSoakingDummyBenchmark(SoakingDummyBenchmark):
+      """Soaking dummy benchmark returning a malformed throughput key."""
+
+      def calculate_throughput_metrics(
+          self, latency_ms: float, prefix: constants.TimingDomain
+      ):
+        del latency_ms, prefix
+        return {"bad_key": 1.0}
+
+    bad_bm = BadThroughputSoakingDummyBenchmark(config=cfg)
+    with self.assertRaisesRegex(
+        ValueError, "Expected throughput key starting with 'wall_clock_'"
+    ):
+      bad_bm.calculate_metrics([1.0, 2.0])
+
 
 class PostRunProcessingTest(absltest.TestCase):
   """Tests for the untimed per-run hook BaseBenchmark.post_run_processing."""
@@ -1563,6 +1802,90 @@ class PostRunProcessingTest(absltest.TestCase):
     self.assertLen(raw_times, 3)
     for run_ms in raw_times:
       self.assertLess(run_ms, hook_delay_s * 1000.0)
+
+  def test_windowed_post_run_processing_per_window_outside_trace_and_timer(
+      self,
+  ):
+    """Verifies per-window post_run_processing outside trace and timer."""
+    cfg = PulseDummyParams(warmup_tries=3, num_cycles=3, idle_s=0.0)
+    events: list[str] = []
+    real_block = jax.block_until_ready
+
+    def recording_block(x):
+      events.append("block")
+      return real_block(x)
+
+    @contextlib.contextmanager
+    def fake_trace(trace_dir, **_kwargs):
+      os.makedirs(trace_dir, exist_ok=True)
+      events.append(f"trace_enter:{os.path.basename(trace_dir)}")
+      yield
+      events.append(f"trace_exit:{os.path.basename(trace_dir)}")
+
+    tmpdir = self.create_tempdir().full_path
+    bm = PulseDummyBenchmark(
+        config=cfg,
+        xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
+    )
+    self.assertIsInstance(bm.executor, executor.PulseRunExecutor)
+    self.assertIsInstance(bm.executor, executor.WindowedRunExecutor)
+    self.assertEqual(bm.executor.run_ops_per_window, 1)
+    with mock.patch.object(bm, "post_run_processing") as mock_warmup_hook:
+      inputs = bm.executor.run_warmup(bm.generate_inputs())
+      mock_warmup_hook.assert_not_called()
+
+    window_last_outputs = []
+
+    def recording_run_op(x):
+      events.append("run_op")
+      out = x * float(len(window_last_outputs) + 1)
+      window_last_outputs.append(out)
+      return out
+
+    hook_delay_s = 0.03
+    hook_calls = []
+
+    def recording_hook(outputs, run_index):
+      events.append(f"hook:{run_index}")
+      time.sleep(hook_delay_s)
+      hook_calls.append((outputs, run_index))
+
+    with (
+        mock.patch.object(bm, "run_op", side_effect=recording_run_op),
+        mock.patch.object(
+            jax, "block_until_ready", side_effect=recording_block
+        ),
+        mock.patch("jax.profiler.trace", side_effect=fake_trace),
+        mock.patch.object(
+            bm, "post_run_processing", side_effect=recording_hook
+        ),
+    ):
+      exec_result = bm.executor.execute(inputs, tmpdir)
+
+    self.assertEqual(exec_result.actual_runs, 3)
+    self.assertLen(exec_result.durations_ms, 3)
+    self.assertLen(hook_calls, 3)
+    for idx, (out, recorded_idx) in enumerate(hook_calls):
+      self.assertEqual(recorded_idx, idx)
+      self.assertIs(out, window_last_outputs[idx])
+    for per_iter_ms in exec_result.durations_ms:
+      self.assertLess(per_iter_ms, hook_delay_s * 1000.0)
+
+    # Verify hook executes strictly outside jax.profiler.trace windows.
+    pre_enter = events.index("trace_enter:pre_soaking_window")
+    pre_exit = events.index("trace_exit:pre_soaking_window")
+    post_enter = events.index("trace_enter:post_soaking_window")
+    post_exit = events.index("trace_exit:post_soaking_window")
+    self.assertEqual(
+        events[pre_enter + 1 : pre_exit],
+        ["run_op", "block"],
+    )
+    self.assertEqual(events[pre_exit + 1], "hook:0")
+    self.assertEqual(
+        events[post_enter + 1 : post_exit],
+        ["run_op", "block"],
+    )
+    self.assertEqual(events[post_exit + 1], "hook:2")
 
 
 if __name__ == "__main__":

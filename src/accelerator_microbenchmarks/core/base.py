@@ -512,15 +512,16 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     return inputs
 
   def post_run_processing(self, outputs: Any, run_index: int) -> None:
-    """Process the outputs of each timed run, outside the timer.
+    """Process the outputs of each timed run or window, outside the timer.
 
-    Called only by BaseRunExecutor, not in warmup or by SoakingRunExecutor.
-    Runs inside the profiler trace, so it must not emit MARKER named scopes,
-    and must synchronize any device work it dispatches before returning.
+    Called by BaseRunExecutor (inside the profiler trace, so it must not emit
+    MARKER named scopes and must synchronize any device work it dispatches
+    before returning) and by WindowedRunExecutor subclasses (outside the
+    profiler trace), never in warmup.
 
     Args:
-      outputs: Outputs returned by `run_op` for the timed iteration.
-      run_index: Zero-based index of the timed iteration.
+      outputs: Outputs returned by the timed run's (or window's final) `run_op`.
+      run_index: Zero-based index of the timed run or window.
     """
     del outputs, run_index  # Unused in base class.
 

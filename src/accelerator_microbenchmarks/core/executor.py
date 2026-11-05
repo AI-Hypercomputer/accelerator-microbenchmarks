@@ -1,5 +1,6 @@
-"""Execution strategies for standard and soaking JAX benchmarks."""
+"""Execution strategies for standard, soaking, and pulsed JAX benchmarks."""
 
+import abc
 from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
@@ -17,10 +18,9 @@ import jax
 from jax.experimental import multihost_utils
 import numpy as np
 
-# Subdirectory names under `local_xprof_dir` for soaking trace snapshots:
-# `pre_soaking_window` captures the post-warmup state at t=0;
-# `post_soaking_window` captures the post-soak throttled state immediately after
-# Phase 2 soak.
+# Subdirectory names under local_xprof_dir for windowed trace snapshots:
+# pre_soaking_window captures the initial traced window before soaking/pulsing,
+# and post_soaking_window captures the final traced window after soaking/pulsing.
 _PRE_SOAKING_TRACE_WINDOW_SUBDIR = "pre_soaking_window"
 _POST_SOAKING_TRACE_WINDOW_SUBDIR = "post_soaking_window"
 
@@ -47,7 +47,8 @@ class ExecutionResult:
   """Outcome of an executor's measurement loop.
 
   Attributes:
-    durations_ms: Per-iteration (or per-chunk for soaking) wall-clock latency.
+    durations_ms: Per-iteration (or per-window for windowed executors)
+      wall-clock latency.
     actual_runs: Total iterations executed by the host loop.
     xprof_expected_runs: Number of traced iterations whose XProf durations feed
       the `xprof_*` latency stats (the upper bound for `xprof_captured_runs`),
@@ -631,41 +632,40 @@ class BaseRunExecutor:
     del metrics
 
 
-class SoakingRunExecutor(BaseRunExecutor):
-  """Continuous soaking execution strategy with pre-soaking, untraced soak, and post-soaking windows.
+def _positive_p50(durations: Sequence[float]) -> Optional[float]:
+  """Returns the 50th percentile of `durations` if strictly positive, else None."""
+  if not durations:
+    return None
+  p50 = float(np.percentile(durations, 50))
+  return p50 if p50 > 0 else None
 
-  Chronological Execution Pipeline:
-    1. Warmup (`run_warmup`): Executes untraced chunks (up to `samples_per_run`
-       iterations per chunk) until `warmup_tries` iterations have elapsed.
-    2. Phase 1 — Pre-Soaking Window (`pre_soaking_window` at `t = 0s`): Executes
-       1 traced window of `samples_per_run` iterations immediately after warmup
-       to capture pre-soaking device latency (`xprof_pre_soaking_p50_ms`).
-    3. Phase 2 — Untraced Thermal Soak (`min_duration_s` > 0.0): Executes
-       continuous, untraced chunks of `samples_per_run` iterations until elapsed
-       Phase 2 time `>= min_duration_s` to drive the accelerator to thermal
-       steady state without `jax.profiler.trace` flush gaps (`num_runs` is not
-       used in soaking mode). Wall-clock soaking metrics
-       (`wall_clock_pre_soaking_p50_ms`, `wall_clock_post_soaking_p50_ms`,
-       `wall_clock_slowdown_ratio`) are derived exclusively from the first and
-       last untraced soak chunks (`soak_wall_ms[0]` and `soak_wall_ms[-1]`).
-    4. Phase 3 — Post-Soaking Window (`post_soaking_window` at
-       `t = end of soak`): Executes 1 traced window of `samples_per_run`
-       iterations immediately after Phase 2 soak to capture post-soaking device
-       latency (`xprof_post_soaking_p50_ms`) and firmware thermal telemetry.
+
+class WindowedRunExecutor(BaseRunExecutor, abc.ABC):
+  """Shared execution strategy with traced pre/post-soaking windows and untraced middle windows.
+
+  Subclasses implement `_run_soaking_windows()` to specialize the untraced
+  middle phase between the traced `pre_soaking_window` (`t = 0s`) and
+  `post_soaking_window`:
+    - `SoakingRunExecutor`: continuous `min_duration_s` thermal soak with
+      `samples_per_run` back-to-back iterations per window.
+    - `PulseRunExecutor`: at least `num_cycles` active load cycles separated
+      by `idle_s` host pauses (1 `run_op` per window).
   """
 
   def __init__(self, benchmark: Any):
     super().__init__(benchmark)
     self.pre_soaking_xprof_durations: list[float] = []
     self.post_soaking_xprof_durations: list[float] = []
-    # Per-chunk wall-clock latency (ms/iter) of the untraced Phase 2 soak
-    # chunks; the traced Phase 1/3 windows are excluded.
-    self.soak_wall_ms: list[float] = []
     self._result_details: dict[str, Any] = {}
 
-  def _samples_per_run(self) -> int:
-    """Returns the number of back-to-back iterations per timing window."""
-    return int(self.config.samples_per_run)
+  @property
+  def run_ops_per_window(self) -> int:
+    """Returns the number of back-to-back `run_op` calls per timing window.
+
+    Defaults to 1 for single-op-per-window executors; subclasses that batch
+    multiple back-to-back iterations per window override this property.
+    """
+    return 1
 
   def _get_profiler_options(self) -> jax.profiler.ProfileOptions:
     """Extends the base trace-reduction options with TPU FW thermal/power events."""
@@ -680,44 +680,63 @@ class SoakingRunExecutor(BaseRunExecutor):
     }
     return options
 
-  def _run_chunk(self, *inputs, samples: int = 1) -> tuple[jax.Array, ...]:
-    """Executes `samples` back-to-back iterations and blocks once at the end."""
+  def _run_window_ops(
+      self, *inputs, num_ops: int = 1
+  ) -> tuple[tuple[jax.Array, ...], Any]:
+    """Executes `num_ops` back-to-back iterations and blocks once at the end."""
     outputs = None
-    for _ in range(samples):
+    for _ in range(num_ops):
       inputs = self.benchmark.reset_data(*inputs)
       outputs = self.benchmark.run_op(*inputs)
     if outputs is not None:
       jax.block_until_ready(outputs)
-    return inputs
+    return inputs, outputs
 
   def _run_window(
       self,
       inputs: tuple[Any, ...],
-      samples: int,
+      *,
+      window_index: int,
       trace_dir: Optional[str] = None,
-      **trace_kwargs: Any,
+      trace_kwargs: Optional[dict[str, Any]] = None,
   ) -> tuple[tuple[Any, ...], float]:
-    """Executes `samples` iterations (optionally traced) and returns (inputs, per_iter_ms)."""
+    """Executes one window of `run_ops_per_window` iterations.
+
+    Args:
+      inputs: Benchmark inputs carried across windows.
+      window_index: Chronological index of this window, passed to
+        `post_run_processing` as `run_index`.
+      trace_dir: If set, wraps the window in `jax.profiler.trace(trace_dir)`.
+      trace_kwargs: Extra keyword arguments for `jax.profiler.trace`.
+
+    Returns:
+      `(inputs, per_iter_ms)`: the updated inputs and the window's wall-clock
+      latency per iteration in milliseconds.
+    """
+    run_ops_per_window = self.run_ops_per_window
     ctx = (
-        jax.profiler.trace(trace_dir, **trace_kwargs)
+        jax.profiler.trace(trace_dir, **(trace_kwargs or {}))
         if trace_dir is not None
         else contextlib.nullcontext()
     )
     with ctx:
       t0 = time.perf_counter()
-      inputs = self._run_chunk(*inputs, samples=samples)
+      inputs, outputs = self._run_window_ops(
+          *inputs, num_ops=run_ops_per_window
+      )
       t1 = time.perf_counter()
-    per_iter_ms = ((t1 - t0) * 1000.0) / samples
+    per_iter_ms = ((t1 - t0) * 1000.0) / run_ops_per_window
+    self.benchmark.post_run_processing(outputs, run_index=window_index)
     return inputs, per_iter_ms
 
   def run_warmup(self, inputs: tuple[Any, ...]) -> tuple[Any, ...]:
-    """Executes chunked warmup iterations (honoring exact `warmup_tries`) before soaking measurement."""
-    samples_per_run = self._samples_per_run()
+    """Executes windowed warmup iterations (honoring exact `warmup_tries`) before measurement."""
+    run_ops_per_window = self.run_ops_per_window
     warmup_tries = int(self.config.warmup_tries)
     i = 0
     while i < warmup_tries:
-      step_iters = min(samples_per_run, warmup_tries - i)
-      inputs = self._run_chunk(*inputs, samples=step_iters)
+      step_iters = min(run_ops_per_window, warmup_tries - i)
+      inputs, _ = self._run_window_ops(*inputs, num_ops=step_iters)
       i += step_iters
     return inputs
 
@@ -739,78 +758,104 @@ class SoakingRunExecutor(BaseRunExecutor):
       )
       return XprofParseResult(durations=[])
 
+  def _min_duration_reached(self, start: float, is_multihost: bool) -> bool:
+    """Returns True once `min_duration_s` has elapsed since `start` on every host.
+
+    On multi-host runs the per-host verdicts are all-gathered so every host
+    exits the middle phase in lockstep and runs the same number of windows,
+    which the cross-host checksum gather requires.
+
+    Args:
+      start: `time.perf_counter()` value at the start of the middle phase.
+      is_multihost: Whether to combine the verdict across hosts.
+    """
+    min_duration_s = self.config.min_duration_s
+    if min_duration_s <= 0.0:
+      # Trivially reached on every host; skip the cross-host collective.
+      return True
+    done = (time.perf_counter() - start) >= min_duration_s
+    if is_multihost:
+      done = bool(np.all(multihost_utils.process_allgather(np.bool_(done))))
+    return done
+
+  @abc.abstractmethod
+  def _run_soaking_windows(
+      self,
+      inputs: tuple[Any, ...],
+      *,
+      start_window_index: int,
+      is_multihost: bool,
+  ) -> tuple[tuple[Any, ...], list[float]]:
+    """Executes the untraced middle phase between pre and post soaking windows.
+
+    Args:
+      inputs: Benchmark inputs carried across windows.
+      start_window_index: Chronological index of the first middle window.
+      is_multihost: Whether to synchronize loop exit across hosts.
+
+    Returns:
+      `(inputs, soaking_windows)`: the updated inputs and the per-iteration
+      wall-clock latency in milliseconds of each middle window.
+    """
+
   def execute(
       self,
       inputs: tuple[Any, ...],
       local_xprof_dir: Optional[str],
   ) -> ExecutionResult:
-    """Executes Phase 1 (`pre_soaking_window`), Phase 2 (`min_duration_s` soak), and Phase 3 (`post_soaking_window`)."""
+    """Executes traced pre-soaking window, untraced middle phase, and traced post-soaking window."""
     if not self.benchmark.xprof_config.xprof_timing or not local_xprof_dir:
       raise ValueError(
-          "SoakingRunExecutor requires xprof_timing=True and a valid"
+          f"{type(self).__name__} requires xprof_timing=True and a valid"
           " local_xprof_dir."
       )
-    if self.config.min_duration_s <= 0.0:
-      raise ValueError("SoakingRunExecutor requires min_duration_s > 0.0.")
 
-    samples_per_run = self._samples_per_run()
-
+    run_ops_per_window = self.run_ops_per_window
     trace_kwargs = self._get_trace_kwargs()
 
-    raw_times: list[float] = []
-    self.soak_wall_ms = []
-    actual_runs = 0
-
-    # Phase 1: Pre-soaking window at t=0 before soaking begins.
     pre_soaking_dir = os.path.join(
         local_xprof_dir, _PRE_SOAKING_TRACE_WINDOW_SUBDIR
     )
-    inputs, pre_soaking_ms = self._run_window(
-        inputs,
-        samples_per_run,
-        trace_dir=pre_soaking_dir,
-        **trace_kwargs,
-    )
-    raw_times.append(pre_soaking_ms)
-    actual_runs += samples_per_run
-
-    # Phase 2: Continuous untraced thermal soak (`min_duration_s`)
-    # (keeps MXU at 100% duty cycle with zero XProf teardown overhead).
-    soak_start = time.perf_counter()
-    while True:
-      inputs, soak_ms = self._run_window(inputs, samples_per_run)
-      self.soak_wall_ms.append(soak_ms)
-      actual_runs += samples_per_run
-      if (time.perf_counter() - soak_start) >= self.config.min_duration_s:
-        break
-
-    # Phase 3: Post-soaking window immediately after Phase 2 soak.
     post_soaking_dir = os.path.join(
         local_xprof_dir, _POST_SOAKING_TRACE_WINDOW_SUBDIR
     )
+    is_multihost = jax.process_count() > 1
+
+    inputs, pre_soaking_ms = self._run_window(
+        inputs,
+        window_index=0,
+        trace_dir=pre_soaking_dir,
+        trace_kwargs=trace_kwargs,
+    )
+    inputs, soaking_windows = self._run_soaking_windows(
+        inputs, start_window_index=1, is_multihost=is_multihost
+    )
     inputs, post_soaking_ms = self._run_window(
         inputs,
-        samples_per_run,
+        window_index=1 + len(soaking_windows),
         trace_dir=post_soaking_dir,
-        **trace_kwargs,
+        trace_kwargs=trace_kwargs,
     )
-    raw_times.extend(self.soak_wall_ms)
-    raw_times.append(post_soaking_ms)
-    actual_runs += samples_per_run
+    raw_times = [pre_soaking_ms, *soaking_windows, post_soaking_ms]
+
+    soak_summary = "n/a (0 windows)"
+    if soaking_windows:
+      soak_p50 = np.percentile(soaking_windows, 50)
+      soak_summary = f"{soak_p50:.4f} ({len(soaking_windows)} windows)"
     print(
-        "SoakingRunExecutor wall-clock ms/iter:"
+        f"{type(self).__name__} wall-clock ms/iter:"
         f" pre_soaking_window={pre_soaking_ms:.4f},"
-        f" soak_p50={np.percentile(self.soak_wall_ms, 50):.4f}"
-        f" ({len(self.soak_wall_ms)} chunks),"
+        f" soak_p50={soak_summary},"
         f" post_soaking_window={post_soaking_ms:.4f}"
     )
 
-    # xprof_* stats use only the traced post_soaking_window (`samples_per_run`
-    # iterations); pre_soaking_window and the untraced soak are excluded.
+    # xprof_* stats use only the traced post_soaking_window
+    # (`run_ops_per_window` iterations); pre_soaking_window and the untraced
+    # middle windows are excluded.
     return ExecutionResult(
         durations_ms=raw_times,
-        actual_runs=actual_runs,
-        xprof_expected_runs=samples_per_run,
+        actual_runs=len(raw_times) * run_ops_per_window,
+        xprof_expected_runs=run_ops_per_window,
     )
 
   def get_xprof_durations(self, xprof_dir: str) -> XprofParseResult:
@@ -872,19 +917,8 @@ class SoakingRunExecutor(BaseRunExecutor):
         stats[f"{prefix}_{suffix}"] = None
       return stats
 
-    # Wall-clock pre_soaking/post_soaking windows are from the first and last
-    # untraced Phase 2 soak chunks (each averaging `samples_per_run` iterations,
-    # matching XProf's pre-soaking vs post-soaking definition). The traced
-    # Phase 1/3 windows are excluded because `post_soaking_window` can read
-    # un-throttled on fast clock-skip throttling hosts, whereas the soak chunks
-    # reflect the throttled steady state. Falls back to `times_ms` when no soak
-    # samples were recorded.
-    if prefix == constants.TimingDomain.WALL_CLOCK and self.soak_wall_ms:
-      phase_times = self.soak_wall_ms
-    else:
-      phase_times = times_ms
-    pre_soaking_p50_ms = float(phase_times[0])
-    post_soaking_p50_ms = float(phase_times[-1])
+    pre_soaking_p50_ms = float(times_ms[0])
+    post_soaking_p50_ms = float(times_ms[-1])
 
     slowdown_ratio = (
         post_soaking_p50_ms / pre_soaking_p50_ms
@@ -898,8 +932,31 @@ class SoakingRunExecutor(BaseRunExecutor):
     })
     return stats
 
+  def _augment_soaking_throughput(
+      self, metrics: dict[str, Any], domain: constants.TimingDomain
+  ) -> None:
+    """Derives pre/post-soaking throughput metrics via `benchmark.calculate_throughput_metrics`."""
+    domain_prefix = f"{domain}_"
+    for window_tag, latency_suffix in (
+        (constants.PRE_SOAKING, constants.PRE_SOAKING_P50_MS),
+        (constants.POST_SOAKING, constants.POST_SOAKING_P50_MS),
+    ):
+      p50_ms = metrics.get(f"{domain}_{latency_suffix}")
+      if p50_ms is None:
+        continue
+      for key, val in self.benchmark.calculate_throughput_metrics(
+          latency_ms=p50_ms, prefix=domain
+      ).items():
+        if not key.startswith(domain_prefix):
+          raise ValueError(
+              f"Expected throughput key starting with {domain_prefix!r},"
+              f" got {key!r}."
+          )
+        suffix = key[len(domain_prefix) :]
+        metrics[f"{domain}_{window_tag}_{suffix}"] = val
+
   def augment_host_metrics(self, metrics: dict[str, Any]) -> None:
-    """Merges per-window firmware telemetry."""
+    """Merges per-window firmware telemetry and wall-clock soaking throughput."""
     local_xprof_dir = self.benchmark._xprof_dir_actual or ""  # pylint: disable=protected-access
 
     pre_soaking_dir = ""
@@ -919,12 +976,13 @@ class SoakingRunExecutor(BaseRunExecutor):
         )
     )
     metrics.update(thermal_metrics)
+    self._augment_soaking_throughput(metrics, constants.TimingDomain.WALL_CLOCK)
 
   def augment_xprof_metrics(
       self,
       metrics: dict[str, Any],
   ) -> None:
-    """Computes soaking XProf latency (`pre_soaking_p50_ms`, `post_soaking_p50_ms`, `slowdown_ratio`).
+    """Computes soaking XProf latency (`pre_soaking_p50_ms`, `post_soaking_p50_ms`, `slowdown_ratio`) and window throughput.
 
     Each window is reported independently, so a window without XProf
     durations does not hide the other one; the slowdown ratio needs both.
@@ -932,29 +990,126 @@ class SoakingRunExecutor(BaseRunExecutor):
     Args:
       metrics: Metrics dictionary updated in place.
     """
-
-    def window_p50(durations: Sequence[float]) -> Optional[float]:
-      if not durations:
-        return None
-      p50 = float(np.percentile(durations, 50))
-      return p50 if p50 > 0 else None
-
-    pre_soak_p50 = window_p50(self.pre_soaking_xprof_durations)
-    post_soak_p50 = window_p50(self.post_soaking_xprof_durations)
+    pre_soak_p50 = _positive_p50(self.pre_soaking_xprof_durations)
+    post_soak_p50 = _positive_p50(self.post_soaking_xprof_durations)
     ratio = None
     if pre_soak_p50 is not None and post_soak_p50 is not None:
       ratio = post_soak_p50 / pre_soak_p50 if pre_soak_p50 > 0 else 1.0
     metrics[constants.XPROF_PRE_SOAKING_P50_MS] = pre_soak_p50
     metrics[constants.XPROF_POST_SOAKING_P50_MS] = post_soak_p50
     metrics[constants.XPROF_SLOWDOWN_RATIO] = ratio
+    self._augment_soaking_throughput(metrics, constants.TimingDomain.XPROF)
 
   def get_result_details(self) -> dict[str, Any]:
     """Returns per-device telemetry of both trace windows."""
     return dict(self._result_details)
 
 
+class SoakingRunExecutor(WindowedRunExecutor):
+  """Continuous soaking execution strategy with pre-soaking, untraced soak, and post-soaking windows.
+
+  Chronological Execution Pipeline:
+    1. Warmup (`run_warmup`): Executes untraced windows (up to `samples_per_run`
+       iterations per window) until `warmup_tries` iterations have elapsed.
+    2. Phase 1 — Pre-Soaking Window (`pre_soaking_window` at `t = 0s`): Executes
+       1 traced window of `samples_per_run` iterations immediately after warmup
+       to capture pre-soaking device latency (`xprof_pre_soaking_p50_ms`).
+    3. Phase 2 — Untraced Thermal Soak (`min_duration_s` > 0.0): Executes
+       continuous, untraced windows of `samples_per_run` iterations until
+       elapsed Phase 2 time `>= min_duration_s` to drive the accelerator to
+       thermal steady state without `jax.profiler.trace` flush gaps (`num_runs`
+       is not used in soaking mode).
+    4. Phase 3 — Post-Soaking Window (`post_soaking_window` at
+       `t = end of soak`): Executes 1 traced window of `samples_per_run`
+       iterations immediately after Phase 2 soak to capture post-soaking device
+       latency (`xprof_post_soaking_p50_ms`) and firmware thermal telemetry.
+       Wall-clock soaking metrics (`wall_clock_pre_soaking_p50_ms`,
+       `wall_clock_post_soaking_p50_ms`, `wall_clock_slowdown_ratio`) are
+       derived from `pre_soaking_window` (`times_ms[0]`) and
+       `post_soaking_window` (`times_ms[-1]`), aligned with XProf.
+  """
+
+  @property
+  def run_ops_per_window(self) -> int:
+    return int(self.config.samples_per_run)
+
+  def _run_soaking_windows(
+      self,
+      inputs: tuple[Any, ...],
+      *,
+      start_window_index: int,
+      is_multihost: bool,
+  ) -> tuple[tuple[Any, ...], list[float]]:
+    soaking_windows: list[float] = []
+    soak_start = time.perf_counter()
+    while True:
+      inputs, window_ms = self._run_window(
+          inputs, window_index=start_window_index + len(soaking_windows)
+      )
+      soaking_windows.append(window_ms)
+      if self._min_duration_reached(soak_start, is_multihost):
+        break
+    return inputs, soaking_windows
+
+
+class PulseRunExecutor(WindowedRunExecutor):
+  """Multi-cycle load-pulsing execution strategy (`num_cycles` separated by `idle_s` pauses).
+
+  Each active load cycle executes 1 window (`1` `run_op`), separated from the
+  next cycle by an `idle_s` pause. Runs at least `num_cycles` total cycles
+  (including `pre_soaking_window` as cycle `0` and `post_soaking_window` as
+  the final cycle) and keeps running middle `(idle_s -> _run_window)` pulse
+  cycles until the middle soaking phase duration is `>= min_duration_s`.
+  """
+
+  def _sleep_between_cycles(
+      self, idle_s: float, window_index: int, is_multihost: bool
+  ) -> None:
+    """Pauses for `idle_s` seconds, bracketed by multi-host barriers."""
+    if idle_s <= 0.0:
+      return
+    # Align falling edge (load -> idle) so all hosts finish active compute
+    # and checksum before any host starts counting the quiet idle valley.
+    if is_multihost:
+      multihost_utils.sync_global_devices(f"pulse_idle_start_{window_index}")
+    time.sleep(idle_s)
+    # Align rising edge (idle -> load) so all hosts wake together and launch
+    # the next cycle's run_op simultaneously for a synchronous step load.
+    if is_multihost:
+      multihost_utils.sync_global_devices(f"pulse_idle_end_{window_index}")
+
+  def _run_soaking_windows(
+      self,
+      inputs: tuple[Any, ...],
+      *,
+      start_window_index: int,
+      is_multihost: bool,
+  ) -> tuple[tuple[Any, ...], list[float]]:
+    # Each cycle is exactly 1 window (`pre_soaking_window` is window/cycle 0),
+    # so `window_index` doubles as the cycle index.
+    num_cycles = self.config.num_cycles
+    idle_s = self.config.idle_s
+    soaking_windows: list[float] = []
+    soak_start = time.perf_counter()
+    window_index = start_window_index
+
+    while window_index < num_cycles - 1 or not self._min_duration_reached(
+        soak_start, is_multihost
+    ):
+      self._sleep_between_cycles(idle_s, window_index, is_multihost)
+      inputs, window_ms = self._run_window(inputs, window_index=window_index)
+      soaking_windows.append(window_ms)
+      window_index += 1
+
+    # Idle before the final cycle (`post_soaking_window`).
+    self._sleep_between_cycles(idle_s, window_index, is_multihost)
+    return inputs, soaking_windows
+
+
 def create_executor(benchmark: Any) -> BaseRunExecutor:
-  """Factory returning SoakingRunExecutor or BaseRunExecutor for `benchmark`."""
+  """Factory returning PulseRunExecutor, SoakingRunExecutor, or BaseRunExecutor."""
+  if isinstance(benchmark.config, config_module.PulseExecutionParamsMixin):
+    return PulseRunExecutor(benchmark)
   if isinstance(benchmark.config, config_module.SoakingExecutionParamsMixin):
     return SoakingRunExecutor(benchmark)
   return BaseRunExecutor(benchmark)

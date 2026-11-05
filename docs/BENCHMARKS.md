@@ -17,6 +17,7 @@ This guide provides the reference for **TPUMS (TPU Microbenchmark Suite)** param
   - [2.1 Matrix Multiplication (`gemm`)](#21-matrix-multiplication-gemm)
     - [2.1.1 GEMM Throttling (`gemm_throttling`) [experimental]](#211-gemm-throttling-gemm_throttling-experimental)
     - [2.1.2 Chained Matrix Multiplication & Determinism Check (`gemm_chained`) [experimental]](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental)
+    - [2.1.3 GEMM Pulse (`gemm_pulse`) [experimental]](#213-gemm-pulse-gemm_pulse-experimental)
   - [2.2 HBM Memory Bandwidth (`hbm`)](#22-hbm-memory-bandwidth-hbm)
   - [2.3 Host I/O Bandwidth (`host_to_device`, `device_to_host`)](#23-host-io-bandwidth-host_to_device-device_to_host)
   - [2.4 Inter-Chip Interconnect (`device_to_device`)](#24-inter-chip-interconnect-device_to_device)
@@ -163,11 +164,11 @@ accelerator (`min_duration_s`) and measuring the degradation between the
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `min_duration_s` | `float` | *(required)* | Duration of the untraced continuous thermal soak (Phase 2) in seconds. |
-| `samples_per_run` | `int` | `25` | Number of iterations per execution chunk. |
+| `samples_per_run` | `int` | `25` | Number of iterations per execution window. |
 
 | New Metric | Description |
 | :--- | :--- |
-| `*_pre_soaking_p50_ms`, `*_post_soaking_p50_ms`, `*_slowdown_ratio` | Steady-state degradation (latency and ratio). Sourced from traced windows (XProf) or untraced Phase 2 boundary chunks (Wall-Clock). |
+| `*_pre_soaking_p50_ms`, `*_post_soaking_p50_ms`, `*_slowdown_ratio` | Steady-state degradation (latency and ratio) between `pre_soaking_window` and `post_soaking_window` across both XProf and Wall-Clock timing domains. |
 | `*_pre_soaking_tflops_per_device`, `*_post_soaking_tflops_per_device` | Steady-state throughput degradation. |
 | `hbm_peak_temp_c`, `peak_temp_c`, `peak_temp_source` | Post-soak peak temperature (°C) and sensor source. |
 | `hbm_throttle_time_pct`, `vdd_core_throttle_time_pct` | Percentage of post-soak window time where throttling was active. |
@@ -226,6 +227,30 @@ such as a stuck bit.
 - Not an HBM scan (`X` and `B` stay at fixed addresses); one shape and dtype covers a subset of MXU datapaths, so sweep for broader coverage.
 - Choose `chain_length` so values stay finite; `inf`/`NaN` or all-zero results never pass.
 - Golden-reference comparison and collective/H2D/D2H integrity are out of scope.
+
+<a id="213-gemm-pulse-gemm_pulse-experimental"></a>
+#### 2.1.3 GEMM Pulse (`gemm_pulse`) [experimental]
+
+Combines multi-cycle idle-to-load pulsing (`PulseRunExecutor`) with
+per-window deterministic chained matrix multiplication (`X <- X @ B`,
+`chain_length` steps) and bit-exact cross-device/cross-host 64-bit checksum
+verification (`GemmChainedBenchmark`).
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `num_cycles` | `int` | `10` | Minimum number of active load cycles (`>= 2`, including `pre_soaking_window` and `post_soaking_window`) separated by `idle_s` host pauses. |
+| `idle_s` | `float` | `0.05` | Host-side idle pause in seconds (`>= 0.0`) between active load cycles, bracketed by multi-host `sync_global_devices` barriers. |
+| `chain_length` | `int` | `1` | Number of sequential matmuls (`X <- X @ B`) per `run_op` call. |
+| `min_duration_s` | `float` | `0.0` | Minimum total duration in seconds (`>= 0.0`) of the untraced middle soaking phase between `pre_soaking_window` and `post_soaking_window`, synchronized across hosts via `process_allgather`. |
+| `enable_checksum` | `bool` | `True` | Compute and verify per-device 64-bit checksums after each window. |
+
+Cycle `0` starts with traced `pre_soaking_window`, intermediate cycles run
+untraced `(idle_s -> window)` pulse cycles until at least `num_cycles - 2`
+middle cycles and `min_duration_s` of middle soaking time have elapsed, and the
+final cycle ends with an `idle_s` pause followed by traced
+`post_soaking_window`. Emits `num_cycles`, `idle_s`, `enable_checksum`, all
+`gemm_throttling` soaking and thermal metrics, plus all `gemm_chained` checksum
+metrics when `enable_checksum=True`.
 
 ---
 

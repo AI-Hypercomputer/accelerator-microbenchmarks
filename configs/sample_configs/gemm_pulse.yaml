@@ -1,0 +1,21 @@
+# Sample configuration for the multi-cycle chained GEMM pulse benchmark.
+#
+# Runs `num_cycles` load cycles separated by barrier-aligned `idle_s` pauses,
+# executing `chain_length` back-to-back matrix multiplications (`X <- X @ B`)
+# per window with cross-device and cross-host 64-bit checksum verification and
+# pre/post-soaking XProf and thermal telemetry.
+benchmark:
+  name: gemm_pulse
+  xprof_timing: true
+  xprof_device_timing_aggregation: local_slowest_device
+  params:
+    warmup_tries: 2
+    num_cycles: 100
+    idle_s: 0.02
+    in_dtype: bfloat16
+    out_dtype: bfloat16
+    m: 8192
+    k: 8192
+    chain_length: 100
+    enable_checksum: true
+    seed: 0

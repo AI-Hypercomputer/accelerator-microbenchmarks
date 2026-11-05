@@ -81,6 +81,7 @@ class GemmParams(base.BaseBenchmarkParams):
 
 
 TGemmConfig = TypeVar("TGemmConfig", bound=base.BaseBenchmarkParams)
+TGemmParams = TypeVar("TGemmParams", bound=GemmParams)
 
 
 def _sample_normal(key: jax.Array, shape: tuple[int, ...], dtype: Any):
@@ -135,7 +136,7 @@ class BaseGemmBenchmark(base.BaseBenchmark[TGemmConfig]):
 
 
 @registry.benchmark_registry.register("gemm", aliases=["gemm_generalized"])
-class GeneralizedGemmBenchmark(BaseGemmBenchmark[GemmParams]):
+class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
   """Generalized GEMM benchmark supporting FP8 and throughput projection.
 
   Pseudo-code: OUT = matmul(IN0, IN1) * rescaling_factor
@@ -335,77 +336,51 @@ class GemmThrottlingParams(config.SoakingExecutionParamsMixin, GemmParams):
   """
 
 
+_SOAKING_THERMAL_REPORT_COLUMNS: tuple[
+    tuple[str, Callable[[Any], str]], ...
+] = (
+    (
+        (constants.WALL_CLOCK_PRE_SOAKING_P50_MS, report.format_4f),
+        (constants.WALL_CLOCK_POST_SOAKING_P50_MS, report.format_4f),
+        (constants.WALL_CLOCK_SLOWDOWN_RATIO, report.format_2f),
+        (
+            constants.WALL_CLOCK_PRE_SOAKING_TFLOPS_PER_DEVICE,
+            report.format_2f,
+        ),
+        (
+            constants.WALL_CLOCK_POST_SOAKING_TFLOPS_PER_DEVICE,
+            report.format_2f,
+        ),
+        (constants.XPROF_PRE_SOAKING_P50_MS, report.format_4f),
+        (constants.XPROF_POST_SOAKING_P50_MS, report.format_4f),
+        (constants.XPROF_SLOWDOWN_RATIO, report.format_2f),
+        (constants.XPROF_PRE_SOAKING_TFLOPS_PER_DEVICE, report.format_2f),
+        (constants.XPROF_POST_SOAKING_TFLOPS_PER_DEVICE, report.format_2f),
+    )
+    + tuple(
+        (k, report.format_2f) for k in constants.THERMAL_PRE_SOAKING_METRIC_KEYS
+    )
+    + tuple(
+        (k, report.format_2f)
+        for k in constants.THERMAL_METRIC_KEYS
+        if k != constants.PEAK_TEMP_SOURCE
+    )
+    + (
+        (constants.PEAK_TEMP_SOURCE, report.format_str),
+        (constants.PSTATE_REQUESTED, report.format_str),
+    )
+)
+
+
 @registry.benchmark_registry.register("gemm_throttling", is_experimental=True)
-class GemmThrottlingBenchmark(GeneralizedGemmBenchmark):
+class GemmThrottlingBenchmark(GeneralizedGemmBenchmark[GemmThrottlingParams]):
   """[EXPERIMENTAL] GEMM throttling benchmark with 3-phase soaking execution and XProf thermal metrics."""
 
   Config = GemmThrottlingParams
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       tuple(GeneralizedGemmBenchmark.REPORT_SCHEMA)
-      + (
-          (constants.WALL_CLOCK_PRE_SOAKING_P50_MS, report.format_4f),
-          (constants.WALL_CLOCK_POST_SOAKING_P50_MS, report.format_4f),
-          (constants.WALL_CLOCK_SLOWDOWN_RATIO, report.format_2f),
-          (
-              constants.WALL_CLOCK_PRE_SOAKING_TFLOPS_PER_DEVICE,
-              report.format_2f,
-          ),
-          (
-              constants.WALL_CLOCK_POST_SOAKING_TFLOPS_PER_DEVICE,
-              report.format_2f,
-          ),
-          (constants.XPROF_PRE_SOAKING_P50_MS, report.format_4f),
-          (constants.XPROF_POST_SOAKING_P50_MS, report.format_4f),
-          (constants.XPROF_SLOWDOWN_RATIO, report.format_2f),
-          (constants.XPROF_PRE_SOAKING_TFLOPS_PER_DEVICE, report.format_2f),
-          (constants.XPROF_POST_SOAKING_TFLOPS_PER_DEVICE, report.format_2f),
-      )
-      + tuple(
-          (k, report.format_2f)
-          for k in constants.THERMAL_PRE_SOAKING_METRIC_KEYS
-      )
-      + tuple(
-          (k, report.format_2f)
-          for k in constants.THERMAL_METRIC_KEYS
-          if k != constants.PEAK_TEMP_SOURCE
-      )
-      + (
-          (constants.PEAK_TEMP_SOURCE, report.format_str),
-          (constants.PSTATE_REQUESTED, report.format_str),
-      )
+      + _SOAKING_THERMAL_REPORT_COLUMNS
   )
-
-  def derive_chip_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
-    metrics = super().derive_chip_metrics(metrics)
-    total_flops = self.get_total_flops()
-
-    for domain in (
-        constants.TimingDomain.WALL_CLOCK,
-        constants.TimingDomain.XPROF,
-    ):
-      pre_ms = metrics.get(f"{domain}_{constants.PRE_SOAKING_P50_MS}")
-      if pre_ms is not None:
-        pre_tflops = (
-            (total_flops / (pre_ms / 1000.0)) / 1e12
-            if pre_ms > 0
-            else float("inf")
-        )
-        metrics[f"{domain}_{constants.PRE_SOAKING}_tflops_per_device"] = (
-            pre_tflops
-        )
-
-      post_ms = metrics.get(f"{domain}_{constants.POST_SOAKING_P50_MS}")
-      if post_ms is not None:
-        post_tflops = (
-            (total_flops / (post_ms / 1000.0)) / 1e12
-            if post_ms > 0
-            else float("inf")
-        )
-        metrics[f"{domain}_{constants.POST_SOAKING}_tflops_per_device"] = (
-            post_tflops
-        )
-
-    return metrics
 
 
 # Dtypes of the chained GEMM's X and B: the floats whose bit width the checksum
@@ -558,8 +533,11 @@ def make_chain_fn(
   return chain_fn
 
 
+TGemmChainedConfig = TypeVar("TGemmChainedConfig", bound=GemmChainedParams)
+
+
 @registry.benchmark_registry.register("gemm_chained", is_experimental=True)
-class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
+class GemmChainedBenchmark(BaseGemmBenchmark[TGemmChainedConfig]):
   """[EXPERIMENTAL] Chained GEMM determinism benchmark with cross-host per-device checksum comparison."""
 
   # Runtime: the params dataclass the CLI / YAML loader instantiates.
@@ -663,3 +641,58 @@ class GemmChainedBenchmark(BaseGemmBenchmark[GemmChainedParams]):
         checksum.gather_and_compare_checksums(self._local_runs, self.mesh)
     )
     return metrics
+
+
+@dataclasses.dataclass
+class GemmPulseParams(config.PulseExecutionParamsMixin, GemmChainedParams):
+  """Configuration parameters for multi-cycle chained GEMM pulse benchmark."""
+
+  min_duration_s: float = dataclasses.field(
+      default=0.0,
+      metadata={
+          "min": 0.0,
+          "help": (
+              "Minimum total duration in seconds of the untraced middle"
+              " soaking phase between pre_soaking_window and"
+              " post_soaking_window (>= 0.0)."
+          ),
+      },
+  )
+  enable_checksum: bool = dataclasses.field(
+      default=True,
+      metadata={
+          "help": "Compute and verify per-device 64-bit checksums per window.",
+      },
+  )
+
+
+@registry.benchmark_registry.register("gemm_pulse", is_experimental=True)
+class GemmPulseBenchmark(GemmChainedBenchmark[GemmPulseParams]):
+  """[EXPERIMENTAL] Chained GEMM multi-cycle determinism and pulse benchmark."""
+
+  Config = GemmPulseParams
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      tuple(GemmChainedBenchmark.REPORT_SCHEMA)
+      + (
+          ("num_cycles", report.format_str),
+          ("idle_s", report.format_str),
+          ("enable_checksum", report.format_str),
+      )
+      + _SOAKING_THERMAL_REPORT_COLUMNS
+  )
+
+  def get_run_identifier(self) -> str:
+    return (
+        f"{super().get_run_identifier()}_cycles_{self.config.num_cycles}_"
+        f"idle_{self.config.idle_s}_dur_{self.config.min_duration_s}_"
+        f"checksum_{self.config.enable_checksum}"
+    )
+
+  def post_run_processing(self, outputs: jax.Array, run_index: int) -> None:
+    if self.config.enable_checksum:
+      super().post_run_processing(outputs, run_index)
+
+  def calculate_metrics(self, times_ms: list[float]) -> dict[str, Any]:
+    if self.config.enable_checksum:
+      return super().calculate_metrics(times_ms)
+    return super(GemmChainedBenchmark, self).calculate_metrics(times_ms)

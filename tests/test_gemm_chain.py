@@ -1,5 +1,6 @@
-"""Unit tests for GemmChainedParams, make_chain_fn and GemmChainedBenchmark."""
+"""Unit tests for GemmChainedParams, make_chain_fn, GemmChainedBenchmark, GemmPulseParams, and GemmPulseBenchmark."""
 
+import contextlib
 import csv
 import dataclasses
 import json
@@ -14,6 +15,9 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import checksum
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import dtypes
+from accelerator_microbenchmarks.core import executor
+from accelerator_microbenchmarks.core import profiler
+from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
 from accelerator_microbenchmarks.tests import test_report_utils
@@ -693,6 +697,222 @@ class GemmChainedBenchmarkTest(parameterized.TestCase):
       self.assertEqual(csv_rows[0]["global_checksum_match"], "True")
       self.assertEqual(csv_rows[0]["diverging_devices"], "[]")
       self.assertTrue(csv_rows[0]["device_checksums"].startswith("[{"))
+
+
+class GemmPulseBenchmarkTest(parameterized.TestCase):
+  """Unit tests for GemmPulseParams and GemmPulseBenchmark."""
+
+  def setUp(self):
+    super().setUp()
+    self._platform_patcher = mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self._platform_patcher.start()
+    self.addCleanup(self._platform_patcher.stop)
+    self.mock_load_trace, self.mock_print = (
+        test_report_utils.patch_xprof_trace_loading(self)
+    )
+    self.mesh = _mesh(8)
+
+  def _run_pulse(
+      self,
+      cfg: matmul.GemmPulseParams,
+      bench_cls: type[matmul.GemmPulseBenchmark] = matmul.GemmPulseBenchmark,
+  ) -> tuple[matmul.GemmPulseBenchmark, base.BenchmarkResult, mock.MagicMock]:
+    """Runs GemmPulseBenchmark with stubbed XProf trace loading."""
+
+    @contextlib.contextmanager
+    def fake_trace(trace_dir, **_kwargs):
+      del trace_dir
+      yield
+
+    tmpdir = self.create_tempdir().full_path
+    bm = bench_cls(
+        config=cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mesh,
+        xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=tmpdir),
+    )
+    with (
+        mock.patch("jax.profiler.trace", side_effect=fake_trace),
+        mock.patch("time.sleep") as mock_sleep,
+        mock.patch.object(
+            profiler.XprofTrace,
+            "device_step_durations_ms",
+            autospec=True,
+            side_effect=(
+                lambda trace, *_a, **_kw: [0.4]
+                if trace.trace_dir.endswith("pre_soaking_window")
+                else [0.8]
+            ),
+        ),
+        mock.patch(
+            "accelerator_microbenchmarks.core.profiler.upload_xprof_trace",
+            return_value=None,
+        ),
+    ):
+      res = bm.run()
+    return bm, res, mock_sleep
+
+  def test_registration_defaults_and_validation(self):
+    """Verifies registration, defaults, and pulse parameter validation."""
+    self.assertIs(
+        registry.benchmark_registry.get_benchmark("gemm_pulse"),
+        matmul.GemmPulseBenchmark,
+    )
+
+    default_cfg = matmul.GemmPulseParams()
+    self.assertEqual(default_cfg.num_cycles, 10)
+    self.assertEqual(default_cfg.idle_s, 0.05)
+    self.assertEqual(default_cfg.min_duration_s, 0.0)
+    self.assertEqual(default_cfg.chain_length, 1)
+    self.assertTrue(default_cfg.enable_checksum)
+    self.assertNotIn("samples_per_run", dataclasses.asdict(default_cfg))
+
+    cfg_two_cycles = matmul.GemmPulseParams(min_duration_s=1.0, num_cycles=2)
+    self.assertEqual(cfg_two_cycles.min_duration_s, 1.0)
+    self.assertEqual(cfg_two_cycles.num_cycles, 2)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "num_cycles must be >= 2",
+    ):
+      matmul.GemmPulseParams(num_cycles=1)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        rf"^in_dtype: Unsupported dtype 'float4_e2m1fn'\. Supported dtypes"
+        rf" for in_dtype: {_CHAIN_DTYPE_NAMES}$",
+    ):
+      matmul.GemmPulseParams(in_dtype="float4_e2m1fn", enable_checksum=False)
+
+    bm = matmul.GemmPulseBenchmark(
+        config=matmul.GemmPulseParams(
+            m=16, k=16, chain_length=3, num_cycles=4, idle_s=0.02
+        ),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mesh,
+    )
+    self.assertIsInstance(bm.executor, executor.PulseRunExecutor)
+    self.assertEqual(bm.executor.run_ops_per_window, 1)
+    self.assertEqual(
+        bm.get_run_identifier(),
+        "m_16_k_16_bfloat16_to_bfloat16_chain_3_cycles_4_idle_0.02_dur_0.0_checksum_True",
+    )
+
+  def test_end_to_end_pulse_checksum_and_fault_detection(self):
+    """Verifies per-window checksums, fault detection, and schema coverage."""
+    cfg = matmul.GemmPulseParams(
+        m=16,
+        k=16,
+        chain_length=3,
+        warmup_tries=1,
+        num_cycles=4,
+        idle_s=0.01,
+        seed=11,
+    )
+    bm, res, mock_sleep = self._run_pulse(cfg)
+    self.assertEqual(mock_sleep.call_count, 3)
+    test_report_utils.assert_schema_matches_output(
+        self,
+        bm,
+        ignored_keys={
+            checksum.CHECKSUM,
+            checksum.DEVICE_CHECKSUMS,
+            checksum.DIVERGING_DEVICES,
+        },
+    )
+
+    self.assertLen(bm._local_runs, 4)  # pylint: disable=protected-access
+    self.assertEqual(res.metrics["actual_runs"], 4)
+    self.assertTrue(res.metrics["all_devices_valid_checksum"])
+    self.assertTrue(res.metrics["intra_host_checksum_match"])
+    self.assertTrue(res.metrics["global_checksum_match"])
+    self.assertEqual(res.metrics["diverging_devices"], [])
+    for key in (
+        constants.WALL_CLOCK_PRE_SOAKING_TFLOPS_PER_DEVICE,
+        constants.WALL_CLOCK_POST_SOAKING_TFLOPS_PER_DEVICE,
+        constants.XPROF_PRE_SOAKING_TFLOPS_PER_DEVICE,
+        constants.XPROF_POST_SOAKING_TFLOPS_PER_DEVICE,
+    ):
+      self.assertIsNotNone(res.metrics[key])
+
+    class _TransientFaultGemmPulse(matmul.GemmPulseBenchmark):
+
+      def post_run_processing(self, outputs, run_index):
+        if run_index == 2:
+          outputs = _with_device_fault(
+              outputs, self.mesh, device_index=3, flat_index=1, bit=5
+          )
+        super().post_run_processing(outputs, run_index)
+
+    _, fault_res, _ = self._run_pulse(cfg, bench_cls=_TransientFaultGemmPulse)
+    self.assertTrue(fault_res.metrics["all_devices_valid_checksum"])
+    self.assertFalse(fault_res.metrics["intra_host_checksum_match"])
+    self.assertFalse(fault_res.metrics["global_checksum_match"])
+    (div,) = fault_res.metrics["diverging_devices"]
+    self.assertEqual(div["device_id"], 3)
+    self.assertEqual([f["run"] for f in div["failed_runs"]], [2])
+
+  def test_end_to_end_pulse_with_min_duration_s(self):
+    """Verifies middle soaking phase extends pulse cycles when min_duration_s > 0.0."""
+    cfg = matmul.GemmPulseParams(
+        m=16,
+        k=16,
+        chain_length=2,
+        warmup_tries=1,
+        min_duration_s=0.01,
+        num_cycles=2,
+        idle_s=0.01,
+        seed=13,
+    )
+    bm, res, mock_sleep = self._run_pulse(cfg)
+    self.assertGreaterEqual(res.metrics["actual_runs"], 3)
+    self.assertEqual(mock_sleep.call_count, res.metrics["actual_runs"] - 1)
+    self.assertLen(
+        bm._local_runs, res.metrics["actual_runs"]  # pylint: disable=protected-access
+    )
+    self.assertTrue(res.metrics["all_devices_valid_checksum"])
+    self.assertTrue(res.metrics["intra_host_checksum_match"])
+    self.assertTrue(res.metrics["global_checksum_match"])
+    self.assertEqual(res.metrics["diverging_devices"], [])
+
+  def test_enable_checksum_false_skips_checksum(self):
+    """Verifies enable_checksum=False skips checksum readback and gather."""
+    cfg = matmul.GemmPulseParams(
+        m=16,
+        k=16,
+        chain_length=2,
+        warmup_tries=1,
+        num_cycles=3,
+        idle_s=0.01,
+        enable_checksum=False,
+    )
+    with (
+        mock.patch.object(
+            checksum,
+            "checksum_local_rows",
+            wraps=checksum.checksum_local_rows,
+        ) as spy_local_rows,
+        mock.patch.object(
+            checksum,
+            "gather_and_compare_checksums",
+            wraps=checksum.gather_and_compare_checksums,
+        ) as spy_gather,
+    ):
+      bm, res, _ = self._run_pulse(cfg)
+    spy_local_rows.assert_not_called()
+    spy_gather.assert_not_called()
+
+    self.assertEmpty(bm._local_runs)  # pylint: disable=protected-access
+    self.assertEqual(res.metrics["actual_runs"], 3)
+    for key in checksum.CHECKSUM_METRIC_KEYS:
+      self.assertNotIn(key, res.metrics)
+    rendered_report = report.generate_benchmark_report(
+        report.results_to_dataframe([res])
+    )
+    self.assertIn("GemmPulseBenchmark", rendered_report)
 
 
 if __name__ == "__main__":
