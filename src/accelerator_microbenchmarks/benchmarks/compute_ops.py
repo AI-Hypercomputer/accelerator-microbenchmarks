@@ -402,6 +402,85 @@ class RMSNormBenchmark(_ActivationBenchmark):
     return float(self.config.batch * self.config.dim * 5)
 
 
+@registry.benchmark_registry.register("layernorm", is_experimental=True)
+class LayerNormBenchmark(_ActivationBenchmark):
+  """LayerNorm benchmark: Y = (X - mean(X)) / sqrt(var(X) + eps) * gamma + beta.
+
+  X and Y are [batch, dim], and gamma and beta are [dim]. The mean and variance
+  over the last axis are computed in float32, and Y is cast back to `dtype`.
+  `mode=bwd` benchmarks the VJP w.r.t. X, gamma, and beta, which reads X,
+  gamma, beta, and dY, and writes dX, dGamma, and dBeta.
+  """
+
+  def setup(self):
+    def layernorm_fwd(x, gamma, beta):
+      xf = x.astype(jnp.float32)
+      mean = jnp.mean(xf, axis=-1, keepdims=True)
+      var = jnp.mean(jnp.square(xf - mean), axis=-1, keepdims=True)
+      normalized = (xf - mean) * jax.lax.rsqrt(var + 1e-6)
+      return (normalized * gamma + beta).astype(x.dtype)
+
+    self._jit_fn = _jit_pass(layernorm_fwd, self.config.mode, num_grad_args=3)
+
+  def generate_inputs(self) -> tuple[jax.Array, ...]:
+    x, dy = self._generate_activations()
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    dtype = dtypes.parse_dtype(self.config.dtype)
+    replicated = jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(None)
+    )
+    gamma = jax.device_put(jnp.ones((self.config.dim,), dtype), replicated)
+    beta = jax.device_put(jnp.zeros((self.config.dim,), dtype), replicated)
+    return (x, gamma, beta) if dy is None else (x, gamma, beta, dy)
+
+  def get_total_bytes(self) -> float:
+    activation_elements = self.config.batch * self.config.dim
+    if self.config.mode == PassMode.BWD:
+      # Read X, read dY, write dX; read gamma and beta, write dGamma and dBeta.
+      num_elements = 3 * activation_elements + 4 * self.config.dim
+    else:
+      # Read X, write Y; read gamma and beta.
+      num_elements = 2 * activation_elements + 2 * self.config.dim
+    return float(num_elements * self._activation_itemsize())
+
+  def _forward_flops(self) -> float:
+    # mean, subtract, square, variance, rsqrt, multiply, scale, shift = ~8
+    # flops per element.
+    return float(self.config.batch * self.config.dim * 8)
+
+
+@registry.benchmark_registry.register("softmax", is_experimental=True)
+class SoftmaxBenchmark(_ActivationBenchmark):
+  """Row-wise softmax benchmark: Y = softmax(X) over the last axis.
+
+  X and Y are [batch, dim]. The softmax is max-subtracted and computed in
+  float32, and Y is cast back to `dtype`. `mode=bwd` benchmarks the VJP w.r.t.
+  X, which reads X and dY and writes dX (the forward output is recomputed from
+  X inside the jitted VJP).
+  """
+
+  def setup(self):
+    def softmax_fwd(x):
+      return jax.nn.softmax(x.astype(jnp.float32), axis=-1).astype(x.dtype)
+
+    self._jit_fn = _jit_pass(softmax_fwd, self.config.mode)
+
+  def get_total_bytes(self) -> float:
+    # fwd: read X, write Y. bwd: read X, read dY, write dX.
+    num_tensors = 3 if self.config.mode == PassMode.BWD else 2
+    return float(
+        num_tensors
+        * self.config.batch
+        * self.config.dim
+        * self._activation_itemsize()
+    )
+
+  def _forward_flops(self) -> float:
+    # max, subtract, exp, sum, divide = ~5 flops per element.
+    return float(self.config.batch * self.config.dim * 5)
+
+
 @registry.benchmark_registry.register("rope", is_experimental=True)
 class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
   """Rotary Positional Embedding (RoPE) benchmark.

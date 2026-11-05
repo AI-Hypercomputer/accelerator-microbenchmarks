@@ -47,6 +47,8 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "swiglu",
             "rmsnorm",
             "sigmoid",
+            "layernorm",
+            "softmax",
             "rope",
             "quantization",
             "quantize_transpose",
