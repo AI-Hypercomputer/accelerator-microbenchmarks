@@ -260,6 +260,187 @@ class RMSNormBenchmarkTest(_ActivationTestBase):
     )
 
 
+class LayerNormBenchmarkTest(_ActivationTestBase):
+  """Unit tests for LayerNorm benchmark."""
+
+  @staticmethod
+  def _reference_layernorm(x, gamma, beta):
+    x = np.asarray(x, np.float64)
+    mean = x.mean(axis=-1, keepdims=True)
+    var = x.var(axis=-1, keepdims=True)
+    return (x - mean) / np.sqrt(var + 1e-6) * np.asarray(
+        gamma, np.float64
+    ) + np.asarray(beta, np.float64)
+
+  def test_benchmark_registered(self):
+    bm_class = registry.benchmark_registry.get_benchmark("layernorm")
+    self.assertEqual(bm_class, compute_ops.LayerNormBenchmark)
+
+  def test_generate_inputs_fwd(self):
+    bm = self._make_benchmark(compute_ops.LayerNormBenchmark)
+    x, gamma, beta = bm.generate_inputs()
+    self.assertEqual(x.shape, (32, 128))
+    self.assertEqual(gamma.shape, (128,))
+    self.assertEqual(beta.shape, (128,))
+    self.assertEqual(x.dtype, jnp.bfloat16)
+    self.assertEqual(gamma.dtype, jnp.bfloat16)
+
+  def test_generate_inputs_bwd(self):
+    bm = self._make_benchmark(compute_ops.LayerNormBenchmark, mode="bwd")
+    x, _, _, dy = bm.generate_inputs()
+    self.assertEqual(dy.shape, x.shape)
+    self.assertEqual(dy.dtype, jnp.bfloat16)
+
+  def test_run_op_fwd_matches_reference(self):
+    bm = self._make_benchmark(compute_ops.LayerNormBenchmark, dtype="float32")
+    x, gamma, beta = bm.generate_inputs()
+    out = bm.run_op(x, gamma, beta)
+    self.assertEqual(out.shape, (32, 128))
+    self.assertEqual(out.dtype, jnp.float32)
+    np.testing.assert_allclose(
+        out, self._reference_layernorm(x, gamma, beta), rtol=1e-5, atol=1e-5
+    )
+
+  def test_run_op_fwd_keeps_bfloat16_output(self):
+    bm = self._make_benchmark(compute_ops.LayerNormBenchmark)
+    x, gamma, beta = bm.generate_inputs()
+    out = bm.run_op(x, gamma, beta)
+    self.assertEqual(out.dtype, jnp.bfloat16)
+    np.testing.assert_allclose(
+        np.asarray(out, np.float32),
+        self._reference_layernorm(x, gamma, beta),
+        rtol=2e-2,
+        atol=2e-2,
+    )
+
+  def test_run_op_bwd_returns_input_and_affine_grads(self):
+    bm = self._make_benchmark(
+        compute_ops.LayerNormBenchmark, dtype="float32", mode="bwd"
+    )
+    x, gamma, beta, dy = bm.generate_inputs()
+    dx, dgamma, dbeta = bm.run_op(x, gamma, beta, dy)
+    self.assertEqual(dx.shape, x.shape)
+    self.assertEqual(dgamma.shape, gamma.shape)
+    self.assertEqual(dbeta.shape, beta.shape)
+
+    def layernorm(x_, gamma_, beta_):
+      mean = jnp.mean(x_, axis=-1, keepdims=True)
+      var = jnp.var(x_, axis=-1, keepdims=True)
+      y = (x_ - mean) / jnp.sqrt(var + 1e-6) * gamma_ + beta_
+      return jnp.sum(y * dy)
+
+    expected = jax.grad(layernorm, argnums=(0, 1, 2))(x, gamma, beta)
+    np.testing.assert_allclose(dx, expected[0], rtol=1e-4, atol=1e-4)
+    np.testing.assert_allclose(dgamma, expected[1], rtol=1e-4, atol=1e-4)
+    np.testing.assert_allclose(dbeta, expected[2], rtol=1e-4, atol=1e-4)
+
+  @parameterized.parameters(
+      # Read X (8192) + write Y (8192) + read gamma, beta (2 * 256) = 16896.
+      ("fwd", 16896.0),
+      # Read X, dY + write dX (3 * 8192) + read gamma, beta and write dGamma,
+      # dBeta (4 * 256) = 25600.
+      ("bwd", 25600.0),
+  )
+  def test_get_total_bytes(self, mode, expected_bytes):
+    bm = self._make_benchmark(compute_ops.LayerNormBenchmark, mode=mode)
+    self.assertAlmostEqual(bm.get_total_bytes(), expected_bytes)
+
+  @parameterized.parameters(("fwd", 1), ("bwd", 2))
+  def test_get_arithmetic_intensity(self, mode, flops_multiplier):
+    bm = self._make_benchmark(compute_ops.LayerNormBenchmark, mode=mode)
+    self.assertAlmostEqual(
+        bm.get_arithmetic_intensity(),
+        32 * 128 * 8 * flops_multiplier / bm.get_total_bytes(),
+    )
+
+  def test_calculate_metrics(self):
+    bm = self._make_benchmark(compute_ops.LayerNormBenchmark)
+    metrics = bm.calculate_metrics([10.0])
+    self.assertAlmostEqual(metrics["wall_clock_avg_ms"], 10.0)
+    self.assertAlmostEqual(
+        metrics["wall_clock_bandwidth_per_device_gb_s"], 16896.0 / 0.01 / 1e9
+    )
+    self.assertAlmostEqual(metrics["total_bytes_mib"], 16896.0 / (1024 * 1024))
+
+  def test_run_identifier_includes_mode(self):
+    bm = self._make_benchmark(compute_ops.LayerNormBenchmark, mode="bwd")
+    self.assertEqual(bm.get_run_identifier(), "batch_32_dim_128_bwd")
+
+
+class SoftmaxBenchmarkTest(_ActivationTestBase):
+  """Unit tests for Softmax benchmark."""
+
+  @staticmethod
+  def _reference_softmax(x):
+    x = np.asarray(x, np.float64)
+    e = np.exp(x - x.max(axis=-1, keepdims=True))
+    return e / e.sum(axis=-1, keepdims=True)
+
+  def test_benchmark_registered(self):
+    bm_class = registry.benchmark_registry.get_benchmark("softmax")
+    self.assertEqual(bm_class, compute_ops.SoftmaxBenchmark)
+
+  def test_generate_inputs_bwd(self):
+    bm = self._make_benchmark(compute_ops.SoftmaxBenchmark, mode="bwd")
+    x, dy = bm.generate_inputs()
+    self.assertEqual(x.shape, (32, 128))
+    self.assertEqual(dy.shape, (32, 128))
+    self.assertEqual(x.dtype, jnp.bfloat16)
+
+  def test_run_op_fwd_matches_reference(self):
+    bm = self._make_benchmark(compute_ops.SoftmaxBenchmark, dtype="float32")
+    (x,) = bm.generate_inputs()
+    out = bm.run_op(x)
+    self.assertEqual(out.dtype, jnp.float32)
+    np.testing.assert_allclose(
+        out, self._reference_softmax(x), rtol=1e-5, atol=1e-6
+    )
+    np.testing.assert_allclose(np.sum(out, axis=-1), 1.0, rtol=1e-5)
+
+  def test_run_op_fwd_keeps_bfloat16_output(self):
+    bm = self._make_benchmark(compute_ops.SoftmaxBenchmark)
+    (x,) = bm.generate_inputs()
+    out = bm.run_op(x)
+    self.assertEqual(out.dtype, jnp.bfloat16)
+    np.testing.assert_allclose(
+        np.asarray(out, np.float32),
+        self._reference_softmax(x),
+        rtol=2e-2,
+        atol=2e-3,
+    )
+
+  def test_run_op_bwd_matches_reference(self):
+    bm = self._make_benchmark(
+        compute_ops.SoftmaxBenchmark, dtype="float32", mode="bwd"
+    )
+    x, dy = bm.generate_inputs()
+    dx = bm.run_op(x, dy)
+    self.assertEqual(dx.shape, x.shape)
+    # dX = Y * (dY - sum(dY * Y)).
+    y = self._reference_softmax(x)
+    dy = np.asarray(dy, np.float64)
+    expected = y * (dy - np.sum(dy * y, axis=-1, keepdims=True))
+    np.testing.assert_allclose(dx, expected, rtol=1e-4, atol=1e-5)
+
+  @parameterized.parameters(
+      # Read X + write Y: 2 * 32 * 128 * 2 = 16384.
+      ("fwd", 16384.0),
+      # Read X + read dY + write dX: 3 * 32 * 128 * 2 = 24576.
+      ("bwd", 24576.0),
+  )
+  def test_get_total_bytes(self, mode, expected_bytes):
+    bm = self._make_benchmark(compute_ops.SoftmaxBenchmark, mode=mode)
+    self.assertAlmostEqual(bm.get_total_bytes(), expected_bytes)
+
+  def test_calculate_metrics(self):
+    bm = self._make_benchmark(compute_ops.SoftmaxBenchmark)
+    metrics = bm.calculate_metrics([10.0])
+    self.assertAlmostEqual(
+        metrics["wall_clock_bandwidth_per_device_gb_s"], 16384.0 / 0.01 / 1e9
+    )
+    self.assertAlmostEqual(metrics["intensity"], 32 * 128 * 5 / 16384.0)
+
+
 class RoPEBenchmarkTest(parameterized.TestCase):
   """Unit tests for RoPE benchmark."""
 
