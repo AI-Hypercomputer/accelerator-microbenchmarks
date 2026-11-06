@@ -836,7 +836,7 @@ class QuantizeTransposeBenchmarkTest(parameterized.TestCase):
         quantize_transpose,
         "quantize_transpose",
         functools.partial(
-            quantize_transpose.quantize_transpose, interpret=True
+            quantize_transpose.quantize_transpose, interpret=pltpu.InterpretParams()
         ),
     ):
       out_t, sf_t = bm_t.run_op(x)
