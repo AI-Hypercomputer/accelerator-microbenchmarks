@@ -778,9 +778,17 @@ class DcnAllReduceBenchmark(
     self._jit_fn = all_reduce_sharded
 
 
-@registry.benchmark_registry.register("all_gather")
-class AllGatherBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
-  """Benchmarks the latency and bandwidth of jax.lax.all_gather across devices."""
+class AllGatherOpMixin(
+    BaseCollectiveBenchmark[TCollectiveConfig], Generic[TCollectiveConfig]
+):
+  """All-gather op logic shared by any topology base.
+
+  Provides the replicated input, the jitted tiled all-gather (scoped by the
+  topology's `_op_scope()`) and its per-device transfer size. List it before
+  the topology base. The topology base builds `self.mesh` in `setup()`, returns
+  its collective axes from `_get_sharding_axes()` and scales the per-device
+  transfer size to its reporting scope in `get_total_bytes()`.
+  """
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
@@ -788,7 +796,7 @@ class AllGatherBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
     @jax.jit
     def all_gather_sharded(x):
       def f(a):
-        with jax.named_scope(constants.MARKER):
+        with self._op_scope():
           return jax.lax.all_gather(
               a,
               axis_name=sharding_axes,
@@ -820,6 +828,22 @@ class AllGatherBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
     """S*P: each device receives one full shard from every peer."""
     del rank  # Unused.
     return self._get_shard_size_bytes() * participating_ranks
+
+
+@registry.benchmark_registry.register("all_gather")
+class AllGatherBenchmark(
+    AllGatherOpMixin[IciCollectivesParams],
+    IciCollectiveBenchmark[IciCollectivesParams],
+):
+  """Benchmarks the latency and bandwidth of jax.lax.all_gather across devices."""
+
+
+@registry.benchmark_registry.register("dcn_all_gather")
+class DcnAllGatherBenchmark(
+    AllGatherOpMixin[DcnCollectivesParams],
+    DcnCollectiveBenchmark[DcnCollectivesParams],
+):
+  """Benchmarks multi-slice DCN AllGather latency and bandwidth."""
 
 
 def all_to_all_peak_bandwidth_per_chip_gb_s(

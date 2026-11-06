@@ -175,8 +175,26 @@ def _mock_tpu7x_devices(
   ]
 
 
+# DCN benchmarks and their configs, for tests of the shared DCN base.
+_DCN_BENCHMARKS: tuple[tuple[str, type[Any], type[Any]], ...] = (
+    (
+        "dcn_all_reduce",
+        collectives.DcnAllReduceBenchmark,
+        collectives.DcnAllReduceParams,
+    ),
+    (
+        "dcn_all_gather",
+        collectives.DcnAllGatherBenchmark,
+        collectives.DcnCollectivesParams,
+    ),
+)
+
+
 def _setup_on_dcn_mesh(
-    bm: collectives.DcnCollectiveBenchmark, num_slices: int
+    bm: collectives.DcnCollectiveBenchmark,
+    num_slices: int,
+    extra_coords: tuple[int, ...] = (0, 0),
+    cores_per_chip: int = 2,
 ) -> None:
   """Runs bm.setup() with CPU devices split evenly into num_slices slices.
 
@@ -188,6 +206,8 @@ def _setup_on_dcn_mesh(
   Args:
     bm: DCN benchmark to set up.
     num_slices: Number of slices to split the CPU devices into.
+    extra_coords: Remaining chip coordinates beyond axis 0.
+    cores_per_chip: Number of cores per chip on the mocked devices.
   """
   devices_per_slice = len(_ALL_CPU_DEVICES) // num_slices
   total_devices = num_slices * devices_per_slice
@@ -200,8 +220,8 @@ def _setup_on_dcn_mesh(
   mock_devices = [
       mock.Mock(
           id=i,
-          coords=(i // 2, 0, 0),
-          core_on_chip=i % 2,
+          coords=(i // cores_per_chip, *extra_coords),
+          core_on_chip=i % cores_per_chip,
           slice_index=i // devices_per_slice,
       )
       for i in range(total_devices)
@@ -299,6 +319,12 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm_class = registry.benchmark_registry.get_benchmark("dcn_all_reduce")
     self.assertEqual(bm_class, collectives.DcnAllReduceBenchmark)
     self.assertEqual(bm_class.Config, collectives.DcnAllReduceParams)
+
+  def test_dcn_all_gather_registered(self):
+    """Verify dcn_all_gather is registered with DcnCollectivesParams."""
+    bm_class = registry.benchmark_registry.get_benchmark("dcn_all_gather")
+    self.assertEqual(bm_class, collectives.DcnAllGatherBenchmark)
+    self.assertEqual(bm_class.Config, collectives.DcnCollectivesParams)
 
   def test_all_gather_registered(self):
     """Verify that the benchmark is correctly registered."""
@@ -1140,51 +1166,107 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     )
 
   @parameterized.named_parameters(
-      ("tpu7x", system.TPU7X_HARDWARE_SPEC, (0, 0), 2),
-      ("v6e", system.V6E_HARDWARE_SPEC, (0,), 1),
+      (
+          f"{case_name}_{hw_name}",
+          bm_cls,
+          config_cls,
+          num_slices,
+          expected_out,
+          bytes_per_shard,
+          hardware_spec,
+          extra_coords,
+          cores_per_chip,
+      )
+      for (
+          case_name,
+          bm_cls,
+          config_cls,
+          num_slices,
+          expected_out,
+          bytes_per_shard,
+      ) in (
+          # Ring all-reduce: 2 * (n - 1) / n * shard_bytes per device.
+          (
+              "all_reduce_two_slices",
+              collectives.DcnAllReduceBenchmark,
+              collectives.DcnAllReduceParams,
+              2,
+              lambda x: x * 2,
+              1.0,
+          ),
+          (
+              "all_reduce_four_slices",
+              collectives.DcnAllReduceBenchmark,
+              collectives.DcnAllReduceParams,
+              4,
+              lambda x: x * 4,
+              1.5,
+          ),
+          # All-gather: (n - 1) * shard_bytes per device.
+          (
+              "all_gather_two_slices",
+              collectives.DcnAllGatherBenchmark,
+              collectives.DcnCollectivesParams,
+              2,
+              lambda x: np.tile(x, (2, 1, 1)),
+              1.0,
+          ),
+          (
+              "all_gather_four_slices",
+              collectives.DcnAllGatherBenchmark,
+              collectives.DcnCollectivesParams,
+              4,
+              lambda x: np.tile(x, (4, 1, 1)),
+              3.0,
+          ),
+      )
+      for hw_name, hardware_spec, extra_coords, cores_per_chip in (
+          ("tpu7x", system.TPU7X_HARDWARE_SPEC, (0, 0), 2),
+          ("v6e", system.V6E_HARDWARE_SPEC, (0,), 1),
+      )
   )
-  def test_dcn_all_reduce_schema_coverage(
-      self, hardware_spec, extra_coords, cores_per_chip
+  def test_dcn_schema_coverage(
+      self,
+      bm_cls,
+      config_cls,
+      num_slices,
+      expected_out,
+      bytes_per_shard,
+      hardware_spec,
+      extra_coords,
+      cores_per_chip,
   ):
-    """Verify DcnAllReduceBenchmark REPORT_SCHEMA, execution, and output keys."""
-    params = {"matrix_dim": 64, "dtype": "float32"}
-    config = collectives.DcnAllReduceParams(**params)
-    bm = collectives.DcnAllReduceBenchmark(
-        config=config, hardware_spec=hardware_spec
+    """Verify DCN collective REPORT_SCHEMA, execution, and output keys."""
+    config = config_cls(matrix_dim=64, dtype="float32")
+    bm = bm_cls(config=config, hardware_spec=hardware_spec)
+    _setup_on_dcn_mesh(
+        bm,
+        num_slices,
+        extra_coords=extra_coords,
+        cores_per_chip=cores_per_chip,
     )
-    dcn_mesh = jax.sharding.Mesh(
-        np.array(jax.devices()).reshape((2, 2)), ("dcn", "ici")
-    )
-    mock_devices = [
-        mock.Mock(
-            id=i,
-            coords=(i // cores_per_chip, *extra_coords),
-            core_on_chip=i % cores_per_chip,
-            slice_index=i // 2,
-        )
-        for i in range(4)
-    ]
-    with (
-        mock.patch.object(jax, "devices", return_value=mock_devices),
-        mock.patch.object(jax.sharding, "Mesh", return_value=dcn_mesh),
-    ):
-      bm.setup()
     (data,) = bm.generate_inputs()
     self.assertEqual(data.shape, (64, 8, 128))
     out = bm.run_op(data)
-    self.assertEqual(out.shape, (64, 8, 128))
-    expected = 2.0 * np.array(data)
+    expected = expected_out(np.array(data))
+    self.assertEqual(out.shape, expected.shape)
     for shard in out.addressable_shards:
       np.testing.assert_allclose(np.array(shard.data), expected, rtol=1e-5)
+    metadata = bm.get_workload_metadata()
+    self.assertEqual(metadata["replica_group_rank"], num_slices)
+    shard_bytes = 64 * 8 * 128 * 4
+    self.assertAlmostEqual(
+        bm.get_total_bytes(), bytes_per_shard * shard_bytes
+    )
     test_report_utils.assert_schema_matches_output(
         self, bm, ignored_keys=_COLLECTIVES_IGNORED_KEYS
     )
-    # DCN reports the transfer size per device: 2 * S * (n - 1) / n for n = 2
-    # slices is one shard, with no devices_per_chip factor.
+    # DCN reports the transfer size per device, with no devices_per_chip factor.
     shard_mib = 64 * 8 * 128 * 4 / (1024 * 1024)
-    metadata = bm.get_workload_metadata()
     self.assertAlmostEqual(metadata["shard_size_mib"], shard_mib)
-    self.assertAlmostEqual(metadata["transfer_size_per_device_mib"], shard_mib)
+    self.assertAlmostEqual(
+        metadata["transfer_size_per_device_mib"], bytes_per_shard * shard_mib
+    )
     self.assertNotIn("transfer_size_per_chip_mib", metadata)
     metrics = bm.derive_chip_metrics(bm.calculate_metrics([1.0]))
     expected_gbps = (
@@ -1236,15 +1318,19 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     )
 
   @parameterized.named_parameters(
-      ("tpu7x", system.TPU7X_HARDWARE_SPEC, (0, 0)),
-      ("v6e", system.V6E_HARDWARE_SPEC, (0,)),
+      (f"{bm_name}_{hw_name}", bm_cls, config_cls, hardware_spec, extra_coords)
+      for bm_name, bm_cls, config_cls in _DCN_BENCHMARKS
+      for hw_name, hardware_spec, extra_coords in (
+          ("tpu7x", system.TPU7X_HARDWARE_SPEC, (0, 0)),
+          ("v6e", system.V6E_HARDWARE_SPEC, (0,)),
+      )
   )
   def test_dcn_setup_single_slice_raises_error(
-      self, hardware_spec, extra_coords
+      self, bm_cls, config_cls, hardware_spec, extra_coords
   ):
     """Verify DcnCollectiveBenchmark.setup rejects fewer than 2 slices."""
-    bm = collectives.DcnAllReduceBenchmark(
-        config=collectives.DcnAllReduceParams(matrix_dim=64, dtype="float32"),
+    bm = bm_cls(
+        config=config_cls(matrix_dim=64, dtype="float32"),
         hardware_spec=hardware_spec,
     )
     # Default CPU devices do not have slice_index -> treated as slice 0 only.
@@ -1267,15 +1353,19 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         bm.setup()
 
   @parameterized.named_parameters(
-      ("tpu7x", system.TPU7X_HARDWARE_SPEC, (0, 0)),
-      ("v6e", system.V6E_HARDWARE_SPEC, (0,)),
+      (f"{bm_name}_{hw_name}", bm_cls, config_cls, hardware_spec, extra_coords)
+      for bm_name, bm_cls, config_cls in _DCN_BENCHMARKS
+      for hw_name, hardware_spec, extra_coords in (
+          ("tpu7x", system.TPU7X_HARDWARE_SPEC, (0, 0)),
+          ("v6e", system.V6E_HARDWARE_SPEC, (0,)),
+      )
   )
   def test_dcn_setup_unequal_slice_device_counts_raises_error(
-      self, hardware_spec, extra_coords
+      self, bm_cls, config_cls, hardware_spec, extra_coords
   ):
     """Verify DcnCollectiveBenchmark.setup rejects slices with different device counts."""
-    bm = collectives.DcnAllReduceBenchmark(
-        config=collectives.DcnAllReduceParams(matrix_dim=64, dtype="float32"),
+    bm = bm_cls(
+        config=config_cls(matrix_dim=64, dtype="float32"),
         hardware_spec=hardware_spec,
     )
     mismatched_devices = [
@@ -1412,9 +1502,21 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     ):
       _setup_on_dcn_mesh(dcn_bm, num_slices=5)
 
-  def test_all_to_all_op_scope_by_topology(self):
-    """Verify ICI all-to-all lowers inside MARKER and DCN all-to-all does not."""
-    ici_bm = collectives.AllToAllBenchmark(
+  @parameterized.named_parameters(
+      (
+          "all_gather",
+          collectives.AllGatherBenchmark,
+          collectives.DcnAllGatherBenchmark,
+      ),
+      (
+          "all_to_all",
+          collectives.AllToAllBenchmark,
+          collectives.DcnAllToAllBenchmark,
+      ),
+  )
+  def test_op_scope_by_topology(self, ici_cls, dcn_cls):
+    """Verify ICI collectives lower inside MARKER and DCN collectives do not."""
+    ici_bm = ici_cls(
         config=collectives.IciCollectivesParams(matrix_dim=64, dtype="float32"),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
         mesh=self.mock_mesh,
@@ -1426,7 +1528,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         ici_bm._jit_fn.lower(ici_x).as_text(debug_info=True),  # pylint: disable=protected-access
     )
 
-    dcn_bm = collectives.DcnAllToAllBenchmark(
+    dcn_bm = dcn_cls(
         config=collectives.DcnCollectivesParams(matrix_dim=64, dtype="float32"),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
     )
@@ -1699,7 +1801,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       (
           "all_gather",
           collectives.AllGatherBenchmark,
-          (collectives.IciCollectiveBenchmark,),
+          (collectives.AllGatherOpMixin, collectives.IciCollectiveBenchmark),
           collectives.IciCollectivesParams,
       ),
       (
@@ -1725,6 +1827,12 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
           collectives.DcnAllReduceBenchmark,
           (collectives.AllReduceOpMixin, collectives.DcnCollectiveBenchmark),
           collectives.DcnAllReduceParams,
+      ),
+      (
+          "dcn_all_gather",
+          collectives.DcnAllGatherBenchmark,
+          (collectives.AllGatherOpMixin, collectives.DcnCollectiveBenchmark),
+          collectives.DcnCollectivesParams,
       ),
       (
           "dcn_all_to_all",
@@ -1829,6 +1937,19 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
           ],
       ),
       (
+          "dcn_all_gather",
+          collectives.DcnAllGatherBenchmark,
+          [
+              "dtype",
+              "matrix_dim",
+              "shard_size_mib",
+              "wall_clock_p50_ms",
+              "wall_clock_bandwidth_per_host_gbps",
+              "xprof_p50_ms",
+              "xprof_bandwidth_per_host_gbps",
+          ],
+      ),
+      (
           "dcn_all_to_all",
           collectives.DcnAllToAllBenchmark,
           [
@@ -1847,14 +1968,31 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual([col for col, _ in bm_cls.REPORT_SCHEMA], expected_cols)
 
   @parameterized.named_parameters(
-      ("all_gather", collectives.AllGatherBenchmark),
-      ("all_to_all", collectives.AllToAllBenchmark),
-      ("reduce_scatter", collectives.ReduceScatterBenchmark),
+      (
+          "all_gather",
+          collectives.AllGatherBenchmark,
+          collectives.IciCollectivesParams,
+      ),
+      (
+          "dcn_all_gather",
+          collectives.DcnAllGatherBenchmark,
+          collectives.DcnCollectivesParams,
+      ),
+      (
+          "all_to_all",
+          collectives.AllToAllBenchmark,
+          collectives.IciCollectivesParams,
+      ),
+      (
+          "reduce_scatter",
+          collectives.ReduceScatterBenchmark,
+          collectives.ReduceScatterParams,
+      ),
   )
-  def test_get_run_identifier(self, bm_cls):
+  def test_get_run_identifier(self, bm_cls, config_cls):
     """Verify non-all-reduce collectives use the dim_<matrix_dim> identifier."""
     bm = bm_cls(
-        config=collectives.IciCollectivesParams(matrix_dim=64),
+        config=config_cls(matrix_dim=64),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
         mesh=self.mock_mesh,
     )
