@@ -64,7 +64,7 @@ CATEGORY_TITLES = {
     ),
     "device_to_device": (
         "🔗 Device-to-Device (D2D)",
-        "Peer-to-peer inter-chip transfer bandwidth and latency",
+        "Device-to-device transfer bandwidth and latency",
     ),
 }
 
