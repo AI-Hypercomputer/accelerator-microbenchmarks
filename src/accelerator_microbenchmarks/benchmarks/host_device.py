@@ -1,6 +1,7 @@
 """Host-to-Device and Device-to-Host transfer performance benchmarks."""
 
 import dataclasses
+import logging
 from typing import Any, Callable, Optional, Sequence
 
 from accelerator_microbenchmarks.core import base
@@ -81,6 +82,7 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
   derive_chip_bandwidth: bool = False
   # Data moves between host buffers and each local device only; no ICI.
   requires_ici: bool = False
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.HOST_LINK
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("transfer_backend", report.format_str),
@@ -224,6 +226,38 @@ class _HostDeviceBenchmark(base.BaseBenchmark[HostDeviceParams]):
 
   def get_workload_metadata(self) -> dict[str, Any]:
     return {"num_devices": self.num_transfer_devices}
+
+  def get_peak_host_link_bandwidth(self) -> float | None:
+    """Returns the host link peak (GB/s) for the devices at `config.scope`.
+
+    The host PCIe link belongs to the chip and is shared by all of its
+    devices, so the peak is the per-chip link bandwidth times the number of
+    distinct chips among the measured devices. A single device transferring
+    alone (`scope="device"`) is therefore bounded by its full chip link. The
+    peak applies to both transfer backends; host-side limits (root complex,
+    NUMA, host DRAM) are not modeled.
+
+    Returns:
+      The peak bandwidth in decimal GB/s, or None (with a warning) when the
+      hardware spec has no PCIe host link or the devices have no physical chip
+      coordinates (non-TPU).
+    """
+    pcie = self.hardware_spec.pcie if self.hardware_spec is not None else None
+    if pcie is None:
+      logging.warning(
+          "No PCIe host link bandwidth in the hardware spec; skipping"
+          " host-link roofline analysis."
+      )
+      return None
+    devices = self.get_devices_to_measure()
+    if any(getattr(device, "coords", None) is None for device in devices):
+      logging.warning(
+          "Devices have no physical chip coordinates (non-TPU); skipping"
+          " host-link roofline analysis."
+      )
+      return None
+    num_chips = len({tuple(device.coords) for device in devices})
+    return pcie.bandwidth_per_direction_gb_s * num_chips
 
   def calculate_throughput_metrics(
       self, latency_ms: float, prefix: constants.TimingDomain

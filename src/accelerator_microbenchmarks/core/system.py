@@ -16,6 +16,8 @@ TpuVersion = schema.TpuVersion
 HardwareSpec = schema.HardwareSpec
 TflopsSpec = schema.TflopsSpec
 IciSpec = schema.IciSpec
+DieToDieSpec = schema.DieToDieSpec
+PcieSpec = schema.PcieSpec
 WraparoundRule = schema.WraparoundRule
 HbmSpec = schema.HbmSpec
 
