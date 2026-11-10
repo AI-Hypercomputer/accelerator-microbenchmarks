@@ -642,6 +642,69 @@ class ProfilerTest(absltest.TestCase):
     # jit_long spans both markers (50 -> 520 us), jit_short only the first.
     self.assertEqual(trace.device_step_durations_ms(0), [0.47, 0.01])
 
+  def test_jit_ops_on_xla_ops_line_are_not_step_spans(self):
+    """Only `XLA Modules` `jit_*` events are steps when that line exists.
+
+    Mirrors an MLA decode trace: a Pallas kernel nested in a `jax.jit` emits
+    `jit_*`-named scalar-prefetch ops on the `XLA Ops` line, and a timed
+    kernel starts inside one of them. Pid 2 has no `XLA Modules` line, so it
+    keeps using every `jit_*` event.
+    """
+
+    def thread(pid, tid, name):
+      return {
+          "ph": "M",
+          "pid": pid,
+          "tid": tid,
+          "name": "thread_name",
+          "args": {"name": name},
+      }
+
+    def event(pid, tid, name, ts, dur):
+      return {
+          "ph": "X",
+          "pid": pid,
+          "tid": tid,
+          "name": name,
+          "ts": ts,
+          "dur": dur,
+      }
+
+    trace = profiler.load_xprof_trace(
+        self._write_trace([
+            {
+                "pid": 1,
+                "name": "process_name",
+                "args": {"name": "/device:TPU:0"},
+            },
+            {
+                "pid": 2,
+                "name": "process_name",
+                "args": {"name": "/device:TPU:1"},
+            },
+            thread(1, 10, "XLA Modules"),
+            thread(1, 11, "XLA Ops"),
+            # One step on pid 1, with two kernels (2 us and 1 us).
+            event(1, 10, "jit__local(123)", 100, 50),
+            event(1, 11, "jit_kernel_.1.ids_ref", 110, 1),
+            event(1, 11, "KERNEL-a.1", 111, 2),
+            event(1, 11, "jit_kernel_.2.ids_ref", 120, 1),
+            event(1, 11, "KERNEL-b.1", 120, 1),
+            # Pid 2 without thread metadata: both jit_* events are steps.
+            event(2, 20, "jit_step", 100, 50),
+            event(2, 20, "jit_inner", 110, 1),
+            event(2, 20, "KERNEL-c.1", 110, 1),
+        ]),
+        lambda e: e.get("name", "").startswith("KERNEL-"),
+    )
+    self.assertEqual(
+        trace.step_spans_by_pid,
+        {1: [(100.0, 150.0)], 2: [(100.0, 150.0), (110.0, 111.0)]},
+    )
+    # One duration per step: earliest kernel start to latest kernel end.
+    self.assertEqual(trace.device_step_durations_ms(0), [0.01])
+    self.assertEqual(trace.device_step_durations_ms(1), [0.001, 0.001])
+
   def test_candidate_selection_is_global_across_pids(self):
     """Verifies call-done markers on one pid suppress plain markers on others."""
     trace = profiler.load_xprof_trace(

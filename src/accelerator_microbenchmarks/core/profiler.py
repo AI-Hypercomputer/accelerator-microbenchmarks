@@ -11,6 +11,9 @@ from accelerator_microbenchmarks.core import constants
 import os
 MARKER = constants.MARKER
 
+# `thread_name` of the TPU trace line holding one event per module execution.
+_XLA_MODULES_THREAD_NAME = "XLA Modules"
+
 
 class TraceEvent(TypedDict, total=False):
   """One event of an XProf `.trace.json.gz` file (Chrome trace event format).
@@ -18,8 +21,9 @@ class TraceEvent(TypedDict, total=False):
   Attributes:
     pid: Trace viewer row (process) the event belongs to, e.g. the row of
       `/device:TPU:0` or `/host:CPU`.
-    name: Event name, e.g. an HLO op, a `jit_*` step, or `process_name`
-      metadata.
+    tid: Trace line (thread) within the pid, e.g. `XLA Modules` or `XLA Ops`.
+    name: Event name, e.g. an HLO op, a `jit_*` step, or `process_name` /
+      `thread_name` metadata.
     ts: Start timestamp in microseconds.
     dur: Duration in microseconds.
     args: Extra event arguments, e.g. `name` for `process_name` metadata,
@@ -27,6 +31,7 @@ class TraceEvent(TypedDict, total=False):
   """
 
   pid: int
+  tid: int
   name: str
   ts: float
   dur: float
@@ -48,8 +53,9 @@ class XprofTrace:
       across the whole trace, grouped by pid in their original trace order.
       Events without a pid are grouped under None.
     step_spans_by_pid: `(start, end)` timestamps (us) of each `jit_*` step event
-      that has both `ts` and `dur`, grouped by pid and stably sorted by start
-      time, so steps with equal start times keep their trace order.
+      that has both `ts` and `dur` (only on the `XLA Modules` line for pids
+      that have one), grouped by pid and stably sorted by start time, so steps
+      with equal start times keep their trace order.
     process_pids: Pid of each `process_name` metadata event keyed by process
       name (e.g. `/device:TPU:0`, `/host:CPU`); the first occurrence wins.
     fallback_pid: Smallest pid among the timing events that have a pid, used
@@ -283,10 +289,29 @@ def _group_timing_events_by_pid(
   return by_pid
 
 
+def _get_module_threads(
+    events: list[TraceEvent],
+) -> set[tuple[int | None, int | None]]:
+  """Returns the `(pid, tid)` of every `XLA Modules` trace line."""
+  return {
+      (e.get("pid"), e.get("tid"))
+      for e in events
+      if e.get("name") == "thread_name"
+      and e.get("args", {}).get("name") == _XLA_MODULES_THREAD_NAME
+  }
+
+
 def _get_step_spans_by_pid(
     events: list[TraceEvent],
 ) -> dict[int, list[tuple[float, float]]]:
   """Returns `(start, end)` of each `jit_*` step event per pid, sorted by start.
+
+  On TPU, a step is one module execution on the pid's `XLA Modules` line. The
+  `XLA Ops` line can also carry `jit_*` events (HLO ops inlined from a nested
+  `jax.jit`, such as the scalar-prefetch ops of Pallas kernels), which are not
+  steps. So for a pid with an `XLA Modules` line, only `jit_*` events on that
+  line are used; pids without one (e.g. host-only traces) use every `jit_*`
+  event.
 
   The sort is stable and keyed on the start only, so step events with equal
   start times keep their trace order.
@@ -297,6 +322,8 @@ def _get_step_spans_by_pid(
   Returns:
     Step spans (us) keyed by pid; events without a pid are skipped.
   """
+  module_threads = _get_module_threads(events)
+  pids_with_module_threads = {pid for pid, _ in module_threads}
   spans_by_pid: dict[int, list[tuple[float, float]]] = {}
   for e in events:
     pid = e.get("pid")
@@ -305,6 +332,10 @@ def _get_step_spans_by_pid(
         and e.get("name", "").startswith("jit_")
         and "ts" in e
         and "dur" in e
+        and (
+            pid not in pids_with_module_threads
+            or (pid, e.get("tid")) in module_threads
+        )
     ):
       start, dur = _event_span_us(e)
       spans_by_pid.setdefault(pid, []).append((start, start + dur))

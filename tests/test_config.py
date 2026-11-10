@@ -15,6 +15,11 @@ from accelerator_microbenchmarks.core import csv_loader
 from accelerator_microbenchmarks.core import registry
 
 
+# Config path prefixes (relative to `configs/`) excluded from the generic config
+# checks below.
+_EXCLUDED_CONFIG_PREFIXES: tuple[str, ...] = ()
+
+
 def _find_all_benchmark_configs() -> list[tuple[str, str]]:
   """Discovers all benchmark YAML config files packaged in test runfiles or repo."""
   configs_dir = os.path.normpath(
@@ -30,6 +35,8 @@ def _find_all_benchmark_configs() -> list[tuple[str, str]]:
         continue
       full_path = os.path.join(root, f)
       rel_path = os.path.relpath(full_path, configs_dir)
+      if rel_path.replace(os.sep, "/").startswith(_EXCLUDED_CONFIG_PREFIXES):
+        continue
       test_name = rel_path.translate(
           str.maketrans(dict.fromkeys(f"{os.sep}.-", "_"))
       )
