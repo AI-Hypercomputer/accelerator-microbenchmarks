@@ -918,11 +918,17 @@ benchmark:
         cli.run, flags_parser=cli._google_flags_parser
     )
 
+  @parameterized.named_parameters(
+      ("dcn_all_reduce", "dcn_all_reduce"),
+      ("dcn_all_to_all", "dcn_all_to_all"),
+  )
   @mock.patch.object(os, "execvpe")
-  def test_maybe_reexec_for_op_env_reexecs_when_env_differs(self, mock_execvpe):
+  def test_maybe_reexec_for_op_env_reexecs_when_env_differs(
+      self, task_name, mock_execvpe
+  ):
     """Verifies _maybe_reexec_for_op_env re-execs when op_flags.yaml env differs."""
     with mock.patch.dict(os.environ, {}, clear=True):
-      cli._maybe_reexec_for_op_env([{"name": "dcn_all_reduce"}])  # pylint: disable=protected-access
+      cli._maybe_reexec_for_op_env([{"name": task_name}])  # pylint: disable=protected-access
     mock_execvpe.assert_called_once_with(
         sys.orig_argv[0],
         sys.orig_argv,
@@ -936,13 +942,23 @@ benchmark:
       ("no_op_env_all_reduce", "all_reduce", {}),
       ("no_op_env_gemm", "gemm", {}),
       (
-          "already_matches",
+          "already_matches_dcn_all_reduce",
           "dcn_all_reduce",
           {"GLIBC_TUNABLES": "glibc.pthread.rseq=0"},
       ),
       (
-          "sentinel_set",
+          "already_matches_dcn_all_to_all",
+          "dcn_all_to_all",
+          {"GLIBC_TUNABLES": "glibc.pthread.rseq=0"},
+      ),
+      (
+          "sentinel_set_dcn_all_reduce",
           "dcn_all_reduce",
+          {cli._REEXEC_SENTINEL: "1"},  # pylint: disable=protected-access
+      ),
+      (
+          "sentinel_set_dcn_all_to_all",
+          "dcn_all_to_all",
           {cli._REEXEC_SENTINEL: "1"},  # pylint: disable=protected-access
       ),
   )
@@ -956,8 +972,10 @@ benchmark:
     mock_execvpe.assert_not_called()
 
   @parameterized.named_parameters(
-      ("run", "run", "dcn_all_reduce"),
-      ("run_config", "run-config", "dcn_all_reduce"),
+      ("run_dcn_all_reduce", "run", "dcn_all_reduce"),
+      ("run_config_dcn_all_reduce", "run-config", "dcn_all_reduce"),
+      ("run_dcn_all_to_all", "run", "dcn_all_to_all"),
+      ("run_config_dcn_all_to_all", "run-config", "dcn_all_to_all"),
   )
   @mock.patch.object(runner, "run_benchmarks")
   @mock.patch.object(cli, "_maybe_reexec_for_op_env")

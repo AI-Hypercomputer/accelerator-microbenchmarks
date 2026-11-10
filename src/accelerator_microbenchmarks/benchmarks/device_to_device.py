@@ -1,11 +1,13 @@
 """Device-to-Device (D2D) transfer performance microbenchmark."""
 
 import dataclasses
+import logging
 from typing import Any, Callable, Optional, Sequence
 
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import dtypes
+from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -20,6 +22,85 @@ class TransferDirection(constants.ParamEnum):
 
   UNI = "uni"
   BI = "bi"
+
+
+def classify_transfer_link(
+    src: jax.Device, dst: jax.Device
+) -> constants.TransferLink:
+  """Returns the physical link that carries a `src -> dst` transfer.
+
+  Devices on the same chip share physical chip coordinates and talk over the
+  on-package die-to-die link; devices on different chips of the same slice
+  talk over ICI.
+
+  Args:
+    src: Source device.
+    dst: Destination device.
+
+  Returns:
+    `TransferLink.DIE_TO_DIE` if both devices are on the same chip, otherwise
+    `TransferLink.ICI`.
+
+  Raises:
+    ValueError: If the devices have no physical chip coordinates (non-TPU) or
+      are on different slices (the transfer then crosses DCN).
+  """
+  src_coords = getattr(src, "coords", None)
+  dst_coords = getattr(dst, "coords", None)
+  if src_coords is None or dst_coords is None:
+    raise ValueError("devices have no physical chip coordinates (non-TPU)")
+  if platform.get_device_slice_index(src) != platform.get_device_slice_index(
+      dst
+  ):
+    raise ValueError("src and dst are on different slices (DCN)")
+  if tuple(src_coords) == tuple(dst_coords):
+    return constants.TransferLink.DIE_TO_DIE
+  return constants.TransferLink.ICI
+
+
+def device_to_device_peak_bandwidth_gb_s(
+    link: constants.TransferLink,
+    direction: TransferDirection,
+    hardware_spec: system.HardwareSpec,
+) -> float:
+  """Returns the theoretical peak bandwidth of one D2D transfer (GB/s).
+
+  A device-to-device transfer is bounded by a single physical link per
+  direction. For ICI this holds independent of the hop count: a single
+  transfer follows one route, so measured cross-chip transfers saturate one
+  link whether the chips are neighbors or several hops apart. Links are
+  full-duplex and `DeviceToDeviceBenchmark.get_total_bytes()` counts the
+  bytes of both directions for `BI`, so the bidirectional peak is twice the
+  per-direction peak.
+
+  Scope: the result is the ceiling for the single measured `src -> dst`
+  transfer, which runs alone (one device pair at a time) and so has the whole
+  link to itself. It is not a per-device share of a chip resource: ICI links
+  belong to the chip and are shared by all of its devices, so ICI peaks must
+  not be summed across the devices of a chip.
+
+  Args:
+    link: The link carrying the transfer.
+    direction: Unidirectional or bidirectional transfer.
+    hardware_spec: Hardware spec holding the link bandwidths.
+
+  Returns:
+    The peak bandwidth in decimal GB/s, in the same units as
+    `*_bandwidth_per_device_gb_s`.
+
+  Raises:
+    ValueError: If `hardware_spec` has no bandwidth for `link`.
+  """
+  if link == constants.TransferLink.DIE_TO_DIE:
+    if hardware_spec.die_to_die is None:
+      raise ValueError(f"no die-to-die spec for {hardware_spec.name}")
+    per_direction_gb_s = hardware_spec.die_to_die.bandwidth_per_direction_gb_s
+  else:
+    if hardware_spec.ici is None:
+      raise ValueError(f"no ICI spec for {hardware_spec.name}")
+    per_direction_gb_s = hardware_spec.ici.link_bw_per_direction_gb_s
+  num_directions = 2.0 if direction == TransferDirection.BI else 1.0
+  return per_direction_gb_s * num_directions
 
 
 @dataclasses.dataclass
@@ -93,6 +174,7 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
 
   Config = DeviceToDeviceParams
   derive_chip_bandwidth: bool = False
+  roofline_mode: constants.RooflineMode = constants.RooflineMode.NETWORK_LINK
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("dtype", report.format_str),
       ("direction", report.format_str),
@@ -234,3 +316,31 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
     return {
         f"{prefix}_bandwidth_per_device_gb_s": bandwidth_gb_s,
     }
+
+  def get_peak_link_bandwidth(
+      self,
+  ) -> tuple[float, constants.TransferLink] | None:
+    """Returns the D2D peak and its bounding link, or None (with a warning).
+
+    The peak is not modeled (and the roofline columns are omitted) for:
+      - Non-TPU devices without chip coordinates.
+      - Pairs on different slices (DCN).
+      - Hardware specs without a bandwidth for the bounding link.
+    """
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    # Indices refer to mesh positions, which need not follow chip order, so
+    # classify the actual devices rather than the indices.
+    src = self.mesh.devices.flat[self.config.src_device_index]
+    dst = self.mesh.devices.flat[self.config.dst_device_index]
+    try:
+      link = classify_transfer_link(src, dst)
+      peak_gb_s = device_to_device_peak_bandwidth_gb_s(
+          link, self.config.direction, self.hardware_spec
+      )
+    except ValueError as e:
+      logging.warning(
+          "Skipping device_to_device *_roofline_efficiency_pct: %s.", e
+      )
+      return None
+    return peak_gb_s, link

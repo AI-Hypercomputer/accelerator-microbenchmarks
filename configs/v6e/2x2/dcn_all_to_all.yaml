@@ -1,0 +1,9 @@
+benchmark:
+  name: dcn_all_to_all
+  xprof_timing: false
+  params:
+    warmup_tries: 20
+    num_runs: 100
+    dtype: bfloat16
+  sweep:
+    matrix_dim: [524288, 1048576, 2097152]

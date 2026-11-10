@@ -502,6 +502,19 @@ class WorkloadSubmitterTest(parameterized.TestCase):
     )
 
   @parameterized.named_parameters(
+      ("tpu7x", "tpu7x", "2x2x1/dcn_all_to_all.yaml"),
+      ("v6e", "v6e", "2x2/dcn_all_to_all.yaml"),
+  )
+  def test_resolve_config_files_dcn_all_to_all_categories(self, acc, expected):
+    resolved = workload_submitter.resolve_config_files(
+        accelerator=acc, categories=["dcn_all_to_all"]
+    )
+    self.assertEqual(
+        [f"{p.parent.name}/{p.name}" for p in resolved],
+        [expected],
+    )
+
+  @parameterized.named_parameters(
       ("topology_token", ["2x2"]),
       ("accelerator_token", ["tpu7x"]),
       ("empty", [""]),

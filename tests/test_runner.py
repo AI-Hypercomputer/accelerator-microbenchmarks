@@ -186,6 +186,29 @@ class TestRunner(absltest.TestCase):
     )
     self.assertEqual(os.environ.get("GLIBC_TUNABLES"), "glibc.pthread.rseq=0")
 
+  def test_set_xla_flags_dcn_all_to_all(self):
+    """Verifies dcn_all_to_all resolves tuned flags and env in op_flags.yaml."""
+    os.environ.pop("LIBTPU_INIT_ARGS", None)
+    os.environ.pop("GLIBC_TUNABLES", None)
+    runner.set_xla_flags([{"name": "dcn_all_to_all"}], None)
+    init_args = os.environ.get("LIBTPU_INIT_ARGS", "")
+    expected_flags = (
+        "--xla_tpu_enable_async_all_to_all=true",
+        "--megascale_max_reduction_shard_size=8388608",
+        "--megascale_grpc_premap_memory_bytes=137438953472",
+        "--megascale_grpc_dynamic_lb_max_outstanding_bytes=67108864",
+        "--megascale_enable_grpc_xprof_profiler=false",
+        "--megascale_grpc_enable_xor_tracer=false",
+        "--megascale_grpc_enable_numa_aware_transmit=false",
+        "--xla_tpu_use_enhanced_launch_barrier=true",
+        "--megascale_grpc_num_channels=8",
+        "--megascale_grpc_dynamic_lb=true",
+    )
+    for flag in expected_flags:
+      self.assertIn(flag, init_args)
+    self.assertNotIn("--megascale_chunk_size", init_args)
+    self.assertEqual(os.environ.get("GLIBC_TUNABLES"), "glibc.pthread.rseq=0")
+
   def test_set_xla_flags_default_path_google3(self):
     """Verifies that set_xla_flags resolves canonical benchmark names."""
     os.environ.pop("LIBTPU_INIT_ARGS", None)
