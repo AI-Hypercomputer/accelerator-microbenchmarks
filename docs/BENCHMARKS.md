@@ -18,6 +18,7 @@ This guide provides the reference for **TPUMS (TPU Microbenchmark Suite)** param
     - [2.1.1 GEMM Throttling (`gemm_throttling`) [experimental]](#211-gemm-throttling-gemm_throttling-experimental)
     - [2.1.2 Chained Matrix Multiplication & Determinism Check (`gemm_chained`) [experimental]](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental)
     - [2.1.3 GEMM Pulse (`gemm_pulse`) [experimental]](#213-gemm-pulse-gemm_pulse-experimental)
+    - [2.1.4 Quantized Matrix Multiplication (`gemm_quantized`) [experimental]](#214-quantized-matrix-multiplication-gemm_quantized-experimental)
   - [2.2 HBM Memory Bandwidth (`hbm`)](#22-hbm-memory-bandwidth-hbm)
   - [2.3 Host I/O Bandwidth (`host_to_device`, `device_to_host`)](#23-host-io-bandwidth-host_to_device-device_to_host)
   - [2.4 Inter-Chip Interconnect (`device_to_device`)](#24-inter-chip-interconnect-device_to_device)
@@ -251,6 +252,27 @@ final cycle ends with an `idle_s` pause followed by traced
 `post_soaking_window`. Emits `num_cycles`, `idle_s`, `enable_checksum`, all
 `gemm_throttling` soaking and thermal metrics, plus all `gemm_chained` checksum
 metrics when `enable_checksum=True`.
+
+<a id="214-quantized-matrix-multiplication-gemm_quantized-experimental"></a>
+#### 2.1.4 Quantized Matrix Multiplication (`gemm_quantized`) [experimental]
+
+Evaluates end-to-end quantized matrix multiplication (`bfloat16` or `float32`
+inputs `A[M, K]` and `B[K, N]` quantized row-wise/column-wise to
+`float8_e4m3fn`, `float8_e5m2`, or `int8` inside the timed step before
+`lax.dot_general`, with dynamic or static scaling and optional output
+dequantization).
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `m` | `int` | `1024` | Matrix dimension `M` (rows of `A` and output matrix `C`). |
+| `k` | `int` | `1024` | Contracting dimension `K` (columns of `A` and rows of `B`). |
+| `n` | `int` | `1024` | Matrix dimension `N` (columns of `B` and output matrix `C`). |
+| `in_dtype` | `str` | `"bfloat16"` | Unquantized input operand dtype (e.g., `bfloat16`, `float32`). |
+| `quant_dtype` | `str` | `"float8_e4m3fn"` | Quantized matmul operand dtype (e.g., `float8_e4m3fn`, `float8_e5m2`, `int8`). Selects the hardware peak TFLOPS ceiling for roofline efficiency. |
+| `out_dtype` | `str` | `"bfloat16"` | Output tensor dtype (e.g., `bfloat16`, `float32`). |
+| `scaling` | `str` | `"dynamic"` | Scale calibration: `"dynamic"` (per-row/column `amax` computed on the fly) or `"static"` (fixed clip bound `0.5 * Q_MAX`, i.e., compile-time scale `0.5`). |
+| `dequantize` | `bool` | `False` | When `True`, multiply the matmul accumulator by the row and column dequantization scales before casting to `out_dtype`. |
+| `seed` | `int` | `0` | PRNG seed for initializing input tensors in HBM. |
 
 ---
 
