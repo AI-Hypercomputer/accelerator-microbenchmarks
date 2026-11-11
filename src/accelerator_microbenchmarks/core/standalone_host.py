@@ -2,12 +2,13 @@
 
 Opt-in (`standalone_host_init` config key / CLI flag) for node-local
 diagnostics. `configure_standalone_host()` forces a 1-host topology, skips
-SliceBuilder/tpunetd and disables the cross-host XLA launch barrier. It is a
-stateless, process-wide startup helper called by `core/runner.py` and must run
-before the first JAX device call. The topology's ICI routing is left untouched
-(neither intra- nor inter-host ICI links are configured), so this mode
-provides no inter-device (ICI) communication; `runner.py` rejects benchmarks
-whose `requires_ici` attribute is set.
+SliceBuilder/tpunetd, and disables the cross-host XLA launch barrier and
+SparseCore copy offloading. It is a stateless, process-wide startup helper
+called by `core/runner.py` and must run before the first JAX device call. The
+topology's ICI routing is left untouched (neither intra- nor inter-host ICI
+links are configured), so this mode provides no inter-device (ICI)
+communication; `runner.py` rejects benchmarks whose `requires_ici` attribute is
+set.
 """
 
 import os
@@ -30,7 +31,9 @@ _STANDALONE_HOST_UNSET_ENV = (
 _STANDALONE_HOST_LIBTPU_FLAGS = {
     "--deepsea_hal_test_skip_slicebuilder": "true",
     "--deepsea_hal_test_allow_multichip_skip_slicebuilder": "true",
+    # Keep barriers and copies on TensorCore; they can hang in standalone mode.
     "--xla_tpu_use_enhanced_launch_barrier": "false",
+    "--xla_tpu_enable_offloading_copy_to_sparsecore": "false",
 }
 
 

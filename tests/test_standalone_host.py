@@ -26,6 +26,7 @@ class StandaloneHostTest(parameterized.TestCase):
       "--deepsea_hal_test_skip_slicebuilder": "true",
       "--deepsea_hal_test_allow_multichip_skip_slicebuilder": "true",
       "--xla_tpu_use_enhanced_launch_barrier": "false",
+      "--xla_tpu_enable_offloading_copy_to_sparsecore": "false",
   }
 
   def _configure(self, env: dict[str, str]) -> tuple[dict[str, str], str]:
