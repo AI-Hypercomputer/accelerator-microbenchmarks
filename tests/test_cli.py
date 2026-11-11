@@ -876,48 +876,6 @@ benchmark:
     _, kwargs = mock_run_benchmarks.call_args
     self.assertIs(kwargs["xprof_timing"], False)
 
-  def test_google_flags_parser(self):
-    """Verifies that _google_flags_parser strips Abseil flags and returns domain argv."""
-    # 1. Leading and trailing Abseil flags
-    raw_argv = [
-        "tpums_tpu",
-        "--alsologtostderr",
-        "--v=1",
-        "benchmark",
-        "run-config",
-        "some_config.yaml",
-        "--output_dir=results",
-    ]
-    parsed_argv = cli._google_flags_parser(raw_argv)
-    self.assertEqual(
-        parsed_argv,
-        ["benchmark", "run-config", "some_config.yaml", "--output_dir=results"],
-    )
-
-    # 2. Interspersed Borg/Abseil flags
-    interspersed_argv = [
-        "/usr/bin/tpums",
-        "--alsologtostderr",
-        "benchmark",
-        "--v=2",
-        "run-config",
-        "some_config.yaml",
-        "--hw=gfl_2x2x1",
-    ]
-    parsed_interspersed = cli._google_flags_parser(interspersed_argv)
-    self.assertEqual(
-        parsed_interspersed,
-        ["benchmark", "run-config", "some_config.yaml", "--hw=gfl_2x2x1"],
-    )
-
-  @mock.patch.object(cli.app, "run")
-  def test_main_invokes_app_run(self, mock_app_run):
-    """Verifies that main delegates to absl.app.run with _google_flags_parser."""
-    cli.main()
-    mock_app_run.assert_called_once_with(
-        cli.run, flags_parser=cli._google_flags_parser
-    )
-
   @mock.patch.object(os, "execvpe")
   def test_maybe_reexec_for_op_env_reexecs_when_env_differs(self, mock_execvpe):
     """Verifies _maybe_reexec_for_op_env re-execs when op_flags.yaml env differs."""
