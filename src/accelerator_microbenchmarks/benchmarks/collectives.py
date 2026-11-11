@@ -547,6 +547,15 @@ class IciCollectiveBenchmark(
     }
 
 
+_DCN_COLLECTIVE_HLO_CATEGORIES: frozenset[str] = frozenset({
+    "host send",
+    "host recv",
+    "host send-done",
+    "host recv-done",
+    "loop fusion",
+})
+
+
 class DcnCollectiveBenchmark(
     BaseCollectiveBenchmark[TDcnConfig], Generic[TDcnConfig]
 ):
@@ -595,10 +604,40 @@ class DcnCollectiveBenchmark(
   def _get_sharding_axes(self):
     return "dcn"
 
-  def _op_scope(self) -> contextlib.AbstractContextManager[Any]:
-    # TODO(simonleesyuan): Check on hardware whether the MARKER scope is safe on
-    # DCN collectives; if so, drop this override so xprof timing works on DCN.
-    return contextlib.nullcontext()
+  @property
+  def xprof_disable_host_tracer(self) -> bool:
+    return True
+
+  def match_xprof_op_fallback(self, event: dict[str, Any]) -> bool:
+    """Matches DCN collective host-transfer and reduction XLA ops when MARKER metadata is stripped."""
+    if "start" in event.get("name", ""):
+      return False
+    return (
+        event.get("args", {}).get("hlo_category")
+        in _DCN_COLLECTIVE_HLO_CATEGORIES
+    )
+
+  def get_xprof_device_timing_aggregation(self) -> str:
+    """Defaults XProf aggregation to `local_slowest_per_step` on multi-device hosts.
+
+    Each local device transfers its own shard over the host's NICs and
+    `calculate_throughput_metrics()` scales per-device bytes by
+    `jax.local_device_count()`, so host step latency is bounded by the slowest
+    local device on that host at each step. Explicit user overrides are
+    preserved.
+
+    Returns:
+      The effective `XprofDeviceTimingAggregation` value for this host.
+    """
+    # Only override when the user left aggregation unset (preserving explicit
+    # `measured_device_or_first`) and multiple local devices exist (keeping
+    # `measured_device` populated on 1-device hosts).
+    if (
+        not self.xprof_config.is_device_timing_aggregation_explicit
+        and len(self.get_devices_to_measure()) > 1
+    ):
+      return constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_PER_STEP
+    return self.xprof_config.device_timing_aggregation
 
   def _get_replica_group_rank(self) -> int:
     """Returns the number of slices in one replica group."""
@@ -765,7 +804,8 @@ class DcnAllReduceBenchmark(
     @jax.jit
     def all_reduce_sharded(x):
       def f(a):
-        return op_fn(a, axis_name=sharding_axes)
+        with self._op_scope():
+          return op_fn(a, axis_name=sharding_axes)
 
       return jax.shard_map(
           f,

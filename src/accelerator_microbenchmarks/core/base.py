@@ -27,11 +27,25 @@ import pandas as pd
 class XprofConfig:
   """Configuration for XProf trace collection and device timing analysis."""
 
+  _explicit_fields: ClassVar[frozenset[str]] = frozenset()
+
+  def __new__(cls, *args: Any, **kwargs: Any):
+    instance = super().__new__(cls)
+    init_fields = [f.name for f in dataclasses.fields(cls) if f.init]
+    explicit = set(init_fields[: len(args)]) | (set(kwargs) & set(init_fields))
+    object.__setattr__(instance, "_explicit_fields", frozenset(explicit))
+    return instance
+
   xprof_timing: bool = False
   xprof_dir: str = "/tmp/tensorboard"
   device_timing_aggregation: str = (
       constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
   )
+
+  @property
+  def is_device_timing_aggregation_explicit(self) -> bool:
+    """Returns True if `device_timing_aggregation` was explicitly provided."""
+    return "device_timing_aggregation" in self._explicit_fields
 
 
 # Field-metadata key that `dtype_field()` sets to mark a dtype field.
@@ -781,6 +795,16 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     Default is False (measures accelerator hardware kernels on
     /device:TPU:{id}). _HostDeviceBenchmark overrides this to True because
     H2D/D2H DMA transfers are recorded on the CPU host process.
+    """
+    return False
+
+  @property
+  def xprof_disable_host_tracer(self) -> bool:
+    """Whether `jax.profiler.trace` should set `host_tracer_level = 0`.
+
+    Default is False so standard benchmarks retain host trace events.
+    `DcnCollectiveBenchmark` overrides this to True because MegaScale
+    host-driven collectives emit millions of host `TraceMe` events per run.
     """
     return False
 

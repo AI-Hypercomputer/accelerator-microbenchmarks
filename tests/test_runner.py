@@ -7,14 +7,16 @@ import tempfile
 from unittest import mock
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import runner
 from accelerator_microbenchmarks.core import system
 import yaml
 
 
-class TestRunner(absltest.TestCase):
+class TestRunner(parameterized.TestCase):
   """Unit tests for runner.py."""
 
   def setUp(self):
@@ -181,6 +183,7 @@ class TestRunner(absltest.TestCase):
     runner.set_xla_flags([{"name": "dcn_all_reduce"}], None)
     init_args = os.environ.get("LIBTPU_INIT_ARGS", "")
     self.assertIn("--xla_tpu_use_enhanced_launch_barrier=false", init_args)
+    self.assertIn("--enable_megascale_profiler=false", init_args)
     self.assertIn(
         "--megascale_grpc_premap_memory_bytes=137438953472", init_args
     )
@@ -501,6 +504,118 @@ class TestRunner(absltest.TestCase):
                     xprof_config=expected_xprof_cfg,
                 )
                 mock_export.assert_called_once()
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="omitted",
+          extra_kwargs={},
+          expected_agg=(
+              constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
+          ),
+          expected_explicit=False,
+      ),
+      dict(
+          testcase_name="explicit_none",
+          extra_kwargs={"xprof_device_timing_aggregation": None},
+          expected_agg=(
+              constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
+          ),
+          expected_explicit=False,
+      ),
+      dict(
+          testcase_name="explicit_default",
+          extra_kwargs={
+              "xprof_device_timing_aggregation": (
+                  constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
+              ),
+          },
+          expected_agg=(
+              constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
+          ),
+          expected_explicit=True,
+      ),
+      dict(
+          testcase_name="explicit_local_slowest_per_step",
+          extra_kwargs={
+              "xprof_device_timing_aggregation": (
+                  constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_PER_STEP
+              ),
+          },
+          expected_agg=(
+              constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_PER_STEP
+          ),
+          expected_explicit=True,
+      ),
+  )
+  def test_run_benchmarks_xprof_device_timing_aggregation(
+      self, extra_kwargs, expected_agg, expected_explicit
+  ):
+    """Verifies device_timing_aggregation is forwarded only when set."""
+    dummy_params = base.BaseBenchmarkParams(warmup_tries=1, num_runs=1)
+    mock_platform = platform.PlatformInfo(
+        tpu_type=system.TpuVersion.V6E,
+        topology="2x4",
+        total_devices=8,
+        local_devices=8,
+        process_count=1,
+        process_index=0,
+        slice_count=1,
+        slice_index=0,
+        python_version="3.11.0",
+        jax_version="0.4.30",
+        jaxlib_version="0.4.30",
+        libtpu_version="0.1.dev20240101",
+    )
+    mock_bench_instance = mock.MagicMock()
+    mock_bench_instance.run.return_value = base.BenchmarkResult(
+        metadata=base.BenchmarkMetadata(
+            benchmark_name="dummy",
+            test_name="dummy_test",
+            start_time="now",
+            end_time="then",
+            params={},
+            platform_info=mock_platform,
+            hardware_spec=system.V6E_HARDWARE_SPEC,
+        ),
+        metrics={"avg_ms": 1.0},
+        timings=base.BenchmarkTimings(
+            wall_clock=base.WallClockTimings(durations_ms=[1.0])
+        ),
+    )
+    mock_bench_instance.get_run_identifier.return_value = "run_1"
+    mock_bench_cls = mock.MagicMock(
+        return_value=mock_bench_instance,
+        __name__="MockBenchmark",
+    )
+
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        mock.patch.object(runner, "set_xla_flags"),
+        mock.patch.object(runner, "init_jax_distributed"),
+        mock.patch.object(
+            runner.platform, "get_platform_info", return_value=mock_platform
+        ),
+        mock.patch.object(runner, "export_to_mlcompass"),
+        mock.patch.object(
+            runner.registry.benchmark_registry,
+            "get_benchmark",
+            return_value=mock_bench_cls,
+        ),
+    ):
+      runner.run_benchmarks(
+          tasks=[("dummy", dummy_params)],
+          output_dir=tmpdir,
+          xprof_timing=True,
+          print_table=False,
+          **extra_kwargs,
+      )
+      mock_bench_cls.assert_called_once()
+      xprof_cfg = mock_bench_cls.call_args.kwargs["xprof_config"]
+      self.assertEqual(xprof_cfg.device_timing_aggregation, expected_agg)
+      self.assertEqual(
+          xprof_cfg.is_device_timing_aggregation_explicit,
+          expected_explicit,
+      )
 
   def test_run_benchmarks_with_xla_flags_file_path(self):
     """Verifies that run_benchmarks passes xla_flags_file_path to set_xla_flags."""

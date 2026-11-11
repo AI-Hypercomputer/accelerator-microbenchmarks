@@ -1696,6 +1696,7 @@ class BaseBenchmarkTest(absltest.TestCase):
 
       for unsupported in (
           agg.LOCAL_SLOWEST_DEVICE,
+          agg.LOCAL_SLOWEST_PER_STEP,
           agg.GLOBAL_SLOWEST_PER_STEP,
       ):
         with self.subTest(f"{benchmark_cls.__name__}_{unsupported}"):

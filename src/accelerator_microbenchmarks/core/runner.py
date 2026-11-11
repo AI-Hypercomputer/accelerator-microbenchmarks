@@ -10,7 +10,6 @@ from typing import Any, List, Optional
 from accelerator_microbenchmarks.benchmarks import benchmark_loader
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import config
-from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
@@ -168,18 +167,18 @@ def run_benchmarks(
     config_path: Optional[str] = None,
     xla_flags_file_path: Optional[str] = None,
     print_table: bool = True,
-    xprof_device_timing_aggregation: str = (
-        constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
-    ),
+    xprof_device_timing_aggregation: Optional[str] = None,
     standalone_host_init: bool = False,
     tpu_version: Optional[str] = None,
 ) -> List[base.BenchmarkResult]:
   """Core execution engine for typed benchmark task configurations."""
-  xprof_config = base.XprofConfig(
-      xprof_timing=xprof_timing,
-      xprof_dir=xprof_dir,
-      device_timing_aggregation=xprof_device_timing_aggregation,
-  )
+  xprof_kwargs: dict[str, Any] = {
+      "xprof_timing": xprof_timing,
+      "xprof_dir": xprof_dir,
+  }
+  if xprof_device_timing_aggregation is not None:
+    xprof_kwargs["device_timing_aggregation"] = xprof_device_timing_aggregation
+  xprof_config = base.XprofConfig(**xprof_kwargs)
 
   benchmark_loader.load_all_benchmarks()
   requested_tpu_version = (

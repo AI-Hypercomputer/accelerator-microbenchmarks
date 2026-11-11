@@ -330,8 +330,13 @@ def create_parser() -> argparse.ArgumentParser:
         "--xprof_device_timing_aggregation",
         type=str,
         choices=[m.value for m in constants.XprofDeviceTimingAggregation],
-        default=constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST,
-        help="Device timing aggregation mode for XProf timings.",
+        default=argparse.SUPPRESS,
+        help=(
+            "Device timing aggregation mode for XProf timings. When omitted,"
+            " defaults to 'measured_device_or_first' (multi-device 'hbm'"
+            " scopes use 'local_slowest_device'; multi-device 'dcn_*'"
+            " collectives use 'local_slowest_per_step')."
+        ),
     )
     add_dataclass_arguments(task_parser, bench_cls.Config)
 
@@ -394,13 +399,10 @@ def run(argv: Sequence[str]) -> None:
         if raw_configs
         else False
     )
-    effective_xprof_device_timing_aggregation = (
-        constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
-    )
+    effective_xprof_device_timing_aggregation: str | None = None
     if raw_configs:
       effective_xprof_device_timing_aggregation = raw_configs[0].get(
-          "xprof_device_timing_aggregation",
-          constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST,
+          "xprof_device_timing_aggregation"
       )
     effective_standalone_host_init = args.standalone_host_init or (
         raw_configs[0].get("standalone_host_init", False)
@@ -451,7 +453,9 @@ def run(argv: Sequence[str]) -> None:
         tasks=[(args.task, task_config) for task_config in task_configs],
         output_dir=args.output_dir,
         xprof_timing=args.xprof_timing,
-        xprof_device_timing_aggregation=args.xprof_device_timing_aggregation,
+        xprof_device_timing_aggregation=getattr(
+            args, "xprof_device_timing_aggregation", None
+        ),
         xprof_dir=args.xprof_dir,
         xla_flags_file_path=args.xla_flags_file_path,
         standalone_host_init=args.standalone_host_init,

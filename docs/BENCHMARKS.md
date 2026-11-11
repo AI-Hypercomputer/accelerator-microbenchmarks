@@ -589,7 +589,14 @@ their own data ($$C$$, or $$D$$ for `all_to_all`).
   - `peak_ici_bandwidth_per_chip_gb_s` — Theoretical peak all-to-all bus bandwidth per chip (`GB/s`).
   - `{wall_clock|xprof}_ici_roofline_efficiency_pct` — Achieved bus bandwidth as a percentage of `peak_ici_bandwidth_per_chip_gb_s` (`%`).
 - **Latency (`ms`)**:
-  - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
+  - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency
+    across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard
+    deviation (`std`) in milliseconds (`ms`). For multi-slice DCN collectives
+    (`dcn_*`) with multiple local devices per host, `xprof_*` latency defaults
+    to `local_slowest_per_step` across the host's local devices so
+    `xprof_bandwidth_per_host_gbps` reflects per-step host completion, and falls
+    back to matching DCN host-transfer and reduction XLA ops when `MARKER!!!`
+    metadata is stripped during cross-slice compilation.
 - **Benchmark Attributes**:
   - `shard_size_mib` — Per-device tensor shard payload (`S` expressed in `MiB`).
   - `replica_group_rank` — Number of participating devices (`R`) per collective replica group (product of dimensions `> 1` in `sharding_strategy`).

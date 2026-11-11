@@ -264,21 +264,25 @@ tpums benchmark run-config configs/sample_configs/parameter_sweep.yaml \
           `get_device_to_measure()` (defaults to `get_devices_to_measure()[0]`,
           i.e. local device `TPU:0` unless the benchmark narrows its
           participating devices; multi-device `hbm` scopes promote this default
-          to `local_slowest_device`).
+          to `local_slowest_device`, and multi-device `dcn_*` collectives
+          promote it to `local_slowest_per_step`).
         - `local_slowest_device`: Selects the local device with the highest median kernel duration.
+        - `local_slowest_per_step`: Takes the slowest (maximum) kernel duration across measured local devices on this host at each step.
         - `global_slowest_per_step`: Takes the slowest (maximum) kernel duration across all devices on all hosts at each step.
         - **Supported modes**: Multi-device TPU benchmarks (`gemm`, collectives,
-          compute ops, and multi-device `hbm` scopes) support all three.
+          compute ops, and multi-device `hbm` scopes) support all four.
           Single-device `hbm` scopes (`scope=device`, or `scope=chip` on
           single-die TPUs), `device_to_device` (whose owner host's series is
           broadcast to all hosts), and host-timed `host_to_device` and
           `device_to_host` support only `measured_device_or_first`. An
           unsupported mode fails at benchmark start with a `ValueError`.
-        - **Choosing a mode**: `global_slowest_per_step` is intended for
-          collectives, where all devices finish each step together. For
-          independent per-device workloads (`gemm`, compute ops, multi-device
-          `hbm`), it takes a per-step maximum over unsynchronized devices, which
-          is an upper (tail) estimate; prefer `local_slowest_device` there.
+        - **Choosing a mode**: `global_slowest_per_step` is intended for ICI
+          collectives, where all devices finish each step together;
+          `local_slowest_per_step` is intended for host-scoped DCN collectives
+          (`dcn_*`), where all local devices on a host share that host's NICs.
+          For independent per-device workloads (`gemm`, compute ops,
+          multi-device `hbm`), per-step maxima over unsynchronized devices give
+          an upper (tail) estimate; prefer `local_slowest_device` there.
 - **Report Output & Compiler Flags**:
     - **`--output_dir <path>`**: Directory to save `summary.csv` and `detailed.json` (defaults to `results/`).
     - **`--xla_flags_file_path <path>`**: Optional path to a custom YAML file overriding default per-benchmark XLA / compiler runtime flags.
@@ -300,7 +304,8 @@ Configuration files define a top-level `benchmark:` mapping containing:
 - **`xprof_timing:`** *(optional)* — Boolean (`true` / `false`) to enable XProf hardware trace collection and device timing analysis.
 - **`xprof_device_timing_aggregation:`** *(optional)* — Device timing
   aggregation mode when `xprof_timing: true` (`measured_device_or_first`
-  [default], `local_slowest_device`, or `global_slowest_per_step`).
+  [default], `local_slowest_device`, `local_slowest_per_step`, or
+  `global_slowest_per_step`).
 - **`standalone_host_init:`** *(optional)* — Boolean (`true` / `false`, default `false`) to initialize this host standalone inside a multi-host topology for node-local diagnostics (see [Common Execution Flags](#4-common-execution-flags)).
 - **`params:`** *(optional)* — Baseline execution parameters shared across all generated runs.
 - **`cases:` / `cases_from_csv:` / `sweep:`** *(optional)* — Case override and parameter sweep generators.
@@ -511,9 +516,10 @@ After every run, TPUMS automatically saves two files in the specified `--output_
           headline `xprof_*` metrics.
         - **`measured_device`**: The device behind that series, as
           `process_{process_index}/TPU:{local_hardware_id}`. It is `null`
-          when no XProf data was parsed, for `global_slowest_per_step`
-          (which takes the per-step maximum across all devices), and for
-          host-side timing (`host_to_device` and `device_to_host`).
+          when no XProf data was parsed, for `local_slowest_per_step` and
+          `global_slowest_per_step` (which take a per-step maximum across
+          devices), and for host-side timing (`host_to_device` and
+          `device_to_host`).
         - **`metrics_per_local_device`**: XProf latency summary
           (`p50_ms`, `avg_ms`, `p90_ms`, `std_ms`)
           of each local device in `get_devices_to_measure()` (all local
