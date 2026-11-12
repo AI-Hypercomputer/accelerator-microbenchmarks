@@ -1,0 +1,24 @@
+# Sample configuration for the Rotary Positional Embedding (RoPE) benchmark.
+#
+# Activations are a bfloat16 [batch * seq_len, heads * head_dim] matrix rotated
+# in float32 against a precomputed float32 [seq_len, head_dim] cos/sin table.
+benchmark:
+  name: rope
+  xprof_timing: true
+  params:
+    warmup_tries: 5
+    num_runs: 10
+    dtype: bfloat16
+    batch: 1
+    head_dim: 128
+  cases:
+    - seq_len: 1024  # N = 1792
+      heads: 14
+    - seq_len: 4096  # N = 4096
+      heads: 32
+    - seq_len: 16384  # N = 2048
+      heads: 16
+  sweep:
+    mode:
+      - fwd
+      - bwd
