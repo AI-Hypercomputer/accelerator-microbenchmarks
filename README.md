@@ -184,6 +184,7 @@ tpums platform describe
 
 # 2. List all registered, production-ready benchmarks
 tpums benchmark list
+tpums benchmark list --include_experimental  # Also list experimental ones
 
 # 3. Inspect typed CLI flags, per-field allowed choices (e.g. dtypes), and defaults
 # tpums benchmark run <benchmark_name> --help

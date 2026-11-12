@@ -125,6 +125,44 @@ class TestCli(parameterized.TestCase):
       self.assertIn("all_reduce", tasks)
       self.assertIn("device_to_device", tasks)
 
+  def test_benchmark_list_default_excludes_experimental(self):
+    """Verifies default `tpums benchmark list` omits experimental benchmarks."""
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
+      cli.run(["benchmark", "list"])
+    data = json.loads(fake_out.getvalue())
+    tasks = [item["task"] for item in data]
+    self.assertIn("gemm", tasks)
+    self.assertNotIn("gemm_throttling", tasks)
+    self.assertNotIn("gemm_generalized", tasks)
+    for item in data:
+      self.assertEqual(set(item.keys()), {"task"})
+
+  def test_benchmark_list_include_experimental(self):
+    """Verifies `--include_experimental` lists and tags experimental tasks."""
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
+      cli.run(["benchmark", "list", "--include_experimental"])
+    data = json.loads(fake_out.getvalue())
+    stability_by_task = {item["task"]: item["stability"] for item in data}
+    self.assertEqual(stability_by_task["gemm"], "stable")
+    self.assertEqual(stability_by_task["gemm_throttling"], "experimental")
+    self.assertNotIn("gemm_generalized", stability_by_task)
+    tasks = [item["task"] for item in data]
+    self.assertEqual(tasks, sorted(tasks))
+
+  def test_benchmark_run_parser_registers_experimental_tasks(self):
+    """Verifies every benchmark, incl. experimental, parses under `run`."""
+    parser = cli.create_parser()
+    for name in registry.benchmark_registry.list_benchmark_names(
+        include_experimental=True
+    ):
+      with self.subTest(name=name):
+        args, _ = parser.parse_known_args(["benchmark", "run", name])
+        self.assertEqual(args.task, name)
+    # Aliases (e.g. `gemm_generalized` for `gemm`) are not `run` subcommands.
+    with mock.patch.object(sys, "stderr", new=io.StringIO()):
+      with self.assertRaises(SystemExit):
+        parser.parse_known_args(["benchmark", "run", "gemm_generalized"])
+
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_hbm(self, mock_run_benchmarks):
     """Verifies that `tpums benchmark run hbm` parses args and calls runner."""
@@ -957,11 +995,18 @@ benchmark:
       self.assertIn("gemm", output)
       self.assertIn("all_reduce", output)
       self.assertIn("hbm", output)
+      normalized = " ".join(output.split())
+      self.assertIn("gemm Run gemm benchmark.", normalized)
+      self.assertIn(
+          "gemm_throttling [experimental] Run gemm_throttling benchmark.",
+          normalized,
+      )
 
   def test_benchmark_run_help_all_registered_tasks(self):
     """Verifies that `tpums benchmark run <task> --help` outputs parameter help for all tasks."""
+    cli.create_parser()  # Loads all benchmarks regardless of test order.
     tasks = registry.benchmark_registry.list_benchmark_names(
-        include_experimental=False, include_aliases=False
+        include_experimental=True, include_aliases=False
     )
     for task_name in tasks:
       with self.subTest(task=task_name):

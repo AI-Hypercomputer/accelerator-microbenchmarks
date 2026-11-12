@@ -274,8 +274,14 @@ def create_parser() -> argparse.ArgumentParser:
   )
 
   # Action: benchmark list
-  benchmark_action_subparsers.add_parser(
+  list_parser = benchmark_action_subparsers.add_parser(
       "list", help="List all registered microbenchmark tasks."
+  )
+  list_parser.add_argument(
+      "--include_experimental",
+      action="store_true",
+      default=False,
+      help="Also list experimental benchmarks (metrics and API may change).",
   )
 
   # Action: benchmark run-config <path_to_yaml>
@@ -299,16 +305,19 @@ def create_parser() -> argparse.ArgumentParser:
       dest="task", required=True, title="Supported Tasks"
   )
 
-  # Dynamically register all non-experimental benchmark tasks and their Config
-  # dataclasses
+  # Dynamically register all benchmark tasks (experimental ones are marked
+  # `[experimental]` in help) and their Config dataclasses
   benchmark_loader.load_all_benchmarks()
   for task_name in registry.benchmark_registry.list_benchmark_names(
-      include_experimental=False, include_aliases=False
+      include_experimental=True, include_aliases=False
   ):
     bench_cls = registry.benchmark_registry.get_benchmark(task_name)
+    task_help = f"Run {task_name} benchmark."
+    if registry.benchmark_registry.is_experimental(task_name):
+      task_help = f"[experimental] {task_help}"
     task_parser = task_subparsers.add_parser(
         task_name,
-        help=f"Run {task_name} benchmark.",
+        help=task_help,
     )
     _add_common_execution_args(task_parser)
     task_parser.add_argument(
@@ -355,9 +364,23 @@ def run(argv: Sequence[str]) -> None:
   # 2. Handle `tpums benchmark list`
   if args.resource == "benchmark" and args.action == "list":
     tasks = registry.benchmark_registry.list_benchmark_names(
-        include_experimental=False, include_aliases=False
+        include_experimental=args.include_experimental, include_aliases=False
     )
-    output = [{"task": task} for task in tasks]
+    if args.include_experimental:
+      output = [
+          {
+              "task": task,
+              "stability": (
+                  "experimental"
+                  if registry.benchmark_registry.is_experimental(task)
+                  else "stable"
+              ),
+          }
+          for task in tasks
+      ]
+    else:
+      # Default output stays `[{"task": ...}]` for backward compatibility.
+      output = [{"task": task} for task in tasks]
     print(json.dumps(output, indent=2))
     return
 
