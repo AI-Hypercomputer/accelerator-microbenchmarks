@@ -22,5 +22,8 @@ V6E_HARDWARE_SPEC = schema.HardwareSpec(
         link_bw_per_direction_gb_s=100.0,
         wraparound_rule=schema.WraparoundRule.PER_DIM_GE_16,
     ),
+    # Host interface: PCIe Gen5 x8 per chip
+    # (https://docs.cloud.google.com/tpu/docs/v6e), raw 32 GT/s x 8 lanes / 8.
+    pcie=schema.PcieSpec(bandwidth_per_direction_gb_s=32.0),
     hbm=schema.HbmSpec(peak_bw_gb_s=1638.4),
 )

@@ -66,8 +66,8 @@
 | :--- | :--- | :--- | :--- |
 | **Compute** | **Matrix Multiplication (GEMM)** | Dense matrix multiplication ($$C = \alpha (A \times B) + \beta C$$) across configurable data types | • Compute Throughput (**TFLOPS**)<br>• Compute Roofline Efficiency (**%**)<br>• Compute Latency (**ms**) |
 | **Memory (HBM)** | **HBM Memory Bandwidth** | High Bandwidth Memory STREAM operations (Copy, Scale, Add, Triad, Read-Only, Write-Only) | • Memory Bandwidth (**GB/s**)<br>• Memory Roofline Efficiency (**%**)<br>• Memory Access Latency (**ms**) |
-| **Host I/O (PCIe)** | **Host-to-Device (H2D)**<br>**Device-to-Host (D2H)** | Host CPU memory to/from accelerator HBM data transfers | • PCIe Transfer Bandwidth (**GB/s**)<br>• Transfer Latency (**ms**) |
-| **Interconnect (ICI)** | **Device-to-Device (D2D)** | Point-to-point inter-chip data transfers across ICI links | • ICI Link Bandwidth (**GB/s**)<br>• Pairwise N × N Device Bandwidth Matrix<br>• Transfer Latency (**ms**) |
+| **Host I/O (PCIe)** | **Host-to-Device (H2D)**<br>**Device-to-Host (D2H)** | Host CPU memory to/from accelerator HBM data transfers | • PCIe Transfer Bandwidth (**GB/s**)<br>• Host Link Roofline Efficiency (**%**)<br>• Transfer Latency (**ms**) |
+| **Interconnect (ICI)** | **Device-to-Device (D2D)** | Data transfers between each device pair, over ICI (different chips) or die-to-die (same chip) | • D2D Link Bandwidth (**GB/s**)<br>• Pairwise N × N Device Bandwidth Matrix<br>• Transfer Latency (**ms**) |
 | **Collectives** | **All-Gather**<br>**All-Reduce**<br>**All-to-All** | Distributed collective communication across multi-chip topologies | • Collective Bus Bandwidth (**GB/s**)<br>• Collective Step Latency (**ms**) |
 
 ---
@@ -210,7 +210,7 @@ tpums benchmark run host_to_device --xprof_timing --data_size_mib 256 --dtype bf
 # 4. Device-to-Host (PCIe) Transfer Latency & Bandwidth on all local devices
 tpums benchmark run device_to_host --xprof_timing --data_size_mib 256 --dtype bfloat16 --transfer_backend tpu_sync --scope host
 
-# 5. Device-to-Device (ICI) point-to-point transfer across all pairs
+# 5. Device-to-device (D2D) transfer across all pairs
 tpums benchmark run device_to_device --xprof_timing --data_size_mib 1024 --direction uni --dtype bfloat16
 
 # 6. Multi-Device All-Reduce Collective
@@ -487,7 +487,7 @@ TPUMS records primary performance metrics across both timing domains:
 | **Latency (`ms`)** | `wall_clock_p50_ms`<br>*(+ `p90`, `avg`, `std`)* | `xprof_p50_ms`<br>*(+ `p90`, `avg`, `std`)* | Execution duration across timed iterations (`p50` median, `p90`, mean, and standard deviation). |
 | **Compute Throughput (`TFLOPS`)** | `wall_clock_tflops_per_chip`<br>`wall_clock_tflops_per_device` | `xprof_tflops_per_chip`<br>`xprof_tflops_per_device` | Achieved compute throughput per physical TPU chip or per logical device ($$10^{12}$$ FLOPS). |
 | **Bandwidth (`GB/s`)** | `wall_clock_bandwidth_per_chip_gb_s`<br>`wall_clock_bandwidth_per_device_gb_s`<br>`wall_clock_bandwidth_per_host_gb_s` | `xprof_bandwidth_per_chip_gb_s`<br>`xprof_bandwidth_per_device_gb_s`<br>`xprof_bandwidth_per_host_gb_s` | Achieved HBM, PCIe, ICI link, or collective bus bandwidth per chip, per device, or per host ($$10^9$$ bytes/sec). |
-| **Roofline Efficiency (`%`)** | `wall_clock_compute_roofline_efficiency_pct`<br>`wall_clock_memory_roofline_efficiency_pct`<br>`wall_clock_ici_roofline_efficiency_pct` | `xprof_compute_roofline_efficiency_pct`<br>`xprof_memory_roofline_efficiency_pct`<br>`xprof_ici_roofline_efficiency_pct` | Achieved compute, memory, or ICI (`all_to_all` only) performance as a percentage of the hardware's theoretical peak (`0–100%`). |
+| **Roofline Efficiency (`%`)** | `wall_clock_compute_roofline_efficiency_pct`<br>`wall_clock_memory_roofline_efficiency_pct`<br>`wall_clock_ici_roofline_efficiency_pct`<br>`wall_clock_roofline_efficiency_pct` | `xprof_compute_roofline_efficiency_pct`<br>`xprof_memory_roofline_efficiency_pct`<br>`xprof_ici_roofline_efficiency_pct`<br>`xprof_roofline_efficiency_pct` | Achieved compute, memory, ICI (`all_to_all` only), device-to-device link (`device_to_device`: ICI or die-to-die), or host link (`host_to_device` / `device_to_host`: PCIe) performance as a percentage of the hardware's theoretical peak. |
 
 See **[Throughput & Bandwidth Metric Conventions in `docs/BENCHMARKS.md`](docs/BENCHMARKS.md#per-device-vs-per-chip-scaling)** for how `_per_chip` vs. `_per_device` scales across dual-device (`tpu7x`) and single-device (`v6e`) TPU chips and which metrics each benchmark reports.
 

@@ -107,6 +107,34 @@ class IciSpec:
 
 
 @dataclasses.dataclass(frozen=True)
+class DieToDieSpec:
+  """On-package link between the compute dies of one chip (theoretical peak).
+
+  Attributes:
+    bandwidth_per_direction_gb_s: Theoretical peak bandwidth between the two
+      dies of a chip in one direction, in decimal GB/s. The link is
+      full-duplex, so each direction carries this bandwidth independently.
+  """
+
+  bandwidth_per_direction_gb_s: float
+
+
+@dataclasses.dataclass(frozen=True)
+class PcieSpec:
+  """PCIe host link of one chip (theoretical peak).
+
+  Attributes:
+    bandwidth_per_direction_gb_s: Raw bandwidth of the chip's host PCIe link in
+      one direction, in decimal GB/s (transfer rate x lanes / 8, before
+      128b/130b line encoding). The link is full-duplex, so each direction
+      carries this bandwidth independently. All devices of a multi-device chip
+      share the link.
+  """
+
+  bandwidth_per_direction_gb_s: float
+
+
+@dataclasses.dataclass(frozen=True)
 class HbmSpec:
   """High Bandwidth Memory specifications (per-chip).
 
@@ -128,6 +156,12 @@ class HardwareSpec:
   devices_per_chip: int = 1
   tflops: TflopsSpec | None = None
   ici: IciSpec | None = None
+  # `None` when the chip has no die-to-die link (one device per chip) or its
+  # bandwidth has not been verified yet.
+  die_to_die: DieToDieSpec | None = None
+  # `None` when the host link is not PCIe or its bandwidth has not been
+  # verified yet.
+  pcie: PcieSpec | None = None
   hbm: HbmSpec | None = None
 
   @property

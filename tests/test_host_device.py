@@ -2,6 +2,7 @@
 
 import contextlib
 import csv
+import dataclasses
 import itertools
 import json
 import os
@@ -502,6 +503,79 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
     )
     self.assertEqual(bm.get_run_identifier(), expected)
 
+  # --- Host-link roofline -------------------------------------------------
+
+  @parameterized.named_parameters(*_BENCHMARK_CLASSES)
+  def test_roofline_mode_is_host_link(self, bm_cls):
+    self.assertEqual(bm_cls.roofline_mode, constants.RooflineMode.HOST_LINK)
+
+  @parameterized.named_parameters(
+      # The 4 CPU devices form 2 chips under the tpu7x spec (2 devices per
+      # chip) and 4 chips under the v6e spec.
+      ("tpu7x_device_0", system.TPU7X_HARDWARE_SPEC, "device", 0, 64.0),
+      ("tpu7x_device_1", system.TPU7X_HARDWARE_SPEC, "device", 1, 64.0),
+      ("tpu7x_chip_1", system.TPU7X_HARDWARE_SPEC, "chip", 1, 64.0),
+      ("tpu7x_host", system.TPU7X_HARDWARE_SPEC, "host", 0, 128.0),
+      ("v6e_device_3", system.V6E_HARDWARE_SPEC, "device", 3, 32.0),
+      ("v6e_chip_2", system.V6E_HARDWARE_SPEC, "chip", 2, 32.0),
+      ("v6e_host", system.V6E_HARDWARE_SPEC, "host", 0, 128.0),
+  )
+  def test_get_peak_host_link_bandwidth(
+      self, hw_spec, scope, local_index, expected
+  ):
+    """The peak is the per-chip PCIe peak times the chips measured."""
+    for bm_cls, backend in itertools.product(
+        (_H2D, _D2H), ("tpu_sync", "jax")
+    ):
+      with self.subTest(bm_cls=bm_cls.__name__, backend=backend):
+        bm = self._make_benchmark(
+            bm_cls,
+            hardware_spec=hw_spec,
+            transfer_backend=backend,
+            scope=scope,
+            local_index=local_index,
+        )
+        self.assertEqual(bm.get_peak_host_link_bandwidth(), expected)
+
+  def test_get_peak_host_link_bandwidth_without_pcie_returns_none(self):
+    spec = dataclasses.replace(system.TPU7X_HARDWARE_SPEC, pcie=None)
+    bm = self._make_benchmark(_H2D, hardware_spec=spec)
+    with self.assertLogs(level="WARNING") as logs:
+      self.assertIsNone(bm.get_peak_host_link_bandwidth())
+    self.assertIn("No PCIe host link", logs.output[0])
+
+  def test_get_peak_host_link_bandwidth_without_coords_returns_none(self):
+    bm = self._make_benchmark(_D2H, scope="host")
+    with mock.patch.object(
+        type(jax.local_devices()[0]),
+        "coords",
+        new=property(lambda d: None),
+        create=True,
+    ):
+      with self.assertLogs(level="WARNING") as logs:
+        self.assertIsNone(bm.get_peak_host_link_bandwidth())
+    self.assertIn("no physical chip coordinates", logs.output[0])
+
+  @parameterized.named_parameters(*_LAYOUT_CASES)
+  def test_apply_roofline_analysis(self, bm_cls, backend, scope):
+    """Only the measured scope gets a peak; efficiency uses that scope."""
+    bm = self._setup_benchmark(bm_cls, transfer_backend=backend, scope=scope)
+    metrics = bm.calculate_metrics([10.0, 10.0, 10.0])
+    metrics.update(
+        bm.calculate_throughput_metrics(1.0, constants.TimingDomain.XPROF)
+    )
+    metrics = bm.apply_roofline_analysis(metrics)
+    peak = bm.get_peak_host_link_bandwidth()
+    self.assertEqual(metrics[f"peak_link_bandwidth_per_{scope}_gb_s"], peak)
+    for prefix in ("wall_clock", "xprof"):
+      self.assertAlmostEqual(
+          metrics[f"{prefix}_roofline_efficiency_pct"],
+          metrics[f"{prefix}_bandwidth_per_{scope}_gb_s"] / peak * 100.0,
+      )
+    for other_scope in {"device", "chip", "host"} - {scope}:
+      self.assertNotIn(f"peak_link_bandwidth_per_{other_scope}_gb_s", metrics)
+    self.assertNotIn("roofline_bound_by", metrics)
+
   # --- Report schema ------------------------------------------------------
 
   @parameterized.named_parameters(*_LAYOUT_CASES)
@@ -978,6 +1052,9 @@ class HostDeviceCommonTest(_HostDeviceTestBase):
         "memory_roofline_efficiency_pct",
     ):
       self.assertNotIn(key, metrics)
+    self.assertIn(f"peak_link_bandwidth_per_{scope}_gb_s", metrics)
+    self.assertIn("wall_clock_roofline_efficiency_pct", metrics)
+    self.assertNotIn("roofline_bound_by", metrics)
     self.assertEqual(result.metadata.params["transfer_backend"], backend)
     self.assertEqual(result.metadata.params["scope"], scope)
     if backend == "tpu_sync":

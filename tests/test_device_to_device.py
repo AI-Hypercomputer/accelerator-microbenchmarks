@@ -1,8 +1,10 @@
 """Unit tests for device_to_device.py."""
 
 import argparse
+import dataclasses
 import io
 import os
+import types
 from unittest import mock
 
 from absl.testing import absltest
@@ -10,6 +12,7 @@ from absl.testing import parameterized
 from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.benchmarks import device_to_device
 from accelerator_microbenchmarks.core import base
+from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -254,6 +257,10 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
     self.assertNotIn("compute_roofline_efficiency_pct", result.metrics)
     self.assertNotIn("peak_hbm_bw_gb_s", result.metrics)
     self.assertNotIn("memory_roofline_efficiency_pct", result.metrics)
+    # CPU devices have no chip coordinates, so the link roofline is skipped.
+    self.assertNotIn("peak_link_bandwidth_per_device_gb_s", result.metrics)
+    self.assertNotIn("roofline_bound_by", result.metrics)
+    self.assertNotIn("wall_clock_roofline_efficiency_pct", result.metrics)
 
   def test_get_arithmetic_intensity(self):
     """Verify DeviceToDeviceBenchmark does not implement get_arithmetic_intensity."""
@@ -495,6 +502,134 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
     self.assertIn("D0", rep)
     self.assertIn("D1", rep)
     self.assertIn("X", rep)
+
+
+def _fake_device(coords=None, slice_index=0):
+  """Returns a stand-in for a jax.Device with the attributes D2D inspects."""
+  device = types.SimpleNamespace(slice_index=slice_index)
+  if coords is not None:
+    device.coords = coords
+  return device
+
+
+class ClassifyTransferLinkTest(absltest.TestCase):
+  """Unit tests for classify_transfer_link."""
+
+  def test_same_chip_is_die_to_die(self):
+    self.assertEqual(
+        device_to_device.classify_transfer_link(
+            _fake_device((0, 0, 0)), _fake_device([0, 0, 0])
+        ),
+        constants.TransferLink.DIE_TO_DIE,
+    )
+
+  def test_different_chips_is_ici(self):
+    self.assertEqual(
+        device_to_device.classify_transfer_link(
+            _fake_device((0, 0, 0)), _fake_device((1, 1, 0))
+        ),
+        constants.TransferLink.ICI,
+    )
+
+  def test_different_slices_raises(self):
+    with self.assertRaisesRegex(ValueError, "different slices"):
+      device_to_device.classify_transfer_link(
+          _fake_device((0, 0, 0), slice_index=0),
+          _fake_device((0, 0, 0), slice_index=1),
+      )
+
+  def test_missing_coords_raises(self):
+    with self.assertRaisesRegex(ValueError, "no physical chip coordinates"):
+      device_to_device.classify_transfer_link(
+          _fake_device(), _fake_device((0, 0, 0))
+      )
+
+
+class DeviceToDevicePeakBandwidthTest(parameterized.TestCase):
+  """Unit tests for device_to_device_peak_bandwidth_gb_s."""
+
+  @parameterized.parameters(
+      (constants.TransferLink.ICI, "uni", 100.0),
+      (constants.TransferLink.ICI, "bi", 200.0),
+      (constants.TransferLink.DIE_TO_DIE, "uni", 700.0),
+      (constants.TransferLink.DIE_TO_DIE, "bi", 1400.0),
+  )
+  def test_tpu7x_peak(self, link, direction, expected_gb_s):
+    self.assertEqual(
+        device_to_device.device_to_device_peak_bandwidth_gb_s(
+            link,
+            device_to_device.TransferDirection(direction),
+            system.TPU7X_HARDWARE_SPEC,
+        ),
+        expected_gb_s,
+    )
+
+  def test_missing_die_to_die_spec_raises(self):
+    with self.assertRaisesRegex(ValueError, "no die-to-die spec for v6e"):
+      device_to_device.device_to_device_peak_bandwidth_gb_s(
+          constants.TransferLink.DIE_TO_DIE,
+          device_to_device.TransferDirection.UNI,
+          system.V6E_HARDWARE_SPEC,
+      )
+
+  def test_missing_ici_spec_raises(self):
+    spec = dataclasses.replace(system.V6E_HARDWARE_SPEC, ici=None)
+    with self.assertRaisesRegex(ValueError, "no ICI spec for v6e"):
+      device_to_device.device_to_device_peak_bandwidth_gb_s(
+          constants.TransferLink.ICI,
+          device_to_device.TransferDirection.UNI,
+          spec,
+      )
+
+
+class GetPeakLinkBandwidthTest(parameterized.TestCase):
+  """Unit tests for DeviceToDeviceBenchmark.get_peak_link_bandwidth."""
+
+  def _make_benchmark(self, devices, src, dst, direction="uni", spec=None):
+    bm = device_to_device.DeviceToDeviceBenchmark(
+        device_to_device.DeviceToDeviceTestCaseParams(
+            direction=direction, src_device_index=src, dst_device_index=dst
+        ),
+        hardware_spec=spec or system.TPU7X_HARDWARE_SPEC,
+    )
+    bm.mesh = types.SimpleNamespace(devices=types.SimpleNamespace(flat=devices))
+    return bm
+
+  def test_classifies_mesh_devices_not_indices(self):
+    # Mesh positions 0 and 1 hold devices on different chips, and positions
+    # 0 and 2 hold the two dies of one chip.
+    devices = [
+        _fake_device((0, 0, 0)),
+        _fake_device((1, 0, 0)),
+        _fake_device((0, 0, 0)),
+    ]
+    self.assertEqual(
+        self._make_benchmark(devices, 0, 1).get_peak_link_bandwidth(),
+        (100.0, constants.TransferLink.ICI),
+    )
+    self.assertEqual(
+        self._make_benchmark(devices, 0, 2, "bi").get_peak_link_bandwidth(),
+        (1400.0, constants.TransferLink.DIE_TO_DIE),
+    )
+
+  def test_unmodeled_pair_returns_none(self):
+    devices = [_fake_device((0, 0, 0)), _fake_device((0, 0, 0))]
+    bm = self._make_benchmark(devices, 0, 1, spec=system.V6E_HARDWARE_SPEC)
+    with self.assertLogs(level="WARNING") as logs:
+      self.assertIsNone(bm.get_peak_link_bandwidth())
+    self.assertIn("no die-to-die spec", logs.output[0])
+
+  def test_roofline_metrics(self):
+    devices = [_fake_device((0, 0, 0)), _fake_device((0, 0, 0))]
+    bm = self._make_benchmark(devices, 0, 1)
+    metrics = bm.apply_roofline_analysis({
+        "wall_clock_bandwidth_per_device_gb_s": 350.0,
+        "xprof_bandwidth_per_device_gb_s": 679.0,
+    })
+    self.assertEqual(metrics["peak_link_bandwidth_per_device_gb_s"], 700.0)
+    self.assertEqual(metrics["roofline_bound_by"], "die_to_die")
+    self.assertAlmostEqual(metrics["wall_clock_roofline_efficiency_pct"], 50.0)
+    self.assertAlmostEqual(metrics["xprof_roofline_efficiency_pct"], 97.0)
 
 
 if __name__ == "__main__":
