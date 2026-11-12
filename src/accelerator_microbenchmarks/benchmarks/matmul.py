@@ -14,6 +14,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+# Unquantized (>= 16-bit) floating-point dtypes for inputs, scales, and outputs.
+_UNQUANTIZED_FLOAT_DTYPES = (
+    jnp.bfloat16,
+    jnp.float16,
+    jnp.float32,
+    jnp.float64,
+)
+
 
 @dataclasses.dataclass
 class GemmParams(base.BaseBenchmarkParams):
@@ -134,6 +142,29 @@ class BaseGemmBenchmark(base.BaseBenchmark[TGemmConfig]):
         f"{prefix}_tflops_per_device": tflops_per_sec,
     }
 
+  def _replicated_normal(
+      self, key: jax.Array, shape: tuple[int, ...], dtype: Any
+  ) -> jax.Array:
+    """Samples a normal array replicated on every mesh device.
+
+    Generating under `jit` with a replicated `out_shardings` (as in `hbm.py`)
+    produces each shard on its own device, and the key is passed as a host
+    array, so no data moves between devices. The result equals eager sampling
+    with the same key.
+    """
+    # Replicated sharding for computation ops to avoid discrepancies
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    replicated_sharding = jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(None, None)
+    )
+    generate = jax.jit(
+        _sample_normal,
+        static_argnums=(1, 2),
+        out_shardings=replicated_sharding,
+    )
+    return generate(np.asarray(key), shape, dtype)
+
 
 @registry.benchmark_registry.register("gemm", aliases=["gemm_generalized"])
 class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
@@ -206,29 +237,6 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
     if self.config.use_scaling_factors:
       run_identifier += "_sf"
     return run_identifier
-
-  def _replicated_normal(
-      self, key: jax.Array, shape: tuple[int, ...], dtype: Any
-  ) -> jax.Array:
-    """Samples a normal array replicated on every mesh device.
-
-    Generating under `jit` with a replicated `out_shardings` (as in `hbm.py`)
-    produces each shard on its own device, and the key is passed as a host
-    array, so no data moves between devices. The result equals eager sampling
-    with the same key.
-    """
-    # Replicated sharding for computation ops to avoid discrepancies
-    if self.mesh is None:
-      raise ValueError("Mesh not initialized.")
-    replicated_sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None)
-    )
-    generate = jax.jit(
-        _sample_normal,
-        static_argnums=(1, 2),
-        out_shardings=replicated_sharding,
-    )
-    return generate(np.asarray(key), shape, dtype)
 
   def generate_inputs(self) -> tuple[Any, ...]:
     (
@@ -696,3 +704,172 @@ class GemmPulseBenchmark(GemmChainedBenchmark[GemmPulseParams]):
     if self.config.enable_checksum:
       return super().calculate_metrics(times_ms)
     return super(GemmChainedBenchmark, self).calculate_metrics(times_ms)
+
+
+def _quantize_rowwise_dynamic(
+    x: jax.Array,
+    *,
+    reduce_axis: int,
+    quant_dtype: jax.typing.DTypeLike,
+) -> jax.Array:
+  """Dynamically quantizes `x` row-wise or column-wise along `reduce_axis`."""
+  q_dtype = jnp.dtype(quant_dtype)
+  q_max = float(dtypes.get_dtype_max(q_dtype))
+  x_f32 = x.astype(jnp.float32)
+  amax = jnp.max(jnp.abs(x_f32), axis=reduce_axis, keepdims=True)
+  scale_f32 = jnp.maximum(amax, 1e-7) / q_max
+  q = x_f32 / scale_f32
+  if jnp.issubdtype(q_dtype, jnp.integer):
+    q = jnp.clip(jnp.round(q), -q_max, q_max)
+  else:
+    q = jnp.clip(q, -q_max, q_max)
+  return q.astype(q_dtype)
+
+
+@dataclasses.dataclass
+class QuantizedGemmParams(base.BaseBenchmarkParams):
+  """Configuration parameters for the `gemm_quantized` microbenchmark."""
+
+  DTYPE_CONSTRAINTS = {
+      "in_dtype": _UNQUANTIZED_FLOAT_DTYPES,
+      "quant_dtype": (jnp.floating, jnp.integer),
+      "out_dtype": _UNQUANTIZED_FLOAT_DTYPES,
+  }
+
+  m: int = dataclasses.field(
+      default=1024,
+      metadata={
+          "min": 1,
+          "help": "Matrix dimension M (rows of operand A / output C).",
+      },
+  )
+  k: int = dataclasses.field(
+      default=1024,
+      metadata={
+          "min": 1,
+          "help": "Contracting dimension K (columns of A / rows of B).",
+      },
+  )
+  n: int = dataclasses.field(
+      default=1024,
+      metadata={
+          "min": 1,
+          "help": "Matrix dimension N (columns of operand B / output C).",
+      },
+  )
+  in_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.BFLOAT16,
+      metadata={
+          "help": (
+              "Data type of the unquantized input operands in HBM (e.g."
+              " 'bfloat16')."
+          )
+      },
+  )
+  quant_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.FLOAT8_E4M3FN,
+      metadata={
+          "help": (
+              "Quantized operand data type fed to the MXU (e.g."
+              " 'float8_e4m3fn', 'int8')."
+          )
+      },
+  )
+  out_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.BFLOAT16,
+      metadata={"help": "Output result data type written to HBM."},
+  )
+  seed: int = dataclasses.field(
+      default=0,
+      metadata={"min": 0, "help": "Random seed for tensor initialization."},
+  )
+
+
+@registry.benchmark_registry.register("gemm_quantized", is_experimental=True)
+class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
+  """[EXPERIMENTAL] GEMM with dynamic row-wise quantization of A and B."""
+
+  Config = QuantizedGemmParams  # pylint: disable=invalid-name
+  requires_ici: bool = False
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("in_dtype", report.format_str),
+      ("quant_dtype", report.format_str),
+      ("out_dtype", report.format_str),
+      ("m", report.format_str),
+      ("k", report.format_str),
+      ("n", report.format_str),
+      ("total_flops", report.format_2f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_tflops_per_chip", report.format_2f),
+      ("xprof_p50_ms", report.format_4f),
+      ("xprof_tflops_per_chip", report.format_2f),
+  )
+
+  def get_compute_dtype(self) -> str:
+    """Returns the quantized dtype, which determines the MXU peak TFLOPS."""
+    return str(self.config.quant_dtype)
+
+  def setup(self):
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    cfg = self.config
+    quant_dtype = dtypes.parse_dtype(cfg.quant_dtype)
+    out_dtype = dtypes.parse_dtype(cfg.out_dtype)
+    dot_acc_dtype = (
+        jnp.int32 if jnp.issubdtype(quant_dtype, jnp.integer) else jnp.float32
+    )
+
+    @jax.jit
+    def quant_gemm_fn(a, b):
+      with jax.named_scope(constants.MARKER):
+        qa = _quantize_rowwise_dynamic(
+            a,
+            reduce_axis=1,
+            quant_dtype=quant_dtype,
+        )
+        qb = _quantize_rowwise_dynamic(
+            b,
+            reduce_axis=0,
+            quant_dtype=quant_dtype,
+        )
+        acc = jax.lax.dot_general(
+            qa,
+            qb,
+            dimension_numbers=(((1,), (0,)), ((), ())),
+            preferred_element_type=dot_acc_dtype,
+        )
+        return acc.astype(out_dtype)
+
+    self._jit_fn = quant_gemm_fn
+
+  def get_run_identifier(self) -> str:
+    cfg = self.config
+    return (
+        f"m_{cfg.m}_k_{cfg.k}_n_{cfg.n}_"
+        f"{cfg.in_dtype}_to_{cfg.quant_dtype}_out_{cfg.out_dtype}"
+    )
+
+  def generate_inputs(self) -> tuple[Any, ...]:
+    cfg = self.config
+    in_dtype = dtypes.parse_dtype(cfg.in_dtype)
+    key_a, key_b = jax.random.split(jax.random.PRNGKey(cfg.seed))
+    a = self._replicated_normal(key_a, (cfg.m, cfg.k), in_dtype)
+    b = self._replicated_normal(key_b, (cfg.k, cfg.n), in_dtype)
+    return (a, b)
+
+  def run_op(self, *args) -> jax.Array:
+    if self._jit_fn is None:
+      raise ValueError("JIT function not initialized.")
+    return self._jit_fn(*args)
+
+  def get_total_bytes(self) -> float:
+    """Returns 1-pass algorithmic HBM bytes (read A, read B, write OUT)."""
+    cfg = self.config
+    m, k, n = cfg.m, cfg.k, cfg.n
+    in_bytes = dtypes.get_dtype_bytes(cfg.in_dtype)
+    out_bytes = dtypes.get_dtype_bytes(cfg.out_dtype)
+    return float((m * k + k * n) * in_bytes + m * n * out_bytes)
+
+  def get_total_flops(self) -> float:
+    m, k, n = self.config.m, self.config.k, self.config.n
+    return float(2 * m * n * k)

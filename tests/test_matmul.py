@@ -729,5 +729,67 @@ class GemmThrottlingBenchmarkTest(parameterized.TestCase):
     )
 
 
+class QuantizedGemmBenchmarkTest(parameterized.TestCase):
+  """Unit tests for QuantizedGemmBenchmark."""
+
+  def setUp(self):
+    super().setUp()
+    self._platform_patcher = mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self._platform_patcher.start()
+    self.addCleanup(self._platform_patcher.stop)
+    self.mock_mesh = jax.sharding.Mesh(
+        np.array(jax.devices()), axis_names=("device",)
+    )
+
+  def _setup_benchmark(self, **kwargs):
+    """Initializes a QuantizedGemmBenchmark instance for testing."""
+    params = {
+        "m": 64,
+        "k": 128,
+        "n": 64,
+        "in_dtype": "bfloat16",
+        "quant_dtype": "float8_e4m3fn",
+        "out_dtype": "bfloat16",
+        "warmup_tries": 1,
+        "num_runs": 2,
+    }
+    params.update(kwargs)
+    cfg = matmul.QuantizedGemmParams(**params)
+    self.bm = matmul.QuantizedGemmBenchmark(
+        config=cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.bm.setup()
+
+  def test_benchmark_registered(self):
+    bm_class = registry.benchmark_registry.get_benchmark("gemm_quantized")
+    self.assertEqual(bm_class, matmul.QuantizedGemmBenchmark)
+
+  def test_generate_inputs_and_run_op(self):
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
+    self.assertLen(inputs, 2)
+    out = self.bm.run_op(*inputs)
+    self.assertEqual(out.shape, (64, 64))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+
+  def test_flops_bytes_and_compute_dtype(self):
+    self._setup_benchmark(m=64, k=128, n=64)
+    self.assertEqual(self.bm.get_compute_dtype(), "float8_e4m3fn")
+    self.assertEqual(self.bm.get_total_flops(), float(2 * 64 * 128 * 64))
+    # 1-pass algorithmic HBM bytes: read A (64x128 bf16) + read B (128x64 bf16)
+    # + write OUT (64x64 bf16).
+    expected_bytes = float((64 * 128 + 128 * 64) * 2 + 64 * 64 * 2)
+    self.assertEqual(self.bm.get_total_bytes(), expected_bytes)
+
+  def test_schema_coverage(self):
+    self._setup_benchmark()
+    test_report_utils.assert_schema_matches_output(self, self.bm)
+
+
 if __name__ == "__main__":
   absltest.main()
