@@ -45,7 +45,9 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     params.update(kwargs)
     config = matmul.GemmParams(**params)
     self.bm = matmul.GeneralizedGemmBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.bm.setup()
 
@@ -203,7 +205,9 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     """Test that is_xprof_op correctly identifies convolution fusion events."""
     config = matmul.GemmParams(m=128, n=128, k=128)
     self.bm = matmul.GeneralizedGemmBenchmark(
-        config=config, hardware_spec=system.TPU7X_HARDWARE_SPEC, mesh=self.mock_mesh
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
     )
     self.assertTrue(
         self.bm.match_xprof_op_fallback(
@@ -727,6 +731,169 @@ class GemmThrottlingBenchmarkTest(parameterized.TestCase):
         self,
         self.bm,
     )
+
+
+class QuantizedGemmBenchmarkTest(parameterized.TestCase):
+  """Unit tests for QuantizedGemmBenchmark."""
+
+  def setUp(self):
+    super().setUp()
+    self._platform_patcher = mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self._platform_patcher.start()
+    self.addCleanup(self._platform_patcher.stop)
+    self.mock_mesh = jax.sharding.Mesh(
+        np.array(jax.devices()), axis_names=("device",)
+    )
+
+  def _setup_benchmark(self, **kwargs):
+    """Initializes a QuantizedGemmBenchmark instance for testing."""
+    params = {
+        "m": 64,
+        "k": 128,
+        "n": 64,
+        "in_dtype": "bfloat16",
+        "quant_dtype": "float8_e4m3fn",
+        "out_dtype": "bfloat16",
+        "warmup_tries": 1,
+        "num_runs": 2,
+    }
+    params.update(kwargs)
+    cfg = matmul.QuantizedGemmParams(**params)
+    self.bm = matmul.QuantizedGemmBenchmark(
+        config=cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.bm.setup()
+
+  def test_benchmark_registered(self):
+    """Tests that gemm_quantized is registered in the benchmark registry."""
+    bm_class = registry.benchmark_registry.get_benchmark("gemm_quantized")
+    self.assertEqual(bm_class, matmul.QuantizedGemmBenchmark)
+
+  def test_generate_inputs_and_run_op(self):
+    """Tests input generation and basic execution of QuantizedGemmBenchmark."""
+    self._setup_benchmark()
+    inputs = self.bm.generate_inputs()
+    self.assertLen(inputs, 2)
+    out = self.bm.run_op(*inputs)
+    self.assertEqual(out.shape, (64, 64))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+
+  @parameterized.parameters(
+      (
+          "dynamic",
+          False,
+          "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_dynamic_out_bfloat16",
+          25690112.0,
+      ),
+      (
+          "static",
+          False,
+          "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_static_out_bfloat16",
+          3211264.0,
+      ),
+      (
+          "dynamic",
+          True,
+          "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_dynamic_out_bfloat16_dequant",
+          802816.0,
+      ),
+      (
+          "static",
+          True,
+          "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_static_out_bfloat16_dequant",
+          802816.0,
+      ),
+  )
+  def test_scaling_and_dequantize_variants(
+      self, scaling, dequantize, expected_run_id, expected_val
+  ):
+    """Tests run IDs and numerical outputs across scaling and dequantize modes."""
+    self._setup_benchmark(scaling=scaling, dequantize=dequantize)
+    self.assertEqual(self.bm.get_run_identifier(), expected_run_id)
+    inputs = self.bm.generate_inputs()
+    out = self.bm.run_op(*inputs)
+    self.assertEqual(out.shape, (64, 64))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+    self.assertTrue(bool(jnp.all(jnp.isfinite(out))))
+
+    # Verify exact numerical quantization and dequantization with dyadic inputs:
+    # A = 112.0 (dynamic sf_a = 0.25, qa = 448; static sf_a = 0.5, qa = 224)
+    # B = 56.0  (dynamic sf_b = 0.125, qb = 448; static sf_b = 0.5, qb = 112)
+    a = jnp.full((64, 128), 112.0, dtype=jnp.bfloat16)
+    b = jnp.full((128, 64), 56.0, dtype=jnp.bfloat16)
+    exact_out = self.bm.run_op(a, b)
+    np.testing.assert_allclose(
+        np.asarray(exact_out, dtype=np.float32),
+        np.full((64, 64), expected_val, dtype=np.float32),
+    )
+
+  def test_int8_quant_dtype_rounds_and_accumulates_int32(self):
+    """Tests that int8 quantization rounds to nearest integer and uses int32."""
+    self._setup_benchmark(
+        m=2,
+        k=2,
+        n=2,
+        quant_dtype="int8",
+        scaling="dynamic",
+        dequantize=True,
+    )
+    # Row 0 of A has amax = 127.0 -> scale = 1.0; 0.6 rounds to 1 (not 0).
+    a = jnp.array([[127.0, 0.6], [63.5, -63.5]], dtype=jnp.bfloat16)
+    b = jnp.array([[127.0, 63.5], [127.0, -63.5]], dtype=jnp.bfloat16)
+    out = self.bm.run_op(a, b)
+    self.assertEqual(out.shape, (2, 2))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+    # Row 0 dot Col 0: q_a=[127, 1], q_b=[127, 127], sf_a=1.0, sf_b=1.0
+    # -> (127*127 + 1*127) * 1.0 = 16256.0 (would be 16129.0 without round).
+    self.assertEqual(float(out[0, 0]), 16256.0)
+
+  def test_static_scaling_clips_outliers_to_qmax(self):
+    """Tests that static scaling clips values exceeding 0.5 * q_max to q_max."""
+    self._setup_benchmark(
+        m=2,
+        k=2,
+        n=2,
+        quant_dtype="float8_e4m3fn",
+        scaling="static",
+        dequantize=False,
+    )
+    # Values > 224.0 exceed q_max (448.0) after dividing by static scale 0.5;
+    # without clipping to [-q_max, q_max], casting 1000.0 to float8_e4m3fn
+    # overflows to NaN.
+    a = jnp.array([[500.0, -500.0], [112.0, 0.0]], dtype=jnp.bfloat16)
+    b = jnp.array([[1.0, 0.0], [0.0, 1.0]], dtype=jnp.bfloat16)
+    out = self.bm.run_op(a, b)
+    self.assertTrue(bool(jnp.all(jnp.isfinite(out))))
+    # q_a[0] clips to [448.0, -448.0] and q_b is [[2.0, 0.0], [0.0, 2.0]].
+    np.testing.assert_allclose(
+        np.asarray(out, dtype=np.float32),
+        np.array([[896.0, -896.0], [448.0, 0.0]], dtype=np.float32),
+    )
+
+  def test_params_validation(self):
+    """Tests that invalid scaling values raise ValueError."""
+    with self.assertRaisesRegex(ValueError, "Invalid scaling"):
+      matmul.QuantizedGemmParams(**{"scaling": "invalid"})
+
+  def test_flops_bytes_and_compute_dtype(self):
+    """Tests FLOPs, bytes, and compute dtype reporting."""
+    self._setup_benchmark(m=64, k=128, n=64)
+    self.assertEqual(self.bm.get_compute_dtype(), "float8_e4m3fn")
+    self.assertEqual(self.bm.get_total_flops(), float(2 * 64 * 128 * 64))
+    # 1-pass algorithmic HBM bytes: read A (64x128 bf16) + read B (128x64 bf16)
+    # + write OUT (64x64 bf16).
+    expected_bytes = float((64 * 128 + 128 * 64) * 2 + 64 * 64 * 2)
+    self.assertEqual(self.bm.get_total_bytes(), expected_bytes)
+
+  def test_schema_coverage(self):
+    """Tests that benchmark output matches the report schema."""
+    self._setup_benchmark()
+    test_report_utils.assert_schema_matches_output(self, self.bm)
 
 
 if __name__ == "__main__":
