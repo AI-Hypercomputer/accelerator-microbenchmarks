@@ -145,6 +145,14 @@ class BaseGemmBenchmark(base.BaseBenchmark[TGemmConfig]):
         f"{prefix}_tflops_per_device": tflops_per_sec,
     }
 
+  def _replicated_sharding(self) -> jax.sharding.NamedSharding:
+    """Returns a 2D replicated NamedSharding over `self.mesh`."""
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    return jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(None, None)
+    )
+
   def _replicated_normal(
       self, key: jax.Array, shape: tuple[int, ...], dtype: Any
   ) -> jax.Array:
@@ -156,15 +164,10 @@ class BaseGemmBenchmark(base.BaseBenchmark[TGemmConfig]):
     with the same key.
     """
     # Replicated sharding for computation ops to avoid discrepancies
-    if self.mesh is None:
-      raise ValueError("Mesh not initialized.")
-    replicated_sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None)
-    )
     generate = jax.jit(
         _sample_normal,
         static_argnums=(1, 2),
-        out_shardings=replicated_sharding,
+        out_shardings=self._replicated_sharding(),
     )
     return generate(np.asarray(key), shape, dtype)
 
@@ -799,6 +802,16 @@ class QuantizedGemmParams(MatmulShapeParams):
           )
       },
   )
+  prequantize_rhs: bool = dataclasses.field(
+      default=False,
+      metadata={
+          "help": (
+              "If True (weight-offline), quantize B to rhs_quant_dtype once"
+              " before the timed loop; if False, quantize both A and B inside"
+              " the timed step."
+          )
+      },
+  )
   scaling: QuantScaling = dataclasses.field(
       default=QuantScaling.DYNAMIC,
       metadata={
@@ -867,6 +880,7 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
       ("m", report.format_str),
       ("k", report.format_str),
       ("n", report.format_str),
+      ("prequantize_rhs", report.format_str),
       ("scaling", report.format_str),
       ("dequantize", report.format_str),
       ("total_flops", report.format_2f),
@@ -892,32 +906,45 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
     )
     dot_acc_dtype = jnp.int32 if both_int else jnp.float32
 
-    @jax.jit
-    def quant_gemm_fn(a, b):
-      with jax.named_scope(constants.MARKER):
-        qa, sf_a = _quantize_per_channel(
-            a,
-            reduce_axis=1,
-            quant_dtype=quant_dtype,
-            scaling=cfg.scaling,
-        )
-        qb, sf_b = _quantize_per_channel(
-            b,
-            reduce_axis=0,
-            quant_dtype=rhs_quant_dtype,
-            scaling=cfg.scaling,
-        )
-        acc = jax.lax.dot_general(
-            qa,
-            qb,
-            dimension_numbers=(((1,), (0,)), ((), ())),
-            preferred_element_type=dot_acc_dtype,
-        )
-        if cfg.dequantize:
-          acc = acc.astype(jnp.float32) * (sf_a * sf_b)
-        return acc.astype(out_dtype)
+    def _quantize_lhs_and_dot(a, qb, sf_b):
+      qa, sf_a = _quantize_per_channel(
+          a,
+          reduce_axis=1,
+          quant_dtype=quant_dtype,
+          scaling=cfg.scaling,
+      )
+      acc = jax.lax.dot_general(
+          qa,
+          qb,
+          dimension_numbers=(((1,), (0,)), ((), ())),
+          preferred_element_type=dot_acc_dtype,
+      )
+      if cfg.dequantize:
+        acc = acc.astype(jnp.float32) * (sf_a * sf_b)
+      return acc.astype(out_dtype)
 
-    self._jit_fn = quant_gemm_fn
+    if cfg.prequantize_rhs:
+
+      @jax.jit
+      def quant_gemm_offline_fn(a, qb, sf_b):
+        with jax.named_scope(constants.MARKER):
+          return _quantize_lhs_and_dot(a, qb, sf_b)
+
+      self._jit_fn = quant_gemm_offline_fn
+    else:
+
+      @jax.jit
+      def quant_gemm_fn(a, b):
+        with jax.named_scope(constants.MARKER):
+          qb, sf_b = _quantize_per_channel(
+              b,
+              reduce_axis=0,
+              quant_dtype=rhs_quant_dtype,
+              scaling=cfg.scaling,
+          )
+          return _quantize_lhs_and_dot(a, qb, sf_b)
+
+      self._jit_fn = quant_gemm_fn
 
   def get_run_identifier(self) -> str:
     cfg = self.config
@@ -932,6 +959,8 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
     )
     if cfg.dequantize:
       run_id += "_dequant"
+    if cfg.prequantize_rhs:
+      run_id += "_weight_offline"
     return run_id
 
   def generate_inputs(self) -> tuple[Any, ...]:
@@ -940,7 +969,23 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
     key_a, key_b = jax.random.split(jax.random.PRNGKey(cfg.seed))
     a = self._replicated_normal(key_a, (cfg.m, cfg.k), in_dtype)
     b = self._replicated_normal(key_b, (cfg.k, cfg.n), in_dtype)
-    return (a, b)
+    if not cfg.prequantize_rhs:
+      return (a, b)
+
+    replicated = self._replicated_sharding()
+    rhs_quant_dtype = dtypes.parse_dtype(cfg.rhs_quant_dtype)
+    quantize_rhs_fn = jax.jit(
+        _quantize_per_channel,
+        static_argnames=("reduce_axis", "quant_dtype", "scaling"),
+        out_shardings=(replicated, replicated),
+    )
+    qb, sf_b = quantize_rhs_fn(
+        b,
+        reduce_axis=0,
+        quant_dtype=rhs_quant_dtype,
+        scaling=cfg.scaling,
+    )
+    return (a, qb, sf_b)
 
   def run_op(self, *args) -> jax.Array:
     if self._jit_fn is None:
@@ -948,12 +993,17 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
     return self._jit_fn(*args)
 
   def get_total_bytes(self) -> float:
-    """Returns 1-pass algorithmic HBM bytes (read A, read B, write OUT)."""
+    """Returns algorithmic HBM bytes (read A, read B or B_q, write OUT)."""
     cfg = self.config
     m, k, n = cfg.m, cfg.k, cfg.n
     in_bytes = dtypes.get_dtype_bytes(cfg.in_dtype)
+    rhs_bytes = (
+        dtypes.get_dtype_bytes(cfg.rhs_quant_dtype)
+        if cfg.prequantize_rhs
+        else in_bytes
+    )
     out_bytes = dtypes.get_dtype_bytes(cfg.out_dtype)
-    return float((m * k + k * n) * in_bytes + m * n * out_bytes)
+    return float(m * k * in_bytes + k * n * rhs_bytes + m * n * out_bytes)
 
   def get_total_flops(self) -> float:
     m, k, n = self.config.m, self.config.k, self.config.n
