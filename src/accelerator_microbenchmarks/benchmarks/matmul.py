@@ -2,6 +2,7 @@
 
 import abc
 import dataclasses
+import time
 from typing import Any, Callable, Optional, Sequence, TypeVar
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import checksum
@@ -11,6 +12,7 @@ from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 import jax
+from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -19,6 +21,26 @@ _UNQUANTIZED_FLOAT_DTYPES = (
     jnp.bfloat16,
     jnp.float32,
 )
+
+
+def _accumulation_dtype(lhs_dtype: str, rhs_dtype: str) -> Any:
+  """MXU accumulation dtype: int32 if both inputs are integers, else float32."""
+  if all(jnp.issubdtype(dtypes.parse_dtype(d), jnp.integer)
+         for d in (lhs_dtype, rhs_dtype)):
+    return jnp.int32
+  return jnp.float32
+
+
+def _resolve_rhs_dtype(params: Any) -> None:
+  """Defaults `rhs_dtype` to `in_dtype` and validates it like `in_dtype`."""
+  params.rhs_dtype = params._to_allowed_dtype(  # pylint: disable=protected-access
+      "in_dtype", params.rhs_dtype or params.in_dtype
+  )
+
+
+def _compute_dtype(lhs_dtype: str, rhs_dtype: str) -> str:
+  """The wider operand sets the MXU path (e.g. FP8 for FP8 x INT4)."""
+  return str(max(lhs_dtype, rhs_dtype, key=dtypes.get_dtype_bits))
 
 
 @dataclasses.dataclass
@@ -68,6 +90,15 @@ class MatmulShapeParams(base.BaseBenchmarkParams):
 class GemmParams(MatmulShapeParams):
   """Configuration parameters for GEMM benchmark."""
 
+  rhs_dtype: str = dataclasses.field(
+      default="",
+      metadata={
+          "help": (
+              "Data type of B (weights); empty = in_dtype. E.g. in_dtype"
+              " float8_e4m3fn with rhs_dtype int4 for an FP8 x INT4 GEMM."
+          )
+      },
+  )
   use_scaling_factors: bool = dataclasses.field(
       default=False,
       metadata={"help": "Apply row-wise/column-wise FP8 scaling factors."},
@@ -89,6 +120,10 @@ class GemmParams(MatmulShapeParams):
       metadata={"help": "Scalar multiplier"
                         " for accumulator matrix C (beta * C)."},
   )
+
+  def __post_init__(self):
+    super().__post_init__()
+    _resolve_rhs_dtype(self)
 
 
 TGemmConfig = TypeVar("TGemmConfig", bound=base.BaseBenchmarkParams)
@@ -181,6 +216,7 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
   requires_ici: bool = False
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("in_dtype", report.format_str),
+      ("rhs_dtype", report.format_str),
       ("out_dtype", report.format_str),
       ("m", report.format_str),
       ("k", report.format_str),
@@ -199,6 +235,7 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
 
   def setup(self):
     out_dtype = dtypes.parse_dtype(self.config.out_dtype)
+    acc_dtype = _accumulation_dtype(self.config.in_dtype, self.config.rhs_dtype)
     alpha = self.config.alpha
     beta = self.config.beta
 
@@ -215,6 +252,7 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
                 (lhs_contracting_dim, rhs_contracting_dim),
                 ((), ()),
             ),
+            preferred_element_type=acc_dtype,
         )
         if alpha != 1.0:
           out = out * alpha
@@ -235,6 +273,8 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
         f"ta_{self.config.transpose_a}_tb_{self.config.transpose_b}_"
         f"alpha_{self.config.alpha}"
     )
+    if self.config.rhs_dtype != self.config.in_dtype:
+      run_identifier += f"_rhs_{self.config.rhs_dtype}"
     if self.config.beta != 0.0:
       run_identifier += f"_beta_{self.config.beta}"
     if self.config.use_scaling_factors:
@@ -268,7 +308,9 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
     a_shape = (k, m) if transpose_a else (m, k)
     b_shape = (n, k) if transpose_b else (k, n)
     a = self._replicated_normal(k1, a_shape, in_dtype)
-    b = self._replicated_normal(k2, b_shape, in_dtype)
+    b = self._replicated_normal(
+        k2, b_shape, dtypes.parse_dtype(self.config.rhs_dtype)
+    )
 
     # Optional scaling factors
     use_sf = self.config.use_scaling_factors
@@ -277,7 +319,9 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
 
     use_accumulator_matrix = True if self.config.beta != 0.0 else False
     c = (
-        self._replicated_normal(k5, (m, n), in_dtype)
+        self._replicated_normal(
+            k5, (m, n), dtypes.parse_dtype(self.config.out_dtype)
+        )
         if use_accumulator_matrix
         else None
     )
@@ -306,16 +350,18 @@ class GeneralizedGemmBenchmark(BaseGemmBenchmark[TGemmParams]):
 
   def get_compute_dtype(self) -> str:
     """Return the primary data type used for compute math, to determine peak TFLOPS."""
-    return self.config.in_dtype
+    return _compute_dtype(self.config.in_dtype, self.config.rhs_dtype)
 
   def get_total_bytes(self) -> float:
     m, k, n = self.config.m, self.config.k, self.config.n
-    in_itemsize = jnp.dtype(dtypes.parse_dtype(self.config.in_dtype)).itemsize
-    out_itemsize = jnp.dtype(dtypes.parse_dtype(self.config.out_dtype)).itemsize
+    # Sub-byte dtypes (int4, float4_e2m1fn) are counted at their packed size.
+    in_itemsize = dtypes.get_dtype_bytes(self.config.in_dtype)
+    rhs_itemsize = dtypes.get_dtype_bytes(self.config.rhs_dtype)
+    out_itemsize = dtypes.get_dtype_bytes(self.config.out_dtype)
 
     # Base memory traffic: Load A (M x K) and B (K x N), Store Out (M x N)
     bytes_a = m * k * in_itemsize
-    bytes_b = k * n * in_itemsize
+    bytes_b = k * n * rhs_itemsize
     bytes_out = m * n * out_itemsize
 
     # Optional memory traffic: Load C (M x N) when accumulator matrix is used (beta != 0.0).
@@ -958,3 +1004,276 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
   def get_total_flops(self) -> float:
     m, k, n = self.config.m, self.config.k, self.config.n
     return float(2 * m * n * k)
+
+
+_DUTY_CYCLE_DELAY_SHAPE = (256, 256)  # f32 tensor updated by the idle steps.
+_CALIBRATION_GEMMS = 20
+_CALIBRATION_ELEM_OPS = 1000
+
+
+@dataclasses.dataclass
+class GemmDutyCycleParams(MatmulShapeParams):
+  """Parameters for the GEMM duty-cycle benchmark."""
+
+  warmup_tries: int = dataclasses.field(
+      default=2, metadata={"min": 0, "help": "Warmup runs."}
+  )
+  num_runs: int = dataclasses.field(
+      default=5, metadata={"min": 0, "help": "Timed runs."}
+  )
+  rhs_dtype: str = dataclasses.field(
+      default="", metadata={"help": "Data type of B; empty = in_dtype."}
+  )
+  duty_cycle: float = dataclasses.field(
+      default=1.0,
+      metadata={
+          "min": 0.01,
+          "max": 1.0,
+          "help": "Target fraction of time spent in the GEMM.",
+      },
+  )
+  gemms_per_run: int = dataclasses.field(
+      default=100,
+      metadata={"min": 1, "help": "GEMM + idle iterations per timed run."},
+  )
+  num_elem_ops: int = dataclasses.field(
+      default=-1,
+      metadata={
+          "min": -1,
+          "help": "Idle steps after each GEMM; -1 calibrates from duty_cycle.",
+      },
+  )
+
+  def __post_init__(self):
+    super().__post_init__()
+    _resolve_rhs_dtype(self)
+
+
+def make_duty_cycle_fn(
+    mesh: jax.sharding.Mesh, acc_dtype: Any, out_dtype: Any
+) -> Callable[..., jax.Array]:
+  """Returns jitted `(a, b, num_gemms, num_elem_ops) -> carry`.
+
+  Each device runs `num_gemms` iterations of a GEMM followed by `num_elem_ops`
+  elementwise steps seeded from the GEMM result. Optimization barriers keep XLA
+  from hoisting the GEMM, overlapping it with the idle steps, or computing only
+  the element the idle steps read. The loop bounds are traced, so calibration
+  and timed runs share one executable.
+  """
+  pspec = jax.sharding.PartitionSpec
+
+  def per_device(a, b, num_gemms, num_elem_ops):
+    def gemm_step(state):
+      i, carry = state
+      a_i, b_i, carry = jax.lax.optimization_barrier((a, b, carry))
+      res = jax.lax.dot_general(
+          a_i,
+          b_i,
+          dimension_numbers=(((1,), (0,)), ((), ())),
+          preferred_element_type=acc_dtype,
+      ).astype(out_dtype)
+      res = jax.lax.optimization_barrier(res)
+      delay = (
+          jnp.zeros(_DUTY_CYCLE_DELAY_SHAPE, jnp.float32)
+          + res[0, 0].astype(jnp.float32) * 1e-20
+          + carry
+      )
+      delay = jax.lax.fori_loop(0, num_elem_ops, lambda _, r: r + 1.0, delay)
+      return i + 1, delay[0, 0] * 1e-20
+
+    with jax.named_scope(constants.MARKER):
+      _, carry = jax.lax.while_loop(
+          lambda state: state[0] < num_gemms,
+          gemm_step,
+          (jnp.int32(0), jnp.float32(0.0)),
+      )
+    return carry.reshape(1)
+
+  return jax.jit(
+      jax.shard_map(
+          per_device,
+          mesh=mesh,
+          in_specs=(pspec(),) * 4,
+          out_specs=pspec(tuple(mesh.axis_names)),
+          check_vma=False,
+      )
+  )
+
+
+def calibrate_num_elem_ops(
+    gemm_s: float, elem_op_s: float, duty_cycle: float
+) -> int:
+  """Idle steps per GEMM for `duty_cycle` (0 at 100%, else at least 1)."""
+  if duty_cycle >= 1.0:
+    return 0
+  if elem_op_s <= 0:
+    raise ValueError(f"elem_op_s must be positive, got {elem_op_s}.")
+  return max(1, round(gemm_s * (1.0 - duty_cycle) / duty_cycle / elem_op_s))
+
+
+@registry.benchmark_registry.register("gemm_duty_cycle", is_experimental=True)
+class GemmDutyCycleBenchmark(BaseGemmBenchmark[GemmDutyCycleParams]):
+  """[EXPERIMENTAL] GEMM at a target duty cycle (GEMM, then elementwise idle).
+
+  `*_tflops_per_device` is the average over the run, `*_active_tflops_per_device`
+  is that / `duty_cycle`, and `*_duty_cycle_pct` is the share of the run the
+  GEMMs take at their calibrated speed (it drops if the run throttles).
+  """
+
+  Config = GemmDutyCycleParams
+  requires_ici: bool = False
+  REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
+      ("in_dtype", report.format_str),
+      ("rhs_dtype", report.format_str),
+      ("out_dtype", report.format_str),
+      ("m", report.format_str),
+      ("k", report.format_str),
+      ("n", report.format_str),
+      ("duty_cycle", report.format_2f),
+      ("gemms_per_run", report.format_str),
+      ("num_elem_ops", report.format_str),
+      ("calibrated_gemm_us", report.format_2f),
+      ("calibrated_elem_op_us", report.format_4f),
+      ("wall_clock_p50_ms", report.format_4f),
+      ("wall_clock_tflops_per_device", report.format_2f),
+      ("wall_clock_duty_cycle_pct", report.format_2f),
+      ("wall_clock_active_tflops_per_device", report.format_2f),
+  )
+
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._num_elem_ops: int | None = None
+    self._gemm_s: float | None = None
+    self._elem_op_s: float | None = None
+
+  def setup(self):
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    self._jit_fn = make_duty_cycle_fn(
+        self.mesh,
+        _accumulation_dtype(self.config.in_dtype, self.config.rhs_dtype),
+        dtypes.parse_dtype(self.config.out_dtype),
+    )
+
+  def get_run_identifier(self) -> str:
+    c = self.config
+    return (
+        f"m_{c.m}_k_{c.k}_n_{c.n}_{c.in_dtype}_x_{c.rhs_dtype}_to_"
+        f"{c.out_dtype}_duty_{c.duty_cycle}_gemms_{c.gemms_per_run}"
+    )
+
+  def _scalar(self, value: int) -> jax.Array:
+    assert self.mesh is not None
+    return jax.device_put(
+        jnp.int32(value),
+        jax.sharding.NamedSharding(self.mesh, jax.sharding.PartitionSpec()),
+    )
+
+  def _time_loop(self, a, b, num_gemms: int, num_elem_ops: int) -> float:
+    """Best wall-clock seconds of 3 runs, process 0's value on every host."""
+    assert self._jit_fn is not None
+    args = (a, b, self._scalar(num_gemms), self._scalar(num_elem_ops))
+    jax.block_until_ready(self._jit_fn(*args))
+    best_s = float("inf")
+    for _ in range(3):
+      start_s = time.perf_counter()
+      jax.block_until_ready(self._jit_fn(*args))
+      best_s = min(best_s, time.perf_counter() - start_s)
+    # Every host must run the same loop bounds.
+    if jax.process_count() > 1:
+      best_s = float(multihost_utils.broadcast_one_to_all(np.float64(best_s)))
+    return best_s
+
+  def _calibrate(self, a, b) -> None:
+    """Sets `_gemm_s`, `_elem_op_s` and `_num_elem_ops`."""
+    n = _CALIBRATION_GEMMS
+    t_n = self._time_loop(a, b, n, 0)
+    # The difference cancels the fixed dispatch overhead.
+    self._gemm_s = max(self._time_loop(a, b, 2 * n, 0) - t_n, 0.0) / n
+    if self.config.num_elem_ops >= 0 or self.config.duty_cycle >= 1.0:
+      self._num_elem_ops = max(self.config.num_elem_ops, 0)
+      return
+    e = _CALIBRATION_ELEM_OPS
+    self._elem_op_s = max(self._time_loop(a, b, n, e) - t_n, 0.0) / (n * e)
+    k = calibrate_num_elem_ops(
+        self._gemm_s, self._elem_op_s, self.config.duty_cycle
+    )
+    # Re-measure at k and 2k idle steps: with idle gaps the GEMM throttles less
+    # than back to back, so solve both times in the target regime.
+    t_k = self._time_loop(a, b, n, k)
+    elem_op_s = (self._time_loop(a, b, n, 2 * k) - t_k) / (n * k)
+    gemm_s = t_k / n - k * elem_op_s
+    if elem_op_s > 0 and gemm_s > 0:
+      self._gemm_s, self._elem_op_s = gemm_s, elem_op_s
+      k = calibrate_num_elem_ops(gemm_s, elem_op_s, self.config.duty_cycle)
+    self._num_elem_ops = k
+
+  def generate_inputs(self) -> tuple[jax.Array, ...]:
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    c = self.config
+    k1, k2 = jax.random.split(jax.random.PRNGKey(c.seed), 2)
+    a = self._replicated_normal(
+        k1, (c.m, c.k), dtypes.parse_dtype(c.in_dtype)
+    )
+    b = self._replicated_normal(
+        k2, (c.k, c.n), dtypes.parse_dtype(c.rhs_dtype)
+    )
+    self._calibrate(a, b)
+    assert self._num_elem_ops is not None
+    return (
+        a,
+        b,
+        self._scalar(c.gemms_per_run),
+        self._scalar(self._num_elem_ops),
+    )
+
+  def run_op(self, *args) -> jax.Array:
+    if self._jit_fn is None:
+      raise ValueError("JIT function not initialized.")
+    return self._jit_fn(*args)
+
+  def match_xprof_op_fallback(self, event):
+    del event  # Only the MARKER-scoped loop includes the idle time.
+    return False
+
+  def get_compute_dtype(self) -> str:
+    """Return the primary data type used for compute math, to determine peak TFLOPS."""
+    return _compute_dtype(self.config.in_dtype, self.config.rhs_dtype)
+
+  def get_total_bytes(self) -> float:
+    c = self.config
+    gemm_bytes = (
+        c.m * c.k * dtypes.get_dtype_bytes(c.in_dtype)
+        + c.k * c.n * dtypes.get_dtype_bytes(c.rhs_dtype)
+        + c.m * c.n * dtypes.get_dtype_bytes(c.out_dtype)
+    )
+    return float(c.gemms_per_run * gemm_bytes)
+
+  def get_total_flops(self) -> float:
+    c = self.config
+    return float(c.gemms_per_run * 2 * c.m * c.n * c.k)
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    us = lambda s: s * 1e6 if s is not None else None
+    return {
+        **super().get_workload_metadata(),
+        "num_elem_ops": self._num_elem_ops,
+        "calibrated_gemm_us": us(self._gemm_s),
+        "calibrated_elem_op_us": us(self._elem_op_s),
+    }
+
+  def calculate_throughput_metrics(
+      self, latency_ms: float, prefix: constants.TimingDomain
+  ) -> dict[str, Any]:
+    metrics = super().calculate_throughput_metrics(latency_ms, prefix)
+    latency_s = latency_ms / 1000.0
+    metrics[f"{prefix}_duty_cycle_pct"] = (
+        self.config.gemms_per_run * self._gemm_s / latency_s * 100.0
+        if self._gemm_s and latency_s > 0
+        else None
+    )
+    metrics[f"{prefix}_active_tflops_per_device"] = (
+        metrics[f"{prefix}_tflops_per_device"] / self.config.duty_cycle
+    )
+    return metrics

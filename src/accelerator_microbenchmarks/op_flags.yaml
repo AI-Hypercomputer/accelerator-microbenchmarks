@@ -113,6 +113,7 @@ gemm_quantized: *gemm_flags
 gemm_throttling: *gemm_flags
 gemm_pulse: *gemm_flags
 gemm_chained: *gemm_flags
+gemm_duty_cycle: *gemm_flags
 
 quantization: *gemm_flags
 quantize_transpose: *gemm_flags
