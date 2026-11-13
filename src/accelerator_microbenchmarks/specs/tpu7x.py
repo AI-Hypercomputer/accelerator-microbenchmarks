@@ -21,5 +21,9 @@ TPU7X_HARDWARE_SPEC = schema.HardwareSpec(
         link_bw_per_direction_gb_s=100.0,
         wraparound_rule=schema.WraparoundRule.ALL_DIMS_GE_4,
     ),
+    # Each chip has two chiplets connected by a die-to-die (D2D) interface
+    # (https://docs.cloud.google.com/tpu/docs/tpu7x#dual-chiplet_architecture).
+    # The D2D link is full duplex.
+    die_to_die=schema.DieToDieSpec(bandwidth_per_direction_gb_s=800.0),
     hbm=schema.HbmSpec(peak_bw_gb_s=7380.0),
 )
