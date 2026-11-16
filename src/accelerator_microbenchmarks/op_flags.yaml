@@ -11,19 +11,6 @@ gemm_flags: &gemm_flags
     - "--xla_tpu_vmem_scavenging_mode=NONE"
     - "--xla_tpu_dvfs_p_state=7"
 
-gemm_numerics_flags: &gemm_numerics_flags
-  flags:
-    - "--xla_tpu_enable_async_collective_fusion=false"
-    - "--xla_tpu_enable_async_collective_fusion_multiple_steps=true"
-    - "--xla_tpu_overlap_compute_collective_tc=true"
-    - "--xla_enable_async_all_gather=true"
-    - "--xla_enable_async_collective_permute=true"
-    - "--xla_tpu_enable_all_experimental_scheduler_features=true"
-    - "--xla_tpu_accumulate_into_mrb=true"
-    - "--xla_tpu_scoped_vmem_limit_kib=65536"
-    - "--xla_tpu_allow_conv_input_fusion_with_downcast_convert=true"
-    - "--xla_tpu_dvfs_p_state=7"
-
 all_reduce:
   flags:
     - "--xla_jf_debug_level=3"
@@ -123,6 +110,7 @@ tokamax_splash_attention:
     - "--xla_tpu_dvfs_p_state=7"
 
 gemm: *gemm_flags
+gemm_quantized: *gemm_flags
 gemm_throttling: *gemm_flags
 gemm_pulse: *gemm_flags
 gemm_chained: *gemm_flags

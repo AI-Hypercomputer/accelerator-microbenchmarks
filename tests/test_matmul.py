@@ -729,5 +729,108 @@ class GemmThrottlingBenchmarkTest(parameterized.TestCase):
     )
 
 
+class QuantizedGemmBenchmarkTest(parameterized.TestCase):
+  """Unit tests for QuantizedGemmBenchmark."""
+
+  def setUp(self):
+    super().setUp()
+    self._platform_patcher = mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    self._platform_patcher.start()
+    self.addCleanup(self._platform_patcher.stop)
+    self.mock_mesh = jax.sharding.Mesh(
+        np.array(jax.devices()), axis_names=("device",)
+    )
+
+  def _setup_benchmark(self, **kwargs):
+    """Initializes a QuantizedGemmBenchmark instance for testing."""
+    params = {
+        "m": 64,
+        "k": 128,
+        "n": 64,
+        "in_dtype": "bfloat16",
+        "quant_dtype": "float8_e4m3fn",
+        "out_dtype": "bfloat16",
+        "warmup_tries": 1,
+        "num_runs": 2,
+    }
+    params.update(kwargs)
+    cfg = matmul.QuantizedGemmParams(**params)
+    self.bm = matmul.QuantizedGemmBenchmark(
+        config=cfg,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    self.bm.setup()
+
+  def test_benchmark_registered(self):
+    bm_class = registry.benchmark_registry.get_benchmark("gemm_quantized")
+    self.assertEqual(bm_class, matmul.QuantizedGemmBenchmark)
+
+  @parameterized.parameters("float8_e4m3fn", "int8")
+  def test_generate_inputs_and_run_op(self, qd):
+    """Tests input generation and numerical output against quantized matmul."""
+    self._setup_benchmark(quant_dtype=qd)
+    self.assertEqual(
+        self.bm.get_run_identifier(),
+        f"m_64_k_128_n_64_bfloat16_to_{qd}_out_bfloat16",
+    )
+    inputs = self.bm.generate_inputs()
+    self.assertLen(inputs, 2)
+    a, b = inputs
+    out = self.bm.run_op(a, b)
+    self.assertEqual(out.shape, (64, 64))
+    self.assertEqual(out.dtype, jnp.bfloat16)
+
+    quantize_fn = jax.jit(
+        matmul._quantize_per_channel_dynamic,  # pylint: disable=protected-access
+        static_argnames=("reduce_axis", "quant_dtype"),
+    )
+    qa = quantize_fn(a, reduce_axis=1, quant_dtype=qd)
+    qb = quantize_fn(b, reduce_axis=0, quant_dtype=qd)
+    expected = jnp.matmul(qa.astype(jnp.float32), qb.astype(jnp.float32))
+    np.testing.assert_allclose(out.astype(jnp.float32), expected, rtol=2e-2)
+
+  def test_quantize_per_channel_dynamic_and_dtype_constraints(self):
+    """Tests int8 rounding and DTYPE_CONSTRAINTS validation."""
+    x = jnp.array([[127.0, 0.6], [63.5, -63.5]], dtype=jnp.bfloat16)
+    q_int8 = (
+        matmul._quantize_per_channel_dynamic(  # pylint: disable=protected-access
+            x, reduce_axis=1, quant_dtype=jnp.int8
+        )
+    )
+    self.assertEqual(q_int8.dtype, jnp.int8)
+    np.testing.assert_array_equal(
+        np.asarray(q_int8), np.array([[127, 1], [127, -127]], dtype=np.int8)
+    )
+    with self.assertRaises(ValueError):
+      matmul.QuantizedGemmParams(quant_dtype="uint8")
+    with self.assertRaises(ValueError):
+      matmul.QuantizedGemmParams(quant_dtype="bfloat16")
+    with self.assertRaises(ValueError):
+      matmul.QuantizedGemmParams(in_dtype="float64")
+    with self.assertRaises(ValueError):
+      matmul.QuantizedGemmParams(out_dtype="float16")
+    self.assertTrue(issubclass(matmul.GemmParams, matmul.MatmulShapeParams))
+    self.assertTrue(
+        issubclass(matmul.QuantizedGemmParams, matmul.MatmulShapeParams)
+    )
+
+  def test_flops_bytes_and_compute_dtype(self):
+    self._setup_benchmark(m=64, k=128, n=64)
+    self.assertEqual(self.bm.get_compute_dtype(), "float8_e4m3fn")
+    self.assertEqual(self.bm.get_total_flops(), float(2 * 64 * 128 * 64))
+    # 1-pass algorithmic HBM bytes: read A (64x128 bf16) + read B (128x64 bf16)
+    # + write OUT (64x64 bf16).
+    expected_bytes = float((64 * 128 + 128 * 64) * 2 + 64 * 64 * 2)
+    self.assertEqual(self.bm.get_total_bytes(), expected_bytes)
+
+  def test_schema_coverage(self):
+    self._setup_benchmark()
+    test_report_utils.assert_schema_matches_output(self, self.bm)
+
+
 if __name__ == "__main__":
   absltest.main()

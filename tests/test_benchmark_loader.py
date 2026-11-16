@@ -34,6 +34,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "gemm_throttling",
             "gemm_pulse",
             "gemm_chained",
+            "gemm_quantized",
             "hbm",
             "hbm_bandwidth",
             "attention_flashed",
@@ -93,6 +94,9 @@ class BenchmarkLoaderTest(absltest.TestCase):
     )
     self.assertTrue(registry.benchmark_registry.is_experimental("gemm_chained"))
     self.assertTrue(registry.benchmark_registry.is_experimental("gemm_pulse"))
+    self.assertTrue(
+        registry.benchmark_registry.is_experimental("gemm_quantized")
+    )
 
   def test_all_benchmarks_have_valid_config(self):
     """Verify that every registered benchmark defines a Config dataclass."""
@@ -165,6 +169,7 @@ class BenchmarkLoaderTest(absltest.TestCase):
             "gemm_throttling",
             "gemm_pulse",
             "gemm_chained",
+            "gemm_quantized",
             "hbm",
             "hbm_bandwidth",
             "host_to_device",
