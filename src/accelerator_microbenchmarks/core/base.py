@@ -557,6 +557,20 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         " RooflineMode.NETWORK_ICI."
     )
 
+  def get_peak_link_bandwidth(
+      self,
+  ) -> tuple[float, constants.TransferLink] | None:
+    """Return the peak link bandwidth per device (GB/s) and the bounding link.
+
+    Required when roofline_mode == RooflineMode.NETWORK_LINK. Returns None
+    when the peak cannot be modeled for the current configuration.
+    """
+    raise NotImplementedError(
+        f"{self.__class__.__name__} must implement"
+        " get_peak_link_bandwidth() when roofline_mode =="
+        " RooflineMode.NETWORK_LINK."
+    )
+
   @abc.abstractmethod
   def get_total_bytes(self) -> float:
     """Calculate total bytes moved to/from HBM."""

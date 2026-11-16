@@ -42,12 +42,29 @@ class RooflineMode(str, enum.Enum):
       supplied by the benchmark (currently only `all_to_all`, whose peak is
       bounded by bisection bandwidth). Emits `peak_ici_bandwidth_per_chip_gb_s`
       and `<domain>_ici_roofline_efficiency_pct`.
+    NETWORK_LINK: Device-to-device transfer roofline: the measured per-device
+      bandwidth is compared against the peak of the single physical link that
+      carries the transfer (ICI between chips, or the die-to-die link between
+      the dies of one chip), as supplied by the benchmark. Emits
+      `peak_link_bandwidth_per_device_gb_s`, `roofline_bound_by` (a
+      `TransferLink` value), and `<domain>_roofline_efficiency_pct`.
   """
 
   NONE = "none"
   COMPUTE = "compute"
   MEMORY_HBM = "memory_hbm"
   NETWORK_ICI = "network_ici"
+  NETWORK_LINK = "network_link"
+
+
+class TransferLink(enum.StrEnum):
+  """Physical link bounding a device-to-device transfer.
+
+  The values are the strings emitted in the `roofline_bound_by` metric.
+  """
+
+  ICI = "ici"
+  DIE_TO_DIE = "die_to_die"
 
 
 class TimingDomain(enum.StrEnum):

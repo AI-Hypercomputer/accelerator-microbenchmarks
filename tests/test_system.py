@@ -194,6 +194,9 @@ class SystemTest(absltest.TestCase):
         hw_spec.ici.wraparound_rule, system.WraparoundRule.ALL_DIMS_GE_4
     )
 
+    # Test die-to-die stats
+    self.assertEqual(hw_spec.die_to_die.bandwidth_per_direction_gb_s, 800.0)
+
     # Test HBM stats
     self.assertEqual(hw_spec.hbm.peak_bw_gb_s, 7380.0)
     self.assertEqual(hw_spec.peak_hbm_bandwidth_per_device, 3690.0)
@@ -224,6 +227,9 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(
         hw_spec.ici.wraparound_rule, system.WraparoundRule.PER_DIM_GE_16
     )
+
+    # One device per chip: no die-to-die link.
+    self.assertIsNone(hw_spec.die_to_die)
 
     # Test HBM stats
     self.assertEqual(hw_spec.hbm.peak_bw_gb_s, 1638.4)
