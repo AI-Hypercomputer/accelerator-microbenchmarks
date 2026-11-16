@@ -25,5 +25,8 @@ TPU7X_HARDWARE_SPEC = schema.HardwareSpec(
     # (https://docs.cloud.google.com/tpu/docs/tpu7x#dual-chiplet_architecture).
     # The D2D link is full duplex.
     die_to_die=schema.DieToDieSpec(bandwidth_per_direction_gb_s=800.0),
+    # Host interface: PCIe Gen5 x16 per chip, shared by both chiplets; raw
+    # 32 GT/s x 16 lanes / 8.
+    pcie=schema.PcieSpec(bandwidth_per_direction_gb_s=64.0),
     hbm=schema.HbmSpec(peak_bw_gb_s=7380.0),
 )

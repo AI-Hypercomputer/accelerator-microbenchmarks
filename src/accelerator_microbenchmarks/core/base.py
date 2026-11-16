@@ -571,6 +571,20 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
         " RooflineMode.NETWORK_LINK."
     )
 
+  def get_peak_host_link_bandwidth(self) -> float | None:
+    """Return the host link peak (GB/s) at the active measurement scope.
+
+    Required when roofline_mode == RooflineMode.HOST_DEVICE_LINK. The value is
+    compared against `*_bandwidth_per_<scope>_gb_s` for `config.scope`.
+    Returns None when the peak cannot be modeled for the current
+    configuration.
+    """
+    raise NotImplementedError(
+        f"{self.__class__.__name__} must implement"
+        " get_peak_host_link_bandwidth() when roofline_mode =="
+        " RooflineMode.HOST_DEVICE_LINK."
+    )
+
   @abc.abstractmethod
   def get_total_bytes(self) -> float:
     """Calculate total bytes moved to/from HBM."""

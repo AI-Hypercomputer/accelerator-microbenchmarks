@@ -101,7 +101,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | :--- | :--- | :--- | :--- |
 | **`gemm`** | **Compute Throughput (`TFLOPS`)** & Roofline (`%`) | **Both Per-Chip & Per-Device**<br>(`*_tflops_per_chip`, `*_tflops_per_device`) | **Measures** per-device and aggregate per-chip matrix compute throughput (`TFLOPS`), and **compares** against peak chip compute rooflines (`%`). |
 | **`hbm`** | **Memory Bandwidth (`GB/s`)** & Roofline (`%`) | **All Three Scopes (`Per-Device`, `Per-Chip`, `Per-Host`; active measured, smaller derived, larger `None`)**<br>(`*_bandwidth_per_{device,chip,host}_gb_s`) | **Measures** HBM memory bandwidth (`GB/s`) across the selected hardware `scope` (`device` default, `chip`, or `host`), **derives** smaller scopes as the average share of the concurrent aggregate measurement, leaves larger scopes as `None` (no upward extrapolation), and **compares** against peak per-device HBM bandwidth rooflines (`%`). |
-| **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** | **All Three Scopes (`Per-Device`, `Per-Chip`, `Per-Host`; active measured, smaller derived, larger `None`)**<br>(`*_bandwidth_per_{device,chip,host}_gb_s`) | **Measures** PCIe transfer bandwidth (`GB/s`) between the host CPU and the selected hardware `scope`: all local devices concurrently (`scope: "host"`, default), one physical chip (`scope: "chip"`), or one local device (`scope: "device"`), **deriving** smaller scopes as the average share while leaving larger scopes as `None` (since shared PCIe links do not scale linearly across cores). |
+| **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** & Roofline (`%`) | **All Three Scopes (`Per-Device`, `Per-Chip`, `Per-Host`; active measured, smaller derived, larger `None`)**<br>(`*_bandwidth_per_{device,chip,host}_gb_s`) | **Measures** PCIe transfer bandwidth (`GB/s`) between the host CPU and the selected hardware `scope`: all local devices concurrently (`scope: "host"`, default), one physical chip (`scope: "chip"`), or one local device (`scope: "device"`), **deriving** smaller scopes as the average share while leaving larger scopes as `None` (since shared PCIe links do not scale linearly across cores), and **compares** the measured scope against the host link (PCIe) peak of the chips involved (`%`). |
 | **`device_to_device`** | **Device-to-Device Link Bandwidth (`GB/s`)** & Roofline (`%`) | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** transfer bandwidth (`GB/s`) between each device pair and **compares** it against the peak of the link used, ICI or die-to-die (`%`). |
 | **`all_reduce` / `all_gather` / `all_to_all`** | **Collective Bus Bandwidth (`GB/s`)** | **Per-Chip**<br>(`*_bandwidth_per_chip_gb_s`) | **Measures** aggregate external ICI collective bus bandwidth (`GB/s`) per physical TPU chip across the active device mesh. |
 
@@ -415,6 +415,26 @@ inputs `A[M, K]` and `B[K, N]` dynamically quantized row-wise/column-wise to
     (`-` in console tables, empty in `summary.csv`, `null` in `detailed.json`)
     because shared PCIe links (such as a dual-die TPU chip sharing one PCIe
     endpoint) cannot be extrapolated upward from a smaller scope.
+- **Host Link Roofline** (summary.csv / detailed.json only; not in the
+  console table):
+  - `roofline_bound_by` — Link that carries the transfer: always `pcie` (the
+    chip's host link). Shared with `device_to_device` (`ici` / `die_to_die`),
+    so every `peak_link_bandwidth_per_*_gb_s` row names its link.
+  - `peak_link_bandwidth_per_{device|chip|host}_gb_s` — Theoretical host link
+    peak for the measured `scope` only (`GB/s`): the chip's raw per-direction
+    PCIe bandwidth (`HardwareSpec.pcie`, e.g. Gen5 x8 = 32 GB/s on `v6e`,
+    Gen5 x16 = 64 GB/s on `tpu7x`) times the number of chips the measured
+    devices span (`ceil(num_devices / devices_per_chip)`). The link belongs to
+    the chip and is shared by its devices, so a single device transferring
+    alone (`scope="device"`) is bounded by the full chip link. Omitted when the
+    hardware spec has no PCIe bandwidth.
+  - `{wall_clock|xprof}_roofline_efficiency_pct` — Measured bandwidth of the
+    active `scope` as a percentage of that peak (`%`). Emitted for both
+    `transfer_backend` values: `tpu_sync` typically reaches ~88–92% (the
+    practical PCIe ceiling after 128b/130b encoding and TLP/DLLP protocol
+    overhead), while lower `jax` values reflect host staging overhead rather
+    than the link. Host-side limits (root complex, NUMA, host DRAM) are not
+    modeled.
 - **Latency (`ms`)**:
   - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
 - **Benchmark Attributes**:

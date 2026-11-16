@@ -48,6 +48,11 @@ class RooflineMode(str, enum.Enum):
       the dies of one chip), as supplied by the benchmark. Emits
       `peak_link_bandwidth_per_device_gb_s`, `roofline_bound_by` (a
       `TransferLink` value), and `<domain>_roofline_efficiency_pct`.
+    HOST_DEVICE_LINK: Host<->device transfer roofline: the measured bandwidth
+      at the active measurement scope is compared against the host link peak
+      of the chips involved, as supplied by the benchmark. Emits
+      `peak_link_bandwidth_per_<scope>_gb_s`, `roofline_bound_by`
+      (`TransferLink.PCIE`), and `<domain>_roofline_efficiency_pct`.
   """
 
   NONE = "none"
@@ -55,16 +60,18 @@ class RooflineMode(str, enum.Enum):
   MEMORY_HBM = "memory_hbm"
   NETWORK_ICI = "network_ici"
   NETWORK_LINK = "network_link"
+  HOST_DEVICE_LINK = "host_device_link"
 
 
 class TransferLink(enum.StrEnum):
-  """Physical link bounding a device-to-device transfer.
+  """Physical link bounding a device-to-device or host<->device transfer.
 
   The values are the strings emitted in the `roofline_bound_by` metric.
   """
 
   ICI = "ici"
   DIE_TO_DIE = "die_to_die"
+  PCIE = "pcie"
 
 
 class TimingDomain(enum.StrEnum):

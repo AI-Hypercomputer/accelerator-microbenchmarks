@@ -497,6 +497,60 @@ class RooflineTest(absltest.TestCase):
     res = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
     self.assertEqual(res, {"wall_clock_bandwidth_per_device_gb_s": 80.0})
 
+  def _set_host_link(self, scope: str, peak: float | None) -> None:
+    self.mock_benchmark.roofline_mode = constants.RooflineMode.HOST_DEVICE_LINK
+    self.mock_benchmark.config = mock.Mock(scope=scope)
+    self.mock_benchmark.get_peak_host_link_bandwidth.return_value = peak
+
+  def test_apply_roofline_analysis_host_link_uses_measured_scope(self):
+    """Verify HOST_DEVICE_LINK names the peak and efficiency by scope."""
+    for scope in ("device", "chip", "host"):
+      with self.subTest(scope=scope):
+        self._set_host_link(scope, 200.0)
+        metrics = {
+            f"wall_clock_bandwidth_per_{scope}_gb_s": 150.0,
+            f"xprof_bandwidth_per_{scope}_gb_s": 180.0,
+        }
+        # Derived smaller-scope shares must not drive the efficiency.
+        if scope != "device":
+          metrics["wall_clock_bandwidth_per_device_gb_s"] = 1.0
+          metrics["xprof_bandwidth_per_device_gb_s"] = 1.0
+        res = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+        self.assertEqual(res[f"peak_link_bandwidth_per_{scope}_gb_s"], 200.0)
+        self.assertAlmostEqual(res["wall_clock_roofline_efficiency_pct"], 75.0)
+        self.assertAlmostEqual(res["xprof_roofline_efficiency_pct"], 90.0)
+        other_scopes = {"device", "chip", "host"} - {scope}
+        for other in other_scopes:
+          self.assertNotIn(f"peak_link_bandwidth_per_{other}_gb_s", res)
+        self.assertEqual(res["roofline_bound_by"], "pcie")
+
+  def test_apply_roofline_analysis_host_link_skips_missing_domain(self):
+    """Verify efficiency is only emitted for domains with a bandwidth."""
+    self._set_host_link("host", 128.0)
+    metrics = {
+        "wall_clock_bandwidth_per_host_gb_s": 64.0,
+        "xprof_bandwidth_per_host_gb_s": None,
+    }
+    res = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+    self.assertAlmostEqual(res["wall_clock_roofline_efficiency_pct"], 50.0)
+    self.assertNotIn("xprof_roofline_efficiency_pct", res)
+
+  def test_apply_roofline_analysis_host_link_not_clamped(self):
+    """Verify efficiency above 100% is reported as-is."""
+    self._set_host_link("chip", 64.0)
+    metrics = {"wall_clock_bandwidth_per_chip_gb_s": 80.0}
+    res = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+    self.assertAlmostEqual(res["wall_clock_roofline_efficiency_pct"], 125.0)
+
+  def test_apply_roofline_analysis_host_link_no_peak(self):
+    """Verify no host-link roofline keys are added without a positive peak."""
+    for peak in (None, 0.0):
+      with self.subTest(peak=peak):
+        self._set_host_link("host", peak)
+        metrics = {"wall_clock_bandwidth_per_host_gb_s": 64.0}
+        res = roofline.apply_roofline_analysis(self.mock_benchmark, metrics)
+        self.assertEqual(res, {"wall_clock_bandwidth_per_host_gb_s": 64.0})
+
 
 if __name__ == "__main__":
   absltest.main()
