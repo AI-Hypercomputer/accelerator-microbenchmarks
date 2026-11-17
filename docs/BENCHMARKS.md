@@ -257,9 +257,10 @@ metrics when `enable_checksum=True`.
 #### 2.1.4 Quantized Matrix Multiplication (`gemm_quantized`) [experimental]
 
 Evaluates end-to-end quantized matrix multiplication (`bfloat16` or `float32`
-inputs `A[M, K]` and `B[K, N]` dynamically quantized row-wise/column-wise to
+inputs `A[M, K]` and `B[K, N]` quantized row-wise/column-wise to
 `float8_e4m3fn`, `float8_e5m2`, or `int8` inside the timed step before
-`lax.dot_general`).
+`lax.dot_general`, with dynamic or static scaling and optional output
+dequantization).
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -269,6 +270,8 @@ inputs `A[M, K]` and `B[K, N]` dynamically quantized row-wise/column-wise to
 | `in_dtype` | `str` | `"bfloat16"` | Unquantized input operand dtype (e.g., `bfloat16`, `float32`). |
 | `quant_dtype` | `str` | `"float8_e4m3fn"` | Quantized matmul operand dtype (e.g., `float8_e4m3fn`, `float8_e5m2`, `int8`). Selects the hardware peak TFLOPS ceiling for roofline efficiency. |
 | `out_dtype` | `str` | `"bfloat16"` | Output tensor dtype (e.g., `bfloat16`, `float32`). |
+| `scaling` | `str` | `"dynamic"` | Scale calibration: `"dynamic"` (per-row/column `amax` computed on the fly) or `"static"` (fixed clip bound `0.5 * Q_MAX`, i.e., compile-time scale `0.5`). |
+| `dequantize` | `bool` | `False` | When `True`, multiply the matmul accumulator by the row and column dequantization scales before casting to `out_dtype`. |
 | `seed` | `int` | `0` | PRNG seed for initializing input tensors in HBM. |
 
 ---

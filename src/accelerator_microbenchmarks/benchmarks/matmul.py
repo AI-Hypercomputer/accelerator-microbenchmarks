@@ -709,24 +709,59 @@ class GemmPulseBenchmark(GemmChainedBenchmark[GemmPulseParams]):
     return super(GemmChainedBenchmark, self).calculate_metrics(times_ms)
 
 
-def _quantize_per_channel_dynamic(
+class QuantScaling(constants.ParamEnum):
+  """Calibration method used to derive the quantization scaling factors.
+
+  Attributes:
+    DYNAMIC: Scales are computed on the fly from the absolute maximum of each
+      row or column (`scale = amax / Q_MAX`).
+    STATIC: Uses a fixed, compile-time clip bound `0.5 * Q_MAX` (`scale = 0.5`)
+      with no `amax` reduction. A non-unit (`!= 1.0`) power-of-2 scale prevents
+      XLA from folding away the scale/dequantize multiplications as identity
+      no-ops while scaling inputs without mantissa rounding loss.
+  """
+
+  DYNAMIC = "dynamic"
+  STATIC = "static"
+
+
+def _quantize_per_channel(
     x: jax.Array,
     *,
     reduce_axis: int,
     quant_dtype: jax.typing.DTypeLike,
-) -> jax.Array:
-  """Dynamically quantizes `x` per channel along `reduce_axis`."""
+    scaling: QuantScaling,
+) -> tuple[jax.Array, jax.Array]:
+  """Quantizes `x` per channel along `reduce_axis`."""
   q_dtype = jnp.dtype(quant_dtype)
   q_max = float(dtypes.get_dtype_max(q_dtype))
   x_f32 = x.astype(jnp.float32)
-  amax = jnp.max(jnp.abs(x_f32), axis=reduce_axis, keepdims=True)
-  inv_scale_f32 = q_max / jnp.maximum(amax, 1e-7)
+
+  if scaling == QuantScaling.STATIC:
+    scale_shape = list(x.shape)
+    scale_shape[reduce_axis] = 1
+    # Use a non-unit power-of-2 bound (`0.5 * q_max` -> `scale = 0.5`) so XLA
+    # cannot elide `x * inv_scale` or `acc * (sf_a * sf_b)` as multiply-by-1
+    # no-ops.
+    static_absmax = 0.5 * q_max
+    scale_f32 = jnp.full(scale_shape, static_absmax / q_max, dtype=jnp.float32)
+    inv_scale_f32 = jnp.reciprocal(scale_f32)
+  elif scaling == QuantScaling.DYNAMIC:
+    amax = jnp.max(jnp.abs(x_f32), axis=reduce_axis, keepdims=True)
+    clamped_amax = jnp.maximum(amax, 1e-7)
+    scale_f32 = clamped_amax / q_max
+    inv_scale_f32 = q_max / clamped_amax
+  else:
+    raise ValueError(
+        f"Unsupported scaling mode '{scaling}'; expected 'dynamic' or 'static'."
+    )
+
   q = x_f32 * inv_scale_f32
   if jnp.issubdtype(q_dtype, jnp.integer):
     q = jnp.clip(jnp.round(q), -q_max, q_max)
   else:
     q = jnp.clip(q, -q_max, q_max)
-  return q.astype(q_dtype)
+  return q.astype(q_dtype), scale_f32
 
 
 @dataclasses.dataclass
@@ -748,11 +783,29 @@ class QuantizedGemmParams(MatmulShapeParams):
           )
       },
   )
+  scaling: QuantScaling = dataclasses.field(
+      default=QuantScaling.DYNAMIC,
+      metadata={
+          "help": (
+              "Scale calibration: 'dynamic' (amax computed on the fly) or"
+              " 'static' (fixed clip bound 0.5 * Q_MAX, i.e. scale = 0.5)."
+          )
+      },
+  )
+  dequantize: bool = dataclasses.field(
+      default=False,
+      metadata={
+          "help": (
+              "If True, multiply the accumulator by the row and column"
+              " dequantization scales before casting to out_dtype."
+          )
+      },
+  )
 
 
 @registry.benchmark_registry.register("gemm_quantized", is_experimental=True)
 class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
-  """[EXPERIMENTAL] GEMM with dynamic per-channel quantization of A and B."""
+  """[EXPERIMENTAL] GEMM with per-channel quantization of A and B."""
 
   Config = QuantizedGemmParams  # pylint: disable=invalid-name
   requires_ici: bool = False
@@ -763,6 +816,8 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
       ("m", report.format_str),
       ("k", report.format_str),
       ("n", report.format_str),
+      ("scaling", report.format_str),
+      ("dequantize", report.format_str),
       ("total_flops", report.format_2f),
       ("wall_clock_p50_ms", report.format_4f),
       ("wall_clock_tflops_per_chip", report.format_2f),
@@ -787,15 +842,17 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
     @jax.jit
     def quant_gemm_fn(a, b):
       with jax.named_scope(constants.MARKER):
-        qa = _quantize_per_channel_dynamic(
+        qa, sf_a = _quantize_per_channel(
             a,
             reduce_axis=1,
             quant_dtype=quant_dtype,
+            scaling=cfg.scaling,
         )
-        qb = _quantize_per_channel_dynamic(
+        qb, sf_b = _quantize_per_channel(
             b,
             reduce_axis=0,
             quant_dtype=quant_dtype,
+            scaling=cfg.scaling,
         )
         acc = jax.lax.dot_general(
             qa,
@@ -803,16 +860,21 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
             dimension_numbers=(((1,), (0,)), ((), ())),
             preferred_element_type=dot_acc_dtype,
         )
+        if cfg.dequantize:
+          acc = acc.astype(jnp.float32) * (sf_a * sf_b)
         return acc.astype(out_dtype)
 
     self._jit_fn = quant_gemm_fn
 
   def get_run_identifier(self) -> str:
     cfg = self.config
-    return (
+    run_id = (
         f"m_{cfg.m}_k_{cfg.k}_n_{cfg.n}_"
-        f"{cfg.in_dtype}_to_{cfg.quant_dtype}_out_{cfg.out_dtype}"
+        f"{cfg.in_dtype}_to_{cfg.quant_dtype}_{cfg.scaling}_out_{cfg.out_dtype}"
     )
+    if cfg.dequantize:
+      run_id += "_dequant"
+    return run_id
 
   def generate_inputs(self) -> tuple[Any, ...]:
     cfg = self.config
