@@ -26,8 +26,6 @@ def apply_roofline_analysis(
     `<domain>_memory_roofline_efficiency_pct` apply invariantly to both scopes.
     `<domain>_ici_roofline_efficiency_pct` is defined per chip only, since ICI
     collectives report exclusively `*_bandwidth_per_chip_gb_s`.
-    `<domain>_roofline_efficiency_pct` (NETWORK_LINK) is defined per device,
-    since device-to-device transfers report `*_bandwidth_per_device_gb_s`.
     `<domain>_roofline_efficiency_pct` (HOST_DEVICE_LINK) is computed at the
     measured `config.scope` only, never from derived smaller-scope shares.
 
@@ -123,29 +121,13 @@ def apply_roofline_analysis(
         ) * 100.0
     return metrics
 
-  if mode == constants.RooflineMode.NETWORK_LINK:
-    peak = benchmark_instance.get_peak_link_bandwidth()
-    if peak is None:
-      return metrics
-    peak_bw, link = peak
-    metrics["peak_link_bandwidth_per_device_gb_s"] = peak_bw
-    metrics["roofline_bound_by"] = str(link)
-    for prefix in constants.TimingDomain:
-      actual_bw = metrics.get(f"{prefix}_bandwidth_per_device_gb_s")
-      if actual_bw is not None and actual_bw >= 0 and peak_bw > 0:
-        metrics[f"{prefix}_roofline_efficiency_pct"] = (
-            actual_bw / peak_bw
-        ) * 100.0
-    return metrics
-
   if mode == constants.RooflineMode.HOST_DEVICE_LINK:
     peak_bw = benchmark_instance.get_peak_host_link_bandwidth()
     if peak_bw is None or peak_bw <= 0:
       return metrics
     scope = constants.Scope(benchmark_instance.config.scope).value
     metrics[f"peak_link_bandwidth_per_{scope}_gb_s"] = peak_bw
-    # Shares `peak_link_bandwidth_per_device_gb_s` with NETWORK_LINK, so name
-    # the bounding link to keep the column self-describing.
+    # Name the bounding link so the peak column is self-describing.
     metrics["roofline_bound_by"] = str(constants.TransferLink.PCIE)
     for prefix in constants.TimingDomain:
       actual_bw = metrics.get(f"{prefix}_bandwidth_per_{scope}_gb_s")

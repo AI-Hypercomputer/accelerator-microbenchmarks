@@ -102,7 +102,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | **`gemm`** | **Compute Throughput (`TFLOPS`)** & Roofline (`%`) | **Both Per-Chip & Per-Device**<br>(`*_tflops_per_chip`, `*_tflops_per_device`) | **Measures** per-device and aggregate per-chip matrix compute throughput (`TFLOPS`), and **compares** against peak chip compute rooflines (`%`). |
 | **`hbm`** | **Memory Bandwidth (`GB/s`)** & Roofline (`%`) | **All Three Scopes (`Per-Device`, `Per-Chip`, `Per-Host`; active measured, smaller derived, larger `None`)**<br>(`*_bandwidth_per_{device,chip,host}_gb_s`) | **Measures** HBM memory bandwidth (`GB/s`) across the selected hardware `scope` (`device` default, `chip`, or `host`), **derives** smaller scopes as the average share of the concurrent aggregate measurement, leaves larger scopes as `None` (no upward extrapolation), and **compares** against peak per-device HBM bandwidth rooflines (`%`). |
 | **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** & Roofline (`%`) | **All Three Scopes (`Per-Device`, `Per-Chip`, `Per-Host`; active measured, smaller derived, larger `None`)**<br>(`*_bandwidth_per_{device,chip,host}_gb_s`) | **Measures** PCIe transfer bandwidth (`GB/s`) between the host CPU and the selected hardware `scope`: all local devices concurrently (`scope: "host"`, default), one physical chip (`scope: "chip"`), or one local device (`scope: "device"`), **deriving** smaller scopes as the average share while leaving larger scopes as `None` (since shared PCIe links do not scale linearly across cores), and **compares** the measured scope against the host link (PCIe) peak of the chips involved (`%`). |
-| **`device_to_device`** | **Device-to-Device Link Bandwidth (`GB/s`)** & Roofline (`%`) | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** transfer bandwidth (`GB/s`) between each device pair and **compares** it against the peak of the link used, ICI or die-to-die (`%`). |
+| **`device_to_device`** | **Device-to-Device Link Bandwidth (`GB/s`)** | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** transfer bandwidth (`GB/s`) between each device pair `(src_device_index, dst_device_index)`. |
 | **`all_reduce` / `all_gather` / `all_to_all`** | **Collective Bus Bandwidth (`GB/s`)** | **Per-Chip**<br>(`*_bandwidth_per_chip_gb_s`) | **Measures** aggregate external ICI collective bus bandwidth (`GB/s`) per physical TPU chip across the active device mesh. |
 
 ---
@@ -436,8 +436,7 @@ dynamic or static scaling and optional output dequantization).
 - **Host Link Roofline** (summary.csv / detailed.json only; not in the
   console table):
   - `roofline_bound_by` — Link that carries the transfer: always `pcie` (the
-    chip's host link). Shared with `device_to_device` (`ici` / `die_to_die`),
-    so every `peak_link_bandwidth_per_*_gb_s` row names its link.
+    chip's host link).
   - `peak_link_bandwidth_per_{device|chip|host}_gb_s` — Theoretical host link
     peak for the measured `scope` only (`GB/s`): the chip's raw per-direction
     PCIe bandwidth (`HardwareSpec.pcie`, e.g. Gen5 x8 = 32 GB/s on `v6e`,
@@ -482,19 +481,12 @@ dynamic or static scaling and optional output dequantization).
 
 - **Link Bandwidth**:
   - `{wall_clock|xprof}_bandwidth_per_device_gb_s` — Device-to-device transfer bandwidth between `(src_device_index, dst_device_index)` (`GB/s`), also formatted in `stdout` as an **`N × N` pairwise device bandwidth matrix** (`src` rows × `dst` columns). For `"bi"`, the bytes of both directions are counted.
-- **Link Roofline**:
-  - `roofline_bound_by` — Link that carries the transfer: `ici` (devices on different chips) or `die_to_die` (the two devices of one chip, e.g. `tpu7x`).
-  - `peak_link_bandwidth_per_device_gb_s` — Theoretical peak bandwidth of that link (`GB/s`), doubled for `"bi"`.
-  - `{wall_clock|xprof}_roofline_efficiency_pct` — Measured bandwidth as a percentage of the peak (`%`).
 - **Latency (`ms`)**:
   - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
 - **Benchmark Attributes**:
   - `src_device_index` / `dst_device_index` — Source and destination logical device indices for the measured pair.
   - `direction` — Active transfer direction (`"uni"` or `"bi"`).
   - `data_size_mib` — Payload size per directional stream (`MiB`).
-
-> [!NOTE]
-> Only one device pair transfers at a time, so each transfer gets the full link. ICI links are shared by the devices of a chip, so don't sum ICI peaks per chip.
 
 ---
 
