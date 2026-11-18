@@ -141,6 +141,20 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | `use_scaling_factors` | `bool` | `False` | Allocate and apply row-wise (`M × 1`) and column-wise (`1 × N`) `float32` scaling factor vectors for quantized/FP8 rescaling. |
 | `seed` | `int` | `0` | PRNG seed for initializing input tensors in HBM. |
 
+> [!NOTE]
+> **`float32` shares the `bfloat16` peak.** MXU multiplies take `bfloat16`
+> inputs and accumulate in `float32` (see
+> [TPU architecture](https://docs.cloud.google.com/tpu/docs/system-architecture-tpu-vm)),
+> and the GEMM benchmarks pass no `precision` to the matmul, so JAX's default
+> precision applies and a `float32` matmul runs as one `bfloat16` pass. JAX's
+> [precision levels](https://docs.jax.dev/en/latest/201/precision.html#precision-the-classic-three-levels)
+> affect only `float32` computations. On TPU:
+>
+> - `Precision.DEFAULT` (what TPUMS runs): fastest, least accurate; computes in
+>   `bfloat16`.
+> - `Precision.HIGH`: slower, more accurate; three `bfloat16` passes.
+> - `Precision.HIGHEST`: slowest, most accurate; six `bfloat16` passes.
+
 #### Reported Metrics
 
 - **Compute Throughput & Roofline**:

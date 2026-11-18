@@ -10,7 +10,11 @@ TPU7X_HARDWARE_SPEC = schema.HardwareSpec(
     tflops=schema.TflopsSpec(
         peak_tflops_per_device={
             "bfloat16": 1153.5,
-            "float32": 576.75,  # 2-pass BF16 emulation on MXU
+            # Same peak as bfloat16: MXU multiplies take bfloat16 inputs and
+            # accumulate in FP32, so a float32 matmul at JAX's default
+            # precision is one bfloat16 pass (see docs/BENCHMARKS.md).
+            # https://docs.cloud.google.com/tpu/docs/system-architecture-tpu-vm
+            "float32": 1153.5,
             "float8_e5m2": 2307.0,
             "float8_e4m3fn": 2307.0,
             "int8": 1153.5,  # Emulated on BF16 datapath

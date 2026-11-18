@@ -179,7 +179,7 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(
         hw_spec.tflops.peak_tflops_per_device["bfloat16"], 1153.5
     )
-    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["float32"], 576.75)
+    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["float32"], 1153.5)
     self.assertEqual(
         hw_spec.tflops.peak_tflops_per_device["float8_e5m2"], 2307.0
     )
@@ -215,7 +215,7 @@ class SystemTest(absltest.TestCase):
     self.assertEqual(
         hw_spec.tflops.peak_tflops_per_device["bfloat16"], 918.0
     )
-    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["float32"], 459.0)
+    self.assertEqual(hw_spec.tflops.peak_tflops_per_device["float32"], 918.0)
     self.assertEqual(
         hw_spec.tflops.peak_tflops_per_device["float8_e5m2"], 918.0
     )
