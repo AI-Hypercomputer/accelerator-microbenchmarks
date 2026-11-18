@@ -771,6 +771,12 @@ class QuantizedGemmParams(MatmulShapeParams):
   DTYPE_CONSTRAINTS = {
       "in_dtype": _UNQUANTIZED_FLOAT_DTYPES,
       "quant_dtype": (jnp.float8_e4m3fn, jnp.float8_e5m2, jnp.int8),
+      "rhs_quant_dtype": (
+          jnp.float8_e4m3fn,
+          jnp.float8_e5m2,
+          jnp.int8,
+          jnp.int4,
+      ),
       "out_dtype": _UNQUANTIZED_FLOAT_DTYPES,
   }
 
@@ -778,8 +784,18 @@ class QuantizedGemmParams(MatmulShapeParams):
       default=dtypes.DType.FLOAT8_E4M3FN,
       metadata={
           "help": (
-              "Quantized operand data type fed to the MXU (e.g."
-              " 'float8_e4m3fn', 'int8')."
+              "Quantized LHS (and default RHS) operand data type fed to the"
+              " MXU (e.g. 'float8_e4m3fn', 'int8')."
+          )
+      },
+  )
+  rhs_quant_dtype: dtypes.DType = base.dtype_field(
+      default=dtypes.DType.FLOAT8_E4M3FN,
+      metadata={
+          "help": (
+              "Quantized RHS (B) operand data type. Defaults to `quant_dtype`;"
+              " also supports 'int4' when `quant_dtype` is FP8"
+              " ('float8_e4m3fn' or 'float8_e5m2')."
           )
       },
   )
@@ -802,6 +818,40 @@ class QuantizedGemmParams(MatmulShapeParams):
       },
   )
 
+  def __post_init__(self):
+    if "rhs_quant_dtype" not in self._explicit_fields:
+      self.rhs_quant_dtype = self.quant_dtype
+    super().__post_init__()
+    if self.rhs_quant_dtype != self.quant_dtype and not (
+        self.rhs_quant_dtype == dtypes.DType.INT4
+        and self.quant_dtype in (
+            dtypes.DType.FLOAT8_E4M3FN,
+            dtypes.DType.FLOAT8_E5M2,
+        )
+    ):
+      raise ValueError(
+          "rhs_quant_dtype must match quant_dtype or be 'int4' paired with an"
+          " FP8 quant_dtype ('float8_e4m3fn' or 'float8_e5m2'), got"
+          f" quant_dtype='{self.quant_dtype}',"
+          f" rhs_quant_dtype='{self.rhs_quant_dtype}'."
+      )
+
+  def with_generation_defaults(
+      self, param_defaults: dict[str, Any]
+  ) -> base.BaseBenchmarkParams:
+    if (
+        param_defaults
+        and "quant_dtype" in param_defaults
+        and "quant_dtype" not in self._explicit_fields
+        and "rhs_quant_dtype" not in param_defaults
+        and "rhs_quant_dtype" not in self._explicit_fields
+    ):
+      param_defaults = {
+          **param_defaults,
+          "rhs_quant_dtype": param_defaults["quant_dtype"],
+      }
+    return super().with_generation_defaults(param_defaults)
+
 
 @registry.benchmark_registry.register("gemm_quantized", is_experimental=True)
 class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
@@ -812,6 +862,7 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
   REPORT_SCHEMA: Sequence[tuple[str, Callable[[Any], str]]] = (
       ("in_dtype", report.format_str),
       ("quant_dtype", report.format_str),
+      ("rhs_quant_dtype", report.format_str),
       ("out_dtype", report.format_str),
       ("m", report.format_str),
       ("k", report.format_str),
@@ -826,7 +877,7 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
   )
 
   def get_compute_dtype(self) -> str:
-    """Returns the quantized dtype, which determines the MXU peak TFLOPS."""
+    """Returns the LHS quantized dtype, which determines the MXU peak TFLOPS."""
     return str(self.config.quant_dtype)
 
   def setup(self):
@@ -834,10 +885,12 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
       raise ValueError("Mesh not initialized.")
     cfg = self.config
     quant_dtype = dtypes.parse_dtype(cfg.quant_dtype)
+    rhs_quant_dtype = dtypes.parse_dtype(cfg.rhs_quant_dtype)
     out_dtype = dtypes.parse_dtype(cfg.out_dtype)
-    dot_acc_dtype = (
-        jnp.int32 if jnp.issubdtype(quant_dtype, jnp.integer) else jnp.float32
+    both_int = jnp.issubdtype(quant_dtype, jnp.integer) and jnp.issubdtype(
+        rhs_quant_dtype, jnp.integer
     )
+    dot_acc_dtype = jnp.int32 if both_int else jnp.float32
 
     @jax.jit
     def quant_gemm_fn(a, b):
@@ -851,7 +904,7 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
         qb, sf_b = _quantize_per_channel(
             b,
             reduce_axis=0,
-            quant_dtype=quant_dtype,
+            quant_dtype=rhs_quant_dtype,
             scaling=cfg.scaling,
         )
         acc = jax.lax.dot_general(
@@ -868,9 +921,14 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
 
   def get_run_identifier(self) -> str:
     cfg = self.config
+    quant_str = (
+        f"{cfg.quant_dtype}"
+        if cfg.rhs_quant_dtype == cfg.quant_dtype
+        else f"{cfg.quant_dtype}_rhs_{cfg.rhs_quant_dtype}"
+    )
     run_id = (
         f"m_{cfg.m}_k_{cfg.k}_n_{cfg.n}_"
-        f"{cfg.in_dtype}_to_{cfg.quant_dtype}_{cfg.scaling}_out_{cfg.out_dtype}"
+        f"{cfg.in_dtype}_to_{quant_str}_{cfg.scaling}_out_{cfg.out_dtype}"
     )
     if cfg.dequantize:
       run_id += "_dequant"

@@ -272,9 +272,9 @@ metrics when `enable_checksum=True`.
 
 Evaluates end-to-end quantized matrix multiplication (`bfloat16` or `float32`
 inputs `A[M, K]` and `B[K, N]` quantized row-wise/column-wise to
-`float8_e4m3fn`, `float8_e5m2`, or `int8` inside the timed step before
-`lax.dot_general`, with dynamic or static scaling and optional output
-dequantization).
+`float8_e4m3fn`, `float8_e5m2`, or `int8`—or mixed-precision `FP8 × INT4` with
+`rhs_quant_dtype="int4"`—inside the timed step before `lax.dot_general`, with
+dynamic or static scaling and optional output dequantization).
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -282,7 +282,8 @@ dequantization).
 | `k` | `int` | `1024` | Contracting dimension `K` (columns of `A` and rows of `B`). |
 | `n` | `int` | `1024` | Matrix dimension `N` (columns of `B` and output matrix `C`). |
 | `in_dtype` | `str` | `"bfloat16"` | Unquantized input operand dtype (e.g., `bfloat16`, `float32`). |
-| `quant_dtype` | `str` | `"float8_e4m3fn"` | Quantized matmul operand dtype (e.g., `float8_e4m3fn`, `float8_e5m2`, `int8`). Selects the hardware peak TFLOPS ceiling for roofline efficiency. |
+| `quant_dtype` | `str` | `"float8_e4m3fn"` | Quantized LHS (and default RHS) operand dtype (`float8_e4m3fn`, `float8_e5m2`, `int8`). Selects the hardware peak TFLOPS ceiling for roofline efficiency. |
+| `rhs_quant_dtype` | `str` | `` `quant_dtype` `` | Quantized RHS (`B`) operand dtype. Defaults to `quant_dtype`; also supports `"int4"` when `quant_dtype` is `float8_e4m3fn` or `float8_e5m2` (`W4A8`). |
 | `out_dtype` | `str` | `"bfloat16"` | Output tensor dtype (e.g., `bfloat16`, `float32`). |
 | `scaling` | `str` | `"dynamic"` | Scale calibration: `"dynamic"` (per-row/column `amax` computed on the fly) or `"static"` (fixed clip bound `0.5 * Q_MAX`, i.e., compile-time scale `0.5`). |
 | `dequantize` | `bool` | `False` | When `True`, multiply the matmul accumulator by the row and column dequantization scales before casting to `out_dtype`. |

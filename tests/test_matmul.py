@@ -774,14 +774,22 @@ class QuantizedGemmBenchmarkTest(parameterized.TestCase):
     bm_class = registry.benchmark_registry.get_benchmark("gemm_quantized")
     self.assertEqual(bm_class, matmul.QuantizedGemmBenchmark)
 
-  @parameterized.parameters("float8_e4m3fn", "int8")
-  def test_generate_inputs_and_run_op(self, qd):
+  @parameterized.parameters(
+      ("float8_e4m3fn", "float8_e4m3fn"),
+      ("float8_e5m2", "float8_e5m2"),
+      ("int8", "int8"),
+      ("float8_e4m3fn", "int4"),
+      ("float8_e5m2", "int4"),
+  )
+  def test_generate_inputs_and_run_op(self, qd, rhs_qd):
     """Tests input generation and numerical output against quantized matmul."""
-    self._setup_benchmark(quant_dtype=qd)
+    self._setup_benchmark(quant_dtype=qd, rhs_quant_dtype=rhs_qd)
+    expected_quant_str = qd if rhs_qd == qd else f"{qd}_rhs_{rhs_qd}"
     self.assertEqual(
         self.bm.get_run_identifier(),
-        f"m_64_k_128_n_64_bfloat16_to_{qd}_dynamic_out_bfloat16",
+        f"m_64_k_128_n_64_bfloat16_to_{expected_quant_str}_dynamic_out_bfloat16",
     )
+    self.assertEqual(self.bm.get_compute_dtype(), qd)
     inputs = self.bm.generate_inputs()
     self.assertLen(inputs, 2)
     a, b = inputs
@@ -802,7 +810,7 @@ class QuantizedGemmBenchmarkTest(parameterized.TestCase):
     qb, _ = quantize_fn(
         b,
         reduce_axis=0,
-        quant_dtype=qd,
+        quant_dtype=rhs_qd,
         scaling=matmul.QuantScaling.DYNAMIC,
     )
     expected = jnp.matmul(qa.astype(jnp.float32), qb.astype(jnp.float32))
@@ -810,35 +818,55 @@ class QuantizedGemmBenchmarkTest(parameterized.TestCase):
 
   @parameterized.parameters(
       (
+          "float8_e4m3fn",
           "dynamic",
           False,
           "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_dynamic_out_bfloat16",
           25690112.0,
       ),
       (
+          "float8_e4m3fn",
           "static",
           False,
           "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_static_out_bfloat16",
           3211264.0,
       ),
       (
+          "float8_e4m3fn",
           "dynamic",
           True,
           "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_dynamic_out_bfloat16_dequant",
           802816.0,
       ),
       (
+          "float8_e4m3fn",
           "static",
           True,
           "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_static_out_bfloat16_dequant",
           802816.0,
       ),
+      (
+          "int4",
+          "dynamic",
+          False,
+          "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_rhs_int4_dynamic_out_bfloat16",
+          401408.0,
+      ),
+      (
+          "int4",
+          "dynamic",
+          True,
+          "m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_rhs_int4_dynamic_out_bfloat16_dequant",
+          802816.0,
+      ),
   )
   def test_scaling_and_dequantize_variants(
-      self, scaling, dequantize, expected_run_id, expected_val
+      self, rhs_qd, scaling, dequantize, expected_run_id, expected_val
   ):
     """Tests run IDs and numerical outputs across scaling and dequantize modes."""
-    self._setup_benchmark(scaling=scaling, dequantize=dequantize)
+    self._setup_benchmark(
+        rhs_quant_dtype=rhs_qd, scaling=scaling, dequantize=dequantize
+    )
     self.assertEqual(self.bm.get_run_identifier(), expected_run_id)
     inputs = self.bm.generate_inputs()
     out = self.bm.run_op(*inputs)
@@ -876,6 +904,22 @@ class QuantizedGemmBenchmarkTest(parameterized.TestCase):
     # Row 0 dot Col 0: q_a=[127, 1], q_b=[127, 127], sf_a=1.0, sf_b=1.0
     # -> (127*127 + 1*127) * 1.0 = 16256.0 (would be 16129.0 without round).
     self.assertEqual(float(out[0, 0]), 16256.0)
+    x_int4 = jnp.array([[7.0, 3.6], [3.5, -3.5]], dtype=jnp.bfloat16)
+    q_int4, sf_int4 = matmul._quantize_per_channel(  # pylint: disable=protected-access
+        x_int4,
+        reduce_axis=1,
+        quant_dtype=jnp.int4,
+        scaling=matmul.QuantScaling.DYNAMIC,
+    )
+    self.assertEqual(q_int4.dtype, jnp.int4)
+    np.testing.assert_array_equal(
+        np.asarray(q_int4.astype(jnp.int8)),
+        np.array([[7, 4], [7, -7]], dtype=np.int8),
+    )
+    np.testing.assert_allclose(
+        np.asarray(sf_int4, dtype=np.float32),
+        np.array([[1.0], [0.5]], dtype=np.float32),
+    )
 
   def test_static_scaling_clips_outliers_to_qmax(self):
     """Tests that static scaling clips values exceeding 0.5 * q_max to q_max."""
@@ -916,12 +960,46 @@ class QuantizedGemmBenchmarkTest(parameterized.TestCase):
 
   def test_params_validation(self):
     """Tests that invalid scaling and quant_dtype values raise ValueError."""
+    # Default rhs_quant_dtype tracks quant_dtype when omitted, including across
+    # with_generation_defaults().
+    self.assertEqual(
+        matmul.QuantizedGemmParams(quant_dtype="int8").rhs_quant_dtype,
+        "int8",
+    )
+    self.assertEqual(
+        matmul.QuantizedGemmParams(quant_dtype="float8_e5m2").rhs_quant_dtype,
+        "float8_e5m2",
+    )
+    default_with_int8 = matmul.QuantizedGemmParams().with_generation_defaults(
+        {"quant_dtype": "int8"}
+    )
+    self.assertEqual(default_with_int8.quant_dtype, "int8")
+    self.assertEqual(default_with_int8.rhs_quant_dtype, "int8")
+    explicit_int4_with_e5m2 = matmul.QuantizedGemmParams(
+        rhs_quant_dtype="int4"
+    ).with_generation_defaults({"quant_dtype": "float8_e5m2"})
+    self.assertEqual(explicit_int4_with_e5m2.quant_dtype, "float8_e5m2")
+    self.assertEqual(explicit_int4_with_e5m2.rhs_quant_dtype, "int4")
     with self.assertRaisesRegex(ValueError, "Invalid scaling"):
       matmul.QuantizedGemmParams(**{"scaling": "invalid"})
     with self.assertRaises(ValueError):
       matmul.QuantizedGemmParams(quant_dtype="uint8")
     with self.assertRaises(ValueError):
       matmul.QuantizedGemmParams(quant_dtype="bfloat16")
+    with self.assertRaises(ValueError):
+      matmul.QuantizedGemmParams(rhs_quant_dtype="bfloat16")
+    with self.assertRaises(ValueError):
+      matmul.QuantizedGemmParams(**{"rhs_quant_dtype": None})
+    with self.assertRaisesRegex(
+        ValueError, "rhs_quant_dtype must match quant_dtype or be 'int4'"
+    ):
+      matmul.QuantizedGemmParams(quant_dtype="int8", rhs_quant_dtype="int4")
+    with self.assertRaisesRegex(
+        ValueError, "rhs_quant_dtype must match quant_dtype or be 'int4'"
+    ):
+      matmul.QuantizedGemmParams(
+          quant_dtype="float8_e4m3fn", rhs_quant_dtype="int8"
+      )
     with self.assertRaises(ValueError):
       matmul.QuantizedGemmParams(in_dtype="float64")
     with self.assertRaises(ValueError):
