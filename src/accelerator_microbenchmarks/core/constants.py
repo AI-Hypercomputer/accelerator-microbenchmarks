@@ -84,6 +84,9 @@ class XprofDeviceTimingAggregation(ParamEnum):
   MEASURED_DEVICE_OR_FIRST = "measured_device_or_first"
   # Row selection: the local device whose median duration is highest.
   LOCAL_SLOWEST_DEVICE = "local_slowest_device"
+  # Slowest (max duration) over measured local devices on this host, taken at
+  # each step.
+  LOCAL_SLOWEST_PER_STEP = "local_slowest_per_step"
   # Slowest (max duration) over all devices on all hosts, taken at each step.
   GLOBAL_SLOWEST_PER_STEP = "global_slowest_per_step"
 

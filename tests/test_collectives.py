@@ -2,8 +2,10 @@
 
 import argparse
 import dataclasses
+import gzip
 import io
 import itertools
+import json
 import math
 import os
 from typing import Any, Sequence
@@ -17,6 +19,7 @@ from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
+from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -1412,8 +1415,8 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     ):
       _setup_on_dcn_mesh(dcn_bm, num_slices=5)
 
-  def test_all_to_all_op_scope_by_topology(self):
-    """Verify ICI all-to-all lowers inside MARKER and DCN all-to-all does not."""
+  def test_all_to_all_and_dcn_all_reduce_op_scope_lowers_marker(self):
+    """Verify ICI and DCN collectives lower inside the MARKER named scope."""
     ici_bm = collectives.AllToAllBenchmark(
         config=collectives.IciCollectivesParams(matrix_dim=64, dtype="float32"),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
@@ -1426,16 +1429,340 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         ici_bm._jit_fn.lower(ici_x).as_text(debug_info=True),  # pylint: disable=protected-access
     )
 
-    dcn_bm = collectives.DcnAllToAllBenchmark(
+    dcn_a2a_bm = collectives.DcnAllToAllBenchmark(
         config=collectives.DcnCollectivesParams(matrix_dim=64, dtype="float32"),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
     )
-    _setup_on_dcn_mesh(dcn_bm, num_slices=2)
-    (dcn_x,) = dcn_bm.generate_inputs()
-    self.assertNotIn(
+    _setup_on_dcn_mesh(dcn_a2a_bm, num_slices=2)
+    (dcn_a2a_x,) = dcn_a2a_bm.generate_inputs()
+    self.assertIn(
         constants.MARKER,
-        dcn_bm._jit_fn.lower(dcn_x).as_text(debug_info=True),  # pylint: disable=protected-access
+        dcn_a2a_bm._jit_fn.lower(dcn_a2a_x).as_text(debug_info=True),  # pylint: disable=protected-access
     )
+
+    dcn_ar_bm = collectives.DcnAllReduceBenchmark(
+        config=collectives.DcnAllReduceParams(matrix_dim=64, dtype="float32"),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    _setup_on_dcn_mesh(dcn_ar_bm, num_slices=2)
+    (dcn_ar_x,) = dcn_ar_bm.generate_inputs()
+    self.assertIn(
+        constants.MARKER,
+        dcn_ar_bm._jit_fn.lower(dcn_ar_x).as_text(debug_info=True),  # pylint: disable=protected-access
+    )
+
+  def test_xprof_disable_host_tracer_is_dcn_only(self):
+    """Verify host tracer disabling is enabled on DCN collectives only."""
+    for dcn_cls, cfg in (
+        (collectives.DcnAllReduceBenchmark, collectives.DcnAllReduceParams()),
+        (collectives.DcnAllToAllBenchmark, collectives.DcnCollectivesParams()),
+    ):
+      bm = dcn_cls(config=cfg, hardware_spec=system.TPU7X_HARDWARE_SPEC)
+      self.assertTrue(bm.xprof_disable_host_tracer)
+
+    for ici_cls, cfg in (
+        (collectives.AllReduceBenchmark, collectives.AllReduceParams()),
+        (collectives.AllGatherBenchmark, collectives.IciCollectivesParams()),
+        (collectives.AllToAllBenchmark, collectives.IciCollectivesParams()),
+    ):
+      bm = ici_cls(
+          config=cfg,
+          hardware_spec=system.TPU7X_HARDWARE_SPEC,
+          mesh=self.mock_mesh,
+      )
+      self.assertFalse(bm.xprof_disable_host_tracer)
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="host_send",
+          event={
+              "name": "send",
+              "ph": "X",
+              "args": {"hlo_category": "host send", "sf": 1},
+          },
+          expected=True,
+      ),
+      dict(
+          testcase_name="host_recv",
+          event={
+              "name": "recv.1",
+              "ph": "X",
+              "args": {"hlo_category": "host recv", "sf": 1},
+          },
+          expected=True,
+      ),
+      dict(
+          testcase_name="host_send_done",
+          event={
+              "name": "send-done",
+              "ph": "X",
+              "args": {
+                  "group_id": 133,
+                  "hlo_category": "host send-done",
+                  "bytes_accessed": 24,
+                  "device_offset_ps": 103782804193277,
+                  "device_duration_ps": 161012655462,
+                  "sf": 1,
+              },
+          },
+          expected=True,
+      ),
+      dict(
+          testcase_name="host_recv_done",
+          event={
+              "name": "recv-done.1",
+              "ph": "X",
+              "args": {
+                  "group_id": 133,
+                  "hlo_category": "host recv-done",
+                  "bytes_accessed": 4294967296,
+                  "device_offset_ps": 104219147405762,
+                  "device_duration_ps": 312088012005,
+                  "sf": 1,
+              },
+          },
+          expected=True,
+      ),
+      dict(
+          testcase_name="slice_add_loop_fusion",
+          event={
+              "name": "slice_add_fusion",
+              "ph": "X",
+              "args": {
+                  "group_id": 133,
+                  "hlo_category": "loop fusion",
+                  "model_flops": 1073741824,
+                  "device_offset_ps": 104175604421369,
+                  "device_duration_ps": 1996888355,
+                  "sf": 1,
+              },
+          },
+          expected=True,
+      ),
+      dict(
+          testcase_name="async_send_start_excluded",
+          event={
+              "name": "send-start",
+              "ph": "X",
+              "args": {"hlo_category": "host send"},
+          },
+          expected=False,
+      ),
+      dict(
+          testcase_name="data_formatting_copy_excluded",
+          event={
+              "name": "copy.3",
+              "ph": "X",
+              "args": {"hlo_category": "data formatting"},
+          },
+          expected=False,
+      ),
+      dict(
+          testcase_name="pad_excluded",
+          event={"name": "pad", "ph": "X", "args": {"hlo_category": "pad"}},
+          expected=False,
+      ),
+      dict(
+          testcase_name="slice_excluded",
+          event={"name": "slice", "ph": "X", "args": {"hlo_category": "slice"}},
+          expected=False,
+      ),
+      dict(
+          testcase_name="barrier_cores_excluded",
+          event={"name": "barrier-cores", "ph": "X", "args": {}},
+          expected=False,
+      ),
+  )
+  def test_dcn_match_xprof_op_fallback(self, event, expected):
+    """Verify fallback matcher includes DCN collective and reduction ops."""
+    bm = collectives.DcnAllReduceBenchmark(
+        config=collectives.DcnAllReduceParams(),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    self.assertEqual(bm.match_xprof_op_fallback(event), expected)
+
+  def test_dcn_get_xprof_device_timing_aggregation_promotes_default(self):
+    """Verify multi-device DCN collectives promote default aggregation."""
+    agg = constants.XprofDeviceTimingAggregation
+    bm_multi = collectives.DcnAllReduceBenchmark(
+        config=collectives.DcnAllReduceParams(),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    self.assertEqual(
+        bm_multi.get_xprof_device_timing_aggregation(),
+        agg.LOCAL_SLOWEST_PER_STEP,
+    )
+
+    with mock.patch.object(
+        jax, "local_devices", return_value=[_ALL_CPU_DEVICES[0]]
+    ):
+      self.assertEqual(
+          bm_multi.get_xprof_device_timing_aggregation(),
+          agg.MEASURED_DEVICE_OR_FIRST,
+      )
+
+    for explicit in (
+        agg.MEASURED_DEVICE_OR_FIRST,
+        agg.LOCAL_SLOWEST_DEVICE,
+        agg.GLOBAL_SLOWEST_PER_STEP,
+    ):
+      bm_explicit = collectives.DcnAllReduceBenchmark(
+          config=collectives.DcnAllReduceParams(),
+          hardware_spec=system.TPU7X_HARDWARE_SPEC,
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=explicit,
+          ),
+      )
+      self.assertEqual(
+          bm_explicit.get_xprof_device_timing_aggregation(), explicit
+      )
+
+  def test_dcn_all_reduce_xprof_fallback_and_local_slowest_per_step(self):
+    """Verify DCN XProf fallback and local_slowest_per_step end-to-end."""
+    trace_dir = self.create_tempdir().full_path
+    trace_path = os.path.join(trace_dir, "dcn_host0.trace.json.gz")
+
+    def _x_event(
+        pid: int,
+        tid: int,
+        name: str,
+        start_ms: float,
+        dur_ms: float,
+        hlo_category: str | None = None,
+    ) -> dict[str, Any]:
+      args: dict[str, Any] = {
+          "device_offset_ps": int(round(start_ms * 1_000_000_000)),
+          "device_duration_ps": int(round(dur_ms * 1_000_000_000)),
+      }
+      if hlo_category is not None:
+        args["hlo_category"] = hlo_category
+      return {
+          "ph": "X",
+          "pid": pid,
+          "tid": tid,
+          "name": name,
+          "ts": start_ms * 1000.0,
+          "dur": dur_ms * 1000.0,
+          "args": args,
+      }
+
+    # 2 local devices (/device:TPU:0 -> pid 3, /device:TPU:1 -> pid 4), 2 steps:
+    # Step 0: TPU:0 = 100 ms (send@10..recv-done.1@110), TPU:1 = 80 ms -> 100 ms
+    # Step 1: 1-stage ending with slice_add_fusion after recv-done:
+    #         TPU:0 = 70 ms (send@200..slice_add@270),
+    #         TPU:1 = 120 ms (send@200..slice_add@320) -> 120 ms.
+    # TPU:0 p50 = 85 ms, TPU:1 p50 = 100 ms, local_slowest_per_step p50 = 110 ms
+    trace_events = [
+        {
+            "ph": "M",
+            "pid": 3,
+            "name": "process_name",
+            "args": {"name": "/device:TPU:0"},
+        },
+        {
+            "ph": "M",
+            "pid": 4,
+            "name": "process_name",
+            "args": {"name": "/device:TPU:1"},
+        },
+        # Step 0 on TPU:0 (pid 3): 100 ms collective + 2 ms copy.3
+        _x_event(3, 2, "jit_all_reduce_sharded(1)", 10.0, 102.0),
+        _x_event(3, 3, "send", 10.0, 0.0, "host send"),
+        _x_event(3, 3, "recv-done", 20.0, 40.0, "host recv-done"),
+        _x_event(3, 3, "slice_add_fusion", 60.0, 2.0, "loop fusion"),
+        _x_event(3, 3, "recv-done.1", 62.0, 48.0, "host recv-done"),
+        _x_event(3, 3, "copy.3", 110.0, 2.0, "data formatting"),
+        # Step 0 on TPU:1 (pid 4): 80 ms collective + 2 ms copy.3
+        _x_event(4, 2, "jit_all_reduce_sharded(1)", 10.0, 82.0),
+        _x_event(4, 3, "send", 10.0, 0.0, "host send"),
+        _x_event(4, 3, "recv-done.1", 40.0, 50.0, "host recv-done"),
+        _x_event(4, 3, "copy.3", 90.0, 2.0, "data formatting"),
+        # Step 1 on TPU:0 (pid 3): 70 ms ending with slice_add_fusion
+        _x_event(3, 2, "jit_all_reduce_sharded(1)", 200.0, 72.0),
+        _x_event(3, 3, "send", 200.0, 0.0, "host send"),
+        _x_event(3, 3, "recv-done", 210.0, 58.0, "host recv-done"),
+        _x_event(3, 3, "slice_add_fusion", 268.0, 2.0, "loop fusion"),
+        _x_event(3, 3, "copy.3", 270.0, 2.0, "data formatting"),
+        # Step 1 on TPU:1 (pid 4): 120 ms ending with slice_add_fusion
+        _x_event(4, 2, "jit_all_reduce_sharded(1)", 200.0, 122.0),
+        _x_event(4, 3, "send", 200.0, 0.0, "host send"),
+        _x_event(4, 3, "recv-done", 220.0, 98.0, "host recv-done"),
+        _x_event(4, 3, "slice_add_fusion", 318.0, 2.0, "loop fusion"),
+        _x_event(4, 3, "copy.3", 320.0, 2.0, "data formatting"),
+    ]
+    with gzip.open(trace_path, "wt", encoding="utf-8") as f:
+      json.dump({"traceEvents": trace_events}, f)
+
+    bm = collectives.DcnAllReduceBenchmark(
+        config=collectives.DcnAllReduceParams(
+            matrix_dim=64, dtype="float32", warmup_tries=0, num_runs=2
+        ),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        xprof_config=base.XprofConfig(xprof_timing=True, xprof_dir=trace_dir),
+    )
+    _setup_on_dcn_mesh(bm, num_slices=2)
+    bm._xprof_dir_actual = trace_dir  # pylint: disable=protected-access
+    two_local_devs = list(_ALL_CPU_DEVICES[:2])
+    with (
+        mock.patch.object(jax, "local_devices", return_value=two_local_devs),
+        mock.patch.object(jax, "local_device_count", return_value=2),
+        mock.patch.object(profiler, "upload_xprof_trace", return_value=None),
+    ):
+      metrics = bm.calculate_metrics([105.0, 125.0])
+      metrics, xprof_res = bm._apply_xprof_timing_and_sync(metrics)  # pylint: disable=protected-access
+      per_dev_summary = bm._summarize_metrics_per_local_device(  # pylint: disable=protected-access
+          xprof_res.per_local_device_durations
+      )
+
+    self.assertEqual(metrics["xprof_captured_runs"], 2)
+    self.assertAlmostEqual(metrics["xprof_p50_ms"], 110.0, places=4)
+    expected_xprof_gbps = (
+        bm.get_total_bytes() * 8.0 * 2 / ((110.0 / 1000.0) * 1e9)
+    )
+    self.assertAlmostEqual(
+        metrics["xprof_bandwidth_per_host_gbps"], expected_xprof_gbps, places=4
+    )
+    self.assertIsNone(xprof_res.measured_device)
+    self.assertEqual(xprof_res.durations, [100.0, 120.0])
+    self.assertIsNotNone(per_dev_summary)
+    self.assertAlmostEqual(
+        per_dev_summary["process_0/TPU:0"]["p50_ms"], 85.0, places=4
+    )
+    self.assertAlmostEqual(
+        per_dev_summary["process_0/TPU:1"]["p50_ms"], 100.0, places=4
+    )
+
+    # Explicit measured_device_or_first pins headline XProf timing to TPU:0.
+    bm_tpu0 = collectives.DcnAllReduceBenchmark(
+        config=collectives.DcnAllReduceParams(
+            matrix_dim=64, dtype="float32", warmup_tries=0, num_runs=2
+        ),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        xprof_config=base.XprofConfig(
+            xprof_timing=True,
+            xprof_dir=trace_dir,
+            device_timing_aggregation=(
+                constants.XprofDeviceTimingAggregation.MEASURED_DEVICE_OR_FIRST
+            ),
+        ),
+    )
+    _setup_on_dcn_mesh(bm_tpu0, num_slices=2)
+    bm_tpu0._xprof_dir_actual = trace_dir  # pylint: disable=protected-access
+    with (
+        mock.patch.object(jax, "local_devices", return_value=two_local_devs),
+        mock.patch.object(jax, "local_device_count", return_value=2),
+        mock.patch.object(profiler, "upload_xprof_trace", return_value=None),
+    ):
+      tpu0_metrics = bm_tpu0.calculate_metrics([105.0, 125.0])
+      tpu0_metrics, tpu0_res = bm_tpu0._apply_xprof_timing_and_sync(  # pylint: disable=protected-access
+          tpu0_metrics
+      )
+
+    self.assertIsNotNone(tpu0_res.measured_device)
+    self.assertEqual(tpu0_res.measured_device.label, "process_0/TPU:0")
+    self.assertEqual(tpu0_res.durations, [100.0, 70.0])
+    self.assertAlmostEqual(tpu0_metrics["xprof_p50_ms"], 85.0, places=4)
 
   def test_all_gather_schema_coverage(self):
     """Verify AllGatherBenchmark REPORT_SCHEMA matches output keys."""

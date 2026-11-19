@@ -1299,7 +1299,9 @@ benchmark:
     mock_run_benchmarks.assert_not_called()
 
   @parameterized.named_parameters(
+      ("measured_device_or_first", "measured_device_or_first"),
       ("local_slowest_device", "local_slowest_device"),
+      ("local_slowest_per_step", "local_slowest_per_step"),
       ("global_slowest_per_step", "global_slowest_per_step"),
   )
   @mock.patch.object(runner, "run_benchmarks")
@@ -1324,7 +1326,9 @@ benchmark:
     )
 
   @parameterized.named_parameters(
+      ("measured_device_or_first", "measured_device_or_first"),
       ("local_slowest_device", "local_slowest_device"),
+      ("local_slowest_per_step", "local_slowest_per_step"),
       ("global_slowest_per_step", "global_slowest_per_step"),
   )
   @mock.patch.object(runner, "run_benchmarks")
@@ -1343,6 +1347,29 @@ benchmark:
     self.assertEqual(
         kwargs["xprof_device_timing_aggregation"], device_timing_aggregation
     )
+
+  def test_benchmark_run_xprof_device_timing_aggregation_omitted_and_help(self):
+    mock_run_benchmarks = self.enter_context(
+        mock.patch.object(
+            runner, "run_benchmarks", autospec=True, spec_set=True
+        )
+    )
+    cli.run(["benchmark", "run", "gemm"])
+    mock_run_benchmarks.assert_called_once()
+    self.assertIsNone(
+        mock_run_benchmarks.call_args.kwargs["xprof_device_timing_aggregation"]
+    )
+
+    with mock.patch.object(sys, "stdout", new=io.StringIO()) as fake_out:
+      with self.assertRaises(SystemExit) as cm:
+        cli.run(["benchmark", "run", "dcn_all_reduce", "--help"])
+    self.assertEqual(cm.exception.code, 0)
+    help_text = fake_out.getvalue()
+    flag_section = help_text.split("  --xprof_device_timing_aggregation ", 1)[
+        1
+    ].split("\n\n", 1)[0]
+    self.assertIn("local_slowest_per_step", flag_section)
+    self.assertNotIn("(default: None)", flag_section)
 
   @mock.patch.object(runner, "run_benchmarks")
   def test_benchmark_run_tpu_version_forwarded(self, mock_run_benchmarks):

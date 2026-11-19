@@ -589,6 +589,129 @@ class SoakingBenchmarkTest(absltest.TestCase):
           bm_max.executor._parse_xprof_durations("/tmp/fake").durations, [6.021, 6.019]  # pylint: disable=protected-access
       )
 
+  def test_local_slowest_per_step_aggregates_on_host_without_allgather(self):
+    """Verifies LOCAL_SLOWEST_PER_STEP reduces across local devices per step without cross-host gather."""
+    fake_devs = [mock.MagicMock(local_hardware_id=i) for i in range(3)]
+    per_dev = {
+        0: [10.0, 25.0, 12.0],
+        1: [14.0, 18.0, 30.0],
+        2: [12.0, 22.0, 20.0],
+    }
+
+    with self.subTest("base_executor_ok"):
+      bm = DummyBenchmark(
+          config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=3),
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_PER_STEP,
+          ),
+      )
+      with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs),
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
+              side_effect=lambda _trace, local_device_id=0: list(
+                  per_dev[local_device_id]
+              ),
+          ),
+          mock.patch.object(
+              multihost_utils, "process_allgather"
+          ) as mock_gather,
+      ):
+        result = bm.executor.get_xprof_durations("/tmp/fake")
+
+      mock_gather.assert_not_called()
+      self.assertEqual(result.durations, [14.0, 25.0, 30.0])
+      self.assertIsNone(result.measured_device)
+      self.assertEqual(
+          result.per_local_device_durations,
+          {executor.XprofDevice(0, i): per_dev[i] for i in range(3)},
+      )
+
+    with self.subTest("soaking_executor_both_windows"):
+      soak_bm = SoakingDummyBenchmark(
+          config=SoakingDummyParams(
+              warmup_tries=0, min_duration_s=0.01, samples_per_run=2
+          ),
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_PER_STEP,
+          ),
+      )
+
+      def fake_soak_parse(trace, local_device_id=0):
+        if "pre_soaking_window" in trace.trace_dir:
+          return [4.0, 9.0] if local_device_id == 0 else [6.0, 7.0]
+        return [8.0, 15.0] if local_device_id == 0 else [11.0, 12.0]
+
+      with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs[:2]),
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
+              side_effect=fake_soak_parse,
+          ),
+          mock.patch.object(
+              multihost_utils, "process_allgather"
+          ) as mock_gather,
+      ):
+        soak_res = soak_bm.executor.get_xprof_durations("/tmp/fake")
+
+      mock_gather.assert_not_called()
+      self.assertEqual(soak_res.durations, [11.0, 15.0])
+      self.assertEqual(soak_bm.executor.pre_soaking_xprof_durations, [6.0, 9.0])
+      self.assertEqual(
+          soak_bm.executor.post_soaking_xprof_durations, [11.0, 15.0]
+      )
+
+    with self.subTest("empty_device_slice_returns_empty"):
+      bm = DummyBenchmark(
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_PER_STEP,
+          )
+      )
+      with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs[:2]),
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
+              side_effect=lambda _trace, local_device_id=0: (
+                  [5.0, 6.0] if local_device_id == 0 else []
+              ),
+          ),
+      ):
+        empty_res = bm.executor.get_xprof_durations("/tmp/fake")
+      self.assertEmpty(empty_res.durations)
+      self.assertIsNone(empty_res.per_local_device_durations)
+
+    with self.subTest("unequal_local_counts_raises_value_error"):
+      bm = DummyBenchmark(
+          xprof_config=base.XprofConfig(
+              xprof_timing=True,
+              device_timing_aggregation=constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_PER_STEP,
+          )
+      )
+      with (
+          mock.patch.object(jax, "local_devices", return_value=fake_devs[:2]),
+          mock.patch.object(
+              profiler.XprofTrace,
+              "device_step_durations_ms",
+              autospec=True,
+              side_effect=lambda _trace, local_device_id=0: (
+                  [5.0, 6.0, 7.0] if local_device_id == 0 else [5.0, 6.0]
+              ),
+          ),
+          self.assertRaisesRegex(
+              ValueError, "Unequal XProf step counts across local devices"
+          ),
+      ):
+        bm.executor.get_xprof_durations("/tmp/fake")
+
   def test_per_local_device_is_none_when_any_local_device_has_no_durations(
       self,
   ):
@@ -791,6 +914,42 @@ class SoakingBenchmarkTest(absltest.TestCase):
         std_result.metrics["actual_runs"],
     )
     self.assertEqual(std_result.metrics["xprof_captured_runs"], 1)
+
+    # 1b. DCN-style benchmark (xprof_disable_host_tracer=True) sets
+    # host_tracer_level=0.
+    mock_trace.reset_mock()
+
+    class NoHostTracerDummyBenchmark(DummyBenchmark):
+      xprof_disable_host_tracer = True
+
+    dcn_bm = NoHostTracerDummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=1),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True, xprof_dir="/tmp/dcn_xprof"
+        ),
+    )
+    dcn_bm.run()
+    mock_trace.assert_called_once()
+    dcn_opts = mock_trace.call_args.kwargs["profiler_options"]
+    self.assertEqual(dcn_opts.host_tracer_level, 0)
+
+    # 1c. xprof_target_host_cpu=True overrides xprof_disable_host_tracer=True.
+    mock_trace.reset_mock()
+
+    class HostCpuWithDisableDummyBenchmark(DummyBenchmark):
+      xprof_disable_host_tracer = True
+      xprof_target_host_cpu = True
+
+    host_bm = HostCpuWithDisableDummyBenchmark(
+        config=base.BaseBenchmarkParams(warmup_tries=0, num_runs=1),
+        xprof_config=base.XprofConfig(
+            xprof_timing=True, xprof_dir="/tmp/host_xprof"
+        ),
+    )
+    host_bm.run()
+    mock_trace.assert_called_once()
+    host_opts = mock_trace.call_args.kwargs["profiler_options"]
+    self.assertNotEqual(host_opts.host_tracer_level, 0)
 
     # 2. SoakingExecutionParamsMixin benchmark
     mock_trace.reset_mock()

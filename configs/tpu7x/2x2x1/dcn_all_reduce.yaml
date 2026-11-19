@@ -1,6 +1,6 @@
 benchmark:
   name: dcn_all_reduce
-  xprof_timing: false
+  xprof_timing: true
   params:
     warmup_tries: 20
     num_runs: 300

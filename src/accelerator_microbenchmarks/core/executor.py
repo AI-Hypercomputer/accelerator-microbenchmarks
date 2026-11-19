@@ -152,6 +152,11 @@ class BaseRunExecutor:
   def _get_profiler_options(self) -> jax.profiler.ProfileOptions:
     """Returns ProfileOptions that drop trace events no TPUMS parser uses."""
     options = jax.profiler.ProfileOptions()
+    if (
+        self.benchmark.xprof_disable_host_tracer
+        and not self.benchmark.xprof_target_host_cpu
+    ):
+      options.host_tracer_level = 0
     options.advanced_configuration = dict(_BASE_PROFILER_ADVANCED_CONFIG)
     return options
 
@@ -478,6 +483,25 @@ class BaseRunExecutor:
           ),
       )
 
+  def _parse_local_per_step_durations(
+      self,
+      trace_dir: str,
+      agg_fn: Callable[..., Any] = np.max,
+  ) -> XprofParseResult:
+    """Parses and aggregates XProf durations per step across local devices on this host."""
+    status, device_slices = self._extract_local_device_slices(trace_dir)
+    if status == _XprofParseStatus.UNEQUAL_LOCAL_COUNTS:
+      raise ValueError("Unequal XProf step counts across local devices.")
+    if status != _XprofParseStatus.OK:
+      return _make_parse_result(durations=[])
+    local_agg = agg_fn(
+        np.asarray(list(device_slices.values()), dtype=np.float64), axis=0
+    )
+    return _make_parse_result(
+        durations=[float(x) for x in local_agg],
+        per_local_device_durations=device_slices,
+    )
+
   def _parse_xprof_durations(
       self,
       trace_dir: str,
@@ -505,6 +529,15 @@ class BaseRunExecutor:
         == constants.XprofDeviceTimingAggregation.GLOBAL_SLOWEST_PER_STEP
     ):
       return self._parse_multihost_durations(
+          trace_dir,
+          agg_fn=np.max,
+      )
+
+    if (
+        aggregation
+        == constants.XprofDeviceTimingAggregation.LOCAL_SLOWEST_PER_STEP
+    ):
+      return self._parse_local_per_step_durations(
           trace_dir,
           agg_fn=np.max,
       )
