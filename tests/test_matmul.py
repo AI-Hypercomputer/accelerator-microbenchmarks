@@ -496,6 +496,7 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
             end_time="2026-08-18T10:01:00",
             params={
                 "in_dtype": "bfloat16",
+                "rhs_dtype": "bfloat16",
                 "out_dtype": "float32",
                 "m": 4096,
                 "k": 2048,
@@ -524,6 +525,7 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     )
     expected_cols = [
         "in_dtype",
+        "rhs_dtype",
         "out_dtype",
         "m",
         "k",
@@ -627,6 +629,70 @@ class GeneralizedGemmBenchmarkTest(parameterized.TestCase):
     self.assertGreaterEqual(
         result.metrics["wall_clock_compute_roofline_efficiency_pct"], 0.0
     )
+
+
+class GemmRhsDtypeTest(parameterized.TestCase):
+  """Tests rhs_dtype and the out_dtype accumulator of the gemm benchmark."""
+
+  def setUp(self):
+    super().setUp()
+    patcher = mock.patch(
+        "accelerator_microbenchmarks.core.platform.get_platform_info",
+        return_value=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
+    )
+    patcher.start()
+    self.addCleanup(patcher.stop)
+    self.mesh = jax.sharding.Mesh(
+        np.array(jax.devices()), axis_names=("device",)
+    )
+
+  def _make(self, **kwargs):
+    bm = matmul.GeneralizedGemmBenchmark(
+        config=matmul.GemmParams(m=32, k=64, n=16, **kwargs),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mesh,
+    )
+    bm.setup()
+    return bm
+
+  def test_default_rhs_is_in_dtype(self):
+    bm = self._make(in_dtype="float8_e4m3fn")
+    self.assertEqual(bm.config.rhs_dtype, "float8_e4m3fn")
+    self.assertNotIn("_rhs_", bm.get_run_identifier())
+
+  @parameterized.parameters(
+      ("float8_e4m3fn", "int4"),
+      ("float8_e4m3fn", "float4_e2m1fn"),
+      ("bfloat16", "int4"),
+  )
+  def test_mixed_inputs(self, in_dtype, rhs_dtype):
+    bm = self._make(in_dtype=in_dtype, rhs_dtype=rhs_dtype)
+    a, b, *rest = bm.generate_inputs()
+    self.assertEqual(b.dtype, jnp.dtype(rhs_dtype))
+    self.assertEqual(bm.get_compute_dtype(), in_dtype)
+    self.assertIn(f"_rhs_{rhs_dtype}", bm.get_run_identifier())
+    # XLA:CPU cannot compile sub-byte matmuls; check that it lowers.
+    bm._jit_fn.lower(a, b, *rest)  # pylint: disable=protected-access
+
+  def test_accumulator_in_out_dtype(self):
+    bm = self._make(in_dtype="bfloat16", out_dtype="float32", beta=1.0)
+    a, b, _, _, c = bm.generate_inputs()
+    self.assertEqual(c.dtype, jnp.float32)
+    np.testing.assert_allclose(
+        bm.run_op(a, b, None, None, c),
+        jnp.dot(a, b, preferred_element_type=jnp.float32) + c,
+        rtol=1e-5,
+        atol=1e-5,
+    )
+
+  def test_sub_byte_rhs_bytes(self):
+    bm = self._make(in_dtype="float8_e4m3fn", rhs_dtype="int4")
+    # A: 1 B/elem, B: 0.5 B/elem (packed), OUT bf16: 2 B/elem.
+    self.assertEqual(bm.get_total_bytes(), 32 * 64 + 64 * 16 * 0.5 + 32 * 16 * 2)
+
+  def test_rejects_unsupported_rhs(self):
+    with self.assertRaises(ValueError):
+      matmul.GemmParams(rhs_dtype="bf16")
 
 
 class GemmParamsValidationTest(parameterized.TestCase):

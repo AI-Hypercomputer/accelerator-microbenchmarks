@@ -19,6 +19,7 @@ This guide provides the reference for **TPUMS (TPU Microbenchmark Suite)** param
     - [2.1.2 Chained Matrix Multiplication & Determinism Check (`gemm_chained`) [experimental]](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental)
     - [2.1.3 GEMM Pulse (`gemm_pulse`) [experimental]](#213-gemm-pulse-gemm_pulse-experimental)
     - [2.1.4 Quantized Matrix Multiplication (`gemm_quantized`) [experimental]](#214-quantized-matrix-multiplication-gemm_quantized-experimental)
+    - [2.1.5 GEMM Duty Cycle (`gemm_duty_cycle`) [experimental]](#215-gemm-duty-cycle-gemm_duty_cycle-experimental)
   - [2.2 HBM Memory Bandwidth (`hbm`)](#22-hbm-memory-bandwidth-hbm)
   - [2.3 Host I/O Bandwidth (`host_to_device`, `device_to_host`)](#23-host-io-bandwidth-host_to_device-device_to_host)
   - [2.4 Device-to-Device Transfers (`device_to_device`)](#24-inter-chip-interconnect-device_to_device)
@@ -133,7 +134,8 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | `k` | `int` | `1024` | Contracting dimension `K` (columns of `op(A)` and rows of `op(B)`). |
 | `n` | `int` | `1024` | Matrix dimension `N` (columns of `op(B)` and output matrix `C_out`). |
 | `in_dtype` | `str` | `"bfloat16"` | Input operand data type (e.g., `bfloat16`, `float8_e4m3fn`, `float32`, `int8`). Selects the hardware peak TFLOPS ceiling for roofline efficiency. Dtypes absent from the hardware spec fall back to the `bfloat16` peak; dtypes the spec marks unsupported (`None`) omit compute roofline metrics. |
-| `out_dtype` | `str` | `"bfloat16"` | Output accumulation and result tensor data type (e.g., `bfloat16`, `float32`). |
+| `rhs_dtype` | `str` | `""` | Data type of `B` (weights); empty = `in_dtype`. E.g. `in_dtype: float8_e4m3fn` with `rhs_dtype: int4` or `float4_e2m1fn` for an FP8 x INT4 / FP4 GEMM; the compute roofline uses the wider operand's peak. |
+| `out_dtype` | `str` | `"bfloat16"` | Output and accumulator `C` data type (e.g., `bfloat16`, `float32`). The matmul accumulates in `float32` (`int32` for integer inputs) before `alpha` / `beta * C`. |
 | `transpose_a` | `bool` | `False` | Transpose operand matrix `A` prior to multiplication (`shape = (k, m)` when `True`, `(m, k)` when `False`). |
 | `transpose_b` | `bool` | `False` | Transpose operand matrix `B` prior to multiplication (`shape = (n, k)` when `True`, `(k, n)` when `False`). |
 | `alpha` | `float` | `1.0` | Scalar multiplier applied to the matrix product ($$\alpha \cdot A \times B$$). |
@@ -288,6 +290,28 @@ dynamic or static scaling and optional output dequantization).
 | `scaling` | `str` | `"dynamic"` | Scale calibration: `"dynamic"` (per-row/column `amax` computed on the fly) or `"static"` (fixed clip bound `0.5 * Q_MAX`, i.e., compile-time scale `0.5`). |
 | `dequantize` | `bool` | `False` | When `True`, multiply the matmul accumulator by the row and column dequantization scales before casting to `out_dtype`. |
 | `seed` | `int` | `0` | PRNG seed for initializing input tensors in HBM. |
+
+<a id="215-gemm-duty-cycle-gemm_duty_cycle-experimental"></a>
+#### 2.1.5 GEMM Duty Cycle (`gemm_duty_cycle`) [experimental]
+
+Runs the MXU at a target duty cycle: each timed run is one device loop of
+`gemms_per_run` x (GEMM, then `num_elem_ops` elementwise idle steps). Before the
+warmup, `num_elem_ops` is calibrated by wall clock from the GEMM and idle-step
+times, re-measured in the target regime (with idle gaps the GEMM throttles less
+than back to back). Only GEMM FLOPs are counted.
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `m`, `k`, `n` | `int` | `1024` | Matrix dimensions. |
+| `in_dtype`, `rhs_dtype`, `out_dtype` | `str` | `"bfloat16"`, `""`, `"bfloat16"` | As in `gemm`. |
+| `duty_cycle` | `float` | `1.0` | Target fraction of time in the GEMM, in `[0.01, 1.0]`. |
+| `gemms_per_run` | `int` | `100` | Iterations per timed run. |
+| `num_elem_ops` | `int` | `-1` | Idle steps per GEMM; `-1` calibrates from `duty_cycle`. |
+
+New metrics: `*_tflops_per_device` (average over the run),
+`*_active_tflops_per_device` (average / `duty_cycle`), `*_duty_cycle_pct`
+(share of the run at the calibrated GEMM speed; drops if the run throttles),
+`num_elem_ops`, `calibrated_gemm_us`, `calibrated_elem_op_us`.
 
 ---
 
