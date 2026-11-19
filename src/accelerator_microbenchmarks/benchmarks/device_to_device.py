@@ -23,16 +23,14 @@ class TransferDirection(constants.ParamEnum):
 
 
 @dataclasses.dataclass
-class DeviceToDeviceParams(base.SingleDtypeBenchmarkParams):
+class DeviceToDeviceParams(
+    base.DataSizeParamsMixin, base.SingleDtypeBenchmarkParams
+):
   """YAML / CLI configuration specification (NO src/dst fields)."""
 
   # generate_inputs() sizes the payload with itemsize bytes per element.
   ALLOW_SUB_BYTE_DTYPES = False
 
-  data_size_mib: int = dataclasses.field(
-      default=1024,
-      metadata={"min": 1, "help": "Transfer payload size in Mebibytes (MiB)."},
-  )
   direction: TransferDirection = dataclasses.field(
       default=TransferDirection.UNI,
       metadata={
@@ -47,9 +45,15 @@ class DeviceToDeviceParams(base.SingleDtypeBenchmarkParams):
       metadata={"min": 0, "help": "Random seed for tensor initialization."},
   )
 
-  @property
-  def data_size_bytes(self) -> int:
-    return self.data_size_mib * 1024 * 1024
+  def __post_init__(self):
+    super().__post_init__()
+    itemsize = jnp.dtype(dtypes.parse_dtype(self.dtype)).itemsize
+    num_bytes = self.data_size_bytes
+    if num_bytes == 0 or num_bytes % itemsize:
+      raise ValueError(
+          f"data_size={self.data_size} ({num_bytes} bytes) must be a positive"
+          f" whole number of {self.dtype} elements ({itemsize} bytes each)."
+      )
 
   def expand_test_cases(self) -> Sequence["DeviceToDeviceTestCaseParams"]:
     """1-to-many sweep: generates a DeviceToDeviceTestCaseParams for each (src, dst) pair."""
@@ -98,7 +102,8 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
       ("direction", report.format_str),
       ("src_device_index", report.format_str),
       ("dst_device_index", report.format_str),
-      ("data_size_mib", report.format_str),
+      ("data_size", report.format_str),
+      ("data_size_bytes", report.format_str),
       ("wall_clock_p50_ms", report.format_4f),
       ("wall_clock_bandwidth_per_device_gb_s", report.format_2f),
       ("xprof_p50_ms", report.format_4f),
@@ -145,8 +150,7 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
     src = self.config.src_device_index
     dst = self.config.dst_device_index
     direction = str(self.config.direction)
-    data_size_mib = self.config.data_size_mib
-    return f"d2d_{src}_to_{dst}_{direction}_{data_size_mib}mib"
+    return f"d2d_{src}_to_{dst}_{direction}_{self.config.data_size}"
 
   def setup(self):
     num_devices = len(jax.devices())
@@ -213,6 +217,9 @@ class DeviceToDeviceBenchmark(base.BaseBenchmark[DeviceToDeviceTestCaseParams]):
     if self._jit_fn is None:
       raise ValueError("JIT function not initialized.")
     return self._jit_fn(data)
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    return {"data_size_bytes": self.config.data_size_bytes}
 
   def get_total_bytes(self) -> float:
     size_bytes = self.config.data_size_bytes

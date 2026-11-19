@@ -3,6 +3,7 @@
 import dataclasses
 import enum
 import itertools
+import numbers
 from typing import Any
 
 from accelerator_microbenchmarks.core import constants
@@ -36,16 +37,18 @@ def expand_sweep(
     base_params: Baseline parameter dictionary to expand.
     sweep_spec: Mapping of parameter name to either a list of values, a single
       scalar value, or a range dictionary specifying 'start', 'end', and
-      optionally 'multiplier' or 'increase_by'. If None or empty, returns a
-      single-element list containing a copy of base_params.
+      optionally 'multiplier' or 'increase_by'. Range bounds must be numbers.
+      If None or empty, returns a single-element list containing a copy of
+      base_params.
 
   Returns:
     A list of resolved parameter dictionaries covering the Cartesian product
     of all sweep axes, capped at _MAX_COMBINATIONS.
 
   Raises:
-    ValueError: If a range sweep specification defines start > end or
-      non-positive progression (multiplier <= 1 and increase_by <= 0).
+    ValueError: If a range sweep specification has non-numeric bounds, defines
+      start > end, or has non-positive progression (multiplier <= 1 and
+      increase_by <= 0).
   """
   if not sweep_spec:
     return [base_params.copy()]
@@ -58,6 +61,11 @@ def expand_sweep(
       values.append(val)
     elif isinstance(val, dict) and "start" in val and "end" in val:
       start, end = val["start"], val["end"]
+      if not all(isinstance(v, numbers.Real) for v in (start, end)):
+        raise ValueError(
+            f"Range sweep for '{key}' needs numeric start/end; list the"
+            " values instead, e.g. [16MiB, 64MiB]."
+        )
       if start > end:
         raise ValueError(
             f"Sweep range for key '{key}' has start ({start}) > end ({end})."

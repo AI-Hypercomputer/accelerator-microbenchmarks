@@ -1,12 +1,54 @@
 """Shared constants for JAX benchmarks."""
 
 import enum
+from typing import Any, Self
 
 MARKER = "MARKER!!!"
 
 
-class ParamEnum(enum.StrEnum):
+class ParamType:
+  """A type a benchmark parameter can hold.
+
+  Params fields annotated with a `ParamType` subclass are parsed by
+  `BaseBenchmarkParams`: `parse()` turns a raw value from a config file or a
+  CLI flag into an instance, so params hold typed values instead of raw
+  strings.
+  """
+
+  __slots__ = ()
+
+  @classmethod
+  def parse(cls, raw: Any, *, param_name: str) -> Self:
+    """Returns `raw` as an instance of this type.
+
+    Args:
+      raw: The raw value from a config file or CLI flag, or an existing
+        instance.
+      param_name: The parameter's name, for error messages.
+
+    Raises:
+      ValueError: If `raw` is invalid, with a message that names the parameter.
+    """
+    raise NotImplementedError
+
+
+class ParamEnum(ParamType, enum.StrEnum):
   """Base class for string-based enums with formatting utilities."""
+
+  @classmethod
+  def parse(cls, raw: Any, *, param_name: str) -> Self:
+    """Returns the member whose value is `raw`.
+
+    Raises:
+      ValueError: If `raw` is not a member value; the message lists them.
+    """
+    try:
+      return cls(raw)
+    except (ValueError, TypeError) as exc:
+      raise ValueError(
+          f"Invalid {param_name} '{raw}'. Must be one of"
+          f" {[member.value for member in cls]}."
+      ) from exc
 
   @classmethod
   def supported_options_str(cls) -> str:

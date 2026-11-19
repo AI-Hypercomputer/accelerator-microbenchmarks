@@ -472,7 +472,7 @@ dynamic or static scaling and optional output dequantization).
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `data_size_mib` | `int` | `1024` | Payload size transferred per directional link in Mebibytes (`MiB`). |
+| `data_size` | `str` | `"1GiB"` | Payload size transferred per directional link: a whole number with an IEC unit (`B`, `KiB`, `MiB`, `GiB`, `TiB`; `1 KiB = 1024 B`), e.g. `"4096B"`, `"4KiB"`, `"256MiB"`. Kept as written. Must be a positive whole number of `dtype` elements. Bare numbers and ambiguous units (`4K`, `4KB`) are rejected. To sweep sizes, list them (e.g. `[4KiB, 1MiB, 256MiB]`). |
 | `direction` | `str` | `"uni"` | Transfer direction mode: `"uni"` (unidirectional send `src → dst`) or `"bi"` (simultaneous bidirectional exchange `src ↔ dst`, doubling total bytes transferred across the pair). |
 | `dtype` | `str` | `"bfloat16"` | Tensor element data type (e.g., `bfloat16`, `float32`). |
 | `seed` | `int` | `0` | PRNG seed for initializing device buffers. |
@@ -486,7 +486,11 @@ dynamic or static scaling and optional output dequantization).
 - **Benchmark Attributes**:
   - `src_device_index` / `dst_device_index` — Source and destination logical device indices for the measured pair.
   - `direction` — Active transfer direction (`"uni"` or `"bi"`).
-  - `data_size_mib` — Payload size per directional stream (`MiB`).
+  - `data_size` — Payload size per directional stream, as written in the config (e.g. `4KiB`).
+  - `data_size_bytes` — The same size in bytes (use this column to sort, compare, or group sizes).
+
+> [!NOTE]
+> At small sizes (KiB range), the measured time is dominated by fixed per-transfer overhead, so `*_bandwidth_per_device_gb_s` reflects that overhead rather than link bandwidth.
 
 ---
 

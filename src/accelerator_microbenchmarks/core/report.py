@@ -182,7 +182,7 @@ def format_device_matrix(
         "Device-to-Device Bandwidth Matrix (XProf GB/s)",
     ))
 
-  sweep_candidates = ["dtype", "direction", "data_size_mib"]
+  sweep_candidates = ["dtype", "direction", "data_size"]
   effective_sweeps = [c for c in sweep_candidates if c in df.columns]
 
   matrices = []

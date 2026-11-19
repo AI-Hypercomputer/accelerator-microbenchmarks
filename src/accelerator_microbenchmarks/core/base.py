@@ -3,13 +3,12 @@
 import abc
 import dataclasses
 import datetime
-import enum
 import functools
 import numbers
 import os
 import time
 import types
-from typing import Any, Callable, ClassVar, Generic, Mapping, Optional, Sequence, TypeVar
+from typing import Any, Callable, ClassVar, Generic, Mapping, Optional, Sequence, TypeGuard, TypeVar
 
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import dtypes
@@ -18,6 +17,7 @@ from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import roofline
 from accelerator_microbenchmarks.core import system
+from accelerator_microbenchmarks.core import units
 import jax
 import numpy as np
 import pandas as pd
@@ -62,6 +62,11 @@ def dtype_field(
 def is_dtype_field(field: dataclasses.Field[Any]) -> bool:
   """Returns whether `field` was declared with `dtype_field()`."""
   return bool(field.metadata.get(_DTYPE_FIELD_KEY, False))
+
+
+def is_param_type(tp: Any) -> TypeGuard[type[constants.ParamType]]:
+  """Returns whether the annotation `tp` is a `constants.ParamType` subclass."""
+  return isinstance(tp, type) and issubclass(tp, constants.ParamType)
 
 
 @dataclasses.dataclass
@@ -142,33 +147,25 @@ class BaseBenchmarkParams:
       if maximum is not None and value > maximum:
         raise ValueError(f"{field.name} must be <= {maximum}, got {value}")
 
-  def _coerce_enums(self) -> None:
-    """Coerces every enum field in-place into a member of its Enum type.
+  def _parse_param_values(self) -> None:
+    """Parses every field annotated with a `constants.ParamType`, in place.
+
+    Raw values from config files or CLI flags become typed values via
+    `ParamType.parse()` (e.g. `ParamEnum` members, `units.ByteSize`).
 
     Raises:
-      ValueError: If any field is not a valid member of its Enum type.
+      ValueError: If a value is invalid for its parameter's type.
     """
     for field in dataclasses.fields(self):
       # Dtype fields are coerced into `dtypes.DType` by `_validate_dtypes()`,
       # whose errors list the dtypes the field accepts.
       if is_dtype_field(field):
         continue
-      # Checks if the field is an enum by coercing raw values into their Enum
-      # member. Only scalar enum fields are supported, not containers such as
-      # list[Enum].
-      if isinstance(field.type, type) and issubclass(field.type, enum.Enum):
-        enum_type: type[enum.Enum] = field.type
-      else:
+      # Only scalar fields are supported, not containers such as list[Enum].
+      if not is_param_type(field.type):
         continue
-
-      value = getattr(self, field.name)
-      try:
-        setattr(self, field.name, enum_type(value))
-      except (ValueError, TypeError) as exc:
-        raise ValueError(
-            f"Invalid {field.name} '{value}'. Must be one of"
-            f" {[member.value for member in enum_type]}."
-        ) from exc
+      raw = getattr(self, field.name)
+      setattr(self, field.name, field.type.parse(raw, param_name=field.name))
 
   @classmethod
   def allowed_dtypes(cls, field_name: str) -> tuple[dtypes.DType, ...]:
@@ -314,7 +311,7 @@ class BaseBenchmarkParams:
     )
 
   def __post_init__(self):
-    self._coerce_enums()
+    self._parse_param_values()
     self._validate_bounds()
     self._validate_dtypes()
 
@@ -361,6 +358,30 @@ class SingleDtypeBenchmarkParams(BaseBenchmarkParams):
           "help": "Data type for tensor operations (e.g. bfloat16, float32)."
       },
   )
+
+
+@dataclasses.dataclass
+class DataSizeParamsMixin:
+  """Mixin for benchmarks parameterized by a transfer payload size.
+
+  Size rules that depend on a benchmark's dtype or buffer layout (e.g. a whole
+  number of elements) are checked by that benchmark's params.
+  """
+
+  data_size: units.ByteSize = dataclasses.field(
+      default=units.ByteSize("1GiB"),
+      metadata={
+          "help": (
+              "Payload size per transfer: a whole number with an IEC unit (B,"
+              " KiB, MiB, GiB, TiB), e.g. '4096B', '4KiB', '256MiB'."
+          ),
+      },
+  )
+
+  @property
+  def data_size_bytes(self) -> int:
+    """`data_size` in bytes."""
+    return self.data_size.num_bytes
 
 
 @dataclasses.dataclass
@@ -600,7 +621,7 @@ class BaseBenchmark(Generic[TConfig], abc.ABC):
     return metrics
 
   def get_workload_metadata(self) -> dict[str, Any]:
-    """Return static, timing-invariant workload metadata (e.g., total_flops, data_size_mib)."""
+    """Return static, timing-invariant workload metadata (e.g., total_flops, data_size_bytes)."""
     return {}
 
   def calculate_latency_stats(

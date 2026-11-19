@@ -189,9 +189,14 @@ def add_dataclass_arguments(
       )
     # 4. Numeric / string flags
     else:
-      # Non-class annotations (e.g. `Optional[str]`) fall back to str parsing;
-      # the dataclass itself remains the source of truth for validation.
-      field_type = field.type if isinstance(field.type, type) else str
+      # Non-class annotations (e.g. `Optional[str]`) and param types (e.g.
+      # `units.ByteSize`) parse as str; the dataclass parses them, so its
+      # error messages aren't replaced by argparse's generic "invalid value".
+      field_type = (
+          field.type
+          if isinstance(field.type, type) and not base.is_param_type(field.type)
+          else str
+      )
       group.add_argument(
           *flag_names,
           type=field_type,

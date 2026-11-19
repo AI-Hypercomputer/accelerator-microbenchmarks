@@ -211,7 +211,7 @@ tpums benchmark run host_to_device --xprof_timing --data_size_mib 256 --dtype bf
 tpums benchmark run device_to_host --xprof_timing --data_size_mib 256 --dtype bfloat16 --transfer_backend tpu_sync --scope host
 
 # 5. Device-to-device (D2D) transfer across all pairs
-tpums benchmark run device_to_device --xprof_timing --data_size_mib 1024 --direction uni --dtype bfloat16
+tpums benchmark run device_to_device --xprof_timing --data_size 1GiB --direction uni --dtype bfloat16
 
 # 6. Multi-Device All-Reduce Collective
 #    - tpu7x (2x2x1, 8 logical devices): --mesh_shape 2x2x2 --sharding_strategy 2x2x1

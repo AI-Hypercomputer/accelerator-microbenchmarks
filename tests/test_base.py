@@ -139,7 +139,7 @@ class BaseBenchmarkParamsTest(parameterized.TestCase):
   def test_custom_min_max_and_enum_validation(self):
     """Verifies min, max, and enum validation on custom subclass."""
 
-    class SampleEnum(enum.Enum):
+    class SampleEnum(constants.ParamEnum):
       ALPHA = "alpha"
       BETA = "beta"
 
@@ -185,11 +185,46 @@ class BaseBenchmarkParamsTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, "score must be >= 1"):
       cfg_direct._validate_bounds()  # pylint: disable=protected-access
 
-    # Test _coerce_enums() independently
+    # Test _parse_param_values() independently
     cfg_direct.score = 5
     cfg_direct.mode = "gamma"
     with self.assertRaisesRegex(ValueError, "Invalid mode 'gamma'"):
-      cfg_direct._coerce_enums()  # pylint: disable=protected-access
+      cfg_direct._parse_param_values()  # pylint: disable=protected-access
+
+  def test_only_param_type_fields_are_parsed(self):
+    """Verifies parsing is opt-in: only ParamType fields are parsed."""
+
+    class Label(str):
+      """A str subclass that is not a ParamType."""
+
+    class Upper(constants.ParamType, str):
+      """A ParamType that upper-cases and rejects empty values."""
+
+      @classmethod
+      def parse(cls, raw, *, param_name):
+        if not raw:
+          raise ValueError(f"{param_name}: must not be empty")
+        return cls(str(raw).upper())
+
+    @dataclasses.dataclass
+    class CustomParams(base.BaseBenchmarkParams):
+      label: Label = Label("x")
+      upper: Upper = Upper("X")
+
+    cfg = CustomParams(label="raw", upper="abc")
+    self.assertIs(type(cfg.label), str)
+    self.assertEqual(cfg.label, "raw")
+    self.assertIsInstance(cfg.upper, Upper)
+    self.assertEqual(cfg.upper, "ABC")
+    with self.assertRaisesRegex(ValueError, "^upper: must not be empty$"):
+      CustomParams(upper="")
+
+  def test_is_param_type(self):
+    """Verifies is_param_type() recognizes ParamType subclasses only."""
+    self.assertTrue(base.is_param_type(constants.Scope))
+    self.assertFalse(base.is_param_type(str))
+    self.assertFalse(base.is_param_type(int))
+    self.assertFalse(base.is_param_type("units.ByteSize"))
 
   def test_dtype_constraints_apply_per_field(self):
     """Verifies each dtype field is checked against its own constraint."""

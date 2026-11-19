@@ -608,7 +608,7 @@ class ReportTest(absltest.TestCase):
         {
             "dtype": "bfloat16",
             "direction": "uni",
-            "data_size_mib": 1024,
+            "data_size": "1GiB",
             "src_device_index": 0,
             "dst_device_index": 1,
             "wall_clock_bandwidth_per_device_gb_s": 80.0,
@@ -616,7 +616,7 @@ class ReportTest(absltest.TestCase):
         {
             "dtype": "bfloat16",
             "direction": "uni",
-            "data_size_mib": 1024,
+            "data_size": "1GiB",
             "src_device_index": 1,
             "dst_device_index": 0,
             "wall_clock_bandwidth_per_device_gb_s": 85.0,
@@ -624,7 +624,7 @@ class ReportTest(absltest.TestCase):
         {
             "dtype": "float32",
             "direction": "bi",
-            "data_size_mib": 2048,
+            "data_size": "2GiB",
             "src_device_index": 0,
             "dst_device_index": 1,
             "wall_clock_bandwidth_per_device_gb_s": 160.0,
@@ -632,7 +632,7 @@ class ReportTest(absltest.TestCase):
         {
             "dtype": "float32",
             "direction": "bi",
-            "data_size_mib": 2048,
+            "data_size": "2GiB",
             "src_device_index": 1,
             "dst_device_index": 0,
             "wall_clock_bandwidth_per_device_gb_s": 165.0,
@@ -641,12 +641,12 @@ class ReportTest(absltest.TestCase):
     multi_matrix = report.format_device_matrix(pd.DataFrame(multi_sweep_data))
     self.assertIn(
         "Device-to-Device Bandwidth Matrix (Wall Clock GB/s) [dtype=bfloat16,"
-        " direction=uni, data_size_mib=1024]",
+        " direction=uni, data_size=1GiB]",
         multi_matrix,
     )
     self.assertIn(
         "Device-to-Device Bandwidth Matrix (Wall Clock GB/s) [dtype=float32,"
-        " direction=bi, data_size_mib=2048]",
+        " direction=bi, data_size=2GiB]",
         multi_matrix,
     )
     self.assertIn("80.00", multi_matrix)
@@ -659,7 +659,7 @@ class ReportTest(absltest.TestCase):
         {
             "dtype": None,
             "direction": "uni",
-            "data_size_mib": 1024,
+            "data_size": "1GiB",
             "src_device_index": 0,
             "dst_device_index": 1,
             "wall_clock_bandwidth_per_device_gb_s": 75.0,
@@ -667,7 +667,7 @@ class ReportTest(absltest.TestCase):
         {
             "dtype": None,
             "direction": "uni",
-            "data_size_mib": 1024,
+            "data_size": "1GiB",
             "src_device_index": 1,
             "dst_device_index": 0,
             "wall_clock_bandwidth_per_device_gb_s": 80.0,
@@ -677,7 +677,7 @@ class ReportTest(absltest.TestCase):
     self.assertTrue(matrix)
     self.assertIn(
         "Device-to-Device Bandwidth Matrix (Wall Clock GB/s) [dtype=nan,"
-        " direction=uni, data_size_mib=1024]",
+        " direction=uni, data_size=1GiB]",
         matrix,
     )
     self.assertIn("D0", matrix)
@@ -1008,7 +1008,7 @@ class ReportTest(absltest.TestCase):
             "direction": "uni",
             "src_device_index": 0,
             "dst_device_index": 1,
-            "data_size_mib": 128,
+            "data_size": "128MiB",
         },
         metrics={
             "wall_clock_avg_ms": 2.0,

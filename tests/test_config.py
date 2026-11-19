@@ -117,6 +117,15 @@ class ConfigTest(parameterized.TestCase):
     self.assertLen(expanded, 1)
     self.assertEqual(expanded[0], {"a": 1, "b": 5})
 
+  @parameterized.named_parameters(
+      ("multiplier", {"start": "16MiB", "end": "4GiB", "multiplier": 4}),
+      ("increase_by", {"start": "1KiB", "end": "4KiB", "increase_by": 1}),
+  )
+  def test_expand_sweep_range_non_numeric_bounds_raises_error(self, spec):
+    """Verifies range bounds must be numbers; other values are listed."""
+    with self.assertRaisesRegex(ValueError, "needs numeric start/end"):
+      config.expand_sweep({}, {"data_size": spec})
+
   def test_expand_sweep_combinatorial_explosion(self):
     """Capping combinations to prevent explosion."""
     base_params = {}

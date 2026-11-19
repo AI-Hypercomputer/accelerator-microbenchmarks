@@ -13,6 +13,7 @@ from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
+from accelerator_microbenchmarks.core import units
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
 import jax.numpy as jnp
@@ -34,7 +35,7 @@ class DeviceToDeviceParamsTest(parameterized.TestCase):
   def test_expand_test_cases_pair_generation(self):
     """Verifies N * (N - 1) sweep pairs where src != dst."""
     cfg = device_to_device.DeviceToDeviceParams(
-        data_size_mib=1, direction="uni"
+        data_size="1MiB", direction="uni"
     )
     cases = cfg.expand_test_cases()
     num_devices = len(jax.devices())
@@ -50,7 +51,7 @@ class DeviceToDeviceParamsTest(parameterized.TestCase):
   def test_expand_test_cases_attribute_propagation(self):
     """Verifies config flags propagate correctly into generated test cases."""
     cfg = device_to_device.DeviceToDeviceParams(
-        data_size_mib=16,
+        data_size="16MiB",
         direction="bi",
         seed=42,
         warmup_tries=3,
@@ -60,16 +61,66 @@ class DeviceToDeviceParamsTest(parameterized.TestCase):
     num_devices = len(jax.devices())
     if num_devices > 1:
       first_case = cases[0]
-      self.assertEqual(first_case.data_size_mib, 16)
+      self.assertEqual(first_case.data_size, "16MiB")
+      self.assertIsInstance(first_case.data_size, units.ByteSize)
       self.assertEqual(first_case.direction, "bi")
       self.assertEqual(first_case.seed, 42)
       self.assertEqual(first_case.warmup_tries, 3)
       self.assertEqual(first_case.num_runs, 7)
 
-  def test_data_size_bytes_property(self):
-    """Verifies MiB to bytes conversion."""
-    cfg = device_to_device.DeviceToDeviceParams(data_size_mib=4)
-    self.assertEqual(cfg.data_size_bytes, 4 * 1024 * 1024)
+  @parameterized.parameters(
+      ("4B", 4),
+      ("4KiB", 4096),
+      ("4MiB", 4 * 1024 * 1024),
+      ("1024KiB", 1024 * 1024),
+  )
+  def test_data_size_bytes_property(self, data_size, expected_bytes):
+    """Verifies data_size labels convert to bytes and are kept as written."""
+    cfg = device_to_device.DeviceToDeviceParams(
+        data_size=data_size, dtype="float32"
+    )
+    self.assertEqual(cfg.data_size, data_size)
+    self.assertEqual(cfg.data_size_bytes, expected_bytes)
+
+  def test_default_data_size(self):
+    """Verifies the default payload is 1GiB."""
+    cfg = device_to_device.DeviceToDeviceParams()
+    self.assertEqual(cfg.data_size, "1GiB")
+    self.assertEqual(cfg.data_size_bytes, 1 << 30)
+
+  @parameterized.parameters(
+      ("2B", "float32"),
+      ("6B", "float32"),
+      ("1B", "bfloat16"),
+      ("0B", "int8"),
+  )
+  def test_partial_element_data_size_raises_error(self, data_size, dtype):
+    """Verifies data_size must be a positive whole number of elements."""
+    with self.assertRaisesRegex(
+        ValueError, f"whole number of {dtype} elements"
+    ):
+      device_to_device.DeviceToDeviceParams(data_size=data_size, dtype=dtype)
+
+  @parameterized.parameters(
+      (4096, "string with a unit"),
+      ("4096", "has no unit"),
+      ("4K", "Did you mean '4KiB'"),
+      ("1.5KiB", "whole number"),
+  )
+  def test_invalid_data_size_raises_error(self, data_size, message):
+    """Verifies invalid data_size values fail with the ByteSize hint."""
+    with self.assertRaisesRegex(ValueError, f"data_size: .*{message}"):
+      device_to_device.DeviceToDeviceParams(data_size=data_size)
+
+  def test_data_size_survives_replace_and_expand(self):
+    """Verifies the label is unchanged through dataclasses round trips."""
+    cfg = device_to_device.DeviceToDeviceParams(
+        data_size="4KiB", dtype="float32"
+    ).with_generation_defaults({"num_runs": 3})
+    self.assertEqual(cfg.data_size, "4KiB")
+    for case in cfg.expand_test_cases():
+      self.assertEqual(case.data_size, "4KiB")
+      self.assertEqual(case.data_size_bytes, 4096)
 
   @parameterized.named_parameters(
       (d.name.lower(), d.value) for d in device_to_device.TransferDirection
@@ -117,7 +168,6 @@ class DeviceToDeviceParamsTest(parameterized.TestCase):
       device_to_device.DeviceToDeviceParams(direction=value)
 
   @parameterized.parameters(
-      (device_to_device.DeviceToDeviceParams, "data_size_mib", 0, 1),
       (device_to_device.DeviceToDeviceParams, "seed", -1, 0),
       (
           device_to_device.DeviceToDeviceTestCaseParams,
@@ -176,7 +226,7 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
     )
     self.bm = self.bm_class(
         device_to_device.DeviceToDeviceTestCaseParams(
-            data_size_mib=1,
+            data_size="1MiB",
             direction="uni",
         ),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
@@ -188,7 +238,7 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
 
   def test_get_total_bytes(self):
     """Verify byte calculation."""
-    self.bm.config.data_size_mib = 1
+    self.bm.config.data_size = units.ByteSize("1MiB")
     self.bm.config.direction = "uni"
     expected_bytes_uni = 1.0 * 1024 * 1024
     self.assertEqual(
@@ -205,7 +255,7 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
   def test_calculate_metrics(self):
     """Verify bandwidth metrics calculation."""
     times_ms = [10.0, 10.0]
-    self.bm.config.data_size_mib = 1
+    self.bm.config.data_size = units.ByteSize("1MiB")
     self.bm.config.direction = "uni"
     self.bm.config.src_device_index = 0
     self.bm.config.dst_device_index = 1
@@ -235,7 +285,7 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
     """Verify run() produces valid wall_clock_bandwidth_per_device_gb_s without per_chip bandwidth."""
     self.bm.config.src_device_index = 0
     self.bm.config.dst_device_index = 1
-    self.bm.config.data_size_mib = 1
+    self.bm.config.data_size = units.ByteSize("1MiB")
     self.bm.config.warmup_tries = 1
     self.bm.config.num_runs = 2
     result = self.bm.run()
@@ -272,10 +322,19 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
     self.bm.config.src_device_index = 0
     self.bm.config.dst_device_index = 1
     self.bm.config.direction = device_to_device.TransferDirection.UNI
-    self.bm.config.data_size_mib = 1
-    self.assertEqual(self.bm.get_run_identifier(), "d2d_0_to_1_uni_1mib")
+    self.bm.config.data_size = units.ByteSize("1MiB")
+    self.assertEqual(self.bm.get_run_identifier(), "d2d_0_to_1_uni_1MiB")
     self.bm.config.direction = device_to_device.TransferDirection.BI
-    self.assertEqual(self.bm.get_run_identifier(), "d2d_0_to_1_bi_1mib")
+    self.assertEqual(self.bm.get_run_identifier(), "d2d_0_to_1_bi_1MiB")
+    self.bm.config.data_size = units.ByteSize("4KiB")
+    self.assertEqual(self.bm.get_run_identifier(), "d2d_0_to_1_bi_4KiB")
+
+  def test_workload_metadata_reports_data_size_bytes(self):
+    """Verifies data_size_bytes is emitted next to the data_size param."""
+    self.bm.config.data_size = units.ByteSize("4KiB")
+    self.assertEqual(
+        self.bm.get_workload_metadata(), {"data_size_bytes": 4096}
+    )
 
   def test_requires_multihost_sync(self):
     """Verify D2D requires multihost sync for asymmetric target device."""
@@ -331,7 +390,7 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
     bm = self.bm_class(
         device_to_device.DeviceToDeviceTestCaseParams(
             dtype=dtype,
-            data_size_mib=1,
+            data_size="1MiB",
             direction="uni",
             src_device_index=0,
             dst_device_index=1,
@@ -362,13 +421,14 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
                 "dtype": "float32",
                 "direction": "uni",
                 "src_device_index": 7783,
-                "data_size_mib": 1024,
+                "data_size": units.ByteSize("1GiB"),
                 "dst_device_index": 153,
             },
             platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
+            "data_size_bytes": 1 << 30,
             "wall_clock_bandwidth_per_device_gb_s": 85.50,
             "xprof_bandwidth_per_device_gb_s": 86.00,
             "wall_clock_p50_ms": 12.3456,
@@ -383,7 +443,8 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
         "direction",
         "src_device_index",
         "dst_device_index",
-        "data_size_mib",
+        "data_size",
+        "data_size_bytes",
         "wall_clock_p50_ms",
         "wall_clock_bandwidth_per_device_gb_s",
         "xprof_p50_ms",
@@ -407,7 +468,8 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
     self.assertIn("uni", table)
     self.assertIn("7783", table)
     self.assertIn("153", table)
-    self.assertIn("1024", table)
+    self.assertIn("1GiB", table)
+    self.assertIn("1073741824", table)
     self.assertIn("85.50", table)
     self.assertIn("86.00", table)
     self.assertIn("12.3456", table)
@@ -441,12 +503,13 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
                 "direction": "uni",
                 "src_device_index": 0,
                 "dst_device_index": 1,
-                "data_size_mib": 1024,
+                "data_size": units.ByteSize("1GiB"),
             },
             platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
+            "data_size_bytes": 1 << 30,
             "wall_clock_bandwidth_per_device_gb_s": 85.50,
             "wall_clock_p50_ms": 12.3456,
             "xprof_p50_ms": 12.3400,
@@ -466,12 +529,13 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
                 "direction": "uni",
                 "src_device_index": 1,
                 "dst_device_index": 0,
-                "data_size_mib": 1024,
+                "data_size": units.ByteSize("1GiB"),
             },
             platform_info=test_report_utils.DEFAULT_TEST_PLATFORM_INFO,
             hardware_spec=test_report_utils.DEFAULT_TEST_HARDWARE_SPEC,
         ),
         metrics={
+            "data_size_bytes": 1 << 30,
             "wall_clock_bandwidth_per_device_gb_s": 86.20,
             "wall_clock_p50_ms": 12.1000,
             "xprof_p50_ms": 12.0000,
@@ -495,6 +559,7 @@ class DeviceToDeviceBenchmarkTest(parameterized.TestCase):
     self.assertIn("D0", rep)
     self.assertIn("D1", rep)
     self.assertIn("X", rep)
+    self.assertIn("data_size=1GiB", rep)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ class DeviceToDeviceTPUTest(parameterized.TestCase):
     super().setUp()
 
     self.params = {
-        "data_size_mib": 16,
+        "data_size": "16MiB",
         "warmup_tries": 2,
         "num_runs": 5,
     }

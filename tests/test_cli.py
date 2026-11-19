@@ -1202,7 +1202,7 @@ benchmark:
           ],
       ),
       (
-          "device_to_device_int_and_enum_sweep",
+          "device_to_device_byte_size_and_enum_sweep",
           [
               "benchmark",
               "run",
@@ -1210,36 +1210,36 @@ benchmark:
               "--direction",
               "uni",
               "bi",
-              "--data_size_mib",
-              "512",
-              "1024",
+              "--data_size",
+              "512MiB",
+              "1GiB",
           ],
           [
               (
                   "device_to_device",
                   device_to_device.DeviceToDeviceParams(
-                      data_size_mib=512,
+                      data_size="512MiB",
                       direction=device_to_device.TransferDirection.UNI,
                   ),
               ),
               (
                   "device_to_device",
                   device_to_device.DeviceToDeviceParams(
-                      data_size_mib=512,
+                      data_size="512MiB",
                       direction=device_to_device.TransferDirection.BI,
                   ),
               ),
               (
                   "device_to_device",
                   device_to_device.DeviceToDeviceParams(
-                      data_size_mib=1024,
+                      data_size="1GiB",
                       direction=device_to_device.TransferDirection.UNI,
                   ),
               ),
               (
                   "device_to_device",
                   device_to_device.DeviceToDeviceParams(
-                      data_size_mib=1024,
+                      data_size="1GiB",
                       direction=device_to_device.TransferDirection.BI,
                   ),
               ),
@@ -1296,6 +1296,15 @@ benchmark:
     """Verifies `benchmark run` raises ValueError if any swept value violates bounds."""
     with self.assertRaisesRegex(ValueError, "m must be >= 1"):
       cli.run(["benchmark", "run", "gemm", "-m", "1024", "0"])
+    mock_run_benchmarks.assert_not_called()
+
+  @mock.patch.object(runner, "run_benchmarks")
+  def test_benchmark_run_byte_size_without_unit_reports_hint(
+      self, mock_run_benchmarks
+  ):
+    """Verifies a unitless --data_size fails with the ByteSize hint, not argparse's."""
+    with self.assertRaisesRegex(ValueError, r"data_size: .*write '4096B'"):
+      cli.run(["benchmark", "run", "device_to_device", "--data_size", "4096"])
     mock_run_benchmarks.assert_not_called()
 
   @parameterized.named_parameters(

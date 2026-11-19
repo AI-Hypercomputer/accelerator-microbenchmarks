@@ -566,7 +566,8 @@ class ReportGeneratorTest(parameterized.TestCase):
             "direction": "uni",
             "src_device_index": src,
             "dst_device_index": 1 - src,
-            "data_size_mib": "256",
+            "data_size": "256MiB",
+            "data_size_bytes": "268435456",
             "num_runs": "5",
             **cols,
         }
@@ -589,7 +590,7 @@ class ReportGeneratorTest(parameterized.TestCase):
     # D2D leading columns come first, in schema order.
     self.assertIn(
         "| dtype | direction | src_device_index | dst_device_index |"
-        " data_size_mib |",
+        " data_size | data_size_bytes |",
         report_md,
     )
     self.assertIn('<details class="d2d-details">', report_html)
