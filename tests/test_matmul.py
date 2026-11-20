@@ -1014,10 +1014,102 @@ class QuantizedGemmBenchmarkTest(parameterized.TestCase):
     self._setup_benchmark(m=64, k=128, n=64)
     self.assertEqual(self.bm.get_compute_dtype(), "float8_e4m3fn")
     self.assertEqual(self.bm.get_total_flops(), float(2 * 64 * 128 * 64))
-    # 1-pass algorithmic HBM bytes: read A (64x128 bf16) + read B (128x64 bf16)
+    # Algorithmic HBM bytes: read A (64x128 bf16) + read B (128x64 bf16)
     # + write OUT (64x64 bf16).
     expected_bytes = float((64 * 128 + 128 * 64) * 2 + 64 * 64 * 2)
     self.assertEqual(self.bm.get_total_bytes(), expected_bytes)
+
+    # Weight-offline (prequantize_rhs=True): read A (64x128 bf16, 2B) + read B_q
+    # (128x64 fp8, 1B) + write OUT (64x64 bf16, 2B) = 16384 + 8192 + 8192.
+    self._setup_benchmark(m=64, k=128, n=64, prequantize_rhs=True)
+    self.assertEqual(self.bm.get_total_bytes(), 32768.0)
+
+    # Mixed-precision weight-offline (FP8 x INT4): read A (64x128 bf16, 2B) +
+    # read B_q (128x64 int4, 0.5B) + write OUT (64x64 bf16, 2B)
+    # = 16384 + 4096 + 8192.
+    self._setup_benchmark(
+        m=64, k=128, n=64, rhs_quant_dtype="int4", prequantize_rhs=True
+    )
+    self.assertEqual(self.bm.get_total_bytes(), 28672.0)
+
+  @parameterized.product(
+      (
+          dict(
+              quant_dtype="float8_e4m3fn",
+              rhs_quant_dtype="float8_e4m3fn",
+              scaling="dynamic",
+              expected_q_dtype=jnp.float8_e4m3fn,
+              run_id_prefix="m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_dynamic_out_bfloat16",
+          ),
+          dict(
+              quant_dtype="float8_e4m3fn",
+              rhs_quant_dtype="float8_e4m3fn",
+              scaling="static",
+              expected_q_dtype=jnp.float8_e4m3fn,
+              run_id_prefix="m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_static_out_bfloat16",
+          ),
+          dict(
+              quant_dtype="int8",
+              rhs_quant_dtype="int8",
+              scaling="dynamic",
+              expected_q_dtype=jnp.int8,
+              run_id_prefix=(
+                  "m_64_k_128_n_64_bfloat16_to_int8_dynamic_out_bfloat16"
+              ),
+          ),
+          dict(
+              quant_dtype="float8_e4m3fn",
+              rhs_quant_dtype="int4",
+              scaling="dynamic",
+              expected_q_dtype=jnp.int4,
+              run_id_prefix="m_64_k_128_n_64_bfloat16_to_float8_e4m3fn_rhs_int4_dynamic_out_bfloat16",
+          ),
+      ),
+      dequantize=(False, True),
+  )
+  def test_weight_offline_matches_online(
+      self,
+      quant_dtype,
+      rhs_quant_dtype,
+      scaling,
+      expected_q_dtype,
+      run_id_prefix,
+      dequantize,
+  ):
+    """Tests prequantize_rhs=True against online mode."""
+    self._setup_benchmark(
+        quant_dtype=quant_dtype,
+        rhs_quant_dtype=rhs_quant_dtype,
+        scaling=scaling,
+        dequantize=dequantize,
+        prequantize_rhs=False,
+    )
+    online_inputs = self.bm.generate_inputs()
+    online_out = self.bm.run_op(*online_inputs)
+
+    self._setup_benchmark(
+        quant_dtype=quant_dtype,
+        rhs_quant_dtype=rhs_quant_dtype,
+        scaling=scaling,
+        dequantize=dequantize,
+        prequantize_rhs=True,
+    )
+    expected_run_id = (
+        f"{run_id_prefix}{'_dequant' if dequantize else ''}_weight_offline"
+    )
+    self.assertEqual(self.bm.get_run_identifier(), expected_run_id)
+    offline_inputs = self.bm.generate_inputs()
+    self.assertLen(offline_inputs, 3)
+    self.assertEqual(offline_inputs[0].dtype, jnp.bfloat16)
+    self.assertEqual(offline_inputs[1].dtype, expected_q_dtype)
+    self.assertEqual(offline_inputs[2].shape, (1, 64))
+    self.assertEqual(offline_inputs[2].dtype, jnp.float32)
+
+    offline_out = self.bm.run_op(*offline_inputs)
+    np.testing.assert_array_equal(
+        np.asarray(offline_out, dtype=np.float32),
+        np.asarray(online_out, dtype=np.float32),
+    )
 
   def test_schema_coverage(self):
     """Tests that benchmark output matches the report schema."""
