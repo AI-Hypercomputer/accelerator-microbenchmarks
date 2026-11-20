@@ -1,4 +1,4 @@
-# TPUMS Automated Benchmark Pipeline Runbook
+# Automation Pipeline
 
 ## 1. Prerequisites
 
@@ -140,7 +140,8 @@ selection mode is required; mixing flags from different modes is an error.
 *   Relative `--configs`, `--suite-file` and `--config-dir` paths resolve
     against the repository root first, then the current directory.
 
-> **Note on Report Generation:** No subsequent commands are required after
+> [!NOTE]
+> **Report Generation:** No subsequent commands are required after
 > running any filtered or custom suite command below. `suite_runner.py`
 > executes the complete end-to-end pipeline automatically: it submits the
 > selected JobSets, polls until completion, aggregates metrics from GCS, and

@@ -1,23 +1,10 @@
 
-# Running TPUMS on Google Kubernetes Engine (GKE)
+# Running on GKE
 
 This guide walks through how to run **TPUMS (TPU Microbenchmark Suite)** benchmarks across single-host and multi-host TPU topologies (`tpu7x` and `v6e`) on **Google Kubernetes Engine (GKE)**, with optional result and XProf trace export to Google Cloud Storage (GCS).
 
 > [!TIP]
 > For running automated multi-benchmark suites across multiple topologies and generating consolidated Markdown/HTML reports, see **[`docs/AUTOMATION.md`](AUTOMATION.md)**.
-
----
-
-## Table of Contents
-
-- [1. TPU Topology & Node Pool Sizing (`tpu7x` & `v6e`)](#1-tpu-topology--node-pool-sizing-tpu7x--v6e)
-  - [`tpu7x` (Ironwood) Topologies](#tpu7x-ironwood-topologies)
-  - [`v6e` (Trillium) Topologies](#v6e-trillium-topologies)
-- [2. Deploying a Benchmark on GKE](#2-deploying-a-benchmark-on-gke)
-  - [Step 1: Prerequisites & Cluster Authentication](#step-1-prerequisites--cluster-authentication)
-  - [Step 2: Configure `templates/gke_job_template.yaml`](#step-2-configure-templatesgke_job_templateyaml)
-  - [Step 3: Launch a Benchmark Job](#step-3-launch-a-benchmark-job)
-  - [Step 4: Monitor Logs, Inspect GCS Results & Clean Up](#step-4-monitor-logs-inspect-gcs-results--clean-up)
 
 ---
 

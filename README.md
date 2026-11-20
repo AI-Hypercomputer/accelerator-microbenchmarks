@@ -1,10 +1,7 @@
 
 # TPUMS: TPU Microbenchmark Suite
 
-[![Status](https://img.shields.io/badge/Status-Pre--Release-yellow.svg)](#overview)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![JAX](https://img.shields.io/badge/JAX-0.10+-red.svg)](https://github.com/google/jax)
-[![Hardware](https://img.shields.io/badge/Hardware-tpu7x%20(ironwood)%20%7C%20v6e%20(trillium)-orange.svg)](https://cloud.google.com/tpu)
+[![Status](https://img.shields.io/badge/Status-Pre--Release-yellow.svg)](#overview) [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/) [![JAX](https://img.shields.io/badge/JAX-0.10+-red.svg)](https://github.com/google/jax) [![Hardware](https://img.shields.io/badge/Hardware-tpu7x%20(ironwood)%20%7C%20v6e%20(trillium)-orange.svg)](https://cloud.google.com/tpu)
 
 **TPUMS (TPU Microbenchmark Suite)** is a modular, high-fidelity benchmarking and profiling framework designed to evaluate the compute, memory, and interconnect performance of Cloud TPUs (currently targeting **tpu7x (ironwood)** and **v6e (trillium)**) using JAX.
 
@@ -16,37 +13,6 @@
 
 ---
 
-## Table of Contents
-
-- [Overview](#overview)
-  - [Core Capabilities Matrix](#core-capabilities-matrix)
-- [Quickstart](#quickstart)
-  - [Prerequisites](#prerequisites)
-  - [1. Installation](#1-installation)
-  - [2. Inspect Accelerator Hardware & Environment](#2-inspect-accelerator-hardware--environment)
-  - [3. Run Your First Benchmark](#3-run-your-first-benchmark)
-  - [4. Console Output Preview](#4-console-output-preview)
-- [CLI Reference](#cli-reference)
-  - [1. Discovery & Environment Inspection](#1-discovery--environment-inspection)
-  - [2. Interactive Benchmark & Sweep Runs (`tpums benchmark run`)](#2-interactive-single-benchmark-runs-tpums-benchmark-run)
-  - [3. Config-Driven Benchmark & Sweep Runs (`tpums benchmark run-config`)](#3-config-driven-benchmark--sweep-runs-tpums-benchmark-run-config)
-  - [4. Common Execution Flags](#4-common-execution-flags)
-- [Configuration & Parameter Sweeps](#configuration-and-sweeps)
-  - [1. Structure of a Benchmark Config](#1-structure-of-a-benchmark-config)
-  - [2. Explicit Test Cases (`cases:`)](#2-explicit-test-cases-cases)
-  - [3. Bulk Case Ingestion via CSV (`cases_from_csv:`)](#3-bulk-case-ingestion-via-csv-cases_from_csv)
-  - [4. Parameter Sweeps (`sweep:`)](#4-parameter-sweeps-sweep)
-- [Benchmark Catalog](#benchmark-catalog)
-- [Results, Profiling & Output Formats](#results-profiling-and-output)
-  - [Wall Clock vs. XProf Timing Metrics](#wall-clock-vs-xprof-timing-metrics)
-  - [Primary Metrics Reference](#primary-metrics)
-  - [Output Files](#output-files)
-  - [Profiling Traces (TensorBoard / XProf)](#profiling-traces-tensorboard--xprof)
-- [Running on GKE & Platform Automation](#platform-automation)
-- [Repository Structure](#repository-structure)
-
----
-
 <a id="overview"></a>
 ## Overview
 
@@ -55,9 +21,9 @@
 - **Consistent, Reproducible Measurement**: Eliminates measurement noise by automatically handling compilation warmup, device synchronization, and repeatable timing loops.
 - **Hardware-Accurate Roofline Insights**: Captures both host wall-clock and on-device XProf hardware metrics, comparing achieved **TFLOPS** and **GB/s** directly against theoretical hardware limits (**%**).
 - **Flexible Sweeps & Structured Reporting**: Runs single benchmarks,
-  interactive CLI parameter sweeps, or large YAML/CSV parameter sweeps and
-  exports structured CSV and JSON reports for dashboards and regression
-  tracking.
+    interactive CLI parameter sweeps, or large YAML/CSV parameter sweeps and
+    exports structured CSV and JSON reports for dashboards and regression
+    tracking.
 
 <a id="core-capabilities-matrix"></a>
 ### Core Capabilities Matrix
@@ -156,12 +122,12 @@ bfloat16    copy device           0           1    536870912       2048.00      
 The `tpums` executable provides a structured resource-action CLI organized into two functional categories:
 
 - **Discovery & Inspection Utilities**:
-  - `tpums platform describe`
-  - `tpums benchmark list`
-  - `tpums benchmark run <benchmark_name> --help`
+    - `tpums platform describe`
+    - `tpums benchmark list`
+    - `tpums benchmark run <benchmark_name> --help`
 - **Benchmark Execution Modes**:
-  - `tpums benchmark run` (interactive single-benchmark or parameter sweep run)
-  - `tpums benchmark run-config` (config-driven multi-case or parameter sweep run)
+    - `tpums benchmark run` (interactive single-benchmark or parameter sweep run)
+    - `tpums benchmark run-config` (config-driven multi-case or parameter sweep run)
 
 ```text
 tpums
@@ -257,28 +223,29 @@ tpums benchmark run-config configs/sample_configs/parameter_sweep.yaml \
         - **YAML Config (`tpums benchmark run-config`)**: Set `xprof_timing: true` inside the YAML `benchmark:` block.
     2. **Set Trace Output Directory (`--xprof_dir <path>`, optional)**: Directory to save TensorBoard / XProf hardware trace files (`.xplane.pb`). Defaults to `/tmp/tensorboard`; **only active when XProf timing is enabled**.
     3. **Device Timing Aggregation (`--xprof_device_timing_aggregation <mode>` /
-       `xprof_device_timing_aggregation: <mode>`, optional)**: Controls how
-       XProf kernel durations are aggregated across devices into a per-step
-       series:
+        `xprof_device_timing_aggregation: <mode>`, optional)**: Controls how
+        XProf kernel durations are aggregated across devices into a per-step
+        series:
         - `measured_device_or_first` *(default)*: Uses the device returned by
-          `get_device_to_measure()` (defaults to `get_devices_to_measure()[0]`,
-          i.e. local device `TPU:0` unless the benchmark narrows its
-          participating devices; multi-device `hbm` scopes promote this default
-          to `local_slowest_device`).
+            `get_device_to_measure()` (defaults to
+            `get_devices_to_measure()[0]`, i.e. local device `TPU:0` unless the
+            benchmark narrows its participating devices; multi-device `hbm`
+            scopes promote this default to `local_slowest_device`).
         - `local_slowest_device`: Selects the local device with the highest median kernel duration.
         - `global_slowest_per_step`: Takes the slowest (maximum) kernel duration across all devices on all hosts at each step.
         - **Supported modes**: Multi-device TPU benchmarks (`gemm`, collectives,
-          compute ops, and multi-device `hbm` scopes) support all three.
-          Single-device `hbm` scopes (`scope=device`, or `scope=chip` on
-          single-die TPUs), `device_to_device` (whose owner host's series is
-          broadcast to all hosts), and host-timed `host_to_device` and
-          `device_to_host` support only `measured_device_or_first`. An
-          unsupported mode fails at benchmark start with a `ValueError`.
+            compute ops, and multi-device `hbm` scopes) support all three.
+            Single-device `hbm` scopes (`scope=device`, or `scope=chip` on
+            single-die TPUs), `device_to_device` (whose owner host's series is
+            broadcast to all hosts), and host-timed `host_to_device` and
+            `device_to_host` support only `measured_device_or_first`. An
+            unsupported mode fails at benchmark start with a `ValueError`.
         - **Choosing a mode**: `global_slowest_per_step` is intended for
-          collectives, where all devices finish each step together. For
-          independent per-device workloads (`gemm`, compute ops, multi-device
-          `hbm`), it takes a per-step maximum over unsynchronized devices, which
-          is an upper (tail) estimate; prefer `local_slowest_device` there.
+            collectives, where all devices finish each step together. For
+            independent per-device workloads (`gemm`, compute ops, multi-device
+            `hbm`), it takes a per-step maximum over unsynchronized devices,
+            which is an upper (tail) estimate; prefer `local_slowest_device`
+            there.
 - **Report Output & Compiler Flags**:
     - **`--output_dir <path>`**: Directory to save `summary.csv` and `detailed.json` (defaults to `results/`).
     - **`--xla_flags_file_path <path>`**: Optional path to a custom YAML file overriding default per-benchmark XLA / compiler runtime flags.
@@ -299,8 +266,8 @@ Configuration files define a top-level `benchmark:` mapping containing:
 - **`name:` (`<benchmark_name>`)** — Target benchmark name (e.g., `gemm`, `hbm`, `all_reduce`; see [Benchmark Catalog](#benchmark-catalog)).
 - **`xprof_timing:`** *(optional)* — Boolean (`true` / `false`) to enable XProf hardware trace collection and device timing analysis.
 - **`xprof_device_timing_aggregation:`** *(optional)* — Device timing
-  aggregation mode when `xprof_timing: true` (`measured_device_or_first`
-  [default], `local_slowest_device`, or `global_slowest_per_step`).
+    aggregation mode when `xprof_timing: true` (`measured_device_or_first`
+    [default], `local_slowest_device`, or `global_slowest_per_step`).
 - **`standalone_host_init:`** *(optional)* — Boolean (`true` / `false`, default `false`) to initialize this host standalone inside a multi-host topology for node-local diagnostics (see [Common Execution Flags](#4-common-execution-flags)).
 - **`params:`** *(optional)* — Baseline execution parameters shared across all generated runs.
 - **`cases:` / `cases_from_csv:` / `sweep:`** *(optional)* — Case override and parameter sweep generators.
@@ -397,35 +364,35 @@ Unlike `cases:` (which runs an explicit list of individual configurations), the 
 
 - **Discrete Value Sweep:** Test specific matrix dimensions, sharding strategies, or operations:
 
-  ```yaml
-  benchmark:
-    name: all_reduce
-    params:
-      warmup_tries: 2
-      num_runs: 5
-      dtype: bfloat16
-      mesh_shape: 2x2x2
-    sweep:
-      sharding_strategy: ["2x2x1", "2x2x2"]
-      matrix_dim: [1024, 2048, 4096, 8192]
-  ```
+    ```yaml
+    benchmark:
+      name: all_reduce
+      params:
+        warmup_tries: 2
+        num_runs: 5
+        dtype: bfloat16
+        mesh_shape: 2x2x2
+      sweep:
+        sharding_strategy: ["2x2x1", "2x2x2"]
+        matrix_dim: [1024, 2048, 4096, 8192]
+    ```
 
 - **Geometric Multiplier Sweep:** Automatically scale values across a geometric range:
 
-  ```yaml
-  benchmark:
-    name: hbm
-    params:
-      warmup_tries: 5
-      num_runs: 20
-      dtype: bfloat16
-    sweep:
-      op_type: ["copy", "scale", "add", "triad"]
-      num_elements:
-        start: 134217728    # 128M elements (256 MiB per array in bfloat16)
-        end: 1073741824     # 1G elements (2 GiB per array in bfloat16)
-        multiplier: 2
-  ```
+    ```yaml
+    benchmark:
+      name: hbm
+      params:
+        warmup_tries: 5
+        num_runs: 20
+        dtype: bfloat16
+      sweep:
+        op_type: ["copy", "scale", "add", "triad"]
+        num_elements:
+          start: 134217728    # 128M elements (256 MiB per array in bfloat16)
+          end: 1073741824     # 1G elements (2 GiB per array in bfloat16)
+          multiplier: 2
+    ```
 
 ---
 
@@ -498,31 +465,31 @@ After every run, TPUMS automatically saves two files in the specified `--output_
 
 1. **`summary.csv`**: A flat, tabular CSV containing all reported metrics, benchmark parameters, and platform metadata for every configuration tested. Ideal for loading into Pandas, Google Sheets, or dashboarding pipelines.
 2. **`detailed.json`**: A structured JSON record containing the complete
-   benchmark metrics, configuration parameters, platform metadata, and
-   raw timing series for programmatic analysis and automation pipelines.
-   Each record contains `metadata` (including `params`), `metrics` (all
-   `wall_clock_*`, `xprof_*`, workload, and roofline metrics), and
-   `timings`:
+    benchmark metrics, configuration parameters, platform metadata, and
+    raw timing series for programmatic analysis and automation pipelines.
+    Each record contains `metadata` (including `params`), `metrics` (all
+    `wall_clock_*`, `xprof_*`, workload, and roofline metrics), and
+    `timings`:
     - **`timings.wall_clock`**: `durations_ms` (raw per-step wall-clock
-      latencies in ms).
+        latencies in ms).
     - **`timings.xprof`**: `null` when XProf timing is disabled;
-      otherwise:
+        otherwise:
         - **`durations_ms`**: The per-step XProf series (ms) behind the
-          headline `xprof_*` metrics.
+            headline `xprof_*` metrics.
         - **`measured_device`**: The device behind that series, as
-          `process_{process_index}/TPU:{local_hardware_id}`. It is `null`
-          when no XProf data was parsed, for `global_slowest_per_step`
-          (which takes the per-step maximum across all devices), and for
-          host-side timing (`host_to_device` and `device_to_host`).
+            `process_{process_index}/TPU:{local_hardware_id}`. It is `null`
+            when no XProf data was parsed, for `global_slowest_per_step`
+            (which takes the per-step maximum across all devices), and for
+            host-side timing (`host_to_device` and `device_to_host`).
         - **`metrics_per_local_device`**: XProf latency summary
-          (`p50_ms`, `avg_ms`, `p90_ms`, `std_ms`)
-          of each local device in `get_devices_to_measure()` (all local
-          devices by default, or the single target device for `hbm`),
-          keyed by `process_{process_index}/TPU:{local_hardware_id}`. It
-          is `null` when any of those devices has no XProf data, for
-          host-side timing (`host_to_device` and `device_to_host`), and
-          for `device_to_device` (its owner-host series is broadcast to
-          all hosts).
+            (`p50_ms`, `avg_ms`, `p90_ms`, `std_ms`)
+            of each local device in `get_devices_to_measure()` (all local
+            devices by default, or the single target device for `hbm`),
+            keyed by `process_{process_index}/TPU:{local_hardware_id}`. It
+            is `null` when any of those devices has no XProf data, for
+            host-side timing (`host_to_device` and `device_to_host`), and
+            for `device_to_device` (its owner-host series is broadcast to
+            all hosts).
 
 <a id="profiling-traces-tensorboard--xprof"></a>
 ### Profiling Traces (TensorBoard / XProf)
