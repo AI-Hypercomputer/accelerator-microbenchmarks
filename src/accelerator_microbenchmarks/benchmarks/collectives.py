@@ -1182,12 +1182,13 @@ class ReduceScatterBenchmark(IciCollectiveBenchmark[ReduceScatterParams]):
     return shape, sharding
 
   def _get_shard_size_bytes(self) -> int:
-    """Returns the size of one reduce-scatter chunk in bytes."""
+    """Returns one output chunk in bytes (input dim 0 == replica group rank)."""
     itemsize = jnp.dtype(dtypes.parse_dtype(self.config.dtype)).itemsize
     return self.config.matrix_dim * _REDUCE_SCATTER_K * itemsize
 
   def _get_transfer_size_bytes_per_device(
       self, rank: int, participating_ranks: int
   ) -> float:
-    """S*P/R: each device receives one S/R chunk to reduce from every peer."""
-    return self._get_shard_size_bytes() * participating_ranks / max(rank, 1)
+    """S*P: S is one S_full/R output chunk; each peer sends one to reduce."""
+    del rank  # Unused.
+    return self._get_shard_size_bytes() * participating_ranks
