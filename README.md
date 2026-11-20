@@ -409,11 +409,17 @@ TPUMS provides microbenchmarks across core accelerator subsystems. Select any be
 | **Interconnect (ICI)** | Device-to-Device (D2D) | [`device_to_device`](docs/BENCHMARKS.md#24-inter-chip-interconnect-device_to_device) | **Single-Host & Multi-Host** |
 | **Collectives** | All-Gather<br>All-Reduce<br>All-to-All | [`all_gather`](docs/BENCHMARKS.md#25-collective-communications-all_reduce-all_gather-all_to_all)<br>[`all_reduce`](docs/BENCHMARKS.md#25-collective-communications-all_reduce-all_gather-all_to_all)<br>[`all_to_all`](docs/BENCHMARKS.md#25-collective-communications-all_reduce-all_gather-all_to_all) | **Single-Host & Multi-Host** |
 
+For experimental benchmarks (including thermal soaking/pulsing and quantized
+GEMM benchmarks, Reduce-Scatter, 2D activation/normalization ops, RoPE,
+quantization kernels, FlashAttention, and MoE Transformer layers), see
+**[Experimental Benchmarks in `docs/BENCHMARKS.md`](docs/BENCHMARKS.md#3-experimental-benchmarks)**.
+
 To list all registered benchmarks or inspect CLI flags for a specific `<benchmark_name>`:
 
 ```bash
 # List all registered benchmarks
 tpums benchmark list
+tpums benchmark list --include_experimental  # Also list experimental ones
 
 # View full parameter definitions and defaults for a specific benchmark:
 # tpums benchmark run <benchmark_name> --help
