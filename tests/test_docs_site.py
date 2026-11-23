@@ -523,6 +523,65 @@ class DocsSiteTest(absltest.TestCase):
           {"docs_dir": empty_docs, "repo_url": self.repo_url},
       )
 
+  def test_extra_css_configured_and_defines_experimental_badge(self):
+    """Verifies mkdocs.yml enables md_in_html and styles experimental drawers."""
+    mkdocs_path = os.path.join(self.repo_root, "mkdocs.yml")
+    with open(mkdocs_path, "r", encoding="utf-8") as f:
+      cfg = yaml.load(f, Loader=_MkDocsYamlLoader)
+    self.assertEqual(cfg.get("extra_css"), ["stylesheets/extra.css"])
+    self.assertIn("md_in_html", cfg.get("markdown_extensions", []))
+
+    css_path = os.path.join(self.docs_dir, "stylesheets", "extra.css")
+    self.assertTrue(os.path.isfile(css_path))
+    with open(css_path, "r", encoding="utf-8") as f:
+      css = f.read()
+    self.assertIn(".md-typeset details.experimental", css)
+    self.assertIn(".md-typeset details.experimental > summary > code", css)
+    self.assertIn('[data-md-color-scheme="slate"]', css)
+
+  def test_experimental_benchmarks_section_and_readme_pointer(self):
+    """Verifies BENCHMARKS.md experimental drawers and README.md pointer."""
+    readme_md = self._read_doc("README.md")
+    self.assertIn("(docs/BENCHMARKS.md#3-experimental-benchmarks)", readme_md)
+    self.assertGreaterEqual(
+        readme_md.count("tpums benchmark list --include_experimental"),
+        2,
+    )
+
+    benchmarks_md = self._read_doc("docs/BENCHMARKS.md")
+    scannable = _strip_fences(benchmarks_md)
+    self.assertIn("## 3. Experimental Benchmarks", scannable)
+    self.assertIn("--include_experimental", scannable)
+    self.assertEqual(
+        scannable.count('<details class="experimental" markdown="1">'),
+        9,
+    )
+    self.assertEqual(scannable.count("<code>[EXPERIMENTAL]</code>"), 9)
+    for anchor_id in (
+        "211-gemm-throttling-gemm_throttling-experimental",
+        "212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental",
+        "213-gemm-pulse-gemm_pulse-experimental",
+        "214-quantized-matrix-multiplication-gemm_quantized-experimental",
+        "251-reduce-scatter-reduce_scatter-experimental",
+        "3-experimental-benchmarks",
+    ):
+      self.assertIn(f'<a id="{anchor_id}"></a>', benchmarks_md)
+
+    config_links = re.findall(r"\]\((\.\./configs/[^)\s#]+)\)", scannable)
+    self.assertIn("../configs/sample_configs/gemm_quantized.yaml", config_links)
+    self.assertIn("../configs/sample_configs/rope.yaml", config_links)
+    for broken_study_cfg in (
+        "../configs/sample_configs/study_llm_200b/attention.yaml",
+        "../configs/sample_configs/study_llm_200b/transformer_moe.yaml",
+    ):
+      self.assertNotIn(broken_study_cfg, config_links)
+    for rel_cfg in config_links:
+      cfg_abs = os.path.normpath(os.path.join(self.docs_dir, rel_cfg))
+      self.assertTrue(
+          os.path.isfile(cfg_abs),
+          f"Missing sample config referenced in BENCHMARKS.md: {rel_cfg}",
+      )
+
 
 if __name__ == "__main__":
   absltest.main()

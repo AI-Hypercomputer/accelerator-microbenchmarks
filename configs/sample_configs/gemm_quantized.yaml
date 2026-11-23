@@ -1,0 +1,30 @@
+# Sample configuration for the per-channel quantized GEMM benchmark.
+#
+# Platform note: on tpu7x, FP8 is the fast path (native FP8 MXU, while int8
+# runs at the bfloat16 rate); on v6e, there is no native FP8 MXU, so FP8 runs
+# below the bfloat16 peak and int8 is the fast path.
+benchmark:
+  name: gemm_quantized
+  xprof_timing: true
+  params:
+    warmup_tries: 2
+    num_runs: 10
+    in_dtype: bfloat16
+    out_dtype: bfloat16
+  cases:
+    - m: 4096
+      k: 4096
+      n: 4096
+    - m: 16384
+      k: 16384
+      n: 4096
+    - m: 1024
+      k: 16384
+      n: 1024
+  sweep:
+    quant_dtype:
+      - float8_e4m3fn
+      - int8
+    scaling:
+      - dynamic
+      - static

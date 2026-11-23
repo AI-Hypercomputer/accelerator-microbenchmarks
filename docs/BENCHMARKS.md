@@ -1,7 +1,8 @@
 
 # Benchmark Reference
 
-This guide provides the reference for **TPUMS (TPU Microbenchmark Suite)** parameters, default values, metric reporting conventions, roofline/bandwidth formulas, and collective communication concepts.
+Parameters, default values, metric conventions, and roofline/bandwidth formulas
+for every TPUMS benchmark.
 
 > [!TIP]
 > For installation, CLI usage, and YAML configuration instructions, see the main **[`README.md`](../README.md)**.
@@ -14,78 +15,60 @@ This guide provides the reference for **TPUMS (TPU Microbenchmark Suite)** param
 <a id="shared-execution-parameters"></a>
 ### 1.1 Shared Execution Parameters
 
-Every benchmark supports the following baseline execution and profiling parameters:
+Every benchmark supports the following baseline execution parameters:
 
-- **Interactive CLI (`tpums benchmark run`)**: Pass any parameter directly as a command-line flag (`bool` parameters take explicit `true` or `false` tokens):
-    - **Single Value**: `tpums benchmark run <benchmark_name> --<param> <val>` *(e.g., `--m 4096 --transpose_a true`)*
-    - **Multi-Value Sweep**: `tpums benchmark run <benchmark_name> --<param> <val1> <val2> ...` *(e.g., `--num_elements 134217728 268435456 --transpose_a true false`)*
-- **YAML Config (`tpums benchmark run-config`)**: Configure inside `params:`, `sweep:`, `cases:`, or `cases_from_csv:` blocks.
+- **Interactive CLI (`tpums benchmark run <name> --<param> <val> [val2 ...]`)**:
+    Pass single values or space-separated sweeps (`bool` flags take explicit
+    `true` or `false`, e.g., `--transpose_a true false`).
+- **YAML Config (`tpums benchmark run-config`)**: Set under `params:`, `sweep:`,
+    `cases:`, or `cases_from_csv:`.
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `warmup_tries` | `int` | `10` | Number of untimed warmup iterations executed prior to measurement to complete XLA JIT compilation and stabilize device clocks. |
-| `num_runs` | `int` | `10` | Minimum number of timed measurement iterations executed inside the timing loop. |
-| `min_duration_s` | `float` | `0.0` | Minimum total measurement duration in seconds. When `> 0.0`, warmup also runs for at least `min(1.0, min_duration_s / 5)` seconds, and the measurement loop continues until both `num_runs` and `min_duration_s` are satisfied. Must be `0.0` for [`gemm_chained`](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental). |
+| `warmup_tries` | `int` | `10` | Untimed iterations before measurement (XLA JIT compile and clock settle). |
+| `num_runs` | `int` | `10` | Minimum timed measurement iterations executed in the timing loop. |
+| `min_duration_s` | `float` | `0.0` | Minimum measurement duration in seconds. When `> 0.0`, warmup runs at least `min(1.0, min_duration_s / 5)` s and measurement continues until both `num_runs` and `min_duration_s` are met. Must be `0.0` for [`gemm_chained`](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental) and `> 0.0` for [`gemm_throttling`](#211-gemm-throttling-gemm_throttling-experimental); [`gemm_pulse`](#213-gemm-pulse-gemm_pulse-experimental) uses it as the untraced middle-phase duration. |
 
 > [!NOTE]
-> Dtype parameters (e.g. `dtype`, `in_dtype`, `out_dtype`) accept values from
-> the curated `DType` enum in
-> [`core/dtypes.py`](../src/accelerator_microbenchmarks/core/dtypes.py) (JAX
-> dtypes outside it, such as `uint16` or `complex128`, are rejected) and are
-> validated when the config is built: 64-bit dtypes (`float64`, `int64`) are
-> rejected unless `jax_enable_x64` is enabled (e.g. `JAX_ENABLE_X64=1`; JAX
-> would otherwise silently truncate them to 32 bits), and benchmarks restrict
-> each field further via `DTYPE_CONSTRAINTS` (shown as `{...}` choices in
-> `tpums benchmark run <benchmark_name> --help` and listed in
-> `Supported dtypes for <field>: ...` error messages). `hbm`, the collectives,
-> `device_to_device`, `host_to_device`, and `device_to_host` also reject
-> sub-byte dtypes (`int4`, `float4_e2m1fn`), so their choices and lists omit
-> them: TPUs store them packed below one byte per element, while these
-> benchmarks count 1 byte per element.
+> Dtype fields accept
+> [`core/dtypes.py`](../src/accelerator_microbenchmarks/core/dtypes.py) `DType`
+> values, narrowed per field by `DTYPE_CONSTRAINTS` (see `--help` choices;
+> 64-bit `float64`/`int64` require `JAX_ENABLE_X64=1`). Benchmarks that count
+> 1 byte/element (`hbm`, collectives, `device_to_device`, `host_to_device`,
+> `device_to_host`, 2D activation/norm ops, and `rope`) reject sub-byte types
+> (`int4`, `float4_e2m1fn`).
 
 <a id="per-device-vs-per-chip-scaling"></a>
 ### 1.2 Throughput & Bandwidth Metric Conventions (`<timing_domain>_<metric_type>_<hardware_scope>`)
 
-Every throughput and bandwidth metric reported by TPUMS follows a standardized 3-part naming structure (for latency `_ms` and roofline `_pct` metrics, which share the same `<timing_domain>_` prefix, see [Primary Metrics Reference in `README.md`](../README.md#primary-metrics)):
+Throughput and bandwidth metrics follow
+`<timing_domain>_<metric_type>_<hardware_scope>[_<unit>]` (e.g.,
+`xprof_tflops_per_chip`, `wall_clock_bandwidth_per_device_gb_s`; see
+[Primary Metrics in `README.md`](../README.md#primary-metrics)):
 
-```text
-<timing_domain>_<metric_type>_<hardware_scope>[_<unit>]
-# Examples:
-#   xprof_tflops_per_chip
-#   wall_clock_bandwidth_per_device_gb_s
-```
+| Component | Values | Meaning |
+| :--- | :--- | :--- |
+| `<timing_domain>` | `wall_clock`, `xprof` | `wall_clock_*` (always recorded): host Python runtime latency. `xprof_*` (when `xprof_timing: true`): on-device kernel time from XLA/XProf traces (see [Wall Clock vs. XProf](../README.md#wall-clock-vs-xprof-timing-metrics)). |
+| `<metric_type>[_<unit>]` | `tflops`, `bandwidth_..._gb_s`, `bandwidth_..._gbps` | Compute throughput in TFLOPS ($$10^{12}$$ FLOPS) or transfer rate in decimal GB/s ($$10^9$$ bytes/s). Exception: multi-slice DCN collectives (`dcn_*`) emit `_gbps` in decimal Gbit/s (`×8` bytes/s). |
+| `<hardware_scope>` | `per_device`, `per_chip`, `per_host` | Aggregation boundary: one logical JAX device (`per_device`), one physical TPU chip (`per_chip = devices_per_chip × per_device`; `2×` on `tpu7x`, `1×` on `v6e`), or all local devices on a host (`per_host`). |
 
-1. **`<timing_domain>` (`wall_clock` vs. `xprof`)** — Timing measurement domain (see [Wall Clock vs. XProf Timing Metrics in `README.md`](../README.md#wall-clock-vs-xprof-timing-metrics)):
-    - **`wall_clock_*`** *(always recorded)*: End-to-end execution time measured on the host Python runtime.
-    - **`xprof_*`** *(recorded when `xprof_timing` is enabled)*: Pure on-device hardware kernel time extracted from XLA / XProf traces.
-2. **`<metric_type>` & `[_<unit>]` (`tflops` vs. `bandwidth_..._gb_s`)** — Performance rate category:
-    - **`tflops_<hardware_scope>`**: Floating-point compute throughput in teraFLOPs per second ($$10^{12}$$ FLOPS).
-    - **`bandwidth_<hardware_scope>_gb_s`**: Data transfer bandwidth in decimal gigabytes per second ($$10^9$$ bytes/sec).
-3. **`<hardware_scope>` (`per_device`, `per_chip`, `per_host`)** — Hardware
-    aggregation boundary:
-    - **Physical TPU Chips vs. Logical JAX Devices**:
-        - **Dual-Device TPU Chips (e.g., `tpu7x`)**: Each physical TPU chip exposes **2 logical JAX devices** (`TPU:0` and `TPU:1`), so per-chip performance equals **`2 × per_device`**.
-        - **Single-Device TPU Chips (e.g., `v6e`)**: Each physical TPU chip exposes **1 logical JAX device** (`TPU:0`), so per-chip performance equals **`1 × per_device`**.
-    - **Per-Device, Per-Chip, and Per-Host Metrics**:
-        - **`*_per_device` (`*_tflops_per_device`,
-            `*_bandwidth_per_device_gb_s`)**: Reports the throughput or
-            bandwidth achieved by a single logical JAX device
-            (`scope="device"`).
-        - **`*_per_chip` (`*_tflops_per_chip`,
-            `*_bandwidth_per_chip_gb_s`)**: Reports the aggregate performance of
-            a physical TPU chip (`scope="chip"`).
-        - **`*_per_host` (`*_bandwidth_per_host_gb_s`)**: Reports the aggregate
-            bandwidth across all local devices on a host (`scope="host"`).
+- **Latency (`ms`)**: Every benchmark reports
+    `{wall_clock|xprof}_{p50,p90,avg,std}_ms` (median, p90, mean, std in ms).
+- **Multi-Scope Rule (`hbm`, `host_to_device`, `device_to_host`)**: Always emits
+    all three `*_bandwidth_per_{device,chip,host}_gb_s` columns: `scope` holds
+    the **measured** rate, smaller scopes are **derived** (`per_device =
+    per_chip / devices_per_chip` or `per_host / num_devices`; `per_chip =
+    per_device * devices_per_chip`), and larger scopes are `None` (`-` in
+    console, empty in CSV, `null` in JSON) with no upward extrapolation.
 
-The table below summarizes which `<metric_type>` and `<hardware_scope>` each benchmark reports:
-
-| Benchmark | Primary Metric Type | Reported Throughput / Bandwidth Scope | Metric Meaning & Scope |
-| :--- | :--- | :--- | :--- |
-| **`gemm`** | **Compute Throughput (`TFLOPS`)** & Roofline (`%`) | **Both Per-Chip & Per-Device**<br>(`*_tflops_per_chip`, `*_tflops_per_device`) | **Measures** per-device and aggregate per-chip matrix compute throughput (`TFLOPS`), and **compares** against peak chip compute rooflines (`%`). |
-| **`hbm`** | **Memory Bandwidth (`GB/s`)** & Roofline (`%`) | **All Three Scopes (`Per-Device`, `Per-Chip`, `Per-Host`; active measured, smaller derived, larger `None`)**<br>(`*_bandwidth_per_{device,chip,host}_gb_s`) | **Measures** HBM memory bandwidth (`GB/s`) across the selected hardware `scope` (`device` default, `chip`, or `host`), **derives** smaller scopes as the average share of the concurrent aggregate measurement, leaves larger scopes as `None` (no upward extrapolation), and **compares** against peak per-device HBM bandwidth rooflines (`%`). |
-| **`host_to_device` / `device_to_host`** | **Host I/O Bandwidth (`GB/s`)** & Roofline (`%`) | **All Three Scopes (`Per-Device`, `Per-Chip`, `Per-Host`; active measured, smaller derived, larger `None`)**<br>(`*_bandwidth_per_{device,chip,host}_gb_s`) | **Measures** PCIe transfer bandwidth (`GB/s`) between the host CPU and the selected hardware `scope`: all local devices concurrently (`scope: "host"`, default), one physical chip (`scope: "chip"`), or one local device (`scope: "device"`), **deriving** smaller scopes as the average share while leaving larger scopes as `None` (since shared PCIe links do not scale linearly across cores), and **compares** the measured scope against the host link (PCIe) peak of the chips involved (`%`). |
-| **`device_to_device`** | **Device-to-Device Link Bandwidth (`GB/s`)** | **Per-Device**<br>(`*_bandwidth_per_device_gb_s`) | **Measures** transfer bandwidth (`GB/s`) between each device pair `(src_device_index, dst_device_index)`. |
-| **`all_reduce` / `all_gather` / `all_to_all`** | **Collective Bus Bandwidth (`GB/s`)** | **Per-Chip**<br>(`*_bandwidth_per_chip_gb_s`) | **Measures** aggregate external ICI collective bus bandwidth (`GB/s`) per physical TPU chip across the active device mesh. |
+| Benchmark | Primary Metric Type | Reported Scope Columns |
+| :--- | :--- | :--- |
+| **`gemm`** | Compute Throughput (`TFLOPS`) & Roofline (`%`) | `*_tflops_per_{chip,device}` |
+| **`hbm`** | Memory Bandwidth (`GB/s`) & Roofline (`%`) | `*_bandwidth_per_{device,chip,host}_gb_s` (measured/derived/`None` per `scope`) |
+| **`host_to_device` / `device_to_host`** | Host I/O Bandwidth (`GB/s`) & Roofline (`%`) | `*_bandwidth_per_{device,chip,host}_gb_s` (measured/derived/`None` per `scope`) |
+| **`device_to_device`** | Link Bandwidth (`GB/s`) | `*_bandwidth_per_device_gb_s` |
+| **`all_reduce` / `all_gather` / `all_to_all`** | ICI Collective Bus Bandwidth (`GB/s`) | `*_bandwidth_per_chip_gb_s` (+ ICI roofline `%` for `all_to_all`) |
+| **`dcn_all_reduce` / `dcn_all_to_all`** | Multi-Slice DCN Bus Bandwidth (`Gbit/s`) | `wall_clock_bandwidth_per_host_gbps` (`xprof_*` not populated) |
 
 ---
 
@@ -95,9 +78,13 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 <a id="21-matrix-multiplication-gemm"></a>
 ### 2.1 Matrix Multiplication (`gemm`)
 
-- **Operation**: Evaluates dense matrix multiplication independently across each accelerator device to measure full-chip compute throughput (**TFLOPS**) and compute roofline efficiency (**%**).
+- **Operation**: Evaluates dense matrix multiplication independently on each
+    device to measure compute throughput (**TFLOPS**) and compute roofline
+    efficiency (**%**).
 - **Kernel Formula**: $$C_{\text{out}} = (\alpha \cdot \text{op}(A) \times \text{op}(B) + \beta \cdot C) \odot (SF_0 \times SF_1)$$
-- **FLOPs Formula (`total_flops`)**: By default (`alpha=1.0`, `beta=0.0`, `use_scaling_factors=False`), per-device FLOPs is `2 × M × N × K`. When optional scaling or accumulation flags are enabled, element-wise operations on the `M × N` output matrix are added:
+- **FLOPs Formula (`total_flops`)**: Default (`alpha=1.0`, `beta=0.0`,
+    `use_scaling_factors=False`) is `2 × M × N × K` per device; optional scaling
+    or accumulation flags add elementwise `M × N` terms:
 
     | Stage | Condition | Per-Device FLOPs |
     | :--- | :--- | :--- |
@@ -114,7 +101,7 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 | `m` | `int` | `1024` | Matrix dimension `M` (rows of `op(A)` and output matrix `C_out`). |
 | `k` | `int` | `1024` | Contracting dimension `K` (columns of `op(A)` and rows of `op(B)`). |
 | `n` | `int` | `1024` | Matrix dimension `N` (columns of `op(B)` and output matrix `C_out`). |
-| `in_dtype` | `str` | `"bfloat16"` | Input operand data type (e.g., `bfloat16`, `float8_e4m3fn`, `float32`, `int8`). Selects the hardware peak TFLOPS ceiling for roofline efficiency. Dtypes absent from the hardware spec fall back to the `bfloat16` peak; dtypes the spec marks unsupported (`None`) omit compute roofline metrics. |
+| `in_dtype` | `str` | `"bfloat16"` | Input operand dtype (e.g., `bfloat16`, `float8_e4m3fn`, `float32`, `int8`). Selects `peak_tflops` in `roofline_tflops_limit_per_device` (dtypes absent from the spec fall back to `bfloat16`; dtypes marked `None` omit compute roofline metrics). |
 | `out_dtype` | `str` | `"bfloat16"` | Output accumulation and result tensor data type (e.g., `bfloat16`, `float32`). |
 | `transpose_a` | `bool` | `False` | Transpose operand matrix `A` prior to multiplication (`shape = (k, m)` when `True`, `(m, k)` when `False`). |
 | `transpose_b` | `bool` | `False` | Transpose operand matrix `B` prior to multiplication (`shape = (n, k)` when `True`, `(k, n)` when `False`). |
@@ -140,41 +127,52 @@ The table below summarizes which `<metric_type>` and `<hardware_scope>` each ben
 #### Reported Metrics
 
 - **Compute Throughput & Roofline**:
-    - `{wall_clock|xprof}_tflops_per_chip` — Aggregate compute throughput per physical TPU chip (`TFLOPS`).
-    - `{wall_clock|xprof}_tflops_per_device` — Compute throughput per logical JAX device (`TFLOPS`).
-    - `{wall_clock|xprof}_compute_roofline_efficiency_pct` — Achieved compute throughput as a percentage of hardware peak (`%`).
-- **Latency (`ms`)**:
-    - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
-- **Benchmark Attributes**:
-    - `total_flops` — Total floating-point operations executed per iteration.
-    - `intensity` — Operational arithmetic intensity (`FLOPs / Byte`).
-    - `roofline_tflops_limit_per_device` — Theoretical compute roofline ceiling per logical device (`TFLOPS`).
-    - `peak_hbm_bw_per_device_gb_s` — Hardware asymptotic peak HBM bandwidth per logical device (`GB/s`).
+    `{wall_clock|xprof}_tflops_per_{chip,device}` (`TFLOPS`) and
+    `{wall_clock|xprof}_compute_roofline_efficiency_pct` (`%` of
+    `roofline_tflops_limit_per_device`).
+- **Benchmark Attributes**: `total_flops`, `intensity` (`FLOPs / Byte`),
+    `roofline_tflops_limit_per_device = min(peak_tflops, intensity ×
+    peak_hbm_bw_per_device_gb_s / 1000)` (`TFLOPS`, comparing memory-bound
+    shapes against the HBM slope rather than MXU peak), and
+    `peak_hbm_bw_per_device_gb_s` (`GB/s`).
 
+<details class="experimental" markdown="1">
+<summary><strong>2.1.1 GEMM Throttling (<code>gemm_throttling</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
 <a id="211-gemm-throttling-gemm_throttling-experimental"></a>
-#### 2.1.1 GEMM Throttling (`gemm_throttling`) [experimental]
 
 Evaluates thermal steady-state performance and power throttling by soaking the
-accelerator (`min_duration_s`) and measuring the degradation between the
-`pre_soaking` and `post_soaking` windows, alongside device firmware telemetry.
+accelerator (`min_duration_s`) between traced `pre_soaking` and `post_soaking`
+windows alongside firmware telemetry. Inherits all matrix shape and dtype
+parameters from `gemm`. Requires `xprof_timing: true`; `num_runs` is ignored,
+and headline `xprof_*` latency/throughput stats come from the post-soak window
+only.
+
+**Parameters:**
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `min_duration_s` | `float` | *(required)* | Duration of the untraced continuous thermal soak (Phase 2) in seconds. |
+| `min_duration_s` | `float` | *(required)* | Duration of the untraced continuous thermal soak (Phase 2) in seconds (`> 0.0`). |
 | `samples_per_run` | `int` | `25` | Number of iterations per execution window. |
+
+**Reported Metrics:**
 
 | New Metric | Description |
 | :--- | :--- |
-| `*_pre_soaking_p50_ms`, `*_post_soaking_p50_ms`, `*_slowdown_ratio` | Steady-state degradation (latency and ratio) between `pre_soaking_window` and `post_soaking_window` across both XProf and Wall-Clock timing domains. |
-| `*_pre_soaking_tflops_per_device`, `*_post_soaking_tflops_per_device` | Steady-state throughput degradation. |
-| `hbm_peak_temp_c`, `peak_temp_c`, `peak_temp_source` | Post-soak peak temperature (°C) and sensor source. |
+| `*_pre_soaking_p50_ms`, `*_post_soaking_p50_ms`, `*_slowdown_ratio` | Pre- vs. post-soak latency and slowdown ratio across XProf and Wall-Clock timing domains. |
+| `*_pre_soaking_tflops_per_device`, `*_post_soaking_tflops_per_device` | Pre- vs. post-soak per-device throughput (`TFLOPS`). |
+| `hbm_peak_temp_c`, `peak_temp_c`, `hbm_peak_temp_c_pre_soaking`, `peak_temp_c_pre_soaking`, `peak_temp_source` | Post-soak and pre-soak peak temperatures (°C) and sensor source. |
 | `hbm_throttle_time_pct`, `vdd_core_throttle_time_pct` | Percentage of post-soak window time where throttling was active. |
 | `hbm_throttle_mean_pct`, `vdd_core_throttle_mean_pct` | Time-weighted mean throttle percentage during the post-soak window. |
 | `vdd_core_power_mean_w`, `hbm_power_mean_w`, `total_power_mean_w` | Time-weighted mean power level 1 meter readings (W). |
 | `pstate_min`, `pstate_max`, `pstate_changes`, `pstate_requested` | Observed and requested DVFS P-state statistics. |
 
+**Example Config (`tpums benchmark run-config`):**
+[`configs/sample_configs/gemm_throttling.yaml`](../configs/sample_configs/gemm_throttling.yaml)
+</details>
+
+<details class="experimental" markdown="1">
+<summary><strong>2.1.2 Chained Matrix Multiplication &amp; Determinism Check (<code>gemm_chained</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
 <a id="212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental"></a>
-#### 2.1.2 Chained Matrix Multiplication & Determinism Check (`gemm_chained`) [experimental]
 
 Runs the same deterministic chain of `chain_length` matmuls
 ($$X_{t+1} = X_t \times B$$, square `B`, no collectives) on every device, then
@@ -185,6 +183,8 @@ fault during input generation only affects that device. Only the chain is timed:
 each timed run is checksummed after its timer stops, and the checksums of every
 run are compared after the measurement loop.
 `total_flops = chain_length × 2 × M × K²`.
+
+**Parameters:**
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -203,6 +203,8 @@ checksum supports. Unlike `gemm`, there is no `n`, `transpose_a`,
 the same number of timed iterations (`num_runs`) before the cross-host checksum
 gather.
 
+**Reported Metrics:**
+
 | New Metric | Description |
 | :--- | :--- |
 | `global_checksum_match` | **The check passed iff `True`.** `False` if any two checksums differ, across devices or timed runs; `None` if it cannot be decided (fewer than 2 devices, a missing checksum, every checksum degenerate, or a failed checksum gather). |
@@ -218,61 +220,100 @@ suggests a corrupted `X_0` or `B`, which are generated once and reused by every
 run. The same wrong checksum in every failed run suggests a deterministic fault,
 such as a stuck bit.
 
-**Limits**:
+**Limits:**
 
-- Every timed run is checksummed (warmup is not), so increasing `num_runs` adds coverage.
-- Not an HBM scan (`X` and `B` stay at fixed addresses); one shape and dtype covers a subset of MXU datapaths, so sweep for broader coverage.
-- Choose `chain_length` so values stay finite; `inf`/`NaN` or all-zero results never pass.
+- Every timed run is checksummed (warmup is not), so increasing `num_runs` adds
+    coverage.
+- Not an HBM scan (`X` and `B` stay at fixed addresses); one shape and dtype
+    covers a subset of MXU datapaths, so sweep for broader coverage.
+- Choose `chain_length` so values stay finite; `inf`/`NaN` or all-zero results
+    never pass.
 - Golden-reference comparison and collective/H2D/D2H integrity are out of scope.
 
-<a id="213-gemm-pulse-gemm_pulse-experimental"></a>
-#### 2.1.3 GEMM Pulse (`gemm_pulse`) [experimental]
+**Example Config (`tpums benchmark run-config`):**
+[`configs/sample_configs/gemm_chained.yaml`](../configs/sample_configs/gemm_chained.yaml)
+</details>
 
-Combines multi-cycle idle-to-load pulsing (`PulseRunExecutor`) with
-per-window deterministic chained matrix multiplication (`X <- X @ B`,
-`chain_length` steps) and bit-exact cross-device/cross-host 64-bit checksum
-verification (`GemmChainedBenchmark`).
+<details class="experimental" markdown="1">
+<summary><strong>2.1.3 GEMM Pulse (<code>gemm_pulse</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
+<a id="213-gemm-pulse-gemm_pulse-experimental"></a>
+
+Combines multi-cycle idle-to-load pulsing with deterministic chained matrix
+multiplication (`X <- X @ B`, `chain_length` steps) and cross-device/cross-host
+64-bit checksum verification. Inherits all `gemm_chained` parameters (`m`, `k`,
+`in_dtype`, `out_dtype`, `seed`, `chain_length`). Each pulse window runs one
+chain of `chain_length` matmuls (no `samples_per_run`). Requires
+`xprof_timing: true`; `num_runs` is ignored, and headline `xprof_*`
+latency/throughput stats come from the post-soak window only.
+
+**Parameters:**
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `num_cycles` | `int` | `10` | Minimum number of active load cycles (`>= 2`, including `pre_soaking_window` and `post_soaking_window`) separated by `idle_s` host pauses. |
-| `idle_s` | `float` | `0.05` | Host-side idle pause in seconds (`>= 0.0`) between active load cycles, bracketed by multi-host `sync_global_devices` barriers. |
-| `chain_length` | `int` | `1` | Number of sequential matmuls (`X <- X @ B`) per `run_op` call. |
-| `min_duration_s` | `float` | `0.0` | Minimum total duration in seconds (`>= 0.0`) of the untraced middle soaking phase between `pre_soaking_window` and `post_soaking_window`, synchronized across hosts via `process_allgather`. |
+| `num_cycles` | `int` | `10` | Minimum active load cycles (`>= 2`, including `pre_soaking_window` and `post_soaking_window`) separated by `idle_s` host pauses. |
+| `idle_s` | `float` | `0.05` | Host-side idle pause in seconds (`>= 0.0`) between active load cycles, bracketed by multi-host barriers. |
+| `min_duration_s` | `float` | `0.0` | Minimum total duration in seconds (`>= 0.0`) of the untraced middle soaking phase between `pre_soaking_window` and `post_soaking_window`. |
 | `enable_checksum` | `bool` | `True` | Compute and verify per-device 64-bit checksums after each window. |
 
-Cycle `0` starts with traced `pre_soaking_window`, intermediate cycles run
-untraced `(idle_s -> window)` pulse cycles until at least `num_cycles - 2`
-middle cycles and `min_duration_s` of middle soaking time have elapsed, and the
-final cycle ends with an `idle_s` pause followed by traced
+**Reported Metrics:** Cycle `0` runs traced `pre_soaking_window`, middle cycles
+run untraced `(idle_s -> window)` pulses until `>= num_cycles - 2` cycles and
+`min_duration_s` elapse, and the final cycle runs `idle_s` then traced
 `post_soaking_window`. Emits `num_cycles`, `idle_s`, `enable_checksum`, all
-`gemm_throttling` soaking and thermal metrics, plus all `gemm_chained` checksum
-metrics when `enable_checksum=True`.
+`gemm_throttling` soaking/thermal metrics, and (when `enable_checksum=True`) all
+`gemm_chained` checksum metrics.
 
+**Example Config (`tpums benchmark run-config`):**
+[`configs/sample_configs/gemm_pulse.yaml`](../configs/sample_configs/gemm_pulse.yaml)
+</details>
+
+<details class="experimental" markdown="1">
+<summary><strong>2.1.4 Quantized Matrix Multiplication (<code>gemm_quantized</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
 <a id="214-quantized-matrix-multiplication-gemm_quantized-experimental"></a>
-#### 2.1.4 Quantized Matrix Multiplication (`gemm_quantized`) [experimental]
 
-Evaluates end-to-end quantized matrix multiplication (`bfloat16` or `float32`
-inputs `A[M, K]` and `B[K, N]` quantized row-wise/column-wise to
-`float8_e4m3fn`, `float8_e5m2`, or `int8`—or mixed-precision `FP8 × INT4` with
-`rhs_quant_dtype="int4"`—before `lax.dot_general`, supporting
-both-inputs-on-the-fly (`prequantize_rhs=False`) and weight-offline
-(`prequantize_rhs=True`) modes, dynamic or static scaling, and optional output
-dequantization).
+Per-channel quantized matrix multiplication replicated on each device:
+
+- **Timed Scope**: Quantizes `A[M, K]` rowwise to `quant_dtype` and (when
+    `prequantize_rhs=False`) `B[K, N]` columnwise to `rhs_quant_dtype` in
+    `float32` (including mixed-precision `FP8 × INT4` when
+    `rhs_quant_dtype="int4"`), or reads offline pre-quantized `B_q` when
+    `prequantize_rhs=True`; runs `jax.lax.dot_general` (`int32` accumulator for
+    `int8`, `float32` when `A` is FP8), and optionally dequantizes in `float32`
+    (`acc * (sf_a * sf_b)`) before casting to `out_dtype`.
+- **FLOPs & Traffic**: `total_flops = 2 × M × N × K` (in-scope quant/dequant
+    cost is reflected in latency only); 1-pass HBM bytes =
+    `M × K × in_bytes + K × N × rhs_bytes + M × N × out_bytes` (`rhs_bytes` is
+    `rhs_quant_bytes` when `prequantize_rhs=True`, else `in_bytes`).
+- **Platform Note**: On `tpu7x`, FP8 uses the native FP8 MXU while `int8` runs
+    at the `bfloat16` rate; on `v6e`, `int8` is the native fast path while FP8
+    has no native MXU path and runs below `bfloat16` peak (with
+    `float8_e4m3fn` slower than `float8_e5m2`, expected rather than a TPUMS
+    bug).
+
+**Parameters:**
 
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `m` | `int` | `1024` | Matrix dimension `M` (rows of `A` and output matrix `C`). |
-| `k` | `int` | `1024` | Contracting dimension `K` (columns of `A` and rows of `B`). |
-| `n` | `int` | `1024` | Matrix dimension `N` (columns of `B` and output matrix `C`). |
-| `in_dtype` | `str` | `"bfloat16"` | Unquantized input operand dtype (e.g., `bfloat16`, `float32`). |
-| `quant_dtype` | `str` | `"float8_e4m3fn"` | Quantized LHS (and default RHS) operand dtype (`float8_e4m3fn`, `float8_e5m2`, `int8`). Selects the hardware peak TFLOPS ceiling for roofline efficiency. |
+| `m` | `int` | `1024` | Matrix dimension `M` (`>= 1`; rows of `A` and output matrix `C`). |
+| `k` | `int` | `1024` | Contracting dimension `K` (`>= 1`; columns of `A` and rows of `B`). |
+| `n` | `int` | `1024` | Matrix dimension `N` (`>= 1`; columns of `B` and output matrix `C`). |
+| `in_dtype` | `str` | `"bfloat16"` | Unquantized input operand dtype (`"bfloat16"` or `"float32"`). |
+| `quant_dtype` | `str` | `"float8_e4m3fn"` | Quantized LHS (and default RHS) operand dtype (`"float8_e4m3fn"`, `"float8_e5m2"`, or `"int8"`). Selects `peak_tflops` in `roofline_tflops_limit_per_device`. |
 | `rhs_quant_dtype` | `str` | `` `quant_dtype` `` | Quantized RHS (`B`) operand dtype. Defaults to `quant_dtype`; also supports `"int4"` when `quant_dtype` is `float8_e4m3fn` or `float8_e5m2` (`W4A8`). |
-| `out_dtype` | `str` | `"bfloat16"` | Output tensor dtype (e.g., `bfloat16`, `float32`). |
-| `prequantize_rhs` | `bool` | `False` | When `True` (weight-offline), `B` is pre-quantized to `rhs_quant_dtype` once before the timed loop and only `A` is quantized on the fly. When `False`, both `A` and `B` are quantized inside the timed step. |
-| `scaling` | `str` | `"dynamic"` | Scale calibration: `"dynamic"` (per-row/column `amax` computed on the fly) or `"static"` (fixed clip bound `0.5 * Q_MAX`, i.e., compile-time scale `0.5`). |
-| `dequantize` | `bool` | `False` | When `True`, multiply the matmul accumulator by the row and column dequantization scales before casting to `out_dtype`. |
-| `seed` | `int` | `0` | PRNG seed for initializing input tensors in HBM. |
+| `out_dtype` | `str` | `"bfloat16"` | Output tensor dtype (`"bfloat16"` or `"float32"`). |
+| `prequantize_rhs` | `bool` | `False` | When `True` (weight-offline), pre-quantizes `B` to `rhs_quant_dtype` once before the timed loop and quantizes only `A` on the fly; when `False`, quantizes both `A` and `B` inside the timed step. |
+| `scaling` | `str` | `"dynamic"` | `"dynamic"` (per-row/column `amax` on the fly, `scale = max(amax, 1e-7) / Q_MAX`) or `"static"` (compile-time clip `0.5 * Q_MAX`, `scale = 0.5`). |
+| `dequantize` | `bool` | `False` | Multiply accumulator in `float32` by `sf_a * sf_b` before casting to `out_dtype`. |
+| `seed` | `int` | `0` | PRNG seed (`>= 0`) for initializing input tensors in HBM. |
+
+**Reported Metrics:** Same compute metric set as [`gemm`](#21-matrix-multiplication-gemm)
+(`*_compute_roofline_efficiency_pct` compares against
+`roofline_tflops_limit_per_device = min(peak_tflops, intensity × peak_hbm_bw /
+1000)` with `peak_tflops` keyed by `quant_dtype`), plus `quant_dtype`,
+`rhs_quant_dtype`, `prequantize_rhs`, `scaling`, and `dequantize`.
+
+**Example Config (`tpums benchmark run-config`):**
+[`configs/sample_configs/gemm_quantized.yaml`](../configs/sample_configs/gemm_quantized.yaml)
+</details>
 
 ---
 
@@ -280,30 +321,18 @@ dequantization).
 ### 2.2 HBM Memory Bandwidth (`hbm`)
 
 - **Operation**: Executes 1D STREAM memory operations across the local devices
-    selected by `scope` (`device` default, `chip`, or `host`) with zero
-    cross-device ICI collectives to measure High-Bandwidth Memory (HBM)
-    throughput (**GB/s**) and memory roofline efficiency (**%**).
-- **Default `scope` & Multi-Device Scaling**: Defaults to `scope="device"`
-    (unlike `host_to_device` and `device_to_host`, which default to
-    `scope="host"` to saturate shared chip PCIe links and host memory channels)
-    because HBM stacks are isolated per die: on-device `xprof_*` bandwidth
-    scales linearly across `chip` and `host` with zero per-die contention,
-    whereas sub-millisecond HBM kernels incur higher `wall_clock_*` latency at
-    larger scopes from multi-device host dispatch and `block_until_ready()`
-    synchronization skew (and `N×` buffer allocation).
-- **Per-Device HBM Traffic Calculation (`data_size_mib`)**:
-    `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`
-    - **Single-Array Size (`MiB`)**:
-        `(num_elements * dtype_bytes) / (1024 * 1024)` — `num_elements` is
-        specified **per device**. By default, `num_elements = 134,217,728`
-        (`128 * 1024 * 1024` elements) and `dtype = bfloat16` (`2 bytes`),
-        allocating **`256 MiB` per array per device**.
-    - **Array Transfer Count (Reads + Writes)**: Total full-array HBM reads + writes executed by the kernel (`1` for `read_only`/`write_only`, `2` for `copy`/`scale`, `3` for `add`/`triad`).
-    - **Per-Device HBM Traffic (`data_size_mib`)**:
-        `Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)` —
-        Per-device HBM traffic moved per iteration (e.g., `2 × 256 MiB = 512`
-        `MiB` for `copy`, `3 × 256 MiB = 768 MiB` for `triad`). Aggregate bytes
-        across the scope equal `num_devices × per_device_bytes`.
+    selected by `scope` (`device` default, `chip`, or `host`) with no ICI
+    collectives to measure HBM bandwidth (**GB/s**) and memory roofline
+    efficiency (**%**).
+- **Default `scope`**: Defaults to `scope="device"` because HBM stacks are
+    isolated per die (`xprof_*` scales linearly across `chip`/`host`), whereas
+    larger scopes add host-dispatch and barrier skew to `wall_clock_*`.
+- **Per-Device HBM Traffic (`data_size_mib`)**: Each 1D array has size
+    `single_array_mib = (num_elements * dtype_bytes) / 2^20` per device
+    (default `134,217,728 × 2 B = 256 MiB` for `bfloat16`). Per-device traffic
+    per iteration is `transfer_count × single_array_mib` (`512 MiB` for `copy`,
+    `768 MiB` for `triad`); aggregate bytes across `scope` equal
+    `num_devices × per_device_bytes`.
 
 #### Supported `op_type` STREAM Kernels
 
@@ -321,44 +350,25 @@ dequantization).
 | Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `op_type` | `str` | `"copy"` | Memory kernel operation (`copy`, `scale`, `add`, `triad`, `read_only`, `write_only`). |
-| `num_elements` | `int` | `134217728` | Number of elements per 1D array per device (`Single-Array Size (MiB) = (num_elements * dtype_bytes) / (1024 * 1024)`). Default `134,217,728` (`128 * 1024 * 1024` elements) × `2 bytes` (`bfloat16`) = `256 MiB` per array per device. |
-| `dtype` | `str` | `"bfloat16"` | Element data type (e.g., `bfloat16`, `float32`, `int8`). |
+| `num_elements` | `int` | `134217728` | Elements per 1D array per device (`256 MiB` per array at default `bfloat16`; see formula above). |
+| `dtype` | `str` | `"bfloat16"` | Element data type (integer or floating; `bool`, `complex`, and sub-byte dtypes rejected — e.g., `bfloat16`, `float32`, `int8`). |
 | `scope` | `str` | `"device"` | Hardware measurement scope: `"device"` (1 local device, default), `"chip"` (1 physical chip = `devices_per_chip` local devices), or `"host"` (all local devices). |
 | `local_index` | `int` | `0` | Host-local index of the target unit within `scope`: the N-th local device (`scope="device"`) or N-th local chip (`scope="chip"`). Must be `0` for `scope="host"`. |
 
 #### Reported Metrics
 
 - **Memory Bandwidth & Roofline**:
-    - `{wall_clock|xprof}_bandwidth_per_{device|chip|host}_gb_s` — Aggregate HBM
-        memory bandwidth (`GB/s`). All three scope columns are always emitted:
-        the column matching `scope` holds the **measured** bandwidth, smaller
-        scopes are **derived** as the average share of the concurrent
-        measurement (`chip` sets `per_device = per_chip / devices_per_chip`;
-        `host` sets `per_device = per_host / num_devices` and
-        `per_chip = per_device * devices_per_chip`), and larger scopes remain
-        `None` (`-` in console tables, empty in `summary.csv`, `null` in
-        `detailed.json`), with no upward extrapolation.
+    - `{wall_clock|xprof}_bandwidth_per_{device|chip|host}_gb_s` — HBM bandwidth
+        (`GB/s`); measured/derived/`None` scope columns follow
+        [§1.2](#per-device-vs-per-chip-scaling). For multi-device scopes
+        (`chip` or `host` with `> 1` device), `xprof_*` latency defaults to
+        `local_slowest_device`.
     - `{wall_clock|xprof}_memory_roofline_efficiency_pct` — Achieved HBM
         bandwidth as a percentage of hardware peak (`%`).
-- **Latency (`ms`)**:
-    - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency
-        across median (`p50`), 90th percentile (`p90`), mean (`avg`), and
-        standard deviation (`std`) in milliseconds (`ms`). For multi-device
-        scopes (`scope="chip"` or `"host"` with multiple local devices),
-        `xprof_*` latency defaults to `local_slowest_device` across the devices
-        in the scope so `xprof_bandwidth_per_{chip,host}_gb_s` reflects the
-        slowest device in the scope.
-- **Benchmark Attributes**:
-    - `scope` — Selected hardware scope (`"device"`, `"chip"`, or `"host"`).
-    - `local_index` — Host-local unit index within `scope` (`0` for `"host"`).
-    - `num_devices` — Number of local devices participating in the measurement
-        (`1`, `devices_per_chip`, or the host's local device count).
-    - `data_size_mib` — Per-device HBM traffic
-        (`Array Transfer Count (Reads + Writes) × Single-Array Size (MiB)`)
-        moved per iteration (`MiB`).
-    - `intensity` — Operational arithmetic intensity (`FLOPs / Byte`).
-    - `peak_hbm_bw_per_device_gb_s` — Hardware asymptotic peak HBM bandwidth per
-        logical device (`GB/s`).
+- **Benchmark Attributes**: `scope`, `local_index`, `num_devices` (`1`,
+    `devices_per_chip`, or host device count), `data_size_mib` (per-device HBM
+    bytes moved per iteration, see above), `intensity` (`FLOPs / Byte`), and
+    `peak_hbm_bw_per_device_gb_s` (`GB/s`).
 
 ---
 
@@ -366,31 +376,20 @@ dequantization).
 ### 2.3 Host I/O Bandwidth (`host_to_device`, `device_to_host`)
 
 - **Operations**:
-    - **`host_to_device` (H2D)**: Transfers a payload buffer from host CPU RAM to local accelerator HBM over PCIe, synchronizing on full DMA transfer completion.
-    - **`device_to_host` (D2H)**: Transfers a resident buffer from local accelerator HBM back to host CPU RAM over PCIe.
-- **Transfer Backends** (`transfer_backend`): the two backends measure
-    different things, and `tpu_sync` typically reports much higher bandwidth
-    than `jax` for the same payload.
-    - **`jax`**: Standard `jax.device_put` (H2D) / `jax.device_get` (D2H) of a
-        `(rows, 128)` buffer sharded across the selected devices. Measures
-        general-purpose framework transfer throughput on arbitrary pageable
-        NumPy arrays, so the timed window includes per-call XLA host
-        bounce-buffer allocation, CPU-side linearization/copying, and
+    - **`host_to_device` (H2D)**: Transfers a buffer from host RAM to local HBM
+        over PCIe, synchronizing on DMA completion.
+    - **`device_to_host` (D2H)**: Transfers a resident buffer from local HBM
+        back to host RAM over PCIe.
+- **Transfer Backends** (`transfer_backend`):
+    - **`jax`**: `jax.device_put` (H2D) / `jax.device_get` (D2H) of a
+        `(rows, 128)` buffer sharded across the selected devices; includes
+        per-call XLA host bounce-buffer allocation, CPU staging, and
         unpinned-memory overhead.
     - **`tpu_sync`**: [`tpu-sync-jax`](https://pypi.org/project/tpu-sync-jax/)
-        `KVCacheManager` DMA between NUMA-local pinned host staging buffers and
-        device HBM. A specialized zero-copy DMA path: host staging buffers are
-        pre-allocated NUMA-local, then pinned and DMA-mapped once in `setup()`,
-        and per-NUMA C++ worker threads dispatch to multiple devices
-        concurrently. Bypassing per-iteration host allocation and CPU staging,
-        it measures the hardware PCIe DMA ceiling.
-        The buffer is shaped `(1, num_devices * rows_per_device, 128)` and
-        sharded along axis 1, so each device shard
-        `(1, rows_per_device, 128)` is a single `KVCacheManager` block and every
-        iteration moves the full per-device payload with one
-        `h2d([0], [0], [1])` / `d2h([0], [0], [1])` call. The `KVCacheManager`
-        and its pinned host memory (`data_size_mib` per device) are allocated
-        once in `setup()` and released in `teardown()` after each sweep point.
+        `KVCacheManager` DMA between pinned host staging buffers and HBM, shaped
+        `(1, num_devices * rows_per_device, 128)` so one `h2d`/`d2h` call moves
+        one `(1, rows_per_device, 128)` block (`data_size_mib`) per device.
+        Setup allocation is untimed, approximating the PCIe ceiling.
 - **Timing**: Both directions record the `MARKER` annotation on the `/host:CPU`
     XProf plane, spanning dispatch through DMA completion.
 
@@ -407,54 +406,33 @@ dequantization).
 #### Reported Metrics
 
 - **PCIe Transfer Bandwidth**:
-    - `{wall_clock|xprof}_bandwidth_per_{device|chip|host}_gb_s` — Aggregate
-        host-to-device or device-to-host PCIe transfer bandwidth
-        (`num_devices × per_device_bytes / latency_s`, `GB/s`). All three scope
-        columns are always emitted: the column matching `scope` holds the
-        **measured** bandwidth, smaller scopes are **derived** as the average
-        share of that concurrent transfer (`chip` sets
-        `per_device = per_chip / devices_per_chip`; `host` sets
-        `per_device = per_host / num_devices` and
-        `per_chip = per_device * devices_per_chip`), and larger scopes remain
-        `None` (`-` in console tables, empty in `summary.csv`, `null` in
-        `detailed.json`) because shared PCIe links (such as a dual-die TPU chip
-        sharing one PCIe endpoint) cannot be extrapolated upward from a smaller
-        scope.
-- **Host Link Roofline** (summary.csv / detailed.json only; not in the
-    console table):
-    - `roofline_bound_by` — Link that carries the transfer: always `pcie` (the
-        chip's host link).
-    - `peak_link_bandwidth_per_{device|chip|host}_gb_s` — Theoretical host link
-        peak for the measured `scope` only (`GB/s`): the chip's raw
-        per-direction PCIe bandwidth (`HardwareSpec.pcie`, e.g. Gen5 x8 =
-        32 GB/s on `v6e`, Gen5 x16 = 64 GB/s on `tpu7x`) times the number of
-        chips the measured devices span (`ceil(num_devices /
-        devices_per_chip)`). The link belongs to the chip and is shared by its
-        devices, so a single device transferring alone (`scope="device"`) is
-        bounded by the full chip link. Omitted when the hardware spec has no
-        PCIe bandwidth.
-    - `{wall_clock|xprof}_roofline_efficiency_pct` — Measured bandwidth of the
-        active `scope` as a percentage of that peak (`%`). Emitted for both
-        `transfer_backend` values: `tpu_sync` typically reaches ~88–92% (the
-        practical PCIe ceiling after 128b/130b encoding and TLP/DLLP protocol
-        overhead), while lower `jax` values reflect host staging overhead rather
-        than the link. Host-side limits (root complex, NUMA, host DRAM) are not
-        modeled.
-- **Latency (`ms`)**:
-    - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
-- **Benchmark Attributes**:
-    - `data_size_mib` — Payload volume transferred per device per iteration (`MiB`).
-    - `transfer_backend` — Active transfer implementation (`"jax"` or `"tpu_sync"`).
-    - `scope` — Selected hardware scope (`"device"`, `"chip"`, or `"host"`).
-    - `local_index` — Host-local unit index within `scope` (`0` for `"host"`).
-    - `num_devices` — Number of local devices transferring concurrently.
+    `{wall_clock|xprof}_bandwidth_per_{device|chip|host}_gb_s`
+    (`num_devices × per_device_bytes / latency_s`, `GB/s`;
+    measured/derived/`None` scope columns follow
+    [§1.2](#per-device-vs-per-chip-scaling) since shared chip PCIe links cannot
+    be extrapolated upward).
+- **Host Link Roofline** (`summary.csv` / `detailed.json` only):
+    `roofline_bound_by` (`"pcie"`),
+    `peak_link_bandwidth_per_{device|chip|host}_gb_s` (`HardwareSpec.pcie ×
+    ceil(num_devices / devices_per_chip)`, e.g., `32 GB/s` on `v6e`, `64 GB/s`
+    on `tpu7x`; a single device at `scope="device"` shares the full chip link;
+    omitted if unset), and `{wall_clock|xprof}_roofline_efficiency_pct`
+    (`tpu_sync` approaches the practical PCIe ceiling after encoding/TLP
+    overhead; lower `jax` values reflect host staging; host
+    root-complex/NUMA/DRAM limits are not modeled).
+- **Benchmark Attributes**: `data_size_mib`, `transfer_backend`, `scope`,
+    `local_index`, and `num_devices`.
 
 ---
 
 <a id="24-inter-chip-interconnect-device_to_device"></a>
 ### 2.4 Device-to-Device Transfers (`device_to_device`)
 
-- **Operation**: Measures device-to-device transfer bandwidth (**GB/s**) and latency (**ms**) across all **`N × (N - 1)` directional device pairs** `(src_device_index, dst_device_index)` in the active topology (`src != dst`), supporting both single-host and multi-host topologies. Pairs on different chips transfer over the Inter-Chip Interconnect (ICI); on chips with two devices (such as **`tpu7x`**), the two devices of one chip transfer over the on-package die-to-die link.
+- **Operation**: Measures transfer bandwidth (**GB/s**) and latency (**ms**)
+    across all **`N × (N - 1)` directional device pairs**
+    `(src_device_index, dst_device_index)` (`src != dst`) on single-host or
+    multi-host topologies, over ICI across chips or the on-package die-to-die
+    link within a dual-device chip (e.g., `tpu7x`).
 
 #### Parameters
 
@@ -468,104 +446,100 @@ dequantization).
 #### Reported Metrics
 
 - **Link Bandwidth**:
-    - `{wall_clock|xprof}_bandwidth_per_device_gb_s` — Device-to-device transfer bandwidth between `(src_device_index, dst_device_index)` (`GB/s`), also formatted in `stdout` as an **`N × N` pairwise device bandwidth matrix** (`src` rows × `dst` columns). For `"bi"`, the bytes of both directions are counted.
-- **Latency (`ms`)**:
-    - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
+    - `{wall_clock|xprof}_bandwidth_per_device_gb_s` — Pairwise transfer
+        bandwidth (`GB/s`, also printed in `stdout` as an `N × N` `src × dst`
+        matrix; `"bi"` counts bytes in both directions).
 - **Benchmark Attributes**:
-    - `src_device_index` / `dst_device_index` — Source and destination logical device indices for the measured pair.
+    - `src_device_index` / `dst_device_index` — Positions in the
+        topology-ordered 1D mesh (`mesh_utils.create_device_mesh((N,))`, printed
+        at setup as `[D2D Mesh Mapping]`), not `device.id`.
     - `direction` — Active transfer direction (`"uni"` or `"bi"`).
-    - `data_size` — Payload size per directional stream, as written in the config (e.g. `4KiB`).
-    - `data_size_bytes` — The same size in bytes (use this column to sort, compare, or group sizes).
+    - `data_size` — Payload size per directional stream, as written in the
+        config (e.g., `4KiB`).
+    - `data_size_bytes` — Exact payload size in bytes (for sorting or grouping).
 
 > [!NOTE]
-> At small sizes (KiB range), the measured time is dominated by fixed per-transfer overhead, so `*_bandwidth_per_device_gb_s` reflects that overhead rather than link bandwidth.
+> At small sizes (KiB range), the measured time is dominated by fixed
+> per-transfer overhead, so `*_bandwidth_per_device_gb_s` reflects that overhead
+> rather than link bandwidth.
 
 ---
 
 <a id="25-collective-communications-all_reduce-all_gather-all_to_all"></a>
-### 2.5 Collective Communications (`all_reduce`, `all_gather`, `all_to_all`)
+### 2.5 ICI Collective Communications (`all_reduce`, `all_gather`, `all_to_all`)
 
-- **Operation**: Evaluates distributed collective communication primitives (`all_reduce`, `all_gather`, `all_to_all`) across a configurable 2D or 3D device mesh (`mesh_shape`) and active collective axis pattern (`sharding_strategy`) on single-host or multi-host topologies.
+- **Operation**: Evaluates intra-slice ICI collectives (`all_reduce`,
+    `all_gather`, `all_to_all`) across a configurable 2D/3D device mesh
+    (`mesh_shape`) and active collective axis pattern (`sharding_strategy`) on
+    single-host or multi-host topologies.
 
 <a id="collective-concepts"></a>
 #### Collective Concepts: `mesh_shape`, `sharding_strategy` & Parallel vs. Non-Parallel Replica Groups
 
-Understanding how TPUMS configures collective meshes and computes per-chip collective bus bandwidth requires four key concepts:
+**1. `mesh_shape` vs. `sharding_strategy` (Logical Mesh vs. Collective Axes):**
 
-**1. `mesh_shape` vs. `sharding_strategy` (Logical Mesh vs. Active Collective Axes):**
-
-- **`mesh_shape`** (e.g., `"2x4x4"` or `"2x2x1"`) arranges the available accelerator devices into an N-dimensional logical mesh. The product of the dimensions in `mesh_shape` must match the number of devices in the target mesh.
-- **`sharding_strategy`** (e.g., `"2x2x1"` or `"2x4x4"`) has the **same number of dimensions** as `mesh_shape` and specifies which mesh dimensions actively participate in the collective operation:
-    - **Active Collective Dimensions (`> 1`)**: Any dimension with a value `> 1` participates in the collective exchange.
-    - **Replicated Dimensions (`== 1`)**: Any dimension with a value of `1` is excluded from the collective exchange, partitioning the mesh into independent replica subgroups along that dimension.
-- **Concrete Example**: With `mesh_shape: "2x2x2"` (8 devices total across 3 dimensions) and `sharding_strategy: "2x2x1"`, only the first two dimensions have size `> 1`. The collective executes across 4-device subgroups (`2 × 2`), while the two planes along the third dimension run as independent parallel replica groups simultaneously.
+- **`mesh_shape`** (e.g., `"2x4x4"`, `"2x2x1"`) reshapes the slice's devices
+    into an N-D logical mesh (if the product does not match the device count or
+    cannot be built, TPUMS logs a warning and falls back to the 1D mesh over all
+    devices).
+- **`sharding_strategy`** (e.g., `"2x2x1"`) matches `mesh_shape`'s
+    dimensionality: axes `> 1` participate in the collective, while axes `== 1`
+    partition the mesh into independent replica groups (e.g., `mesh_shape:
+    "2x2x2"` + `sharding_strategy: "2x2x1"` runs two concurrent 4-device
+    `2 × 2` groups). Ignored when `mesh_shape` is `None`.
 
 **2. `parallel` vs. `non-parallel` Replica Groups (`replica_group_type`):**
 
-On TPU architectures with two logical devices per physical chip—such as **`tpu7x`**, where logical devices `(0, 1)` reside on Chip 0, `(2, 3)` on Chip 1, etc.—how replica groups map to logical device IDs determines how much traffic traverses external Inter-Chip Interconnect (ICI) links:
+On dual-device TPU chips (e.g., **`tpu7x`**, where logical devices `(0, 1)`
+reside on Chip 0, `(2, 3)` on Chip 1, etc.), replica-group device mapping
+determines external ICI link traffic:
 
-- **`parallel` Replica Group** (e.g., `[0, 2, 4, 6]` and `[1, 3, 5, 7]`): Logical Device 0 of each chip forms one inter-chip collective ring (`[0, 2, 4, 6]`), while Logical Device 1 of each chip simultaneously forms a second disjoint inter-chip collective ring (`[1, 3, 5, 7]`). Because **both logical devices on every physical chip transmit across external ICI links simultaneously**, each physical chip drives **`C = 2` active rings in parallel**, with **`P = R - 1`** external inter-chip peers per ring of size `R`.
-- **`non-parallel` Replica Group** (e.g., `[0, 1, 2, 3]`): Both logical devices (`0` and `1`) of the **same physical chip** participate in the **same** collective replica group (`C = 1` ring per chip). Because intra-chip communication between Logical Device 0 and Logical Device 1 stays internal to the physical chip rather than traversing external ICI links, each ring of size `R` has **`P = max(R - 2, 1)`** external inter-chip peers.
-- **Reported Metadata**: TPUMS automatically classifies the first replica group
-    from the JAX mesh by the devices' `core_on_chip` (`"parallel"` iff all
-    devices share one core) and records `replica_group_type` (`"parallel"` or
-    `"non-parallel"`) and `replica_group_rank` (`R`) in the output reports.
+- **`parallel` Replica Group** (e.g., `[0, 2, 4, 6]` and `[1, 3, 5, 7]`): Core 0
+    and Core 1 of each chip form two disjoint inter-chip rings, driving
+    **`C = 2` active rings per chip** with **`P = R - 1`** external peers per
+    ring of size `R`.
+- **`non-parallel` Replica Group** (e.g., `[0, 1, 2, 3]`): Both cores of a chip
+    share one ring (`C = 1`), keeping intra-chip traffic on-package so each ring
+    has **`P = max(R - D, 1)`** external peers (`D = devices_per_chip`).
+- **Classification Rule**: `"parallel"` iff `devices_per_chip > 1`, `R > 1`, and
+    every device in the first replica group shares the same `core_on_chip`.
+    Single-device chips (e.g., **`v6e`**, `D = 1`) always report
+    `"non-parallel"` (`C = 1`, `P = max(R - 1, 1)`).
 
-**3. Tensor Shape & Per-Device Shard Payload (`matrix_dim` → `shard_size_mib`):**
+**3. Tensor Shape & Per-Device Shard (`matrix_dim` → `shard_size_mib`):**
 
-- For `all_reduce`, `all_gather`, and `all_to_all`, `matrix_dim` defines a 3D per-device tensor of shape **`(matrix_dim, 8, 128)`**, which aligns with native TPU matrix register tiles (`8 * 128 = 1,024` elements per unit of `matrix_dim`).
-- **Per-Device Shard Size Calculation (`shard_size_mib`)**: `(matrix_dim * 8 * 128 * dtype_bytes) / (1024 * 1024)`
-    - **1. Per-Device Shard Payload (`S`, in `Bytes`)**: `S = matrix_dim * 8 * 128 * dtype_bytes`
-    - **2. Reported Shard Size (`shard_size_mib`, in `MiB`)**: `S / (1024 * 1024)` — With `dtype: bfloat16` (`2` bytes per element), `matrix_dim: 1024` produces **`2.00 MiB`** per device; `matrix_dim: 8192` produces **`16.00 MiB`** per device.
+`matrix_dim` defines a 3D per-device tensor `(matrix_dim, 8, 128)` with byte
+size `S = matrix_dim × 8 × 128 × dtype_bytes` (`shard_size_mib = S / 2^20`; for
+`bfloat16`, `matrix_dim: 1024` → `2.00 MiB`, `8192` → `16.00 MiB`).
 
-**4. Mesh Device Placement (`device_placement`):**
+**4. Mesh Device Placement (`device_placement`, when `mesh_shape` is set):**
 
-`device_placement` controls which physical device lands at each coordinate of
-the `mesh_shape` logical mesh. It only takes effect when `mesh_shape` is set.
-Because replica groups are derived from mesh coordinates, the placement changes
-which devices exchange data in each collective and therefore the communication
-paths the traffic takes.
-
-- **`mesh_utils`** *(default)*: Uses
-    `jax.experimental.mesh_utils.create_device_mesh(mesh_shape, devices=jax.devices())`,
-    which assigns devices based on their physical topology coordinates.
-- **`id_sorted`**: Sorts `jax.devices()` by ascending `device.id` and reshapes
-    them into `mesh_shape`
-    (`np.asarray(sorted(jax.devices(), key=lambda d: d.id)).reshape(mesh_shape)`).
-- **When to use `id_sorted`**: Because the resulting replica-group device order
-    differs from `mesh_utils`, `id_sorted` can yield higher collective bandwidth
-    on some full-chip mesh shapes (e.g., `all_gather` on TPU v7x `2x2x2`). If
-    bandwidth on a given topology looks lower than expected, benchmark both
-    placements and compare.
-- **Caveat**: `id_sorted` ignores physical topology and may map logical axes
-    across physical ones on non-standard or sub-mesh shapes. Prefer the default
-    `mesh_utils` for those cases.
+- **`mesh_utils`** *(default)*: Topology-aware
+    `mesh_utils.create_device_mesh(mesh_shape, devices=jax.devices())`.
+- **`id_sorted`**: Reshapes `sorted(jax.devices(), key=lambda d: d.id)` into
+    `mesh_shape`. Can improve bandwidth on some full-chip meshes (e.g.,
+    `all_gather` on `tpu7x` `2x2x2`), though it ignores physical topology on
+    sub-meshes.
 
 #### Parameters
 
 | Parameter | Type | Default | Applies To | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `mesh_shape` | `Optional[str]` | `None` | All Collectives | Logical TPU mesh dimensions formatted as `'DxDyDz'` or `'DxDy'` (e.g., `"2x2x1"`, `"2x4x4"`, `"4x4"`). Defaults to a 1D mesh over all devices if `None`. |
-| `device_placement` | `str` | `"mesh_utils"` | All Collectives | Mesh device placement: `"mesh_utils"` (topology-aware `create_device_mesh`) or `"id_sorted"` (sorted ascending by `device.id`). Ignored when `mesh_shape` is `None`. See [Mesh Device Placement](#collective-concepts). |
-| `sharding_strategy` | `Optional[str]` | `None` | All Collectives | Axis participation pattern matching the dimensionality of `mesh_shape` (e.g., `"2x2x1"`). Dimensions with value `> 1` participate in the collective; defaults to all mesh dimensions if `None`. |
-| `matrix_dim` | `int` | `1024` | All Collectives | Leading dimension of the per-device tensor `(matrix_dim, 8, 128)`. |
-| `dtype` | `str` | `"bfloat16"` | All Collectives | Tensor element data type (e.g., `bfloat16`, `float32`). |
-| `reduce_op` | `str` | `"sum"` | `all_reduce` only | Reduction operator applied across active collective dimensions (`"sum"`, `"mean"`, `"max"`, `"min"`). |
-| `seed` | `int` | `0` | All Collectives | PRNG seed for tensor initialization. |
+| `mesh_shape` | `Optional[str]` | `None` | All ICI Collectives | Logical mesh `'DxDyDz'` or `'DxDy'` (e.g., `"2x4x4"`). Defaults to a 1D mesh over all devices if `None`; an invalid shape logs a warning and falls back to the 1D mesh. |
+| `device_placement` | `str` | `"mesh_utils"` | All ICI Collectives | `"mesh_utils"` (topology-aware) or `"id_sorted"` (sorted by `device.id`). Ignored when `mesh_shape` is `None`. |
+| `sharding_strategy` | `Optional[str]` | `None` | All ICI Collectives | Active collective axis pattern matching `mesh_shape` dimensionality (axes `> 1` participate; defaults to all mesh axes if `None`). Ignored when `mesh_shape` is `None`. |
+| `matrix_dim` | `int` | `1024` | All ICI Collectives | Leading dimension of `(matrix_dim, 8, 128)`. `all_to_all` floors `matrix_dim` to a multiple of `R` (raises `ValueError` if `< R`) and reports the input as `requested_matrix_dim`. |
+| `dtype` | `str` | `"bfloat16"` | All ICI Collectives | Element dtype (e.g., `bfloat16`, `float32`; `all_reduce` requires integer or floating). |
+| `reduce_op` | `str` | `"sum"` | `all_reduce` only | Reduction operator (`"sum"`, `"mean"`, `"max"`, `"min"`). |
+| `seed` | `int` | `0` | All ICI Collectives | PRNG seed for tensor initialization. |
 
 #### Collective Bus Bandwidth Formulas (`transfer_size_per_chip_mib`)
 
-Given per-device shard payload $$S$$ (bytes), replica group rank $$R$$
-(`replica_group_rank`, devices per ring), external inter-chip peers $$P$$
-($$R - 1$$ for single-device or `parallel` dual-device; $$R - 2$$ for
-`non-parallel` dual-device), active rings per physical chip $$C$$ ($$2$$ for
-`parallel` dual-device; $$1$$ otherwise), and devices per physical chip $$D$$
-(`devices_per_chip`, e.g., $$2$$ for dual-device chips, $$1$$ for
-single-device chips):
-
-Each collective's per-device transfer size is topology-neutral; the ICI
-benchmarks scale it to the chip by the number of devices of one chip that send
-their own data ($$C$$, or $$D$$ for `all_to_all`).
+Symbols: $$S$$ per-device shard bytes, $$R$$ `replica_group_rank`, $$D$$
+`devices_per_chip`, $$P$$ external inter-chip peers ($$R - 1$$ for single-device
+or `parallel` dual-device; $$\max(R - D, 1)$$ for `non-parallel` dual-device),
+and $$C$$ sending rings per chip ($$2$$ for `parallel` dual-device, else $$1$$;
+`all_to_all` scales by $$D$$ because every core sends distinct chunks):
 
 | Benchmark | JAX Primitive | Per-Device Transfer Size | Per-Chip Scale | Per-Chip Transfer Size (`transfer_size_per_chip_mib`) |
 | :--- | :--- | :--- | :--- | :--- |
@@ -575,21 +549,321 @@ their own data ($$C$$, or $$D$$ for `all_to_all`).
 
 #### Reported Metrics
 
-- **Collective Bus Bandwidth**:
-    - `{wall_clock|xprof}_bandwidth_per_chip_gb_s` — Effective external ICI collective bus bandwidth per physical TPU chip (`GB/s`).
-- **ICI Roofline (`all_to_all` only)**:
-    - `peak_ici_bandwidth_per_chip_gb_s` — Theoretical peak all-to-all bus bandwidth per chip (`GB/s`).
-    - `{wall_clock|xprof}_ici_roofline_efficiency_pct` — Achieved bus bandwidth as a percentage of `peak_ici_bandwidth_per_chip_gb_s` (`%`).
-- **Latency (`ms`)**:
-    - `{wall_clock|xprof}_{p50|p90|avg|std}_ms` — Iteration execution latency across median (`p50`), 90th percentile (`p90`), mean (`avg`), and standard deviation (`std`) in milliseconds (`ms`).
+- **Collective Bus Bandwidth & Roofline**:
+    - `{wall_clock|xprof}_bandwidth_per_chip_gb_s` — Effective external ICI bus
+        bandwidth per physical TPU chip (`GB/s`).
+    - `peak_ici_bandwidth_per_chip_gb_s` and
+        `{wall_clock|xprof}_ici_roofline_efficiency_pct` (`all_to_all` only).
 - **Benchmark Attributes**:
-    - `shard_size_mib` — Per-device tensor shard payload (`S` expressed in `MiB`).
-    - `replica_group_rank` — Number of participating devices (`R`) per collective replica group (product of dimensions `> 1` in `sharding_strategy`).
-    - `replica_group_type` — Classified replica ring mode (`"parallel"` vs. `"non-parallel"`).
-    - `transfer_size_per_chip_mib` — Effective external ICI transfer size per physical chip per collective step (`MiB`); the bytes behind `*_bandwidth_per_chip_gb_s`.
-    - `transfer_size_per_device_mib` — Multi-slice DCN collectives (`dcn_*`) only: DCN transfer size per device per collective step (`MiB`); `*_bandwidth_per_host_gbps` scales it by the local device count.
+    - `shard_size_mib` (`S / 2^20`) and `transfer_size_per_chip_mib` (`MiB`).
+    - `replica_group_rank` — Devices per replica group (`R`): product of the
+        `mesh_shape` sizes on axes where `sharding_strategy > 1` (or all devices
+        when `mesh_shape` is `None`).
+    - `replica_group_type` (`"parallel"` or `"non-parallel"`) and
+        `requested_matrix_dim` (`all_to_all` only).
+
+<details class="experimental" markdown="1">
+<summary><strong>2.5.1 Reduce-Scatter (<code>reduce_scatter</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
+<a id="251-reduce-scatter-reduce_scatter-experimental"></a>
+
+Benchmarks distributed sum reduction + scatter
+(`jax.lax.psum_scatter(..., tiled=True)`) across active ICI mesh axes
+(`sharding_strategy`). Each participating device holds a per-device input shard
+of shape `(R, matrix_dim, 256)` (where $$R$$ is `replica_group_rank`) and
+receives one reduced `(1, matrix_dim, 256)` output chunk of byte size
+$$S_{\text{chunk}} = \text{matrix\_dim} \times 256 \times \text{dtype\_bytes}$$
+— giving full per-device input shard $$S = R \times S_{\text{chunk}}$$
+(consistent with $$S$$ in the §2.5 symbol table above).
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `mesh_shape` | `Optional[str]` | `None` | Logical TPU mesh dimensions `'DxDyDz'` or `'DxDy'` (defaults to 1D mesh over all devices if `None`). |
+| `device_placement` | `str` | `"mesh_utils"` | `"mesh_utils"` or `"id_sorted"` (ignored when `mesh_shape` is `None`). |
+| `sharding_strategy` | `Optional[str]` | `None` | Active collective axis pattern matching `mesh_shape` dimensionality (axes `> 1` participate; ignored when `mesh_shape` is `None`). |
+| `matrix_dim` | `int` | `1024` | Middle dimension of per-device input `(R, matrix_dim, 256)` ($$S = R \times S_{\text{chunk}}$$) and reduced output chunk `(1, matrix_dim, 256)` ($$S_{\text{chunk}} = \text{matrix\_dim} \times 256 \times \text{dtype\_bytes}$$). |
+| `dtype` | `str` | `"bfloat16"` | Element dtype (integer or floating non-sub-byte dtypes, e.g., `bfloat16`, `float32`, `int32`; always sum reduction, no `reduce_op`). |
+| `seed` | `int` | `0` | PRNG seed for tensor initialization. |
+
+**Bus Bandwidth Formula & Reported Metrics:**
+
+- **Per-Device / Per-Chip Transfer Size**:
+    $$S \times \frac{P}{R} = S_{\text{chunk}} \times P$$ per device;
+    $$S \times (P / R) \times C = S_{\text{chunk}} \times P \times C$$ per chip
+    (`transfer_size_per_chip_mib`), where $$C$$ is sending rings per chip from
+    the §2.5 table (`2` for `parallel` dual-device, else `1`). Earlier runs that
+    set $$S = S_{\text{chunk}}$$ under-reported `shard_size_mib`,
+    `transfer_size_per_chip_mib`, and bandwidth by $$R$$.
+- **Reported Metrics**: `{wall_clock|xprof}_bandwidth_per_chip_gb_s`,
+    `shard_size_mib` ($$S / 2^{20}$$, full per-device input),
+    `transfer_size_per_chip_mib`, `replica_group_rank`, and
+    `replica_group_type`.
+
+**Example Config (`tpums benchmark run-config`):**
+[`configs/tpu7x/2x2x1/reduce_scatter.yaml`](../configs/tpu7x/2x2x1/reduce_scatter.yaml)
+</details>
 
 ---
 
+<a id="26-multi-slice-dcn-collectives-dcn_all_reduce-dcn_all_to_all"></a>
+### 2.6 Multi-Slice DCN Collectives (`dcn_all_reduce`, `dcn_all_to_all`)
+
+- **Operation**: Evaluates cross-slice Data Center Network (DCN) collectives
+    over a 2D `("dcn", "ici")` mesh across `R = num_slices >= 2` equal-size TPU
+    slices (each device exchanges `(matrix_dim, 8, 128)` shards with the device
+    at the same ICI coordinate in every other slice). `xprof_*` metrics are not
+    populated on DCN (no `MARKER` scope; canonical configs set
+    `xprof_timing: false`).
+- **Parameters**: `matrix_dim` (`int`, default `1024`; `dcn_all_to_all` floors
+    it to a multiple of `R`, raises if `< R`, and reports
+    `requested_matrix_dim`), `dtype` (`str`, default `"bfloat16"`, sub-byte
+    rejected; integer/floating only for `dcn_all_reduce`), `reduce_op`
+    (`"sum"` default, `"mean"`, `"max"`, `"min"` — `dcn_all_reduce` only), and
+    `seed` (`int`, default `0`).
+- **Formulas & Reported Metrics**: Per-device DCN transfer bytes
+    (`transfer_size_per_device_mib` in `MiB`) are
+    $$2 \times S \times \frac{R - 1}{R}$$ (`dcn_all_reduce`) and
+    $$S \times \frac{R - 1}{R}$$ (`dcn_all_to_all`). Emits
+    `wall_clock_bandwidth_per_host_gbps` in **Gbit/s** — an exception to the
+    `_gb_s` convention, computed as
+    `(per_device_bytes × 8 / (latency_s × 1e9)) × local_device_count` — plus
+    `shard_size_mib`, `transfer_size_per_device_mib`, `replica_group_rank`
+    (`num_slices`), and `requested_matrix_dim` (`dcn_all_to_all`).
+- **Canonical Configs**:
+    [`configs/tpu7x/2x2x1/dcn_all_reduce.yaml`](../configs/tpu7x/2x2x1/dcn_all_reduce.yaml),
+    [`configs/tpu7x/2x2x1/dcn_all_to_all.yaml`](../configs/tpu7x/2x2x1/dcn_all_to_all.yaml), and
+    [`configs/v6e/2x2/dcn_all_reduce.yaml`](../configs/v6e/2x2/dcn_all_reduce.yaml).
+
+---
+
+<a id="3-experimental-benchmarks"></a>
+## 3. Experimental Benchmarks
+
 > [!NOTE]
-> Additional experimental benchmarks (such as ReduceScatter, FlashAttention, MoE Transformer layers, and custom fusion ops) are under active development — use with caution.
+> Experimental benchmarks (`is_experimental=True`) may change parameters or
+> metrics across releases. They are omitted from `tpums benchmark list` unless
+> `--include_experimental` is passed, and run via `tpums benchmark run` or
+> `run-config` as usual. Experimental GEMM
+> ([`gemm_throttling`](#211-gemm-throttling-gemm_throttling-experimental),
+> [`gemm_chained`](#212-chained-matrix-multiplication--determinism-check-gemm_chained-experimental),
+> [`gemm_pulse`](#213-gemm-pulse-gemm_pulse-experimental),
+> [`gemm_quantized`](#214-quantized-matrix-multiplication-gemm_quantized-experimental))
+> and [`reduce_scatter`](#251-reduce-scatter-reduce_scatter-experimental) live
+> under [§2.1](#21-matrix-multiplication-gemm) and
+> [§2.5](#25-collective-communications-all_reduce-all_gather-all_to_all); the
+> remaining 11 are grouped below.
+
+**Shared Memory-Bound Metric Set (Cards 3.1–3.3):** Every memory-bound op in
+3.1–3.3 reports `{wall_clock|xprof}_bandwidth_per_{device,chip}_gb_s`,
+`{wall_clock|xprof}_memory_roofline_efficiency_pct`, `total_bytes_mib`,
+`intensity`, and `peak_hbm_bw_per_device_gb_s` (plus [§1.2](#per-device-vs-per-chip-scaling)
+latency stats).
+
+<details class="experimental" markdown="1">
+<summary><strong>3.1 2D Activation &amp; Normalization Ops (<code>swiglu</code>, <code>sigmoid</code>, <code>rmsnorm</code>, <code>layernorm</code>, <code>softmax</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
+<a id="31-2d-activation--normalization-ops-experimental"></a>
+
+Memory-bound 2D activation and normalization kernels replicated on every
+device, supporting forward (`"fwd"`) and backward VJP (`"bwd"`) passes.
+
+**Parameters (shared across all 5 benchmarks):**
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `batch` | `int` | `1024` | Leading batch/token dimension (`>= 1`). |
+| `dim` | `int` | `4096` | Hidden feature dimension (`>= 1`). For `swiglu`, input `X` is `(batch, 2 * dim)` and output `Y` is `(batch, dim)`; for all other ops, both `X` and `Y` are `(batch, dim)`. |
+| `dtype` | `str` | `"bfloat16"` | Activation dtype (floating non-sub-byte dtypes, e.g., `bfloat16`, `float32`). |
+| `mode` | `str` | `"fwd"` | `"fwd"` (forward) or `"bwd"` (backward VJP w.r.t. activations and learnable norm weights). |
+
+**Per-Benchmark Formulas & 1-Pass Algorithmic HBM Traffic (Per Device):**
+
+| Benchmark | Forward Formula | `fwd` HBM Bytes ($$\times \text{dtype\_bytes}$$) | `bwd` HBM Bytes ($$\times \text{dtype\_bytes}$$) |
+| :--- | :--- | :--- | :--- |
+| `swiglu` | $$Y = (A \odot \sigma(A)) \odot B$$, $$[A, B] = \text{split}(X, 2)$$ | $$3 \times \text{batch} \times \text{dim}$$ | $$5 \times \text{batch} \times \text{dim}$$ |
+| `sigmoid` | $$Y = \sigma(X)$$ | $$2 \times \text{batch} \times \text{dim}$$ | $$3 \times \text{batch} \times \text{dim}$$ |
+| `rmsnorm` | $$Y = \frac{X}{\sqrt{\text{mean}(X^2) + 10^{-6}}} \odot W$$ | $$2 \times \text{batch} \times \text{dim} + \text{dim}$$ | $$3 \times \text{batch} \times \text{dim} + 2 \times \text{dim}$$ |
+| `layernorm` | $$Y = \frac{X - \mu}{\sqrt{\sigma^2 + 10^{-6}}} \odot \gamma + \beta$$ (`float32` stats) | $$2 \times \text{batch} \times \text{dim} + 2 \times \text{dim}$$ | $$3 \times \text{batch} \times \text{dim} + 4 \times \text{dim}$$ |
+| `softmax` | $$Y = \text{softmax}(X)$$ over last axis (`float32` compute) | $$2 \times \text{batch} \times \text{dim}$$ | $$3 \times \text{batch} \times \text{dim}$$ |
+
+**Reported Metrics:** Shared §3 memory-bound metric set.
+
+**Example Config (`tpums benchmark run-config`):** Sample configs in
+[`swiglu.yaml`](../configs/sample_configs/cop/swiglu.yaml),
+[`sigmoid.yaml`](../configs/sample_configs/cop/sigmoid.yaml), and
+[`rmsnorm.yaml`](../configs/sample_configs/cop/rmsnorm.yaml); `layernorm` and
+`softmax` take the exact same parameters (just change `name`).
+</details>
+
+<details class="experimental" markdown="1">
+<summary><strong>3.2 Rotary Positional Embedding (<code>rope</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
+<a id="32-rotary-positional-embedding-rope-experimental"></a>
+
+Half-split (`rotate_half`) Rotary Positional Embedding replicated on every
+device. Activations `X` are a 2D `(batch * seq_len, heads * head_dim)` matrix
+in `dtype` rotated in `float32` against a precomputed `float32`
+`(seq_len, head_dim)` cos/sin table before casting back to `dtype`. At the
+sample config sizes, `rope` is latency-bound on both `tpu7x` and `v6e` (~12–34%
+of peak HBM bandwidth).
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `batch` | `int` | `32` | Batch size dimension (`>= 1`). |
+| `seq_len` | `int` | `1024` | Sequence length dimension (`>= 1`). |
+| `heads` | `int` | `32` | Number of attention heads (`>= 1`). |
+| `head_dim` | `int` | `128` | Per-head dimension (`>= 2`, must be even). |
+| `dtype` | `str` | `"bfloat16"` | Activation input/output dtype (floating non-sub-byte dtypes, e.g., `bfloat16`, `float32`). |
+| `mode` | `str` | `"fwd"` | `"fwd"` or `"bwd"` (VJP w.r.t. `X`; the cos/sin table is constant, so both passes move `2 × batch × seq_len × heads × head_dim × dtype_bytes + seq_len × head_dim × 4` bytes per device). |
+
+**Reported Metrics:** Shared §3 memory-bound metric set.
+
+**Example Config (`tpums benchmark run-config`):**
+[`configs/sample_configs/rope.yaml`](../configs/sample_configs/rope.yaml)
+</details>
+
+<details class="experimental" markdown="1">
+<summary><strong>3.3 Quantization Kernels (<code>quantization</code>, <code>quantize_transpose</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
+<a id="33-quantization-kernels-quantization-quantize_transpose-experimental"></a>
+
+Dynamic rowwise quantization (`quantization`) and fused Pallas transposed
+quantization (`quantize_transpose`) replicated on every device:
+
+- **`quantization`**: Computes rowwise scales
+    $$SF_i = Q_{\max} / \max_j |X_{i,j}|$$ (`m` scales) and writes
+    $$\text{OUT}_{M \times N} = \text{cast\_quant}(X \odot SF)$$. Per-device
+    1-pass HBM bytes:
+    $$M \cdot N \cdot \text{in\_bytes} + M \cdot N \cdot \text{quant\_bytes} + M \cdot \text{scale\_bytes}$$.
+- **`quantize_transpose`**: Fused Pallas kernel producing
+    $$\text{OUT}_{N \times M} = \text{cast\_quant}(X^\top \odot SF)$$ with `n`
+    columnwise scales of `X` without writing an unquantized $$X^\top$$ to HBM
+    (1-pass HBM bytes replace $$M \cdot \text{scale\_bytes}$$ with
+    $$N \cdot \text{scale\_bytes}$$). Derives Pallas tile dimensions
+    automatically and records `block_m` and `block_n` in output metadata.
+
+**Parameters (shared by both benchmarks):**
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `m` | `int` | `4096` | Input matrix rows `M` (`>= 1`). |
+| `n` | `int` | `4096` | Input matrix columns `N` (`>= 1`). |
+| `dtype` | `str` | `"bfloat16"` | Input activation dtype (`bfloat16`, `float16`, `float32`, or `float64` with `JAX_ENABLE_X64=1`). |
+| `quant_dtype` | `str` | `"float8_e4m3fn"` | Target quantized output dtype (floating or integer dtypes, including sub-byte `float4_e2m1fn` and `int4`). |
+| `scale_dtype` | `str` | `"bfloat16"` | Scaling factor dtype (`bfloat16`, `float16`, `float32`, or `float64` with `JAX_ENABLE_X64=1`). |
+
+**Reported Metrics:** Shared §3 memory-bound metric set, plus `quant_dtype`,
+`scale_dtype`, and (`quantize_transpose` only) `block_m` and `block_n`.
+
+**Example Config (`tpums benchmark run-config`):**
+[`configs/sample_configs/verify_study/quantization.yaml`](../configs/sample_configs/verify_study/quantization.yaml).
+Same parameters for `quantize_transpose`; just change `name` (`block_m` and
+`block_n` are derived automatically, not passed in `params:`).
+</details>
+
+<details class="experimental" markdown="1">
+<summary><strong>3.4 FlashAttention, MoE Layer &amp; Smoke-Test Ops (<code>attention_flashed</code>, <code>transformer_layer_moe</code>, <code>simple_add</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
+<a id="34-flashattention-moe-layer--smoke-test-ops-experimental"></a>
+
+**1. FlashAttention (`attention_flashed`):**
+
+Executes `jax.nn.dot_product_attention` across MHA/GQA shapes, sharding `Q` and
+`K/V` across the 1D device mesh along the head dimension whenever `num_q_heads`
+and `num_kv_heads` are divisible by the device count (otherwise replicating).
+Global forward FLOPs is $$2 \cdot B \cdot S^2 \cdot H_q \cdot D$$
+(`causal=True`) or $$4 \cdot B \cdot S^2 \cdot H_q \cdot D$$ (`causal=False`);
+`mode="bwd"` times `jax.vjp` + `vjp_fn` (`3.5×` forward FLOPs), divided by the
+active query-head shard degree.
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `dtype` | `str` | `"bfloat16"` | Tensor dtype (`"bfloat16"` or `"float32"`). |
+| `mode` | `str` | `"fwd"` | Execution pass: `"fwd"` or `"bwd"`. |
+| `causal` | `bool` | `True` | Apply causal attention masking. |
+| `batch` | `int` | `1` | Batch size `B` (`>= 1`). |
+| `seq_len` | `int` | `8192` | Sequence length `S` (`>= 1`). |
+| `num_q_heads` | `int` | `56` | Number of query attention heads `H_q` (`>= 1`). |
+| `num_kv_heads` | `int` | `56` | Number of key/value heads `H_kv` (`>= 1`). |
+| `head_dim` | `int` | `128` | Per-head dimension `D` (`>= 1`). |
+
+- **Reported Metrics (`attention_flashed`)**: Same compute metric set as
+    [`gemm`](#21-matrix-multiplication-gemm)
+    (`{wall_clock|xprof}_tflops_per_{device,chip}`,
+    `{wall_clock|xprof}_compute_roofline_efficiency_pct` against
+    `roofline_tflops_limit_per_device`, `total_flops`, `intensity`, and
+    `peak_hbm_bw_per_device_gb_s`).
+- **Example Config (`tpums benchmark run-config`)**:
+
+    ```yaml
+    benchmark:
+      name: attention_flashed
+      xprof_timing: true
+      params:
+        warmup_tries: 2
+        num_runs: 10
+        dtype: bfloat16
+        mode: fwd
+        causal: true
+        batch: 1
+        seq_len: 8192
+        num_q_heads: 32
+        num_kv_heads: 8
+        head_dim: 128
+    ```
+
+**2. MoE Transformer Layer Proxy (`transformer_layer_moe`):**
+
+Forward-pass layer proxy (`batch=1`: standardization norm + QKV/output
+attention matmuls `×3` + a dense 2-matmul FFN proxy `up ×2`, `down` standing in
+for MoE experts with **no routing**, plus residual adds =
+$$20 \times \text{mslen} \times \text{model\_dim}^2$$ global FLOPs),
+partitioning `mslen` and `model_dim` across the mesh when divisible by the
+device count.
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `model_dim` | `int` | `7168` | Transformer hidden dimension (`>= 1`). |
+| `mslen` | `int` | `1024` | Micro-sequence length (`>= 1`). |
+| `dtype` | `str` | `"bfloat16"` | Layer floating-point dtype (e.g., `bfloat16`, `float32`). |
+
+- **Reported Metrics (`transformer_layer_moe`)**: Same compute metric set as
+    [`gemm`](#21-matrix-multiplication-gemm) (with `*_compute_roofline_efficiency_pct`
+    compared against `roofline_tflops_limit_per_device`).
+- **Example Config (`tpums benchmark run-config`)**:
+
+    ```yaml
+    benchmark:
+      name: transformer_layer_moe
+      xprof_timing: true
+      params:
+        warmup_tries: 2
+        num_runs: 10
+        dtype: bfloat16
+        model_dim: 7168
+        mslen: 1024
+    ```
+
+**3. Elementwise Add Smoke Check (`simple_add`):**
+
+1D elementwise vector addition (`Z = X + Y`) on fixed `bfloat16` arrays of
+shape `(size,)` replicated across devices for harness and profiler smoke
+testing.
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `size` | `int` | `1048576` | Number of 1D elements per vector (`>= 1`, `1024 * 1024` default). |
+| `dtype` | `str` | `"bfloat16"` | Inherited parameter field (`simple_add` allocates fixed `bfloat16` inputs). |
+
+- **Reported Metrics (`simple_add`)**:
+    `{wall_clock|xprof}_{p50|p90|avg|std}_ms` latency statistics only (no
+    throughput or roofline columns).
+
+```yaml
+benchmark:
+  name: simple_add
+  params:
+    warmup_tries: 2
+    num_runs: 5
+    size: 1048576
+```
+</details>

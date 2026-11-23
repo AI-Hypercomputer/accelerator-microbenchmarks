@@ -4,3 +4,53 @@
     display: none;
   }
 }
+
+.md-typeset details.experimental {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-left-width: 1px;
+  border-radius: 0.35rem;
+  box-shadow: none;
+  background-color: transparent;
+}
+
+.md-typeset details.experimental > summary {
+  padding-left: 0.85rem;
+  padding-right: 2.2rem;
+  background-color: rgba(148, 163, 184, 0.06);
+  color: var(--md-default-fg-color--light);
+  font-weight: 500;
+}
+
+.md-typeset details.experimental > summary::before {
+  display: none;
+}
+
+.md-typeset details.experimental > summary::after {
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset details.experimental[open] > summary {
+  color: var(--md-default-fg-color);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.md-typeset details.experimental > summary > code {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.08rem 0.48rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  vertical-align: middle;
+  color: #475569;
+  background-color: rgba(148, 163, 184, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+[data-md-color-scheme="slate"] .md-typeset details.experimental > summary > code {
+  color: #94a3b8;
+  background-color: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.28);
+}
