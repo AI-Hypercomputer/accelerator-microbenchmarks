@@ -560,6 +560,17 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
           ),
           "shard_size_mib",
       ),
+      (
+          "reduce_scatter",
+          collectives.ReduceScatterBenchmark,
+          collectives.ReduceScatterParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2x1",
+              sharding_strategy="2x2x1",
+          ),
+          "shard_size_mib",
+      ),
   )
   def test_input_shape_and_transfer_metrics_invariant(
       self, benchmark_cls, config, size_metric_key
@@ -648,6 +659,30 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
           "all_to_all_v6e",
           collectives.AllToAllBenchmark,
           collectives.IciCollectivesParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2",
+              sharding_strategy="2x2",
+          ),
+          system.V6E_HARDWARE_SPEC,
+          3.145728,
+      ),
+      (
+          "reduce_scatter_tpu7x",
+          collectives.ReduceScatterBenchmark,
+          collectives.ReduceScatterParams(
+              matrix_dim=1024,
+              dtype="float32",
+              mesh_shape="2x2",
+              sharding_strategy="2x2",
+          ),
+          system.TPU7X_HARDWARE_SPEC,
+          2.097152,
+      ),
+      (
+          "reduce_scatter_v6e",
+          collectives.ReduceScatterBenchmark,
+          collectives.ReduceScatterParams(
               matrix_dim=1024,
               dtype="float32",
               mesh_shape="2x2",
@@ -776,6 +811,81 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     metrics = a2a_bm.calculate_metrics([1.0])
     self.assertAlmostEqual(
         metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
+    )
+
+  # Per-device input S = R * C for shape (R, 1024, 256) in float32 = R MiB
+  # (where one chunk C = 1 MiB). Expected per-chip bytes are
+  # (S * P / R) * sending_devices_per_chip = C * P * sending_devices_per_chip.
+  @parameterized.named_parameters(
+      # R=2, P=1, 2 sending cores: 2 MiB.
+      ("mesh_parallel_2_chips", "2x1", None, "parallel", 2, 2097152.0),
+      # R=4, P=2, 1 sending core: 2 MiB.
+      ("mesh_non_parallel_2_chips", "2x2", None, "non-parallel", 4, 2097152.0),
+      # R=8, P=7, 2 sending cores: 14 MiB.
+      (
+          "parallel_8_chips",
+          "2x2",
+          [0, 2, 4, 6, 8, 10, 12, 14],
+          "parallel",
+          8,
+          14680064.0,
+      ),
+      # R=16, P=14, 1 sending core: 14 MiB.
+      (
+          "non_parallel_8_chips",
+          "2x2",
+          list(range(16)),
+          "non-parallel",
+          16,
+          14680064.0,
+      ),
+  )
+  def test_reduce_scatter_parallel_vs_non_parallel_transfer_metrics(
+      self,
+      sharding_strategy,
+      group_ids,
+      expected_group_type,
+      expected_rank,
+      expected_bytes,
+  ):
+    """Verify ReduceScatterBenchmark computes S*P/R per device with S = R*C."""
+    config = collectives.ReduceScatterParams(
+        matrix_dim=1024,
+        dtype="float32",
+        mesh_shape="2x2",
+        sharding_strategy=sharding_strategy,
+    )
+    rs_bm = collectives.ReduceScatterBenchmark(
+        config=config,
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    rs_bm.setup()
+    self.assertEqual(rs_bm.hardware_spec.devices_per_chip, 2)
+    if group_ids is not None:
+      # Larger TPU7x replica group than the 4 CPU devices can form.
+      rs_bm._get_first_replica_group_devices = lambda: [  # pylint: disable=protected-access
+          _MockTpuDevice(id=i, core_on_chip=i % 2) for i in group_ids
+      ]
+      rs_bm._get_num_sharded_devices = (  # pylint: disable=protected-access
+          lambda *args, **kwargs: len(group_ids)
+      )
+
+    metadata = rs_bm.get_workload_metadata()
+    self.assertEqual(metadata["replica_group_type"], expected_group_type)
+    self.assertEqual(metadata["replica_group_rank"], expected_rank)
+    self.assertAlmostEqual(metadata["shard_size_mib"], float(expected_rank))
+    self.assertAlmostEqual(
+        metadata["transfer_size_per_chip_mib"] * 1024 * 1024,
+        expected_bytes,
+        places=1,
+    )
+
+    metrics = rs_bm.calculate_metrics([1.0])
+    expected_bw_gb_s = expected_bytes / 1e6  # bytes / 1 ms -> GB/s
+    self.assertAlmostEqual(
+        metrics["wall_clock_bandwidth_per_chip_gb_s"],
+        expected_bw_gb_s,
+        places=4,
     )
 
   def _make_all_to_all_ici_benchmark(
