@@ -671,12 +671,14 @@ class WindowedRunExecutor(BaseRunExecutor, abc.ABC):
     """Extends the base trace-reduction options with TPU FW thermal/power events."""
     options = super()._get_profiler_options()
     options.host_tracer_level = 0
+    # Leave `tpu_power_trace_level` unset (defaults to 0): `throttle_profiler`
+    # reads only firmware counters, while hardware power traces emit high-rate
+    # cycle-skipping events that bloat traces and can stall profiler teardown.
     options.advanced_configuration = {
         **options.advanced_configuration,
         "tpu_e2e_enable_fw_thermal_event": True,
         "tpu_e2e_enable_fw_power_level_event": True,
         "tpu_e2e_enable_fw_throttle_event": True,
-        "tpu_power_trace_level": 1,
     }
     return options
 

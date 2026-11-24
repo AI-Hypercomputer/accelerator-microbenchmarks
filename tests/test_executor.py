@@ -822,7 +822,7 @@ class SoakingBenchmarkTest(absltest.TestCase):
     self.assertTrue(
         opts.advanced_configuration["tpu_e2e_enable_fw_throttle_event"]
     )
-    self.assertEqual(opts.advanced_configuration["tpu_power_trace_level"], 1)
+    self.assertNotIn("tpu_power_trace_level", opts.advanced_configuration)
     self.assertFalse(opts.advanced_configuration["tpu_perf_counters"])
 
   @mock.patch("jax.profiler.trace")

@@ -168,7 +168,6 @@ PEAK_TEMP_C_PRE_SOAKING = f"{PEAK_TEMP_C}_pre_soaking"
 
 PSTATE_REQUESTED = "pstate_requested"
 LIBTPU_DVFS_P_STATE_FLAG = "--xla_tpu_dvfs_p_state"
-TPU_POWER_TRACE_LEVEL = 0
 
 THERMAL_PER_DEVICE = "thermal_per_device"
 THERMAL_PER_DEVICE_PRE_SOAKING = "thermal_per_device_pre_soaking"

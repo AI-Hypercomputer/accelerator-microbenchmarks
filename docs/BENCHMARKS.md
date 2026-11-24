@@ -161,10 +161,27 @@ only.
 | `*_pre_soaking_p50_ms`, `*_post_soaking_p50_ms`, `*_slowdown_ratio` | Pre- vs. post-soak latency and slowdown ratio across XProf and Wall-Clock timing domains. |
 | `*_pre_soaking_tflops_per_device`, `*_post_soaking_tflops_per_device` | Pre- vs. post-soak per-device throughput (`TFLOPS`). |
 | `hbm_peak_temp_c`, `peak_temp_c`, `hbm_peak_temp_c_pre_soaking`, `peak_temp_c_pre_soaking`, `peak_temp_source` | Post-soak and pre-soak peak temperatures (°C) and sensor source. |
-| `hbm_throttle_time_pct`, `vdd_core_throttle_time_pct` | Percentage of post-soak window time where throttling was active. |
-| `hbm_throttle_mean_pct`, `vdd_core_throttle_mean_pct` | Time-weighted mean throttle percentage during the post-soak window. |
+| `hbm_throttle_time_pct`, `vdd_core_throttle_time_pct` | Percentage of the post-soak window where the firmware throttle counter is above zero (active duration, not throttling magnitude; host-level max across devices). |
+| `hbm_throttle_mean_pct`, `vdd_core_throttle_mean_pct` | Time-weighted mean throttle percentage during the post-soak window (throttling magnitude; host-level max across devices). |
 | `vdd_core_power_mean_w`, `hbm_power_mean_w`, `total_power_mean_w` | Time-weighted mean power level 1 meter readings (W). |
 | `pstate_min`, `pstate_max`, `pstate_changes`, `pstate_requested` | Observed and requested DVFS P-state statistics. |
+
+**Interpreting Results:**
+
+- **Focus on performance and thermal metrics first**: Use
+    `*_post_soaking_tflops_per_device` and `*_slowdown_ratio` to evaluate actual
+    compute impact, alongside `hbm_throttle_*` and peak temperatures
+    (`hbm_peak_temp_c`, `peak_temp_c`) for thermal anomalies.
+- **Do not treat `vdd_core_throttle_time_pct > 0` alone as performance
+    throttling**: Because `*_throttle_time_pct` measures only how much of the
+    window the firmware counter stayed above zero, light chip-level power
+    management under sustained load can produce a high `time_pct` while
+    `vdd_core_throttle_mean_pct` remains low and throughput matches healthy
+    peers.
+- **Cluster health checks and pass/fail thresholds**: TPUMS reports raw
+    microbenchmark measurements without pass/fail verdicts. For automated
+    cluster health checks with curated pass/fail thresholds, use
+    [Cluster Health Scanner (CHS)](https://github.com/GoogleCloudPlatform/cluster-health-scanner).
 
 **Example Config (`tpums benchmark run-config`):**
 [`configs/sample_configs/gemm_throttling.yaml`](../configs/sample_configs/gemm_throttling.yaml)
