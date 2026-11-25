@@ -10,6 +10,7 @@ from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import dtypes
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
+from accelerator_microbenchmarks.kernels import quantized_matmul
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -717,7 +718,7 @@ class QuantScaling(constants.ParamEnum):
 
   Attributes:
     DYNAMIC: Scales are computed on the fly from the absolute maximum of each
-      row or column (`scale = amax / Q_MAX`).
+      row, column, or sub-channel block (`scale = amax / Q_MAX`).
     STATIC: Uses a fixed, compile-time clip bound `0.5 * Q_MAX` (`scale = 0.5`)
       with no `amax` reduction. A non-unit (`!= 1.0`) power-of-2 scale prevents
       XLA from folding away the scale/dequantize multiplications as identity
@@ -825,9 +826,56 @@ class QuantizedGemmParams(MatmulShapeParams):
       default=False,
       metadata={
           "help": (
-              "If True, multiply the accumulator by the row and column"
-              " dequantization scales before casting to out_dtype."
+              "If True, apply LHS and RHS dequantization scales: rescaling the"
+              " final accumulator per channel when block_size == 0, or"
+              " rescaling each sub-channel partial dot inside the K loop when"
+              " block_size > 0."
           )
+      },
+  )
+  block_size: int = dataclasses.field(
+      default=0,
+      metadata={
+          "min": 0,
+          "help": (
+              "Sub-channel quantization block size along K (multiple of 128,"
+              " e.g. 128 or 512). 0 uses per-channel (1 x K) quantization;"
+              " block_size > 0 dispatches to the fused Pallas"
+              " quantized_matmul kernel."
+          ),
+      },
+  )
+  block_m: int = dataclasses.field(
+      default=0,
+      metadata={
+          "min": 0,
+          "help": (
+              "Explicit Pallas M tile size override (0 = automatic hardware"
+              " VMEM sizing; requires block_size > 0 and must be set together"
+              " with block_k and block_n)."
+          ),
+      },
+  )
+  block_k: int = dataclasses.field(
+      default=0,
+      metadata={
+          "min": 0,
+          "help": (
+              "Explicit Pallas K tile size override (0 = automatic hardware"
+              " VMEM sizing; requires block_size > 0 and must be set together"
+              " with block_m and block_n)."
+          ),
+      },
+  )
+  block_n: int = dataclasses.field(
+      default=0,
+      metadata={
+          "min": 0,
+          "help": (
+              "Explicit Pallas N tile size override (0 = automatic hardware"
+              " VMEM sizing; requires block_size > 0 and must be set together"
+              " with block_m and block_k)."
+          ),
       },
   )
 
@@ -835,19 +883,60 @@ class QuantizedGemmParams(MatmulShapeParams):
     if "rhs_quant_dtype" not in self._explicit_fields:
       self.rhs_quant_dtype = self.quant_dtype
     super().__post_init__()
-    if self.rhs_quant_dtype != self.quant_dtype and not (
-        self.rhs_quant_dtype == dtypes.DType.INT4
-        and self.quant_dtype in (
-            dtypes.DType.FLOAT8_E4M3FN,
-            dtypes.DType.FLOAT8_E5M2,
+    quantized_matmul.validate_quant_dtype_pair(
+        dtypes.parse_dtype(self.quant_dtype),
+        dtypes.parse_dtype(self.rhs_quant_dtype),
+    )
+    explicit_blocks = (self.block_m, self.block_k, self.block_n)
+    if self.block_size > 0:
+      if self.prequantize_rhs:
+        raise ValueError(
+            "prequantize_rhs=True is not supported with block_size."
         )
-    ):
-      raise ValueError(
-          "rhs_quant_dtype must match quant_dtype or be 'int4' paired with an"
-          " FP8 quant_dtype ('float8_e4m3fn' or 'float8_e5m2'), got"
-          f" quant_dtype='{self.quant_dtype}',"
-          f" rhs_quant_dtype='{self.rhs_quant_dtype}'."
-      )
+      if self.block_size >= self.k:
+        raise ValueError(
+            "block_size must satisfy 0 < block_size < k, got"
+            f" block_size={self.block_size} for k={self.k}."
+        )
+      if self.k % self.block_size != 0:
+        raise ValueError(
+            f"k={self.k} must be divisible by block_size={self.block_size}."
+        )
+      if self.block_size % 128 != 0:
+        raise ValueError(
+            f"block_size={self.block_size} must be a multiple of 128."
+        )
+      if any(explicit_blocks) and not all(explicit_blocks):
+        raise ValueError(
+            "block_m, block_k, and block_n must all be specified together or"
+            " all left at 0."
+        )
+      if all(explicit_blocks):
+        if (
+            self.m % self.block_m != 0
+            or self.k % self.block_k != 0
+            or self.n % self.block_n != 0
+        ):
+          raise ValueError(
+              f"Tile sizes ({self.block_m}, {self.block_k}, {self.block_n})"
+              f" must divide matrix dimensions ({self.m}, {self.k}, {self.n})."
+          )
+        if self.block_k % self.block_size != 0:
+          raise ValueError(
+              f"block_k={self.block_k} must be divisible by"
+              f" block_size={self.block_size}."
+          )
+        if self.block_m < self.m and self.block_m % 8 != 0:
+          raise ValueError(
+              f"block_m={self.block_m} (< m={self.m}) must be a multiple of 8."
+          )
+        if self.block_n < self.n and self.block_n % 128 != 0:
+          raise ValueError(
+              f"block_n={self.block_n} (< n={self.n}) must be a multiple of"
+              " 128."
+          )
+    elif any(explicit_blocks):
+      raise ValueError("block_m, block_k, and block_n require block_size > 0.")
 
   def with_generation_defaults(
       self, param_defaults: dict[str, Any]
@@ -868,7 +957,7 @@ class QuantizedGemmParams(MatmulShapeParams):
 
 @registry.benchmark_registry.register("gemm_quantized", is_experimental=True)
 class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
-  """[EXPERIMENTAL] GEMM with per-channel quantization of A and B."""
+  """[EXPERIMENTAL] GEMM with per-channel or sub-channel quantization."""
 
   Config = QuantizedGemmParams  # pylint: disable=invalid-name
   requires_ici: bool = False
@@ -880,6 +969,7 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
       ("m", report.format_str),
       ("k", report.format_str),
       ("n", report.format_str),
+      ("block_size", report.format_str),
       ("prequantize_rhs", report.format_str),
       ("scaling", report.format_str),
       ("dequantize", report.format_str),
@@ -894,6 +984,37 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
     """Returns the LHS quantized dtype, which determines the MXU peak TFLOPS."""
     return str(self.config.quant_dtype)
 
+  def _resolve_pallas_blocks(self) -> tuple[int, int, int]:
+    """Resolves and validates `(block_m, block_k, block_n)` for Pallas mode."""
+    cfg = self.config
+    if cfg.block_size <= 0:
+      raise ValueError("Pallas blocks require block_size > 0.")
+    in_dtype = dtypes.parse_dtype(cfg.in_dtype)
+    out_dtype = dtypes.parse_dtype(cfg.out_dtype)
+    if cfg.block_m and cfg.block_k and cfg.block_n:
+      bm, bk, bn = cfg.block_m, cfg.block_k, cfg.block_n
+    else:
+      bm, bk, bn = quantized_matmul.default_quantized_matmul_blocks(
+          cfg.m,
+          cfg.k,
+          cfg.n,
+          sc_size=cfg.block_size,
+          in_dtype=in_dtype,
+          out_dtype=out_dtype,
+      )
+    quantized_matmul.validate_quantized_matmul_blocks(
+        cfg.m,
+        cfg.k,
+        cfg.n,
+        sc_size=cfg.block_size,
+        block_m=bm,
+        block_k=bk,
+        block_n=bn,
+        in_dtype=in_dtype,
+        out_dtype=out_dtype,
+    )
+    return bm, bk, bn
+
   def setup(self):
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
@@ -901,6 +1022,40 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
     quant_dtype = dtypes.parse_dtype(cfg.quant_dtype)
     rhs_quant_dtype = dtypes.parse_dtype(cfg.rhs_quant_dtype)
     out_dtype = dtypes.parse_dtype(cfg.out_dtype)
+
+    if cfg.block_size > 0:
+      bm, bk, bn = self._resolve_pallas_blocks()
+      sc_size = cfg.block_size
+      is_dynamic = cfg.scaling == QuantScaling.DYNAMIC
+
+      def per_device_pallas_fn(a, b):
+        with jax.named_scope(constants.MARKER):
+          return quantized_matmul.quantized_matmul(
+              a,
+              b,
+              sc_size=sc_size,
+              block_m=bm,
+              block_k=bk,
+              block_n=bn,
+              quant_dtype=quant_dtype,
+              rhs_quant_dtype=rhs_quant_dtype,
+              out_dtype=out_dtype,
+              dynamic=is_dynamic,
+              dequantize=cfg.dequantize,
+          )
+
+      replicated = jax.sharding.PartitionSpec(None, None)
+      self._jit_fn = jax.jit(
+          jax.shard_map(
+              per_device_pallas_fn,
+              mesh=self.mesh,
+              in_specs=(replicated, replicated),
+              out_specs=replicated,
+              check_vma=False,
+          )
+      )
+      return
+
     both_int = jnp.issubdtype(quant_dtype, jnp.integer) and jnp.issubdtype(
         rhs_quant_dtype, jnp.integer
     )
@@ -957,11 +1112,24 @@ class QuantizedGemmBenchmark(BaseGemmBenchmark[QuantizedGemmParams]):
         f"m_{cfg.m}_k_{cfg.k}_n_{cfg.n}_"
         f"{cfg.in_dtype}_to_{quant_str}_{cfg.scaling}_out_{cfg.out_dtype}"
     )
+    if cfg.block_size > 0:
+      run_id += f"_b{cfg.block_size}"
+      if cfg.block_m > 0:
+        run_id += f"_bm{cfg.block_m}_bk{cfg.block_k}_bn{cfg.block_n}"
     if cfg.dequantize:
       run_id += "_dequant"
     if cfg.prequantize_rhs:
       run_id += "_weight_offline"
     return run_id
+
+  def get_workload_metadata(self) -> dict[str, Any]:
+    metadata = super().get_workload_metadata()
+    if self.config.block_size > 0:
+      bm, bk, bn = self._resolve_pallas_blocks()
+      metadata["block_m"] = bm
+      metadata["block_k"] = bk
+      metadata["block_n"] = bn
+    return metadata
 
   def generate_inputs(self) -> tuple[Any, ...]:
     cfg = self.config

@@ -287,17 +287,23 @@ run untraced `(idle_s -> window)` pulses until `>= num_cycles - 2` cycles and
 <summary><strong>2.1.4 Quantized Matrix Multiplication (<code>gemm_quantized</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
 <a id="214-quantized-matrix-multiplication-gemm_quantized-experimental"></a>
 
-Per-channel quantized matrix multiplication replicated on each device:
+Per-channel or sub-channel (`1 × block_size`) quantized matrix multiplication
+replicated on each device:
 
-- **Timed Scope**: Quantizes `A[M, K]` rowwise to `quant_dtype` and (when
-    `prequantize_rhs=False`) `B[K, N]` columnwise to `rhs_quant_dtype` in
-    `float32` (including mixed-precision `FP8 × INT4` when
-    `rhs_quant_dtype="int4"`), or reads offline pre-quantized `B_q` when
-    `prequantize_rhs=True`; runs `jax.lax.dot_general` (`int32` accumulator for
-    `int8`, `float32` when `A` is FP8), and optionally dequantizes in `float32`
-    (`acc * (sf_a * sf_b)`) before casting to `out_dtype`.
+- **Timed Scope**: When `block_size == 0` (per-channel), quantizes `A[M, K]`
+    rowwise to `quant_dtype` and (when `prequantize_rhs=False`) `B[K, N]`
+    columnwise to `rhs_quant_dtype` in `float32` (including mixed-precision
+    `FP8 × INT4` when `rhs_quant_dtype="int4"`), or reads offline pre-quantized
+    `B_q` when `prequantize_rhs=True`; runs `jax.lax.dot_general` (`int32`
+    accumulator for `int8`, `float32` when `A` is FP8), and optionally
+    dequantizes in `float32` (`acc * (sf_a * sf_b)`) before casting to
+    `out_dtype`. When `block_size > 0` (sub-channel, `prequantize_rhs=False`),
+    dispatches to the fused Pallas `quantized_matmul` kernel so sub-channel
+    quantization, MXU dots, in-loop `(dot * sf_a) * sf_b` rescaling, and
+    `float32` accumulation stay in VMEM without materializing 3D reshapes or
+    quantized intermediates in HBM.
 - **FLOPs & Traffic**: `total_flops = 2 × M × N × K` (in-scope quant/dequant
-    cost is reflected in latency only); 1-pass HBM bytes =
+    cost is reflected in latency only); algorithmic HBM bytes =
     `M × K × in_bytes + K × N × rhs_bytes + M × N × out_bytes` (`rhs_bytes` is
     `rhs_quant_bytes` when `prequantize_rhs=True`, else `in_bytes`).
 - **Platform Note**: On `tpu7x`, FP8 uses the native FP8 MXU while `int8` runs
@@ -318,15 +324,21 @@ Per-channel quantized matrix multiplication replicated on each device:
 | `rhs_quant_dtype` | `str` | `` `quant_dtype` `` | Quantized RHS (`B`) operand dtype. Defaults to `quant_dtype`; also supports `"int4"` when `quant_dtype` is `float8_e4m3fn` or `float8_e5m2` (`W4A8`). |
 | `out_dtype` | `str` | `"bfloat16"` | Output tensor dtype (`"bfloat16"` or `"float32"`). |
 | `prequantize_rhs` | `bool` | `False` | When `True` (weight-offline), pre-quantizes `B` to `rhs_quant_dtype` once before the timed loop and quantizes only `A` on the fly; when `False`, quantizes both `A` and `B` inside the timed step. |
-| `scaling` | `str` | `"dynamic"` | `"dynamic"` (per-row/column `amax` on the fly, `scale = max(amax, 1e-7) / Q_MAX`) or `"static"` (compile-time clip `0.5 * Q_MAX`, `scale = 0.5`). |
-| `dequantize` | `bool` | `False` | Multiply accumulator in `float32` by `sf_a * sf_b` before casting to `out_dtype`. |
+| `block_size` | `int` | `0` | Sub-channel quantization block size along `K` (`0 < block_size < k`, multiple of `128` dividing `k`, e.g., `128` or `512`). `0` uses per-channel (`1 × K`) quantization. Requires `prequantize_rhs=False`. |
+| `block_m` | `int` | `0` | Explicit Pallas `M` tile size override (`0` = automatic hardware VMEM sizing; requires `block_size > 0` and must be set together with `block_k` and `block_n`). |
+| `block_k` | `int` | `0` | Explicit Pallas `K` tile size override (`0` = automatic hardware VMEM sizing; requires `block_size > 0` and must be set together with `block_m` and `block_n`). |
+| `block_n` | `int` | `0` | Explicit Pallas `N` tile size override (`0` = automatic hardware VMEM sizing; requires `block_size > 0` and must be set together with `block_m` and `block_k`). |
+| `scaling` | `str` | `"dynamic"` | `"dynamic"` (per-row/column/sub-channel `amax` on the fly, `scale = max(amax, 1e-7) / Q_MAX`) or `"static"` (compile-time clip `0.5 * Q_MAX`, `scale = 0.5`). |
+| `dequantize` | `bool` | `False` | When `True`, apply LHS and RHS dequantization scales: rescaling the final accumulator per channel when `block_size == 0`, or rescaling each sub-channel partial dot inside the `K` loop when `block_size > 0`. |
 | `seed` | `int` | `0` | PRNG seed (`>= 0`) for initializing input tensors in HBM. |
 
 **Reported Metrics:** Same compute metric set as [`gemm`](#21-matrix-multiplication-gemm)
 (`*_compute_roofline_efficiency_pct` compares against
 `roofline_tflops_limit_per_device = min(peak_tflops, intensity × peak_hbm_bw /
 1000)` with `peak_tflops` keyed by `quant_dtype`), plus `quant_dtype`,
-`rhs_quant_dtype`, `prequantize_rhs`, `scaling`, and `dequantize`.
+`rhs_quant_dtype`, `block_size` (and `block_m`, `block_k`, `block_n` in
+workload metadata when `block_size > 0`), `prequantize_rhs`, `scaling`, and
+`dequantize`.
 
 **Example Config (`tpums benchmark run-config`):**
 [`configs/sample_configs/gemm_quantized.yaml`](../configs/sample_configs/gemm_quantized.yaml)

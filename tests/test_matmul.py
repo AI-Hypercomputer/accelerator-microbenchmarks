@@ -1,17 +1,22 @@
 """Unit tests for matlmul.py."""
 
+import argparse
+import functools
 from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from accelerator_microbenchmarks import cli
 from accelerator_microbenchmarks.benchmarks import matmul
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import platform
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
+from accelerator_microbenchmarks.kernels import quantized_matmul
 from accelerator_microbenchmarks.tests import test_report_utils
 import jax
+from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -744,6 +749,16 @@ class QuantizedGemmBenchmarkTest(parameterized.TestCase):
     )
     self._platform_patcher.start()
     self.addCleanup(self._platform_patcher.stop)
+    self.enter_context(
+        mock.patch.object(
+            pltpu,
+            "get_tpu_info",
+            autospec=True,
+            return_value=pltpu.get_tpu_info_for_chip(
+                pltpu.ChipVersion.TPU_7X, 1
+            ),
+        )
+    )
     self.mock_mesh = jax.sharding.Mesh(
         np.array(jax.devices()), axis_names=("device",)
     )
@@ -1114,7 +1129,237 @@ class QuantizedGemmBenchmarkTest(parameterized.TestCase):
   def test_schema_coverage(self):
     """Tests that benchmark output matches the report schema."""
     self._setup_benchmark()
-    test_report_utils.assert_schema_matches_output(self, self.bm)
+    test_report_utils.assert_schema_matches_output(
+        self, self.bm, ignored_keys={"block_m", "block_k", "block_n"}
+    )
+
+  def test_schema_coverage_blockwise(self):
+    """Tests blockwise report schema coverage and block_m/k/n metadata."""
+    self._setup_benchmark(m=128, k=512, n=256, block_size=128)
+    meta = self.bm.get_workload_metadata()
+    for key in ("block_m", "block_k", "block_n"):
+      self.assertIn(key, meta)
+      self.assertGreater(meta[key], 0)
+    test_report_utils.assert_schema_matches_output(
+        self, self.bm, ignored_keys={"block_m", "block_k", "block_n"}
+    )
+
+  @parameterized.named_parameters(
+      (
+          "block_size_not_multiple_of_128",
+          dict(m=128, k=512, n=256, block_size=64),
+          "multiple of 128",
+      ),
+      (
+          "non_dividing_block_m",
+          dict(
+              m=128,
+              k=512,
+              n=256,
+              block_size=128,
+              block_m=96,
+              block_k=256,
+              block_n=128,
+          ),
+          "must divide matrix dimensions",
+      ),
+      (
+          "non_dividing_block_k",
+          dict(
+              m=128,
+              k=512,
+              n=256,
+              block_size=128,
+              block_m=64,
+              block_k=384,
+              block_n=128,
+          ),
+          "must divide matrix dimensions",
+      ),
+      (
+          "non_dividing_block_n",
+          dict(
+              m=128,
+              k=512,
+              n=256,
+              block_size=128,
+              block_m=64,
+              block_k=256,
+              block_n=192,
+          ),
+          "must divide matrix dimensions",
+      ),
+      (
+          "block_k_not_divisible_by_block_size",
+          dict(
+              m=128,
+              k=512,
+              n=256,
+              block_size=256,
+              block_m=64,
+              block_k=128,
+              block_n=128,
+          ),
+          "divisible by block_size",
+      ),
+      (
+          "unaligned_block_m",
+          dict(
+              m=128,
+              k=512,
+              n=256,
+              block_size=128,
+              block_m=4,
+              block_k=256,
+              block_n=128,
+          ),
+          "multiple of 8",
+      ),
+      (
+          "unaligned_block_n",
+          dict(
+              m=128,
+              k=512,
+              n=256,
+              block_size=128,
+              block_m=64,
+              block_k=256,
+              block_n=64,
+          ),
+          "multiple of 128",
+      ),
+  )
+  def test_blockwise_params_fail_fast_validation(self, params, err_regex):
+    """Verifies fail-fast hardware-independent validation in __post_init__."""
+    with self.assertRaisesRegex(ValueError, err_regex):
+      matmul.QuantizedGemmParams(**params)
+
+  def test_blockwise_pallas_wiring_and_explicit_blocks(self):
+    """Tests sub-channel Pallas dispatch, metadata, and numerical parity."""
+    with mock.patch.object(
+        quantized_matmul,
+        "quantized_matmul",
+        functools.partial(quantized_matmul.quantized_matmul, interpret=True),
+    ):
+      self._setup_benchmark(
+          m=128,
+          k=512,
+          n=256,
+          block_size=128,
+          rhs_quant_dtype="int4",
+          dequantize=True,
+      )
+      expected_default_id = (
+          "m_128_k_512_n_256_bfloat16_to_float8_e4m3fn_rhs_int4_dynamic"
+          "_out_bfloat16_b128_dequant"
+      )
+      self.assertEqual(self.bm.get_run_identifier(), expected_default_id)
+      a_def, b_def = self.bm.generate_inputs()
+      out_def = self.bm.run_op(a_def, b_def)
+
+      self._setup_benchmark(
+          m=128,
+          k=512,
+          n=256,
+          block_size=128,
+          block_m=64,
+          block_k=256,
+          block_n=128,
+          rhs_quant_dtype="int4",
+          dequantize=True,
+      )
+      expected_explicit_id = (
+          "m_128_k_512_n_256_bfloat16_to_float8_e4m3fn_rhs_int4_dynamic"
+          "_out_bfloat16_b128_bm64_bk256_bn128_dequant"
+      )
+      self.assertEqual(self.bm.get_run_identifier(), expected_explicit_id)
+      meta = self.bm.get_workload_metadata()
+      self.assertEqual(meta["block_m"], 64)
+      self.assertEqual(meta["block_k"], 256)
+      self.assertEqual(meta["block_n"], 128)
+      a, b = self.bm.generate_inputs()
+      out = self.bm.run_op(a, b)
+      self.assertEqual(out.shape, (128, 256))
+      self.assertEqual(out.dtype, jnp.bfloat16)
+      np.testing.assert_allclose(
+          np.asarray(out, dtype=np.float32),
+          np.asarray(out_def, dtype=np.float32),
+          rtol=1e-2,
+          atol=1e-3,
+      )
+
+  def test_blockwise_param_validation_and_cli_parsing(self):
+    """Tests int=0 defaults, CLI flag parsing, and invalid blockwise errors."""
+    default_cfg = matmul.QuantizedGemmParams(m=128, k=512, n=256)
+    self.assertEqual(default_cfg.block_size, 0)
+    self.assertEqual(
+        (default_cfg.block_m, default_cfg.block_k, default_cfg.block_n),
+        (0, 0, 0),
+    )
+
+    parser = argparse.ArgumentParser()
+    cli.add_dataclass_arguments(parser, matmul.QuantizedGemmParams)
+    parsed = parser.parse_args([
+        "--m",
+        "128",
+        "--k",
+        "512",
+        "--n",
+        "256",
+        "--block_size",
+        "128",
+        "--block_m",
+        "64",
+        "--block_k",
+        "256",
+        "--block_n",
+        "128",
+    ])
+    cli_configs = cli.parse_cli_configs(matmul.QuantizedGemmParams, parsed)
+    self.assertLen(cli_configs, 1)
+    cli_cfg = cli_configs[0]
+    self.assertIsInstance(cli_cfg, matmul.QuantizedGemmParams)
+    self.assertEqual(cli_cfg.block_size, 128)
+    self.assertEqual(
+        (cli_cfg.block_m, cli_cfg.block_k, cli_cfg.block_n), (64, 256, 128)
+    )
+
+    with self.assertRaisesRegex(ValueError, "0 < block_size < k"):
+      matmul.QuantizedGemmParams(m=128, k=512, n=256, block_size=512)
+    with self.assertRaisesRegex(ValueError, "not supported with block_size"):
+      matmul.QuantizedGemmParams(
+          m=128, k=512, n=256, block_size=128, prequantize_rhs=True
+      )
+    with self.assertRaisesRegex(ValueError, "divisible by block_size"):
+      matmul.QuantizedGemmParams(m=128, k=512, n=256, block_size=100)
+    with self.assertRaisesRegex(ValueError, "must be an integer >= 0"):
+      matmul.QuantizedGemmParams(m=128, k=512, n=256, **{"block_size": True})
+    with self.assertRaisesRegex(ValueError, "must be an integer >= 0"):
+      matmul.QuantizedGemmParams(m=128, k=512, n=256, **{"block_size": 128.0})
+    with self.assertRaisesRegex(ValueError, "must be an integer >= 0"):
+      matmul.QuantizedGemmParams(m=128, k=512, n=256, **{"block_size": None})
+    with self.assertRaisesRegex(ValueError, "block_size must be >= 0"):
+      matmul.QuantizedGemmParams(m=128, k=512, n=256, block_size=-128)
+    with self.assertRaisesRegex(ValueError, "block_m must be >= 0"):
+      matmul.QuantizedGemmParams(
+          m=128, k=512, n=256, block_size=128, block_m=-64
+      )
+    with self.assertRaisesRegex(ValueError, "require block_size > 0"):
+      matmul.QuantizedGemmParams(m=128, k=512, n=256, block_m=64)
+    with self.assertRaisesRegex(ValueError, "all be specified together"):
+      matmul.QuantizedGemmParams(
+          m=128, k=512, n=256, block_size=128, block_m=64
+      )
+    with self.assertRaisesRegex(ValueError, "exceeding usable budget"):
+      self._setup_benchmark(
+          m=4096,
+          k=4096,
+          n=4096,
+          block_size=128,
+          block_m=4096,
+          block_k=4096,
+          block_n=4096,
+      )
 
 
 if __name__ == "__main__":
