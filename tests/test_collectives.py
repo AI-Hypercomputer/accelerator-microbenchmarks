@@ -111,8 +111,9 @@ _HEAD_FIELD_SPEC: dict[str, tuple[object, dict[str, object]]] = {
         {
             "min": 1,
             "help": (
-                "Dimension size for sharded collective matrices. Actual matrix"
-                " size will be (matrix_dim, 8, 128)."
+                "Leading dimension of the replicated per-device input"
+                " (matrix_dim, 8, 128). Ops that split it across the replica"
+                " group floor it to a multiple of the group size."
             ),
         },
     ),
@@ -452,10 +453,16 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(bm._get_sharding_axes(), ("d_0",))
 
     (data_2x1,) = bm.generate_inputs()
-    self.assertEqual(data_2x1.shape, (2, 64, 256))
+    self.assertEqual(data_2x1.shape, (64, 8, 128))
 
+    # Each device keeps a (64 / 2, 8, 128) chunk of the sum of 2 replicas.
     out_2x1 = bm.run_op(data_2x1)
-    self.assertEqual(out_2x1.shape, (2, 64, 256))
+    self.assertEqual(out_2x1.shape, (64, 8, 128))
+    np.testing.assert_allclose(
+        np.asarray(out_2x1, np.float32),
+        2 * np.asarray(data_2x1, np.float32),
+        rtol=1e-2,
+    )
 
     # Case 2: sharding_strategy = 2x2 (d_0 and d_1)
     params_2x2 = {
@@ -473,10 +480,15 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertEqual(bm._get_sharding_axes(), ("d_0", "d_1"))
 
     (data_2x2,) = bm.generate_inputs()
-    self.assertEqual(data_2x2.shape, (4, 64, 256))
+    self.assertEqual(data_2x2.shape, (64, 8, 128))
 
     out_2x2 = bm.run_op(data_2x2)
-    self.assertEqual(out_2x2.shape, (4, 64, 256))
+    self.assertEqual(out_2x2.shape, (64, 8, 128))
+    np.testing.assert_allclose(
+        np.asarray(out_2x2, np.float32),
+        4 * np.asarray(data_2x2, np.float32),
+        rtol=1e-2,
+    )
 
   def test_all_to_all_with_sharding_strategy(self):
     # Case 1: 2D mesh (V6E_HARDWARE_SPEC)
@@ -813,31 +825,31 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
         metrics["wall_clock_bandwidth_per_chip_gb_s"], expected_bw, places=4
     )
 
-  # Per-device input S = R * C for shape (R, 1024, 256) in float32 = R MiB
-  # (where one chunk C = 1 MiB). Expected per-chip bytes are
-  # (S * P / R) * sending_devices_per_chip = C * P * sending_devices_per_chip.
+  # Per-device input S for shape (1024, 8, 128) in float32 = 4 MiB, the same
+  # for every R. Expected per-chip bytes are
+  # (S * P / R) * sending_devices_per_chip.
   @parameterized.named_parameters(
-      # R=2, P=1, 2 sending cores: 2 MiB.
-      ("mesh_parallel_2_chips", "2x1", None, "parallel", 2, 2097152.0),
+      # R=2, P=1, 2 sending cores: 4 MiB.
+      ("mesh_parallel_2_chips", "2x1", None, "parallel", 2, 4194304.0),
       # R=4, P=2, 1 sending core: 2 MiB.
       ("mesh_non_parallel_2_chips", "2x2", None, "non-parallel", 4, 2097152.0),
-      # R=8, P=7, 2 sending cores: 14 MiB.
+      # R=8, P=7, 2 sending cores: 7 MiB.
       (
           "parallel_8_chips",
           "2x2",
           [0, 2, 4, 6, 8, 10, 12, 14],
           "parallel",
           8,
-          14680064.0,
+          7340032.0,
       ),
-      # R=16, P=14, 1 sending core: 14 MiB.
+      # R=16, P=14, 1 sending core: 3.5 MiB.
       (
           "non_parallel_8_chips",
           "2x2",
           list(range(16)),
           "non-parallel",
           16,
-          14680064.0,
+          3670016.0,
       ),
   )
   def test_reduce_scatter_parallel_vs_non_parallel_transfer_metrics(
@@ -848,7 +860,7 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       expected_rank,
       expected_bytes,
   ):
-    """Verify ReduceScatterBenchmark computes S*P/R per device with S = R*C."""
+    """Verify ReduceScatterBenchmark computes S*P/R per device with S = input."""
     config = collectives.ReduceScatterParams(
         matrix_dim=1024,
         dtype="float32",
@@ -866,14 +878,11 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       rs_bm._get_first_replica_group_devices = lambda: [  # pylint: disable=protected-access
           _MockTpuDevice(id=i, core_on_chip=i % 2) for i in group_ids
       ]
-      rs_bm._get_num_sharded_devices = (  # pylint: disable=protected-access
-          lambda *args, **kwargs: len(group_ids)
-      )
 
     metadata = rs_bm.get_workload_metadata()
     self.assertEqual(metadata["replica_group_type"], expected_group_type)
     self.assertEqual(metadata["replica_group_rank"], expected_rank)
-    self.assertAlmostEqual(metadata["shard_size_mib"], float(expected_rank))
+    self.assertAlmostEqual(metadata["shard_size_mib"], 4.0)
     self.assertAlmostEqual(
         metadata["transfer_size_per_chip_mib"] * 1024 * 1024,
         expected_bytes,
@@ -1481,10 +1490,14 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     self.assertAlmostEqual(metadata["shard_size_mib"], expected_shard_mib)
     self.assertEqual(metadata["requested_matrix_dim"], 64)
 
-  def test_all_to_all_ici_floors_matrix_dim_and_logs_warning(self):
-    """Verify ICI AllToAllBenchmark floors indivisible matrix_dim with warning."""
-    bm = collectives.AllToAllBenchmark(
-        config=collectives.IciCollectivesParams(matrix_dim=65, dtype="float32"),
+  @parameterized.named_parameters(
+      ("all_to_all", collectives.AllToAllBenchmark),
+      ("reduce_scatter", collectives.ReduceScatterBenchmark),
+  )
+  def test_tiled_collective_floors_matrix_dim_and_logs_warning(self, bm_cls):
+    """Verify tiled ICI collectives floor indivisible matrix_dim with warning."""
+    bm = bm_cls(
+        config=bm_cls.Config(matrix_dim=65, dtype="float32"),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
         mesh=self.mock_mesh,
     )
@@ -1492,33 +1505,90 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
       bm.setup()
 
     self.assertIn(
-        "Flooring all-to-all matrix_dim from 65 to 64 (largest multiple of"
-        " group size 4).",
+        f"{bm_cls.__name__}: flooring matrix_dim from 65 to 64 (largest"
+        " multiple of replica group size 4).",
         "\n".join(cm.output),
     )
     self.assertEqual(bm.config.matrix_dim, 64)
+    self.assertEqual(bm.get_run_identifier(), "dim_64")
+    (data,) = bm.generate_inputs()
+    self.assertEqual(data.shape, (64, 8, 128))
     self.assertEqual(bm.get_workload_metadata()["requested_matrix_dim"], 65)
 
-  def test_all_to_all_matrix_dim_smaller_than_group_size_raises_error(self):
-    """Verify ICI and DCN all-to-all reject matrix_dim < group_size."""
-    ici_bm = collectives.AllToAllBenchmark(
-        config=collectives.IciCollectivesParams(matrix_dim=3, dtype="float32"),
+  @parameterized.named_parameters(
+      ("all_gather", collectives.AllGatherBenchmark),
+      ("all_reduce", collectives.AllReduceBenchmark),
+  )
+  def test_non_tiled_collective_keeps_matrix_dim(self, bm_cls):
+    """Verify non-tiled collectives keep matrix_dim and omit requested_matrix_dim."""
+    bm = bm_cls(
+        config=bm_cls.Config(matrix_dim=65, dtype="float32"),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    bm.setup()
+
+    self.assertEqual(bm.config.matrix_dim, 65)
+    (data,) = bm.generate_inputs()
+    self.assertEqual(data.shape, (65, 8, 128))
+    self.assertNotIn("requested_matrix_dim", bm.get_workload_metadata())
+
+  @parameterized.named_parameters(
+      ("all_to_all", collectives.AllToAllBenchmark),
+      ("reduce_scatter", collectives.ReduceScatterBenchmark),
+  )
+  def test_tiled_collective_reports_requested_matrix_dim_for_group_of_one(
+      self, bm_cls
+  ):
+    """Verify tiled collectives keep requested_matrix_dim when R = 1."""
+    bm = bm_cls(
+        config=bm_cls.Config(
+            matrix_dim=65,
+            dtype="float32",
+            mesh_shape="2x2",
+            sharding_strategy="1x1",
+        ),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+    )
+    bm.setup()
+
+    metadata = bm.get_workload_metadata()
+    self.assertEqual(metadata["replica_group_rank"], 1)
+    self.assertEqual(bm.config.matrix_dim, 65)
+    self.assertEqual(metadata["requested_matrix_dim"], 65)
+
+  @parameterized.named_parameters(
+      ("all_to_all", collectives.AllToAllBenchmark),
+      ("reduce_scatter", collectives.ReduceScatterBenchmark),
+  )
+  def test_tiled_collective_matrix_dim_smaller_than_group_size_raises_error(
+      self, bm_cls
+  ):
+    """Verify tiled ICI collectives reject matrix_dim < group size."""
+    bm = bm_cls(
+        config=bm_cls.Config(matrix_dim=3, dtype="float32"),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
         mesh=self.mock_mesh,
     )
     with self.assertRaisesRegex(
         ValueError,
-        r"matrix_dim \(3\) must be >= the all-to-all group size \(4\)",
+        rf"{bm_cls.__name__}: matrix_dim \(3\) must be >= the replica group"
+        r" size \(4\)",
     ):
-      ici_bm.setup()
+      bm.setup()
 
+  def test_dcn_all_to_all_matrix_dim_smaller_than_group_size_raises_error(
+      self,
+  ):
+    """Verify DCN all-to-all rejects matrix_dim < number of slices."""
     dcn_bm = collectives.DcnAllToAllBenchmark(
         config=collectives.DcnCollectivesParams(matrix_dim=4, dtype="float32"),
         hardware_spec=system.TPU7X_HARDWARE_SPEC,
     )
     with self.assertRaisesRegex(
         ValueError,
-        r"matrix_dim \(4\) must be >= the all-to-all group size \(5\)",
+        r"DcnAllToAllBenchmark: matrix_dim \(4\) must be >= the replica group"
+        r" size \(5\)",
     ):
       _setup_on_dcn_mesh(dcn_bm, num_slices=5)
 

@@ -5,7 +5,7 @@ import dataclasses
 import enum
 import logging
 import math
-from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
+from typing import Any, Callable, ClassVar, Generic, Optional, Sequence, TypeVar
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import dtypes
@@ -24,7 +24,6 @@ import numpy as np
 
 _BASE_N = 8
 _BASE_K = 128
-_REDUCE_SCATTER_K = 256
 
 
 # 1. Define the Primitive
@@ -122,8 +121,9 @@ class CollectivesParams(base.SingleDtypeBenchmarkParams):
       metadata={
           "min": 1,
           "help": (
-              "Dimension size for sharded collective matrices. Actual matrix"
-              " size will be (matrix_dim, 8, 128)."
+              "Leading dimension of the replicated per-device input"
+              " (matrix_dim, 8, 128). Ops that split it across the replica"
+              " group floor it to a multiple of the group size."
           ),
       },
   )
@@ -213,12 +213,16 @@ class BaseCollectiveBenchmark(
 ):
   """Base class for all collective communication benchmarks.
 
-  Holds the logic shared by every collective: input generation, run_op and
-  replica-group slicing of the mesh. A concrete benchmark combines an op with
-  a topology base, and the two split the remaining hooks:
+  Holds the logic shared by every collective: the setup lifecycle, input
+  generation, run_op and replica-group slicing of the mesh. Every collective
+  runs on a replicated `(matrix_dim, 8, 128)` per-device input, so
+  `matrix_dim` and `shard_size_mib` describe the per-device input for every
+  op. `setup()` runs `_build_mesh()`, then `_resolve_matrix_dim()`, then
+  `_setup_jit_fn()`. A concrete benchmark combines an op with a topology base,
+  and the two split the remaining hooks:
 
   Topology base (`IciCollectiveBenchmark` / `DcnCollectiveBenchmark`):
-    - `setup()`: builds `self.mesh`.
+    - `_build_mesh()`: builds `self.mesh`.
     - `_get_sharding_axes()`: mesh axes the collective runs over.
     - `get_total_bytes()`: per-device transfer size scaled to the reporting
       scope (per chip for ICI, per device for DCN).
@@ -227,11 +231,94 @@ class BaseCollectiveBenchmark(
   Op (`*OpMixin` or op class):
     - `_setup_jit_fn()`: the jitted collective.
     - `_get_transfer_size_bytes_per_device()`: topology-neutral bus bytes.
-    - `_get_shard_size_bytes()` and `_get_input_shape_and_sharding()`
-      (optional): input size and layout.
+    - `_SPLITS_MATRIX_DIM` (optional): True for ops that split input axis 0
+      across the replica group, so `matrix_dim` must be a multiple of its size.
+    - `_get_input_shape()` and `_get_input_sharding()` (optional): input
+      layout. `_get_shard_size_bytes()` follows the shape.
   """
 
   Config = CollectivesParams
+  # True for ops that split input axis 0 (`matrix_dim`) into one chunk per
+  # replica-group member (tiled all_to_all, tiled psum_scatter): `matrix_dim`
+  # is floored to a multiple of the group size and `requested_matrix_dim` is
+  # reported.
+  _SPLITS_MATRIX_DIM: ClassVar[bool] = False
+
+  def __init__(
+      self,
+      config: TCollectiveConfig,
+      hardware_spec: system.HardwareSpec,
+      mesh: Optional[jax.sharding.Mesh] = None,
+      xprof_config: Optional[base.XprofConfig] = None,
+  ):
+    super().__init__(
+        config=config,
+        hardware_spec=hardware_spec,
+        mesh=mesh,
+        xprof_config=xprof_config,
+    )
+    # setup() may floor config.matrix_dim; keep the requested value to report.
+    self._requested_matrix_dim: int = self.config.matrix_dim
+
+  def setup(self):
+    """Builds the mesh, resolves matrix_dim for the op, then builds the op."""
+    self._build_mesh()
+    self._resolve_matrix_dim()
+    self._setup_jit_fn()
+
+  def _build_mesh(self) -> None:
+    """Sets `self.mesh` and any topology state the sharding axes need."""
+    raise NotImplementedError("Subclasses must implement _build_mesh")
+
+  def _get_matrix_dim_split_count(self) -> int:
+    """Returns how many chunks `matrix_dim` is split into.
+
+    The replica-group size for ops that split `matrix_dim` (see
+    `_SPLITS_MATRIX_DIM`), otherwise 1 (not split).
+    """
+    if self._SPLITS_MATRIX_DIM:
+      return self._get_num_sharded_devices()
+    return 1
+
+  def _resolve_matrix_dim(self) -> None:
+    """Floors `config.matrix_dim` to a multiple of its split count.
+
+    Matches nccl-tests, which floors the per-rank count and uses
+    `nranks * base` as the buffer.
+
+    Raises:
+      ValueError: If the requested matrix_dim is smaller than the split count.
+    """
+    split_count = self._get_matrix_dim_split_count()
+    requested_dim = self._requested_matrix_dim
+    if requested_dim < split_count:
+      raise ValueError(
+          f"{type(self).__name__}: matrix_dim ({requested_dim}) must be >= the"
+          f" replica group size ({split_count}), since the op splits it into"
+          " one chunk per group member."
+      )
+    effective_dim = (requested_dim // split_count) * split_count
+    if effective_dim != requested_dim:
+      logging.warning(
+          "%s: flooring matrix_dim from %d to %d (largest multiple of replica"
+          " group size %d).",
+          type(self).__name__,
+          requested_dim,
+          effective_dim,
+          split_count,
+      )
+    if self.config.matrix_dim != effective_dim:
+      self.config = dataclasses.replace(self.config, matrix_dim=effective_dim)
+
+  def _get_matrix_dim_metadata(self) -> dict[str, Any]:
+    """Returns `requested_matrix_dim` for ops that split matrix_dim.
+
+    Keyed on the class, not the runtime group size, so the output columns of a
+    benchmark do not depend on the topology.
+    """
+    if not self._SPLITS_MATRIX_DIM:
+      return {}
+    return {"requested_matrix_dim": self._requested_matrix_dim}
 
   def get_run_identifier(self) -> str:
     return f"dim_{self.config.matrix_dim}"
@@ -271,28 +358,24 @@ class BaseCollectiveBenchmark(
     """
     return jax.named_scope(constants.MARKER)
 
-  def _get_input_shape_and_sharding(
-      self, num_devices: int, dim: int, sharding_axes
-  ) -> tuple[tuple[int, ...], jax.sharding.NamedSharding]:
-    # TODO(vvashishth): Verify shapes and sharding match before returning.
-    shape = (num_devices, dim, dim)
-    sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(sharding_axes, None, None)  # pyrefly: ignore[bad-argument-type]
+  def _get_input_shape(self) -> tuple[int, ...]:
+    """Returns the per-device input shape, `(matrix_dim, 8, 128)`."""
+    return (self.config.matrix_dim, _BASE_N, _BASE_K)
+
+  def _get_input_sharding(self) -> jax.sharding.NamedSharding:
+    """Returns the input sharding: replicated, a full input on every device."""
+    if self.mesh is None:
+      raise ValueError("Mesh not initialized.")
+    return jax.sharding.NamedSharding(
+        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
     )
-    return shape, sharding
 
   def generate_inputs(self) -> tuple[jnp.ndarray, ...]:
     if self.mesh is None:
       raise ValueError("Mesh not initialized.")
-    dim = self.config.matrix_dim
     dtype = dtypes.parse_dtype(self.config.dtype)
-
-    sharding_axes = self._get_sharding_axes()
-    num_sharded_devices = self._get_num_sharded_devices(sharding_axes)
-
-    shape, sharding = self._get_input_shape_and_sharding(
-        num_sharded_devices, dim, sharding_axes
-    )
+    shape = self._get_input_shape()
+    sharding = self._get_input_sharding()
 
     key = jax.random.PRNGKey(self.config.seed)
 
@@ -327,9 +410,9 @@ class BaseCollectiveBenchmark(
     return list(self.mesh.devices[indexer].flatten())
 
   def _get_shard_size_bytes(self) -> int:
-    """Returns the per-device input shard size in bytes."""
+    """Returns the per-device input size in bytes (S), from the input shape."""
     itemsize = jnp.dtype(dtypes.parse_dtype(self.config.dtype)).itemsize
-    return self.config.matrix_dim * _BASE_N * _BASE_K * itemsize
+    return math.prod(self._get_input_shape()) * itemsize
 
   def _get_transfer_size_bytes_per_device(
       self, rank: int, participating_ranks: int
@@ -392,7 +475,7 @@ class IciCollectiveBenchmark(
       )
     return mesh_utils.create_device_mesh(mesh_shape, devices=jax.devices())
 
-  def setup(self):
+  def _build_mesh(self) -> None:
     mesh_shape_str = self.config.mesh_shape
     if mesh_shape_str is not None:
       try:
@@ -411,8 +494,6 @@ class IciCollectiveBenchmark(
       raise ValueError("Mesh not initialized.")
 
     self.sharding_strategy = self.config.sharding_strategy
-
-    self._setup_jit_fn()
 
   def _get_sharding_axes(self):
     if self.mesh is None:
@@ -528,6 +609,7 @@ class IciCollectiveBenchmark(
         "transfer_size_per_chip_mib": self.get_total_bytes() / (1024 * 1024),
         "replica_group_type": info.group_type.value,
         "replica_group_rank": info.rank,
+        **self._get_matrix_dim_metadata(),
     }
 
   def calculate_throughput_metrics(
@@ -564,7 +646,7 @@ class DcnCollectiveBenchmark(
       ("xprof_bandwidth_per_host_gbps", report.format_2f),
   )
 
-  def setup(self):
+  def _build_mesh(self) -> None:
     devices = jax.devices()
     device_key = lambda d: (*d.coords, int(d.core_on_chip))
     slice_ids = sorted({platform.get_device_slice_index(d) for d in devices})
@@ -590,7 +672,6 @@ class DcnCollectiveBenchmark(
     self.mesh = jax.sharding.Mesh(
         np.array(slices, dtype=object), ("dcn", "ici")
     )
-    self._setup_jit_fn()
 
   def _get_sharding_axes(self):
     return "dcn"
@@ -623,6 +704,7 @@ class DcnCollectiveBenchmark(
         "shard_size_mib": self._get_shard_size_bytes() / (1024 * 1024),
         "transfer_size_per_device_mib": self.get_total_bytes() / (1024 * 1024),
         "replica_group_rank": self._get_replica_group_rank(),
+        **self._get_matrix_dim_metadata(),
     }
 
   def calculate_throughput_metrics(
@@ -642,12 +724,12 @@ class AllReduceOpMixin(
 ):
   """All-reduce op logic shared by any topology base.
 
-  Provides reduce_op validation, the run identifier, the replicated input,
-  the jitted all-reduce and its per-device transfer size. List it before the
-  topology base, whose config must include `AllReduceParamsMixin`. The
-  topology base builds `self.mesh` in `setup()`, returns its collective axes
-  from `_get_sharding_axes()` and scales the per-device transfer size to its
-  reporting scope in `get_total_bytes()`.
+  Provides reduce_op validation, the run identifier, the jitted all-reduce and
+  its per-device transfer size on the base class's replicated input. List it
+  before the topology base, whose config must include `AllReduceParamsMixin`.
+  The topology base builds `self.mesh` in `_build_mesh()`, returns its
+  collective axes from `_get_sharding_axes()` and scales the per-device
+  transfer size to its reporting scope in `get_total_bytes()`.
 
   `_setup_jit_fn()` wraps the op in the MARKER named scope and `zero_crop`
   directly instead of using `_op_scope()`, since `zero_crop` is ICI-only, so
@@ -677,15 +759,6 @@ class AllReduceOpMixin(
     dim = self.config.matrix_dim
     op = self._get_reduce_op()
     return f"dim_{dim}_op_{op}"
-
-  def _get_input_shape_and_sharding(
-      self, num_devices: int, dim: int, sharding_axes
-  ) -> tuple[tuple[int, ...], jax.sharding.NamedSharding]:
-    shape = (dim, _BASE_N, _BASE_K)
-    sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
-    )
-    return shape, sharding
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
@@ -804,15 +877,6 @@ class AllGatherBenchmark(IciCollectiveBenchmark[IciCollectivesParams]):
       )(x)
 
     self._jit_fn = all_gather_sharded
-
-  def _get_input_shape_and_sharding(
-      self, num_devices: int, dim: int, sharding_axes
-  ):
-    shape = (dim, _BASE_N, _BASE_K)
-    sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
-    )
-    return shape, sharding
 
   def _get_transfer_size_bytes_per_device(
       self, rank: int, participating_ranks: int
@@ -954,56 +1018,16 @@ class AllToAllOpMixin(
 ):
   """All-to-all op logic shared by any topology base.
 
-  Provides the replicated input, the jitted tiled all-to-all (scoped by the
-  topology's `_op_scope()`), `matrix_dim` flooring to a multiple of the
-  replica-group size (preserving the original value as `requested_matrix_dim`
-  in workload metadata) and the per-device transfer size: every rank splits its
-  local buffer into `rank` chunks along axis 0 and sends one chunk to each
-  peer reached over the measured link, i.e. `P/R` of the buffer (`(R - 1)/R`
-  on DCN). List it before the topology base.
+  Provides the jitted tiled all-to-all (scoped by the topology's
+  `_op_scope()`) on the base class's replicated input, requires `matrix_dim`
+  to be a multiple of the replica-group size (the base class floors it and
+  reports `requested_matrix_dim`) and the per-device transfer size: every rank
+  splits its local buffer into `rank` chunks along axis 0 and sends one chunk
+  to each peer reached over the measured link, i.e. `P/R` of the buffer
+  (`(R - 1)/R` on DCN). List it before the topology base.
   """
 
-  def __init__(
-      self,
-      config: TCollectiveConfig,
-      hardware_spec: system.HardwareSpec,
-      mesh: Optional[jax.sharding.Mesh] = None,
-      xprof_config: Optional[base.XprofConfig] = None,
-  ):
-    super().__init__(
-        config=config,
-        hardware_spec=hardware_spec,
-        mesh=mesh,
-        xprof_config=xprof_config,
-    )
-    self._requested_matrix_dim: int = self.config.matrix_dim
-
-  def setup(self):
-    super().setup()  # Builds the mesh; jax.jit is lazy, so nothing compiles.
-    group_size = self._get_num_sharded_devices()
-    requested_dim = self._requested_matrix_dim
-    if requested_dim < group_size:
-      raise ValueError(
-          f"matrix_dim ({requested_dim}) must be >= the"
-          f" all-to-all group size ({group_size}) for a tiled all_to_all."
-      )
-    effective_dim = (requested_dim // group_size) * group_size
-    if effective_dim != requested_dim:
-      logging.warning(
-          "Flooring all-to-all matrix_dim from %d to %d (largest multiple of"
-          " group size %d).",
-          requested_dim,
-          effective_dim,
-          group_size,
-      )
-    if self.config.matrix_dim != effective_dim:
-      self.config = dataclasses.replace(self.config, matrix_dim=effective_dim)
-
-  def get_workload_metadata(self) -> dict[str, Any]:
-    return {
-        **super().get_workload_metadata(),
-        "requested_matrix_dim": self._requested_matrix_dim,
-    }
+  _SPLITS_MATRIX_DIM = True
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
@@ -1029,15 +1053,6 @@ class AllToAllOpMixin(
       )(x)
 
     self._jit_fn = all_to_all_sharded
-
-  def _get_input_shape_and_sharding(
-      self, num_devices: int, dim: int, sharding_axes
-  ):
-    shape = (dim, _BASE_N, _BASE_K)
-    sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
-    )
-    return shape, sharding
 
   def _get_transfer_size_bytes_per_device(
       self, rank: int, participating_ranks: int
@@ -1136,7 +1151,8 @@ class DcnAllToAllBenchmark(
   chunks along axis 0 and exchanges one chunk with the device at the same ICI
   position in every other slice, so it sends `(num_slices - 1) / num_slices`
   of its buffer over DCN. When `matrix_dim` is not divisible by `num_slices`,
-  `setup()` floors it down to `(matrix_dim // num_slices) * num_slices`.
+  `setup()` floors it down to `(matrix_dim // num_slices) * num_slices` and
+  reports the original value as `requested_matrix_dim`.
   Per-host bandwidth sums all local devices, since each one sends its own data.
   """
 
@@ -1145,9 +1161,15 @@ class DcnAllToAllBenchmark(
 
 @registry.benchmark_registry.register("reduce_scatter", is_experimental=True)
 class ReduceScatterBenchmark(IciCollectiveBenchmark[ReduceScatterParams]):
-  """[EXPERIMENTAL] Benchmarks the latency and bandwidth of jax.lax.psum_scatter across devices."""
+  """[EXPERIMENTAL] Benchmarks the latency and bandwidth of jax.lax.psum_scatter across devices.
+
+  Each device reduces its replicated `(matrix_dim, 8, 128)` input across the
+  replica group and keeps one `(matrix_dim / R, 8, 128)` chunk of the result,
+  so `matrix_dim` must be a multiple of R (the base class floors it).
+  """
 
   Config = ReduceScatterParams
+  _SPLITS_MATRIX_DIM = True
 
   def _setup_jit_fn(self):
     sharding_axes = self._get_sharding_axes()
@@ -1171,25 +1193,6 @@ class ReduceScatterBenchmark(IciCollectiveBenchmark[ReduceScatterParams]):
       )(x)
 
     self._jit_fn = reduce_scatter_sharded
-
-  def _get_input_shape_and_sharding(
-      self, num_devices: int, dim: int, sharding_axes
-  ):
-    shape = (num_devices, dim, _REDUCE_SCATTER_K)
-    sharding = jax.sharding.NamedSharding(
-        self.mesh, jax.sharding.PartitionSpec(None, None, None)  # pyrefly: ignore[bad-argument-type]
-    )
-    return shape, sharding
-
-  def _get_shard_size_bytes(self) -> int:
-    """Returns the per-device input (R, matrix_dim, K) in bytes."""
-    itemsize = jnp.dtype(dtypes.parse_dtype(self.config.dtype)).itemsize
-    return (
-        self._get_num_sharded_devices()
-        * self.config.matrix_dim
-        * _REDUCE_SCATTER_K
-        * itemsize
-    )
 
   def _get_transfer_size_bytes_per_device(
       self, rank: int, participating_ranks: int

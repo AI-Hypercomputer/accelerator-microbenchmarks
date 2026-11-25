@@ -545,7 +545,7 @@ size `S = matrix_dim × 8 × 128 × dtype_bytes` (`shard_size_mib = S / 2^20`; f
 | `mesh_shape` | `Optional[str]` | `None` | All ICI Collectives | Logical mesh `'DxDyDz'` or `'DxDy'` (e.g., `"2x4x4"`). Defaults to a 1D mesh over all devices if `None`; an invalid shape logs a warning and falls back to the 1D mesh. |
 | `device_placement` | `str` | `"mesh_utils"` | All ICI Collectives | `"mesh_utils"` (topology-aware) or `"id_sorted"` (sorted by `device.id`). Ignored when `mesh_shape` is `None`. |
 | `sharding_strategy` | `Optional[str]` | `None` | All ICI Collectives | Active collective axis pattern matching `mesh_shape` dimensionality (axes `> 1` participate; defaults to all mesh axes if `None`). Ignored when `mesh_shape` is `None`. |
-| `matrix_dim` | `int` | `1024` | All ICI Collectives | Leading dimension of `(matrix_dim, 8, 128)`. `all_to_all` floors `matrix_dim` to a multiple of `R` (raises `ValueError` if `< R`) and reports the input as `requested_matrix_dim`. |
+| `matrix_dim` | `int` | `1024` | All ICI Collectives | Leading dimension of `(matrix_dim, 8, 128)`. `all_to_all` and `reduce_scatter` floor `matrix_dim` to a multiple of `R` (raise `ValueError` if `< R`) and report the input as `requested_matrix_dim`. |
 | `dtype` | `str` | `"bfloat16"` | All ICI Collectives | Element dtype (e.g., `bfloat16`, `float32`; `all_reduce` requires integer or floating). |
 | `reduce_op` | `str` | `"sum"` | `all_reduce` only | Reduction operator (`"sum"`, `"mean"`, `"max"`, `"min"`). |
 | `seed` | `int` | `0` | All ICI Collectives | PRNG seed for tensor initialization. |
@@ -577,7 +577,7 @@ and $$C$$ sending rings per chip ($$2$$ for `parallel` dual-device, else $$1$$;
         `mesh_shape` sizes on axes where `sharding_strategy > 1` (or all devices
         when `mesh_shape` is `None`).
     - `replica_group_type` (`"parallel"` or `"non-parallel"`) and
-        `requested_matrix_dim` (`all_to_all` only).
+        `requested_matrix_dim` (`all_to_all` and `reduce_scatter`).
 
 <details class="experimental" markdown="1">
 <summary><strong>2.5.1 Reduce-Scatter (<code>reduce_scatter</code>)</strong> <code>[EXPERIMENTAL]</code></summary>
@@ -585,12 +585,11 @@ and $$C$$ sending rings per chip ($$2$$ for `parallel` dual-device, else $$1$$;
 
 Benchmarks distributed sum reduction + scatter
 (`jax.lax.psum_scatter(..., tiled=True)`) across active ICI mesh axes
-(`sharding_strategy`). Each participating device holds a per-device input shard
-of shape `(R, matrix_dim, 256)` (where $$R$$ is `replica_group_rank`) and
-receives one reduced `(1, matrix_dim, 256)` output chunk of byte size
-$$S_{\text{chunk}} = \text{matrix\_dim} \times 256 \times \text{dtype\_bytes}$$
-— giving full per-device input shard $$S = R \times S_{\text{chunk}}$$
-(consistent with $$S$$ in the §2.5 symbol table above).
+(`sharding_strategy`). Each participating device holds the same per-device
+input `(matrix_dim, 8, 128)` as the other collectives (byte size $$S$$ from
+§2.5) and keeps one reduced `(matrix_dim / R, 8, 128)` output chunk (where
+$$R$$ is `replica_group_rank`), so `matrix_dim` is floored to a multiple of
+$$R$$.
 
 **Parameters:**
 
@@ -599,23 +598,22 @@ $$S_{\text{chunk}} = \text{matrix\_dim} \times 256 \times \text{dtype\_bytes}$$
 | `mesh_shape` | `Optional[str]` | `None` | Logical TPU mesh dimensions `'DxDyDz'` or `'DxDy'` (defaults to 1D mesh over all devices if `None`). |
 | `device_placement` | `str` | `"mesh_utils"` | `"mesh_utils"` or `"id_sorted"` (ignored when `mesh_shape` is `None`). |
 | `sharding_strategy` | `Optional[str]` | `None` | Active collective axis pattern matching `mesh_shape` dimensionality (axes `> 1` participate; ignored when `mesh_shape` is `None`). |
-| `matrix_dim` | `int` | `1024` | Middle dimension of per-device input `(R, matrix_dim, 256)` ($$S = R \times S_{\text{chunk}}$$) and reduced output chunk `(1, matrix_dim, 256)` ($$S_{\text{chunk}} = \text{matrix\_dim} \times 256 \times \text{dtype\_bytes}$$). |
+| `matrix_dim` | `int` | `1024` | Leading dimension of the per-device input `(matrix_dim, 8, 128)`. Floored to a multiple of $$R$$ (raises `ValueError` if `< R`); the configured value is reported as `requested_matrix_dim`. |
 | `dtype` | `str` | `"bfloat16"` | Element dtype (integer or floating non-sub-byte dtypes, e.g., `bfloat16`, `float32`, `int32`; always sum reduction, no `reduce_op`). |
 | `seed` | `int` | `0` | PRNG seed for tensor initialization. |
 
 **Bus Bandwidth Formula & Reported Metrics:**
 
 - **Per-Device / Per-Chip Transfer Size**:
-    $$S \times \frac{P}{R} = S_{\text{chunk}} \times P$$ per device;
-    $$S \times (P / R) \times C = S_{\text{chunk}} \times P \times C$$ per chip
+    $$S \times \frac{P}{R}$$ per device (each device receives one $$S / R$$
+    chunk to reduce from every peer); $$S \times (P / R) \times C$$ per chip
     (`transfer_size_per_chip_mib`), where $$C$$ is sending rings per chip from
-    the §2.5 table (`2` for `parallel` dual-device, else `1`). Earlier runs that
-    set $$S = S_{\text{chunk}}$$ under-reported `shard_size_mib`,
-    `transfer_size_per_chip_mib`, and bandwidth by $$R$$.
+    the §2.5 table (`2` for `parallel` dual-device, else `1`). Earlier versions
+    used a `(R, matrix_dim, 256)` input, so their `shard_size_mib`,
+    `transfer_size_per_chip_mib`, and bandwidth are not comparable.
 - **Reported Metrics**: `{wall_clock|xprof}_bandwidth_per_chip_gb_s`,
-    `shard_size_mib` ($$S / 2^{20}$$, full per-device input),
-    `transfer_size_per_chip_mib`, `replica_group_rank`, and
-    `replica_group_type`.
+    `shard_size_mib` ($$S / 2^{20}$$), `transfer_size_per_chip_mib`,
+    `replica_group_rank`, `replica_group_type`, and `requested_matrix_dim`.
 
 **Example Config (`tpums benchmark run-config`):**
 [`configs/tpu7x/2x2x1/reduce_scatter.yaml`](../configs/tpu7x/2x2x1/reduce_scatter.yaml)
