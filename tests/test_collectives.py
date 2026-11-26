@@ -2,8 +2,10 @@
 
 import argparse
 import dataclasses
+import gzip
 import io
 import itertools
+import json
 import math
 import os
 from typing import Any, Sequence
@@ -17,6 +19,7 @@ from accelerator_microbenchmarks.benchmarks import collectives
 from accelerator_microbenchmarks.core import base
 from accelerator_microbenchmarks.core import constants
 from accelerator_microbenchmarks.core import platform
+from accelerator_microbenchmarks.core import profiler
 from accelerator_microbenchmarks.core import registry
 from accelerator_microbenchmarks.core import report
 from accelerator_microbenchmarks.core import system
@@ -318,6 +321,102 @@ class CollectivesBenchmarkTest(parameterized.TestCase):
     bm_class = registry.benchmark_registry.get_benchmark("reduce_scatter")
     self.assertEqual(bm_class, collectives.ReduceScatterBenchmark)
     self.assertEqual(bm_class.Config, collectives.ReduceScatterParams)
+
+  @parameterized.named_parameters(
+      # Pattern 1: SparseCore-offloaded reduce-scatter that lost MARKER.
+      ("rs_offloaded_call_done", "reduce-scatter.5.cloned.1.call-done", True),
+      ("rs_other_instance", "reduce-scatter.4.cloned.1.call-done", True),
+      ("rs_call_start", "reduce-scatter.5.cloned.1.call-start", False),
+      ("rs_call_update", "reduce-scatter.5.cloned.1.call-update", False),
+      ("rs_async_done", "reduce-scatter-done.1", False),
+      # Pattern 2: tiny input compiled as an offloaded all-reduce + slice.
+      ("ar_offloaded_call_done", "all-reduce.3.cloned.1.call-done", True),
+      ("ar_call_start", "all-reduce.3.cloned.1.call-start", False),
+      ("ar_call_update", "all-reduce.3.cloned.1.call-update", False),
+      # Pattern 3: tiny input compiled as a TensorCore all-reduce + slice.
+      ("ar_tensorcore", "all-reduce", True),
+      ("ar_tensorcore_numbered", "all-reduce.2", True),
+      ("ar_tensorcore_async_start", "all-reduce-start.1", False),
+      # No pattern: the slice and other collectives are never timed.
+      ("dynamic_slice", "dynamic-slice", False),
+      ("other_collective", "all-gather.2.cloned.1.call-done", False),
+      ("no_name", None, False),
+  )
+  def test_reduce_scatter_match_xprof_op_fallback(self, name, expected):
+    """Verify the fallback matches only the reduce-scatter's collective."""
+    bm = collectives.ReduceScatterBenchmark(
+        config=collectives.ReduceScatterParams(matrix_dim=64, dtype="float32"),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+    event = {} if name is None else {"name": name}
+
+    self.assertEqual(bm.match_xprof_op_fallback(event), expected)
+
+  @parameterized.named_parameters(
+      # MARKER-less offloaded reduce-scatter: call-start / call-update must not
+      # widen the timed span.
+      (
+          "offloaded_reduce_scatter",
+          (
+              ("reduce-scatter.5.cloned.1.call-start", 10, 5),
+              ("reduce-scatter.5.cloned.1.call-update", 20, 5),
+              ("reduce-scatter.5.cloned.1.call-done", 100, None),
+          ),
+      ),
+      # Tiny input compiled as an offloaded all-reduce + slice.
+      (
+          "offloaded_all_reduce_rewrite",
+          (
+              ("all-reduce.3.cloned.1.call-start", 10, 5),
+              ("all-reduce.3.cloned.1.call-update", 20, 5),
+              ("dynamic-slice", 30, 5),
+              ("all-reduce.3.cloned.1.call-done", 100, None),
+              ("constant_dynamic-slice_fusion", 850, 5),
+          ),
+      ),
+      # Tiny input compiled as a TensorCore all-reduce + slice: the copies and
+      # slice around the all-reduce are not timed.
+      (
+          "tensorcore_all_reduce_rewrite",
+          (
+              ("copy-start", 10, 5),
+              ("copy-done", 20, 5),
+              ("dynamic-slice", 30, 5),
+              ("all-reduce", 100, None),
+              ("constant_dynamic-slice_fusion", 850, 5),
+          ),
+      ),
+  )
+  def test_reduce_scatter_xprof_times_untagged_collective(self, step_ops):
+    """Verify XProf times only the untagged collective in each step."""
+    bm = collectives.ReduceScatterBenchmark(
+        config=collectives.ReduceScatterParams(matrix_dim=64, dtype="float32"),
+        hardware_spec=system.TPU7X_HARDWARE_SPEC,
+        mesh=self.mock_mesh,
+    )
+
+    def event(name: str, ts: float, dur: float) -> dict[str, Any]:
+      return {"pid": 1, "name": name, "ts": ts, "dur": dur}
+
+    events = [
+        {"pid": 1, "name": "process_name", "args": {"name": "/device:TPU:0"}},
+    ]
+    # Two steps; `None` marks the collective, which lasts `collective_dur_us`.
+    for start_us, collective_dur_us in ((0, 300), (1000, 500)):
+      events.append(event("jit_reduce_scatter_sharded", start_us, 900))
+      for name, offset_us, dur_us in step_ops:
+        events.append(
+            event(name, start_us + offset_us, dur_us or collective_dur_us)
+        )
+    trace_dir = self.create_tempdir().full_path
+    with gzip.open(os.path.join(trace_dir, "host.trace.json.gz"), "wt") as f:
+      json.dump({"traceEvents": events}, f)
+
+    trace = profiler.load_xprof_trace(trace_dir, bm.match_xprof_op_fallback)
+
+    self.assertIsNotNone(trace)
+    self.assertEqual(trace.device_step_durations_ms(0), [0.3, 0.5])
 
   # int8 / bool cover non-float input generation (jax.random.normal is
   # float-only); all-reduce rejects bool.

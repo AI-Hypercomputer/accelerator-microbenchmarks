@@ -1194,6 +1194,36 @@ class ReduceScatterBenchmark(IciCollectiveBenchmark[ReduceScatterParams]):
 
     self._jit_fn = reduce_scatter_sharded
 
+  def match_xprof_op_fallback(self, event: dict[str, Any]) -> bool:
+    """Matches the collective XLA compiled for the reduce-scatter.
+
+    Used only when the trace has no MARKER events. A reduce_scatter program
+    has only this one collective, so timing it gives the cost of the requested
+    reduce-scatter. Offloaded ops match only on `call-done`, the same event the
+    MARKER path times. The patterns below were observed on TPU7x.
+
+    Args:
+      event: One XProf trace event.
+
+    Returns:
+      Whether the event is the reduce-scatter's collective.
+    """
+    name = event.get("name", "")
+    # 1. SparseCore-offloaded reduce-scatter whose call-done lost MARKER
+    #    (`reduce-scatter.4/.5.cloned.1.call-done`, larger inputs).
+    if name.startswith("reduce-scatter.") and name.endswith("call-done"):
+      return True
+    # 2. Tiny input (one output row per device, R >= 16) compiled as an
+    #    offloaded all-reduce + slice (`all-reduce.3.cloned.1.call-done`).
+    if name.startswith("all-reduce.") and name.endswith("call-done"):
+      return True
+    # 3. Tiny input with R <= 8 compiled as a TensorCore all-reduce + slice
+    #    (`all-reduce` or `all-reduce.<N>`).
+    if name == "all-reduce":
+      return True
+    suffix = name.removeprefix("all-reduce.")
+    return suffix != name and suffix.isdigit()
+
   def _get_transfer_size_bytes_per_device(
       self, rank: int, participating_ranks: int
   ) -> float:
