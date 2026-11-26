@@ -153,11 +153,8 @@ def init_jax_distributed(distributed: bool = True):
       print(f"Note: jax.distributed.initialize() failed or not needed: {e}")
   else:
     print("Skipping JAX distributed initialization (standalone_host_init).")
-  try:
-    devices = jax.devices()
-    print(f"JAX devices: {len(devices)} (e.g. {devices[:4]}...)")
-  except Exception as e:
-    print(f"Error initializing JAX devices: {e}")
+  devices = jax.devices()
+  print(f"JAX devices: {len(devices)} (e.g. {devices[:4]}...)")
 
 
 def run_benchmarks(

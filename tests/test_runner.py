@@ -226,6 +226,19 @@ class TestRunner(absltest.TestCase):
       runner.init_jax_distributed(distributed=False)
       mock_init.assert_not_called()
 
+  def test_init_jax_distributed_propagates_devices_error(self):
+    with (
+        mock.patch.object(runner.jax.distributed, "initialize", autospec=True),
+        mock.patch.object(
+            runner.jax,
+            "devices",
+            autospec=True,
+            side_effect=RuntimeError("coordinator timeout"),
+        ),
+    ):
+      with self.assertRaisesRegex(RuntimeError, "coordinator timeout"):
+        runner.init_jax_distributed()
+
   # Fake registry for the standalone-init tests: `requires_ici` per name.
   _FAKE_REQUIRES_ICI = {
       "gemm": False,
