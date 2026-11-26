@@ -98,6 +98,28 @@ class BenchmarkLoaderTest(absltest.TestCase):
         registry.benchmark_registry.is_experimental("gemm_quantized")
     )
 
+  def test_experimental_docstring_matches_registry(self):
+    """Verify [EXPERIMENTAL] docstring prefix matches is_experimental status."""
+    for name in registry.benchmark_registry.list_benchmark_names(
+        include_experimental=True, include_aliases=False
+    ):
+      bench_cls = registry.benchmark_registry.get_benchmark(name)
+      doc = (bench_cls.__doc__ or "").lstrip()
+      is_exp = registry.benchmark_registry.is_experimental(name)
+      with self.subTest(benchmark=name, is_experimental=is_exp):
+        self.assertTrue(
+            doc,
+            f"Benchmark '{name}' ({bench_cls.__name__}) must define a"
+            " docstring.",
+        )
+        self.assertEqual(
+            doc.startswith("[EXPERIMENTAL]"),
+            is_exp,
+            f"Benchmark '{name}' ({bench_cls.__name__}) has"
+            f" is_experimental={is_exp} but docstring starts with"
+            f" {doc.splitlines()[0]!r}.",
+        )
+
   def test_all_benchmarks_have_valid_config(self):
     """Verify that every registered benchmark defines a Config dataclass."""
     for name, bench_cls in registry.benchmark_registry.get_all().items():

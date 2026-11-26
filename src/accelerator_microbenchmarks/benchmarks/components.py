@@ -74,7 +74,7 @@ class ComponentBenchmark(base.BaseBenchmark[TransformerLayerParams]):
     "transformer_layer_moe", is_experimental=True
 )
 class TransformerLayerMoE(ComponentBenchmark):
-  """Comprehensive Transformer Layer benchmark representing DeepSeek-like MoE architectures.
+  """[EXPERIMENTAL] Transformer layer benchmark for DeepSeek-like MoE models.
 
   Encapsulates:
   - RMSNorm
@@ -82,6 +82,7 @@ class TransformerLayerMoE(ComponentBenchmark):
   - Routed Experts (FFN)
   - Residual connections
   """
+
   Config = TransformerLayerParams
   QKV_PROJ_FACTOR: int = 3
   FFN_EXPANSION_FACTOR: int = 2

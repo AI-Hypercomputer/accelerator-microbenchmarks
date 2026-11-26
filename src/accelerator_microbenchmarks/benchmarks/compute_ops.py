@@ -303,7 +303,7 @@ class _ActivationBenchmark(base.BaseBenchmark[ComputeParams]):
 
 @registry.benchmark_registry.register("swiglu", is_experimental=True)
 class SwiGLUBenchmark(_ActivationBenchmark):
-  """SwiGLU activation benchmark.
+  """[EXPERIMENTAL] SwiGLU activation benchmark.
 
   Y = Swish(A) * B, where [A, B] = Split(X, 2), X is [batch, 2 * dim], and Y is
   [batch, dim]. A v7x SwiGLU shape (M, N), where N is the width of X, maps to
@@ -336,9 +336,10 @@ class SwiGLUBenchmark(_ActivationBenchmark):
 
 @registry.benchmark_registry.register("sigmoid", is_experimental=True)
 class SigmoidBenchmark(_ActivationBenchmark):
-  """Sigmoid activation benchmark: Y = sigmoid(X), with X and Y [batch, dim].
+  """[EXPERIMENTAL] Sigmoid activation benchmark: Y = sigmoid(X).
 
-  `mode=bwd` benchmarks the VJP w.r.t. X, which reads X and dY and writes dX.
+  X and Y are [batch, dim]. `mode=bwd` benchmarks the VJP w.r.t. X, which reads
+  X and dY and writes dX.
   """
 
   def setup(self):
@@ -361,7 +362,7 @@ class SigmoidBenchmark(_ActivationBenchmark):
 
 @registry.benchmark_registry.register("rmsnorm", is_experimental=True)
 class RMSNormBenchmark(_ActivationBenchmark):
-  """RMSNorm benchmark: Y = X / rms(X) * weight.
+  """[EXPERIMENTAL] RMSNorm benchmark: Y = X / rms(X) * weight.
 
   X and Y are [batch, dim] and the weight is [dim]. `mode=bwd` benchmarks the
   VJP w.r.t. both X and the weight, which reads X, the weight, and dY, and
@@ -404,12 +405,13 @@ class RMSNormBenchmark(_ActivationBenchmark):
 
 @registry.benchmark_registry.register("layernorm", is_experimental=True)
 class LayerNormBenchmark(_ActivationBenchmark):
-  """LayerNorm benchmark: Y = (X - mean(X)) / sqrt(var(X) + eps) * gamma + beta.
+  """[EXPERIMENTAL] LayerNorm benchmark over the last axis.
 
-  X and Y are [batch, dim], and gamma and beta are [dim]. The mean and variance
-  over the last axis are computed in float32, and Y is cast back to `dtype`.
-  `mode=bwd` benchmarks the VJP w.r.t. X, gamma, and beta, which reads X,
-  gamma, beta, and dY, and writes dX, dGamma, and dBeta.
+  Computes Y = (X - mean(X)) / sqrt(var(X) + eps) * gamma + beta, where X and Y
+  are [batch, dim], and gamma and beta are [dim]. The mean and variance over the
+  last axis are computed in float32, and Y is cast back to `dtype`. `mode=bwd`
+  benchmarks the VJP w.r.t. X, gamma, and beta, which reads X, gamma, beta, and
+  dY, and writes dX, dGamma, and dBeta.
   """
 
   def setup(self):
@@ -452,7 +454,7 @@ class LayerNormBenchmark(_ActivationBenchmark):
 
 @registry.benchmark_registry.register("softmax", is_experimental=True)
 class SoftmaxBenchmark(_ActivationBenchmark):
-  """Row-wise softmax benchmark: Y = softmax(X) over the last axis.
+  """[EXPERIMENTAL] Row-wise softmax: Y = softmax(X) over the last axis.
 
   X and Y are [batch, dim]. The softmax is max-subtracted and computed in
   float32, and Y is cast back to `dtype`. `mode=bwd` benchmarks the VJP w.r.t.
@@ -483,7 +485,7 @@ class SoftmaxBenchmark(_ActivationBenchmark):
 
 @registry.benchmark_registry.register("rope", is_experimental=True)
 class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
-  """Rotary Positional Embedding (RoPE) benchmark.
+  """[EXPERIMENTAL] Rotary Positional Embedding (RoPE) benchmark.
 
   Matches the TPU v7x (Ironwood) RoPE microbenchmark: activations X are a
   [batch * seq_len, heads * head_dim] matrix in `dtype`, and the cos/sin table
@@ -593,7 +595,7 @@ class RoPEBenchmark(base.BaseBenchmark[RoPEParams]):
 
 @registry.benchmark_registry.register("quantization", is_experimental=True)
 class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
-  """Rowwise quantization: OUT = cast_quant(X * SF).
+  """[EXPERIMENTAL] Rowwise quantization: OUT = cast_quant(X * SF).
 
   For fused transposed quantization, see `QuantizeTransposeBenchmark`
   (`quantize_transpose`).
@@ -711,7 +713,7 @@ class QuantizationBenchmark(base.BaseBenchmark[QuantParams]):
     "quantize_transpose", is_experimental=True
 )
 class QuantizeTransposeBenchmark(QuantizationBenchmark):
-  """Transposed quantization: OUT<N, M> = cast_quant(X^T * SF).
+  """[EXPERIMENTAL] Transposed quantization: OUT<N, M> = cast_quant(X^T * SF).
 
   SF<N> holds one scaling factor per column of X. Runs as a fused Pallas kernel
   (`quantize_transpose.quantize_transpose`) that does not write X^T to HBM.
@@ -773,7 +775,7 @@ class QuantizeTransposeBenchmark(QuantizationBenchmark):
 
 @registry.benchmark_registry.register("simple_add", is_experimental=True)
 class AddBenchmark(base.BaseBenchmark[AddParams]):
-  """Simple Z = X + Y benchmark."""
+  """[EXPERIMENTAL] Simple Z = X + Y benchmark."""
 
   Config = AddParams
 

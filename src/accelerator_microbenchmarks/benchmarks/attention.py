@@ -63,11 +63,9 @@ class AttentionParams(base.SingleDtypeBenchmarkParams):
   )
 
 
-@registry.benchmark_registry.register(
-    "attention_flashed", is_experimental=True
-)
+@registry.benchmark_registry.register("attention_flashed", is_experimental=True)
 class AttentionBenchmark(base.BaseBenchmark[AttentionParams]):
-  """Attention benchmark simulating FlashAttention behavior.
+  """[EXPERIMENTAL] Attention benchmark simulating FlashAttention behavior.
 
   Supports:
   - MHA/GQA
