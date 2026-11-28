@@ -200,7 +200,7 @@ class QuantizeTransposeTest(parameterized.TestCase):
         q_max=q_max,
         block_m=blocks[0],
         block_n=blocks[1],
-        interpret=True,
+        interpret=pltpu.InterpretParams(),
     )
     ref_out, ref_sf = _reference_quantize_transpose(
         x, out_dtype, sf_dtype, q_max
@@ -225,7 +225,7 @@ class QuantizeTransposeTest(parameterized.TestCase):
         out_dtype=jnp.float8_e4m3fn,
         scale_dtype=jnp.bfloat16,
         q_max=448.0,
-        interpret=True,
+        interpret=pltpu.InterpretParams(),
     )
     ref_out, ref_sf = _reference_quantize_transpose(
         x, jnp.float8_e4m3fn, jnp.bfloat16, 448.0
@@ -260,7 +260,7 @@ class QuantizeTransposeTest(parameterized.TestCase):
           q_max=448.0,
           block_m=block_m,
           block_n=block_n,
-          interpret=True,
+          interpret=pltpu.InterpretParams(),
       )
 
 
